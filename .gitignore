@@ -1,0 +1,35 @@
+# Build artifacts
+/dist/
+/bin/
+
+# Model artifacts — large, downloaded per-machine, never committed.
+# Tests skip cleanly when these aren't present. Populate via symlink
+# into ~/.cache/huggingface/... or `ken download-model --to ...`.
+testdata/model
+testdata/encoder-model
+*.safetensors
+
+# Go
+*.test
+*.out
+/vendor/
+
+# Editor / OS
+.DS_Store
+.vscode/
+.idea/
+*.swp
+
+# Python tooling (pin_inference.py + pin_encoder.py regenerate the
+# golden fixtures; their venvs are reproducible and not committed)
+.venv/
+__pycache__/
+*.pyc
+
+# Generated fixture at root — the canonical copies live under testdata/
+/ken_golden.json
+/aikit_golden.json
+
+# 100k-input tokenizer parity dump (regenerated via scripts/parity_dump.py).
+# Tens of MB; never committed.
+testdata/parity.jsonl
