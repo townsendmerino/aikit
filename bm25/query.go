@@ -25,6 +25,20 @@ func (ix *Index) idf(term string) float64 {
 	return math.Log(1 + (n-float64(df)+0.5)/(float64(df)+0.5))
 }
 
+// IDF returns the Lucene/bm25s BM25 IDF for term. Public wrapper around
+// the unexported idf used by query scoring; identical formula. Returns 0
+// for unknown terms. Exposed for downstream tooling that ranks tokens
+// by corpus distinctiveness — e.g. a pseudo-relevance-feedback (PRF)
+// term harvester, or an oracle identifier picker for retrieval-eval
+// experiments.
+func (ix *Index) IDF(term string) float64 { return ix.idf(term) }
+
+// DF returns the raw document-frequency of term — the number of indexed
+// documents that contain it at least once. Returns 0 for unknown terms.
+// Paired with IDF for tooling that needs to *filter* by DF (e.g. drop
+// near-hapax tokens that are too rare to predict) before ranking by IDF.
+func (ix *Index) DF(term string) int { return ix.df[term] }
+
 // Scores returns the BM25 score of every document for query (already
 // tokenized). The result is indexed by document id; length == ix.N().
 func (ix *Index) Scores(query []string) []float64 {
