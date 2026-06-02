@@ -35,6 +35,13 @@ package encoder
 // accumulation differs by ULPs; cosine vs reference still > 0.997
 // per the M2 contract — pinned by TestForwardBatch_matchesSingle).
 func (w *Weights) forwardBatch(idsList [][]int32) [][]float32 {
+	// Counts as one in-flight forward so the intra-op matmul gate stays
+	// serial under EncodeBatch's per-worker parallelism (parallel.go).
+	// The B==1 fast path below nests into forward() (count→2) and so
+	// won't intra-op-parallelize; that's benign — true single-item
+	// latency is served by Encode()→forward (count=1), not batch-of-1.
+	enterForward()
+	defer leaveForward()
 	B := len(idsList)
 	D := w.Cfg.HiddenDim
 	if B == 0 {

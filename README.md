@@ -7,10 +7,11 @@ DAG is shallow (most are leaves; only `encoder` requires `embed`).
 | Package | Purpose | Deps (beyond stdlib) |
 |---|---|---|
 | `topk` | bounded min-heap top-K selector (generic) | — |
-| `ann` | flat brute-force cosine ANN over a dense matrix | — |
+| `ann` | cosine ANN over a dense matrix — exact flat scan + approximate HNSW graph | — |
 | `bm25` | identifier-aware BM25 lexical index (Lucene-variant) | — |
+| `fuse` | reciprocal-rank fusion (RRF) — blend lexical + dense rankings for hybrid search | — |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `golang.org/x/text` |
-| `encoder` | CodeRankEmbed transformer encoder (NomicBert, 12-layer, NEON-accelerated on arm64) | — |
+| `encoder` | CodeRankEmbed transformer encoder (NomicBert, 12-layer; NEON-accelerated on arm64, AVX2/FMA on amd64, with intra-op row-parallel matmul for single-forward latency) | — |
 | `chunk` | language-aware code chunker registry + 3 concrete chunkers (`regex`, `markdown`, `treesitter`) | `github.com/odvcencio/gotreesitter` (treesitter only) |
 
 `aikit` is "the parts of ken another project could reuse." The application
@@ -46,6 +47,11 @@ Mirroring [ken ADR-032](https://github.com/townsendmerino/ken/blob/main/docs/DEC
   [`github.com/odvcencio/gotreesitter`](https://github.com/odvcencio/gotreesitter)
 - `encoder.LoadQ8` / `encoder.ModelQ8` (int8 quant) — alternate precision path
 - The mmap variant of `embed.OpenSafetensors`
+- `ann.HNSW` / `ann.NewHNSW` / `ann.BuildHNSW` / `ann.Config` — new approximate index;
+  the `Hit` / `Query` surface is stable, but graph internals and Config defaults may tune
+- `fuse.RRF` / `fuse.RRFWeighted` / `fuse.Keys` — new; the RRF math is fixed but the
+  helper surface is young
+- GPU backend (`encoder/gpu`, `-tags gpu`) — optional, cgo, foundation stage only
 
 ---
 

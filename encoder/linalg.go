@@ -71,6 +71,14 @@ func matmulBTInto(a, b, dst []float32, M, K, N int) {
 		matmulBTNaiveInto(a, b, dst, M, K, N)
 		return
 	}
+	// Intra-op row parallelism kicks in only for a lone forward with a
+	// large enough shape (see wantParallelMatmul). Under EncodeBatch's
+	// per-worker parallelism this is false, so the batch path stays on
+	// the serial blocked fill.
+	if wantParallelMatmul(M, K, N) {
+		matmulBTBlockedIntoParallel(a, b, dst, M, K, N)
+		return
+	}
 	matmulBTBlockedInto(a, b, dst, M, K, N)
 }
 

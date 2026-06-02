@@ -19,6 +19,8 @@ package encoder
 // Single-sequence only in M2 (no batching, no padding mask). M7 brings
 // batched mode if needed.
 func (w *Weights) forward(ids []int32) []float32 {
+	enterForward()
+	defer leaveForward()
 	L := len(ids)
 	if L == 0 {
 		// Degenerate input — return zero vector (matches the empty-input

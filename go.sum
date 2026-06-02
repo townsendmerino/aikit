@@ -1,3 +1,5 @@
+github.com/cogentcore/webgpu v0.23.0 h1:hrjnnuDZAPSRsqBjQAsJOyg2COGztIkBbxL87r0Q9KE=
+github.com/cogentcore/webgpu v0.23.0/go.mod h1:ciqaxChrmRRMU1SnI5OE12Cn3QWvOKO+e5nSy+N9S1o=
 github.com/odvcencio/gotreesitter v0.19.1 h1:OYp/gOvm/uQnmR1ZlBcp6bDOdN8HtRBS74cVrI3C/oc=
 github.com/odvcencio/gotreesitter v0.19.1/go.mod h1:hBVkghd0paaYAVwd2087vfwdeU984bQbMo9LvpE0moo=
 golang.org/x/text v0.37.0 h1:Cqjiwd9eSg8e0QAkyCaQTNHFIIzWtidPahFWR83rTrc=

@@ -9,6 +9,8 @@ import "math"
 // either tiny ops or parity-sensitive reductions where f64 accumulators
 // matter.
 func (w *WeightsQ8) forward(ids []int32) []float32 {
+	enterForward()
+	defer leaveForward()
 	L := len(ids)
 	D := w.Cfg.HiddenDim
 	if L == 0 {
@@ -52,6 +54,8 @@ func (w *WeightsQ8) forward(ids []int32) []float32 {
 // layers, with linear projections in int8 and attention per-sequence-
 // per-head bounded by realLen[b].
 func (w *WeightsQ8) forwardBatch(idsList [][]int32) [][]float32 {
+	enterForward() // see Weights.forwardBatch for the in-flight-gate rationale
+	defer leaveForward()
 	B := len(idsList)
 	D := w.Cfg.HiddenDim
 	if B == 0 {
