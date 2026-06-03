@@ -538,3 +538,34 @@ func (t *Tokenizer) Decode(ids []int) (string, error) {
 func (t *Tokenizer) DecodePiece(id int) (string, error) {
 	return t.Decode([]int{id})
 }
+
+// TokenText returns the raw surface bytes a single token id contributes when
+// decoded — the per-token building block for byte-level constrained decoding
+// (mapping the vocab onto a grammar). Unlike Decode it does NO whole-sequence
+// post-processing: no SentencePiece leading-space strip, and no fusing of
+// adjacent byte-fallback pieces. A byte-level piece is mapped through the byte
+// decoder; a SentencePiece byte-fallback token yields its single raw byte; a
+// normal SentencePiece piece has ▁ mapped to a space. Special tokens render as
+// their literal surface form (so a grammar that forbids them masks them out).
+// An out-of-range id returns nil.
+func (t *Tokenizer) TokenText(id int) []byte {
+	if id < 0 || id >= len(t.idToPiece) {
+		return nil
+	}
+	if t.mode == modeByteLevel {
+		var buf []byte
+		for _, r := range t.idToPiece[id] {
+			if b, ok := t.byteDecoder[r]; ok {
+				buf = append(buf, b)
+			} else {
+				buf = utf8.AppendRune(buf, r) // defensive: non-byte-level rune
+			}
+		}
+		return buf
+	}
+	// modeGemma: byte-fallback token → its raw byte; else ▁ → space.
+	if b, ok := t.byteToVal[int32(id)]; ok {
+		return []byte{b}
+	}
+	return []byte(strings.ReplaceAll(t.idToPiece[id], spaceMarker, " "))
+}

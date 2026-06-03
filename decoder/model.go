@@ -198,9 +198,9 @@ func (m *Model) forward(id int, cache *KVCache) ([]float32, error) {
 // ids (the demo runs the tokenizer). The channel closes when generation
 // ends; check Err after the range loop for a terminal error.
 //
-// The forward pass (prefill + per-step decode) is implemented (M3). Remaining
-// for M4/M6: non-greedy sampling (Sampler.Sample still stubs temp/top-k/top-p)
-// and isStop's EOS/stop-id wiring — so today this greedy-decodes to maxTokens.
+// Sampling is greedy at Temperature 0, else temperature/top-k/top-p (see
+// Sampler). A SamplingParams.LogitProcessor, if set, masks each step's logits
+// before sampling — the seam for constrained/structured decoding.
 func (m *Model) Generate(ctx context.Context, prompt []int, maxTokens int, sp SamplingParams) (<-chan int, *Generation) {
 	out := make(chan int)
 	g := &Generation{}
@@ -227,12 +227,18 @@ func (m *Model) Generate(ctx context.Context, prompt []int, maxTokens int, sp Sa
 			return
 		}
 		// Decode loop.
+		var generated []int
 		for range maxTokens {
 			select {
 			case <-ctx.Done():
 				g.err = ctx.Err()
 				return
 			default:
+			}
+			// Constrained decoding: let the processor mask this step's logits
+			// (based on what's been generated) before sampling and the stop check.
+			if sp.LogitProcessor != nil {
+				sp.LogitProcessor(generated, logits)
 			}
 			next, err := sampler.Sample(logits)
 			if err != nil {
@@ -243,6 +249,7 @@ func (m *Model) Generate(ctx context.Context, prompt []int, maxTokens int, sp Sa
 				return
 			}
 			out <- next
+			generated = append(generated, next)
 			if logits, err = m.forward(next, cache); err != nil {
 				g.err = err
 				return

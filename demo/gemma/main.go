@@ -30,6 +30,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/townsendmerino/aikit/constrain"
 	"github.com/townsendmerino/aikit/decoder"
 	"github.com/townsendmerino/aikit/tokenizer"
 )
@@ -45,6 +46,7 @@ func main() {
 		seed     = flag.Int64("seed", 0, "sampling RNG seed")
 		backend  = flag.String("backend", "cpu", "compute backend: cpu | webgpu")
 		quant    = flag.String("quant", "", "weight quantization: \"\" (f32) | int8 | int8int8 | int4")
+		jsonMode = flag.Bool("json", false, "constrain output to valid JSON (logit masking via constrain.JSON)")
 	)
 	flag.Parse()
 
@@ -54,7 +56,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	if err := run(*modelDir, *prompt, *maxTok, *backend, *quant, decoder.SamplingParams{
+	if err := run(*modelDir, *prompt, *maxTok, *backend, *quant, *jsonMode, decoder.SamplingParams{
 		Temperature: *temp,
 		TopK:        *topK,
 		TopP:        *topP,
@@ -66,7 +68,7 @@ func main() {
 	}
 }
 
-func run(modelDir, prompt string, maxTok int, backend, quant string, sp decoder.SamplingParams) error {
+func run(modelDir, prompt string, maxTok int, backend, quant string, jsonMode bool, sp decoder.SamplingParams) error {
 	// 1) Tokenizer. A bare .gguf carries its tokenizer in metadata
 	// (tokenizer.LoadGGUF); an HF checkpoint dir has a tokenizer.json
 	// (tokenizer.Load).
@@ -92,6 +94,15 @@ func run(modelDir, prompt string, maxTok int, backend, quant string, sp decoder.
 	}
 	fmt.Fprintf(os.Stderr, "loaded %d-layer model (hidden %d, vocab %d) in %s [backend=%s quant=%s]\n",
 		cfg.NumLayers, cfg.HiddenDim, cfg.VocabSize, time.Since(t0).Round(time.Millisecond), backend, q)
+
+	// 2b) Constrained decoding: mask every step's logits to the tokens a JSON
+	// grammar permits, so the model physically cannot emit malformed JSON. The
+	// vocab→bytes map comes from the tokenizer; EOS is gated until the document
+	// is complete.
+	if jsonMode {
+		sp.LogitProcessor = jsonMasker(tk, cfg.VocabSize)
+		fmt.Fprintln(os.Stderr, "constrained to valid JSON (constrain.JSON)")
+	}
 
 	// 3) Encode prompt.
 	ids, err := tk.Encode(prompt, true /* addBOS */)
@@ -149,6 +160,20 @@ func run(modelDir, prompt string, maxTok int, backend, quant string, sp decoder.
 	}
 	fmt.Println()
 	return gen.Err()
+}
+
+// jsonMasker builds the JSON-constraining LogitProcessor: the vocab's surface
+// bytes (tk.TokenText) feed a constrain.Masker over a JSON grammar, with the
+// tokenizer's EOS / end-of-turn ids gated until the document is complete.
+func jsonMasker(tk *tokenizer.Tokenizer, vocab int) func(generated []int, logits []float32) {
+	var eos []int
+	for _, id := range []int{tk.Special().EOS, tk.Special().EndOfTurn} {
+		if id >= 0 {
+			eos = append(eos, id)
+		}
+	}
+	m := constrain.NewMasker(constrain.JSON(), constrain.TokenBytes(vocab, tk.TokenText), eos).StopWhenComplete()
+	return m.Process
 }
 
 // completeUTF8Len returns the length of the longest prefix of b that ends on a

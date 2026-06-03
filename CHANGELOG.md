@@ -12,6 +12,26 @@ it.
 
 ### Added
 
+- **`constrain` package — constrained / structured decoding.** A logit mask that
+  forces a model's output to satisfy a grammar: at each step every vocab token
+  whose bytes would break the grammar is set to −∞, and EOS is masked until the
+  output is a complete document. Ships a streaming **JSON** grammar (byte-level
+  pushdown automaton, RFC 8259) — so a small model *physically cannot* emit
+  malformed JSON. It plugs into the new `decoder.SamplingParams.LogitProcessor`
+  hook (`constrain.Masker.Process` matches the signature) and is stdlib-only (the
+  vocab→bytes map is injected as a func, e.g. `tokenizer.TokenText`). The guarantee
+  is proven structurally: a hard-invariant test drives the masker with *random*
+  logits over a synthetic vocab and confirms the output is always valid per
+  `encoding/json` (`TestConstrainedDecode_alwaysValidJSON`). `demo/gemma --json`
+  shows it end-to-end (a 1B model emits a valid JSON object). `StopWhenComplete`
+  ends generation at the first complete document.
+- **`decoder.SamplingParams.LogitProcessor`** — an optional per-step hook,
+  `func(generated []int, logits []float32)`, called after the forward pass and
+  before sampling so a caller can mask/bias logits (the seam for constrained
+  decoding; can also gate EOS).
+- **`tokenizer.Tokenizer.TokenText(id) []byte`** — the raw surface bytes a single
+  token contributes (no whole-sequence post-processing), for mapping a vocabulary
+  onto a byte-level grammar.
 - **int8×int8 (W8A8) quantization** (`decoder.Load(…, Quant: "int8int8")`) — in
   addition to the weight-only int8, this quantizes the activations to int8 on the
   fly (dynamic per-row scale) and runs a true integer matmul: `linalg.dotI8`

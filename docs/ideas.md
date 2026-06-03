@@ -49,6 +49,13 @@ context-window management are fiddly; lean on the `decoder` chat template work.
 
 ### 2. Constrained / structured generation — guaranteed-valid output  ·  M
 
+**Status: JSON shipped** (`constrain` package). The logit-mask seam
+(`decoder.SamplingParams.LogitProcessor`) + a `Masker` over a byte-level
+`Grammar`, with a streaming JSON grammar — a model that physically cannot emit
+malformed JSON (`demo/gemma --json`; hard-invariant test vs `encoding/json`).
+Still open below: a general GBNF/regex engine and a JSON-Schema → grammar
+compiler on the same `Grammar` interface.
+
 **What.** Decode under a constraint so the model *cannot* emit invalid output:
 mask the logits at each step to only the tokens a grammar permits. Two layers:
 a JSON-Schema → grammar compiler, and a general GBNF-style grammar engine

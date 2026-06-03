@@ -15,6 +15,13 @@ type SamplingParams struct {
 	TopP        float64 // 0 = disabled; nucleus — smallest set with cumprob ≥ TopP
 	Seed        int64   // RNG seed for reproducible sampling
 	StopIDs     []int   // extra ids that end generation (besides config EOS), e.g. <end_of_turn>
+	// LogitProcessor, if non-nil, is called each decode step with the ids
+	// generated so far and that step's logits, which it may modify in place
+	// before the sampler runs — e.g. masking disallowed tokens to -inf for
+	// constrained/structured decoding (see the constrain package). It runs after
+	// the forward pass and before sampling and the stop check, so a constraint
+	// can also gate EOS (mask it until the output is a complete document).
+	LogitProcessor func(generated []int, logits []float32)
 }
 
 // Sampler turns a logit vector into a token id. It owns its RNG so a run is

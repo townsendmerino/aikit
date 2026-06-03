@@ -56,10 +56,13 @@ complete, these are now the most impactful next step:
   into one `Answer(query) → (text, []Citation)` pipeline. The product; makes the
   library more than the sum of its packages. Bigger integration, harder to
   validate offline (needs real models).
-- **Constrained / structured generation** — logit-masking on the existing
-  `Sampler` so a small model *cannot* emit malformed JSON/invalid grammar.
-  Self-contained, builds on the `Sampler`, fully offline-validatable (the
-  constraint is a hard invariant).
+- **Constrained / structured generation** — ✅ **JSON shipped** (`constrain`
+  package): a logit mask via the new `decoder.SamplingParams.LogitProcessor` hook
+  forces output to satisfy a byte-level grammar; ships a streaming JSON grammar
+  (a model that *cannot* emit malformed JSON), proven by a random-logits
+  hard-invariant test vs `encoding/json` and `demo/gemma --json`. Still open: a
+  general GBNF/regex engine and a JSON-Schema → grammar compiler on the same
+  `Grammar` interface.
 
 ### 2. More GGUF quant types (Q5_K/Q3_K/IQ*) — incremental · S
 
