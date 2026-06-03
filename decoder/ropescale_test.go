@@ -86,7 +86,7 @@ func TestApplyRoPE_partialRotary(t *testing.T) {
 	orig := append([]float32(nil), vec...)
 
 	inv := computeInvFreq(base, rotaryDim, nil)
-	applyRoPE(vec, 1, headDim, pos, inv)
+	applyRoPE(vec, 1, headDim, pos, inv, 1.0)
 
 	// Trailing headDim-rotaryDim dims unchanged.
 	for d := rotaryDim; d < headDim; d++ {

@@ -45,9 +45,13 @@ type Architecture struct {
 	// HeadDim. <HeadDim is partial rotary (Phi's partial_rotary_factor), where
 	// the trailing dims pass through unrotated.
 	RotaryDim int
-	// ropeScaling transforms the inv-freq table (Llama-3 llama3 / linear);
-	// nil = none. Set by the adapter, consumed when the tables are built.
-	ropeScaling *ropeScaling
+	// ropeScaling transforms the GLOBAL (full-attention) inv-freq table (Llama-3
+	// llama3 / linear / yarn); nil = none. ropeScalingLocal does the same for the
+	// LOCAL (sliding) table — usually nil even when the global table is scaled
+	// (Mellum: YaRN on full layers, plain RoPE on sliding layers). Set by the
+	// adapter, consumed when the tables are built.
+	ropeScaling      *ropeScaling
+	ropeScalingLocal *ropeScaling
 
 	// Precomputed inverse-frequency tables (base + scaling baked in), built by
 	// finalizeRoPE at resolve time so the forward pass never recomputes pow/scaling
@@ -73,6 +77,11 @@ type MoEConfig struct {
 	NumExperts   int  // experts per layer (E)
 	TopK         int  // experts evaluated per token (k)
 	NormTopKProb bool // renormalize the top-k router weights to sum to 1 (Mixtral)
+	// IntermediateDim is the per-expert FFN width. Mixtral's experts use the
+	// model's intermediate_size; Mellum gives them a narrower moe_intermediate_size
+	// (896 vs the vestigial 7168), so the expert width is tracked here rather than
+	// read from arch.IntermediateDim.
+	IntermediateDim int
 }
 
 // NormKind selects the normalization. Only RMSNorm is implemented today;
@@ -121,6 +130,20 @@ func (a *Architecture) ropeBase(i int) float64 {
 	return a.RoPELocalBase
 }
 
+// ropeMscale returns the attention_factor applied to the rotated q/k of layer i
+// (YaRN's mscale; 1.0 for non-YaRN layers). Picks the global or local scaling
+// per the layer's attention type.
+func (a *Architecture) ropeMscale(i int) float64 {
+	sc := a.ropeScaling
+	if !a.isGlobalLayer(i) {
+		sc = a.ropeScalingLocal
+	}
+	if sc != nil && sc.mscale != 0 {
+		return sc.mscale
+	}
+	return 1
+}
+
 // rotaryDim returns the number of head dims RoPE rotates, defaulting to the
 // full HeadDim when RotaryDim is unset.
 func (a *Architecture) rotaryDim() int {
@@ -139,11 +162,13 @@ func (a *Architecture) finalizeRoPE() {
 	}
 	rd := a.rotaryDim()
 	a.ropeInvFreqGlobal = computeInvFreq(a.RoPEGlobalBase, rd, a.ropeScaling)
-	if a.RoPELocalBase == a.RoPEGlobalBase {
+	// Share the table only when the local layers use the SAME base AND scaling
+	// (single-base, single-scaling families). Gemma differs by base; Mellum
+	// differs by scaling (YaRN global vs plain local) at the same base.
+	if a.RoPELocalBase == a.RoPEGlobalBase && a.ropeScalingLocal == a.ropeScaling {
 		a.ropeInvFreqLocal = a.ropeInvFreqGlobal
 	} else {
-		// Gemma's local base; scaling is single-base only, so it does not apply here.
-		a.ropeInvFreqLocal = computeInvFreq(a.RoPELocalBase, rd, nil)
+		a.ropeInvFreqLocal = computeInvFreq(a.RoPELocalBase, rd, a.ropeScalingLocal)
 	}
 }
 

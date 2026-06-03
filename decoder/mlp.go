@@ -63,8 +63,9 @@ func moeMLP(h []float32, lw *LayerWeights, arch *Architecture, be Backend) ([]fl
 		}
 	}
 
-	// Weighted sum of the chosen experts (each a SwiGLU MLP).
-	inter, hidden := arch.IntermediateDim, arch.HiddenDim
+	// Weighted sum of the chosen experts (each a SwiGLU MLP). Experts use the
+	// MoE expert width (Mellum's moe_intermediate_size), not the dense one.
+	inter, hidden := arch.MoE.IntermediateDim, arch.HiddenDim
 	out := make([]float32, hidden)
 	gate := make([]float32, inter)
 	up := make([]float32, inter)

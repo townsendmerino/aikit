@@ -18,13 +18,17 @@ import "math"
 // where θ_d = pos * invFreq[d] for d ∈ [0, rotaryDim/2). When rotaryDim <
 // headDim (Phi's partial_rotary_factor), the trailing headDim-rotaryDim dims
 // pass through unrotated.
-func applyRoPE(vec []float32, heads, headDim, pos int, invFreq []float64) {
+//
+// scale is YaRN's attention_factor (mscale), folded into cos/sin so the rotated
+// q/k are scaled by it — matching HF, which multiplies cos/sin by
+// attention_scaling. Pass 1.0 for non-YaRN families (no scaling).
+func applyRoPE(vec []float32, heads, headDim, pos int, invFreq []float64, scale float64) {
 	half := len(invFreq) // == rotaryDim/2
 	posF := float64(pos)
 	for d := range half {
 		theta := posF * invFreq[d]
-		c := math.Cos(theta)
-		s := math.Sin(theta)
+		c := math.Cos(theta) * scale
+		s := math.Sin(theta) * scale
 		for h := range heads {
 			off := h * headDim
 			x1 := float64(vec[off+d])

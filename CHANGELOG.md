@@ -12,6 +12,20 @@ it.
 
 ### Added
 
+- **Mellum2 support + YaRN RoPE scaling.** The decoder now runs JetBrains
+  Mellum2 (`model_type: "mellum"`, a 12B-A2.5B MoE code model): a `mellum`
+  adapter combines axes we already had — a sparse MoE on every layer (64 experts,
+  top-8, with the narrower `moe_intermediate_size` for the expert FFN) and a 3:1
+  sliding/full attention interleave (`layer_types`) — plus the one new piece,
+  **YaRN** RoPE. YaRN is implemented HF-exact (`_compute_yarn_parameters`: the
+  NTK-by-parts inv-freq blend + the `attention_factor` mscale), validated against
+  a pinned reference (`TestYarn_matchesHF`, rel ≤ 1e-12), and slots into the
+  existing dual-table RoPE via a new per-attention-type scaling path
+  (`ropeScalingLocal`) and the new nested `rope_parameters` config (YaRN on full
+  layers, plain RoPE on sliding layers). Also generally usable for long-context
+  Qwen/Llama checkpoints that set `rope_scaling: {"rope_type": "yarn"}`. The
+  `mellum` adapter resolves the real config to the right descriptor + RoPE tables
+  + mscale (`TestResolveMellum`); full forward parity awaits the 12B checkpoint.
 - **`constrain` package — constrained / structured decoding.** A logit mask that
   forces a model's output to satisfy a grammar: at each step every vocab token
   whose bytes would break the grammar is set to −∞, and EOS is masked until the

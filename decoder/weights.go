@@ -324,16 +324,17 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 			if l.Router, err = loadMat(st, tensorName(i, s.Router), arch.MoE.NumExperts, hd); err != nil {
 				return nil, err
 			}
+			expInter := arch.MoE.IntermediateDim // expert FFN width (Mellum: moe_intermediate_size)
 			l.Experts = make([]expertWeights, arch.MoE.NumExperts)
 			for e := 0; e < arch.MoE.NumExperts; e++ {
 				ex := &l.Experts[e]
-				if ex.Gate, err = loadMatQ(tensorName(i, fmt.Sprintf(s.ExpertGate, e)), cfg.IntermediateDim, hd); err != nil {
+				if ex.Gate, err = loadMatQ(tensorName(i, fmt.Sprintf(s.ExpertGate, e)), expInter, hd); err != nil {
 					return nil, err
 				}
-				if ex.Up, err = loadMatQ(tensorName(i, fmt.Sprintf(s.ExpertUp, e)), cfg.IntermediateDim, hd); err != nil {
+				if ex.Up, err = loadMatQ(tensorName(i, fmt.Sprintf(s.ExpertUp, e)), expInter, hd); err != nil {
 					return nil, err
 				}
-				if ex.Down, err = loadMatQ(tensorName(i, fmt.Sprintf(s.ExpertDown, e)), hd, cfg.IntermediateDim); err != nil {
+				if ex.Down, err = loadMatQ(tensorName(i, fmt.Sprintf(s.ExpertDown, e)), hd, expInter); err != nil {
 					return nil, err
 				}
 			}
@@ -520,6 +521,27 @@ var mixtralTensorSchema = tensorSchema{
 	ExpertGate:  "block_sparse_moe.experts.%d.w1.weight",
 	ExpertUp:    "block_sparse_moe.experts.%d.w3.weight",
 	ExpertDown:  "block_sparse_moe.experts.%d.w2.weight",
+}
+
+// mellumTensorSchema: Mellum2 — the llama attention/norm names with a sparse
+// MoE FFN, but using the standard HF Qwen/Llama MoE naming (mlp.gate router,
+// mlp.experts.E.{gate,up,down}_proj) rather than Mixtral's block_sparse_moe /
+// w1,w3,w2. Every layer is MoE (mlp_layer_types all "sparse"); no QK-norm, no
+// bias, untied head. The experts use moe_intermediate_size (MoEConfig.IntermediateDim).
+var mellumTensorSchema = tensorSchema{
+	Embed:       "model.embed_tokens.weight",
+	LMHead:      "lm_head.weight",
+	FinalNorm:   "model.norm.weight",
+	QProj:       "self_attn.q_proj.weight",
+	KProj:       "self_attn.k_proj.weight",
+	VProj:       "self_attn.v_proj.weight",
+	OProj:       "self_attn.o_proj.weight",
+	PreAttnNorm: "input_layernorm.weight",
+	PreMLPNorm:  "post_attention_layernorm.weight", // HF name; positionally the pre-MLP norm
+	Router:      "mlp.gate.weight",
+	ExpertGate:  "mlp.experts.%d.gate_proj.weight",
+	ExpertUp:    "mlp.experts.%d.up_proj.weight",
+	ExpertDown:  "mlp.experts.%d.down_proj.weight",
 }
 
 // gpt2TensorSchema is a marker — GPT-2's fused c_attn + Conv1D weight layout

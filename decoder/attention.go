@@ -70,12 +70,15 @@ func causalAttention(
 	}
 
 	// 3. RoPE at pos with the per-layer inv-freq table (Gemma: local 10k vs
-	// global 1e6 base; Llama-3: llama3 scaling baked in; Phi: partial rotary).
-	// GPT-2 uses learned absolute positions instead, so it skips RoPE.
+	// global 1e6 base; Llama-3: llama3 scaling baked in; Mellum: YaRN on full
+	// layers, plain on sliding; Phi: partial rotary). The mscale folds YaRN's
+	// attention_factor into the rotation (1.0 elsewhere). GPT-2 uses learned
+	// absolute positions instead, so it skips RoPE.
 	if !arch.LearnedPosEmbed {
 		invFreq := arch.ropeInvFreq(layer)
-		applyRoPE(q, nH, hd, pos, invFreq)
-		applyRoPE(k, nKV, hd, pos, invFreq)
+		ms := arch.ropeMscale(layer)
+		applyRoPE(q, nH, hd, pos, invFreq, ms)
+		applyRoPE(k, nKV, hd, pos, invFreq, ms)
 	}
 
 	// 4. Append this position's K/V, then attend over the stored history.

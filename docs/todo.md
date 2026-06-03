@@ -82,11 +82,18 @@ already covers the dominant laptop quant, so this is low marginal value).
 same dequant idea; the safetensors loader already handles the container. Adds the
 HF-hosted int4 ecosystem.
 
-### 5. Shared-expert MoE + YaRN/longrope — lowest urgency · S–M
+### 5. Shared-expert MoE + longrope/dynamic RoPE — lowest urgency · S–M
 
-"A couple more `MoEConfig` knobs" on the G6 MoE base for Qwen-MoE/DeepSeek, plus
-YaRN's mscale for long context. Cleanly scoped, but only pays off for those
-specific families.
+✅ **YaRN done** (Mellum2 — NTK-by-parts + mscale, HF-exact). Still open: a couple
+more `MoEConfig` knobs for shared-expert MoE (Qwen-MoE/DeepSeek), and the
+remaining RoPE scalings (longrope/su, dynamic). Cleanly scoped, but only pays off
+for those specific families.
+
+### Models supported (decoder)
+
+Gemma 3 · Qwen2.5/3 · Llama-2/3 · Mistral · GPT-2 · Mixtral · **Mellum2** (MoE +
+sliding/full interleave + YaRN). Full Mellum2 forward parity awaits the 12B
+checkpoint; the YaRN math and config resolution are validated offline.
 
 ---
 
