@@ -9,6 +9,12 @@ Rosetta 2, which tops out at SSE4.2).
 > **Status note.** This doc is kept current as the follow-ups below land. Last updated for:
 > Phase A (amd64 AVX2/FMA, first-cut) + Phase B (intra-op row-parallel matmul) +
 > Phase 3 foundation (WebGPU matmul offload, `-tags gpu`) on the `main` branch.
+>
+> **2026-06-02 — amd64 AVX2 path validated on Linux for the first time.** Every
+> `AVX2|Dot` test PASSes with `hasAVX2=true`, no SIGILL, and `-race` is clean.
+> The single-row and both register-blocked kernels (`dotFMA`/`dotFMA4`/`dotFMA8`)
+> bit-match the scalar reference on real AVX2 hardware. Numbers + one tuning
+> finding in follow-up §A below. Box: AMD Ryzen 7 3700X (8C/16T, Zen 2), Go 1.26.3.
 
 ---
 
@@ -157,20 +163,36 @@ go build ./...
 These are the deliberately-deferred pieces — each needs real amd64 hardware (or model weights)
 to measure, which is exactly what the Linux box gives you. Roughly in priority order.
 
-### A. amd64 register-blocked micro-kernel — DONE (validate + benchmark on Linux)
+### A. amd64 register-blocked micro-kernel — DONE & VALIDATED on Linux (2026-06-02)
 
-**Implemented.** `dotFMA4` / `dotFMA8` in `encoder/dot_amd64.s` now load each 8-float chunk of
-the shared `a` row ONCE and run 4/8 FMA chains against the b-rows into separate YMM accumulators —
-the a-reuse register-blocking arm64's NEON kernel uses. `dotNEON4x4`/`dotNEON8x4` in
-`dot_amd64.go` dispatch to them (scalar fallback when `!hasAVX2`). Built + `go vet`/`asmdecl`-clean
-on the arm64 host, but **never executed** — validate on the Linux box:
+**Implemented and now executed.** `dotFMA4` / `dotFMA8` in `encoder/dot_amd64.s` load each 8-float
+chunk of the shared `a` row ONCE and run 4/8 FMA chains against the b-rows into separate YMM
+accumulators — the a-reuse register-blocking arm64's NEON kernel uses. `dotNEON4x4`/`dotNEON8x4` in
+`dot_amd64.go` dispatch to them (scalar fallback when `!hasAVX2`). Cross-compiled + `go vet`/
+`asmdecl`-clean on the arm64 host; **first real execution was on the Ryzen 7 3700X box below.**
 
-- Correctness: `go test ./encoder/ -run 'Dot4x4|Dot8x4' -v` — these compare the kernel against an
-  independent scalar reference, so they prove the register-blocked asm on real AVX2 hardware. A
-  **SIGILL** (vs an assertion failure) would mean an asm encoding bug; capture the test name.
-- Speedup: `go test ./encoder/ -run XXX -bench 'Dot4x4|Dot8x4' -benchmem` with `benchstat` (n≥6),
-  vs the pre-existing single-`dotFMA`-per-row numbers if you stash them. Expect the multi-row
-  kernels to beat the single-row baseline by the a-reuse factor.
+**Correctness — all PASS, no SIGILL, `-race` clean.** `TestAVX2_dotFMA_matchesGeneric`,
+`TestDotF32/Dot4x4/Dot8x4_matchesScalar` all bit-match the independent scalar reference;
+`TestAVX2_detection` logs `hasAVX2=true (maxLeaf=16)`. The register-blocked asm is correct on real
+AVX2 hardware.
+
+**Speedup** (`-bench 'Dot' -benchmem`, Ryzen 7 3700X, Zen 2, Go 1.26.3; MB/s column):
+
+| K     | scalar `DotGo` | single-row `dotFMA` |       Dot4x4 |       Dot8x4 |
+|-------|---------------:|--------------------:|-------------:|-------------:|
+| 64    |   7.4 GB/s     | 14.3 GB/s (1.9×)    |  30.8 GB/s   |  35.3 GB/s   |
+| 768   |   8.1 GB/s     | 44.2 GB/s (5.5×)    |  51.9 GB/s   | **86.5 GB/s**|
+| 3072  |   8.4 GB/s     | 49.9 GB/s (5.9×)    |  51.4 GB/s   |  40.5 GB/s   |
+
+Single-row AVX2 lands the expected ~6× over scalar at the linear-layer widths. Register-blocking
+adds a-reuse on top: `Dot8x4` peaks at **86.5 GB/s** (K=768).
+
+**Tuning finding → feeds §B/§D.** `Dot8x4` *regresses at K=3072* (40.5 GB/s) — below both `Dot4x4`
+(51.4) and even single-row `dotFMA` (49.9) at that width. The 8 live YMM accumulators plus the
+streamed b-rows appear to exceed what stays hot at large K (register/L1 pressure), so the 8-row
+block is a win only for mid-K (≈768) and loses its lead as K grows. The dispatch should prefer
+`dotFMA4` (or fall to single-row) past some K; finding that crossover is the open micro-kernel
+tuning task. Not yet wired — the kernels are correct, the selection heuristic is the follow-up.
 
 ### B. Tune `parallelThreshold` on actual amd64 silicon
 

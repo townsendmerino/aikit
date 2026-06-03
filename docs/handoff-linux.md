@@ -47,42 +47,64 @@ Full details + the deferred follow-ups (register-blocked kernel was
 **implemented**; tuning, AVX-512, GPU resident buffers remain) are in
 [`docs/cpu-acceleration.md`](cpu-acceleration.md).
 
-## 2. Gemma M1 loader — golden parity
+## 2. Gemma M1 loader — golden parity ✅ VALIDATED 2026-06-02
 
-The loader (BF16/F16 decode + shape-validated weight load) is done and its
-test **skips** until the checkpoint + golden are present. To exercise it:
+The loader (BF16/F16 decode + shape-validated weight load) **passes against the
+real `google/gemma-3-270m` checkpoint** — `TestLoadWeights_goldenChecksums`
+loads the full `gemma3TensorSchema` and matches the Python oracle's
+shape/dtype/checksums (≤1e-6 rel). The test **skips** when the checkpoint or
+golden is absent; the steps below light it up on a fresh box.
 
 ```bash
-# Python tooling for the golden (one-time):
-python3 -m venv .venv && . .venv/bin/activate
-pip install torch safetensors transformers huggingface_hub
+# Python tooling for the golden (one-time). NOTE the install is split — see gotchas:
+python3 -m venv .venv
+.venv/bin/pip install huggingface_hub safetensors          # PyPI
+.venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+# (transformers is NOT needed — pin_gemma.py imports only torch + safetensors.)
 
-# Get the checkpoint (~340 MB bf16) and regenerate the golden:
-huggingface-cli download google/gemma-3-270m --local-dir testdata/gemma-3-270m
+# gemma is a GATED repo: accept the license once at
+#   https://huggingface.co/google/gemma-3-270m
+# then authenticate this box (writes ~/.cache/huggingface/token):
+.venv/bin/hf auth login                                    # paste an HF *read* token
+
+# Get the checkpoint (~536 MB bf16, single-file) and regenerate the golden:
+.venv/bin/python -c "from huggingface_hub import snapshot_download; \
+    snapshot_download('google/gemma-3-270m', local_dir='testdata/gemma-3-270m')"
 .venv/bin/python scripts/pin_gemma.py        # writes testdata/gemma_golden.json
 
 # Now the loader parity test runs instead of skipping:
 go test ./decoder/ -run TestLoadWeights -v   # PASS = shapes + checksums match
 ```
+
+**Setup gotchas hit on the Linux box (Python 3.14):**
+- **Gated repo.** Plain download 401s with `GatedRepoError` until you accept the
+  license *and* `hf auth login`. (huggingface_hub 1.x renamed the CLI `huggingface-cli`→`hf`.)
+- **Split the pip install.** `pip install safetensors torch --index-url .../whl/cpu`
+  fails — the torch CPU index has no `safetensors`, so the whole resolve aborts.
+  Install safetensors from PyPI, torch from the CPU index, separately.
+- **Python 3.14 is fine.** `torch 2.12.0+cpu` ships a `cp314` wheel. (A harmless
+  "Failed to initialize NumPy" warning prints — pin_gemma.py doesn't use numpy.)
+- `testdata/gemma-3-270m/` and `gemma_golden.json` is the committed oracle (~2.5 KB);
+  the weights dir is gitignored.
+
 Spec: [`docs/milestones/M1-loader.md`](milestones/M1-loader.md). Architecture
 + later milestones (M2 tokenizer, M3 forward pass, …): [`docs/gemma-decoder-plan.md`](gemma-decoder-plan.md).
 
-**One unverified assumption** (couldn't be checked without the real
-checkpoint): the tensor *names* in `gemma3TensorSchema` (`decoder/weights.go`)
-— `q_norm`/`k_norm` existing, single-file `model.safetensors` (not sharded).
-Shapes are config-derived and match the plan. If a name/shape is wrong the
-loader fails with a precise `tensor %q ... shape %v != want %v` — that's the
-signal to fix the schema.
+**The previously-unverified assumption is now RESOLVED.** The tensor *names* in
+`gemma3TensorSchema` (`decoder/weights.go`) — `q_norm`/`k_norm` existing,
+single-file `model.safetensors` (not sharded) — are all confirmed: `LoadWeights`
+validates every schema entry across all layers and returned no error. Shapes
+(config-derived) match the real checkpoint exactly.
 
 ## 3. Where things stand
 
 | Track | State |
 |---|---|
-| encoder AVX2 amd64 (+register-blocked kernel) | written; **validate on Linux (§1)** |
+| encoder AVX2 amd64 (+register-blocked kernel) | ✅ validated on Linux 2026-06-02 (Ryzen 7 3700X) — all tests pass, `-race` clean, ~6× single-row; see `cpu-acceleration.md` §A. Open: `Dot8x4` large-K crossover tuning |
 | encoder intra-op parallel matmul | done, verified on arm64 |
 | encoder/gpu WebGPU (`-tags gpu`) | foundation done; resident-buffer + tiled-kernel follow-ups deferred (loses to CPU until then) |
 | ann HNSW, fuse RRF | done, verified |
-| decoder M1 loader | done; **golden parity needs checkpoint (§2)** |
+| decoder M1 loader | ✅ golden parity validated 2026-06-02 against real gemma-3-270m checkpoint (§2); schema assumptions confirmed |
 | decoder M2+ (tokenizer, forward, sampler) | scaffold only — stubs return errNotImplemented |
 
 Reference docs: [`cpu-acceleration.md`](cpu-acceleration.md),
