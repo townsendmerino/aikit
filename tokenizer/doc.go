@@ -17,10 +17,11 @@
 //
 // LoadGGUF (see gguf.go) is the sidecar-free sibling of Load: it builds the
 // same Tokenizer from a bare .gguf file's embedded metadata (vocab + merges +
-// special ids), so a quantized checkpoint tokenizes with no tokenizer.json.
-// It covers the SentencePiece byte-fallback family (tokenizer.ggml.model ==
-// "llama"), which reuses modeGemma plus the ▁ dummy-prefix knob; the
-// byte-level GGUF family is a follow-up.
+// special ids), so a quantized checkpoint tokenizes with no tokenizer.json. It
+// covers both GGUF tokenizer families, dispatched on tokenizer.ggml.model:
+// "llama" (SentencePiece byte-fallback — reuses modeGemma + the ▁ dummy-prefix
+// knob) and "gpt2" (byte-level — reuses modeByteLevel, with the pretokenizer
+// knobs read from tokenizer.ggml.pre instead of tokenizer.json).
 //
 // Golden parity against HF `tokenizers` is the gate for every family (M2 /
 // G3 / GGUF): a single-token drift silently degrades generation, so the bar

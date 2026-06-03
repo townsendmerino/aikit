@@ -99,5 +99,10 @@ testdata/mixtral_forward_full.json
 # committed f32 llama golden; the .gguf files themselves are never committed.
 testdata/tinyllama-gguf
 
+# Byte-level GGUF tokenizer fixture (unsloth/Llama-3.2-1B-Instruct-GGUF,
+# Q4_K_M) — per-machine. TestLoadGGUF_byteLevelMatchesJSON cross-checks it
+# against the committed testdata/llama3.2-1b/tokenizer.json; never committed.
+testdata/llama32-gguf
+
 # Local HF token notes — per-machine secret, never commit (rotate + delete).
 docs/keepers.txt

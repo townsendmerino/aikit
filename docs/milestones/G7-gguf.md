@@ -83,10 +83,15 @@ rendering.
   dequant — the K-quants are fiddly enough that shipping one unvalidated isn't
   worth it.
 - **Byte-level GGUF tokenizer** (`tokenizer.ggml.model == "gpt2"`:
-  Llama-3 / Qwen / GPT-2): the same machinery as `modeByteLevel`, but its
-  pretokenizer knobs (digit-run cap, NFC) come from `tokenizer.ggml.pre` and
-  want a committed byte-level GGUF to parity-gate (testdata has only the
-  SPM/llama TinyLlama GGUF today).
+  Llama-3 / Qwen / GPT-2) — DONE. `tokenizer.LoadGGUF` dispatches "gpt2" to the
+  `modeByteLevel` pipeline, reading the pretokenizer knobs (digit-run cap, NFC,
+  ignore_merges) from `tokenizer.ggml.pre` (`llama-bpe`→digits 3/no-NFC/ignore;
+  `qwen2`→digits 1/NFC/honor; `gpt-2`/default→digits 1/no-NFC/honor) — the GGUF
+  analogue of reading them from tokenizer.json. Parity-gated against a real
+  Llama-3.2-1B-Instruct GGUF: `LoadGGUF` matches `Load` on the same model's
+  tokenizer.json id-for-id (`TestLoadGGUF_byteLevelMatchesJSON`), and that json
+  path is HF-golden-validated for the family. A bare byte-level `.gguf` now
+  chats end-to-end.
 - **Other GGUF architectures** (qwen2/gemma/…): map their metadata keys + names;
   the per-family descriptors already exist.
 - **GPTQ / AWQ** (safetensors-resident int4): the other half of the plan's G7 —

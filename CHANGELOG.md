@@ -12,6 +12,16 @@ it.
 
 ### Added
 
+- **Byte-level GGUF tokenizer** — `tokenizer.LoadGGUF` now also handles the
+  byte-level family (`tokenizer.ggml.model == "gpt2"`: Llama-3 / Qwen / GPT-2),
+  not just SPM/llama. It dispatches "gpt2" to the existing `modeByteLevel`
+  pipeline and reads the pretokenizer knobs (digit-run cap, NFC, ignore_merges)
+  from `tokenizer.ggml.pre` — the GGUF analogue of reading them from
+  tokenizer.json. So a bare byte-level `.gguf` (the common modern instruct quant)
+  now chats end-to-end. Parity-gated against a real Llama-3.2-1B-Instruct GGUF:
+  `LoadGGUF` matches `Load` on the same model's tokenizer.json id-for-id
+  (`TestLoadGGUF_byteLevelMatchesJSON`), and that json path is HF-golden-validated
+  for the family.
 - **int4 weight quantization** (`decoder.Load(…, Quant: "int4")`) — group-wise
   symmetric 4-bit on the projections (group size 32: a per-group f32 scale, two
   nibbles per byte; `linalg.QuantizeGroupsInt4` + a dequant-per-tile

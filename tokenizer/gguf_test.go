@@ -21,6 +21,9 @@ import (
 const (
 	tinyllamaGGUF   = "../testdata/tinyllama-gguf/tinyllama-1.1b-chat-v1.0.Q8_0.gguf"
 	tinyllamaGolden = "../testdata/tinyllama_tokenizer_golden.json"
+	// Byte-level (gpt2-family) GGUF + the same model's committed tokenizer.json.
+	llama32GGUF = "../testdata/llama32-gguf/llama-3.2-1b-instruct-Q4_K_M.gguf"
+	llama32JSON = "../testdata/llama3.2-1b"
 )
 
 // TestLoadGGUF_tinyllamaParity: the tokenizer built from GGUF metadata alone
@@ -48,6 +51,78 @@ func TestLoadGGUF_tinyllamaParity(t *testing.T) {
 	}
 
 	checkGoldenCases(t, tk, g)
+}
+
+// TestLoadGGUF_byteLevelMatchesJSON: the byte-level (gpt2-family) GGUF tokenizer
+// must reproduce the same ids as Load on the same model's tokenizer.json — the
+// GGUF metadata (tokens + merges + tokenizer.ggml.pre) and the tokenizer.json
+// carry the same byte-level vocab/merges/knobs, so the two extraction paths
+// agree id-for-id. The json path is itself HF-golden-validated for this family
+// (llama3_tokenizer_golden.json), so agreement pins the GGUF path to HF. Uses a
+// real Llama-3.2-1B-Instruct GGUF; skips when absent.
+func TestLoadGGUF_byteLevelMatchesJSON(t *testing.T) {
+	if _, err := os.Stat(llama32GGUF); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no byte-level GGUF at %s", llama32GGUF)
+	}
+	if _, err := os.Stat(llama32JSON); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no tokenizer.json model at %s", llama32JSON)
+	}
+
+	gg, err := LoadGGUF(llama32GGUF)
+	if err != nil {
+		t.Fatalf("LoadGGUF: %v", err)
+	}
+	jj, err := Load(llama32JSON)
+	if err != nil {
+		t.Fatalf("Load(json): %v", err)
+	}
+
+	// Structural: the GGUF pre→knob mapping must match what Load derived from the
+	// tokenizer.json (byte-level, digit-run 3, no NFC, ignore_merges for Llama-3).
+	if gg.mode != modeByteLevel {
+		t.Fatalf("GGUF mode = %d, want modeByteLevel", gg.mode)
+	}
+	if gg.maxDigits != jj.maxDigits || gg.normOn != jj.normOn || gg.ignoreMerges != jj.ignoreMerges {
+		t.Errorf("knobs differ: gguf{digits=%d nfc=%v ignoreMerges=%v} json{digits=%d nfc=%v ignoreMerges=%v}",
+			gg.maxDigits, gg.normOn, gg.ignoreMerges, jj.maxDigits, jj.normOn, jj.ignoreMerges)
+	}
+	if gg.special.BOS != jj.special.BOS {
+		t.Errorf("BOS: gguf %d, json %d", gg.special.BOS, jj.special.BOS)
+	}
+
+	prompts := []string{
+		"Hello world", " Hello", "  two  spaces", "trailing   ",
+		"The quick brown fox jumps over the lazy dog.",
+		"café 中文 — naïve façade", "𝕳ello", "emoji 🦄 and 🏳️‍🌈",
+		"a\tb\nc\n\nd", "don't can't I'LL we've",
+		"func main() { fmt.Println(\"hi\") }",
+		"Number 1234567 and 56 and 8", "year 2024, pi 3.14159, 1000000",
+		"<|begin_of_text|>hi<|eot_id|>", "<|begin_of_text|>", "",
+	}
+	for _, p := range prompts {
+		t.Run(caseName(p), func(t *testing.T) {
+			for _, bos := range []bool{false, true} {
+				gi, err := gg.Encode(p, bos)
+				if err != nil {
+					t.Fatalf("gguf Encode: %v", err)
+				}
+				ji, jerr := jj.Encode(p, bos)
+				if jerr != nil {
+					t.Fatalf("json Encode: %v", jerr)
+				}
+				if !equalInts(gi, ji) {
+					t.Errorf("Encode(%q, bos=%v) disagree\n  gguf %v\n  json %v", p, bos, gi, ji)
+				}
+			}
+			// Decode round-trips identically too.
+			ids, _ := gg.Encode(p, false)
+			gd, _ := gg.Decode(ids)
+			jd, _ := jj.Decode(ids)
+			if gd != jd {
+				t.Errorf("Decode(%q) disagree: gguf %q json %q", p, gd, jd)
+			}
+		})
+	}
 }
 
 // checkGoldenCases asserts a loaded tokenizer matches every golden case:

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/townsendmerino/aikit/embed"
+	"golang.org/x/text/unicode/norm"
 )
 
 // GGUF tokenizer (G7 follow-up). A .gguf checkpoint carries its tokenizer in
@@ -30,6 +31,7 @@ const (
 	ggufTokTokens = "tokenizer.ggml.tokens"
 	ggufTokMerges = "tokenizer.ggml.merges"
 	ggufTokTypes  = "tokenizer.ggml.token_type"
+	ggufTokPre    = "tokenizer.ggml.pre"
 	ggufTokBOS    = "tokenizer.ggml.bos_token_id"
 	ggufTokEOS    = "tokenizer.ggml.eos_token_id"
 	ggufTokUnk    = "tokenizer.ggml.unknown_token_id"
@@ -50,9 +52,10 @@ const (
 
 // LoadGGUF builds a Tokenizer from a .gguf file's embedded tokenizer metadata.
 // It is the bare-checkpoint sibling of Load (which reads tokenizer.json): a
-// .gguf is self-describing, so no other files are needed. Only the
-// SentencePiece byte-fallback family (tokenizer.ggml.model == "llama") is
-// supported today; see the package note for the byte-level follow-up.
+// .gguf is self-describing, so no other files are needed. It covers both GGUF
+// tokenizer families: "llama" (SentencePiece byte-fallback — Llama-2/Mistral)
+// and "gpt2" (byte-level — Llama-3/Qwen/GPT-2), dispatched on
+// tokenizer.ggml.model.
 func LoadGGUF(path string) (*Tokenizer, error) {
 	// mmap, not heap-read: the tokenizer only needs the metadata at the head of
 	// the file, so mapping avoids paging in the (multi-GB) weights entirely.
@@ -73,8 +76,8 @@ func fromGGUF(g *embed.GGUFFile) (*Tokenizer, error) {
 	if !ok {
 		return nil, fmt.Errorf("missing %s (not a GGUF with an embedded tokenizer)", ggufTokModel)
 	}
-	if model != "llama" {
-		return nil, fmt.Errorf("unsupported tokenizer model %q (have: llama; gpt2/byte-level is a follow-up)", model)
+	if model != "llama" && model != "gpt2" {
+		return nil, fmt.Errorf("unsupported tokenizer model %q (have: llama [SPM byte-fallback], gpt2 [byte-level])", model)
 	}
 
 	tokens, err := ggufStringArray(g, ggufTokTokens)
@@ -86,7 +89,6 @@ func fromGGUF(g *embed.GGUFFile) (*Tokenizer, error) {
 	}
 
 	t := &Tokenizer{
-		mode:      modeGemma,
 		vocab:     make(map[string]int32, len(tokens)),
 		idToPiece: tokens, // id == array index, contiguous and complete
 		pairRank:  make(map[bigram]int32),
@@ -98,9 +100,10 @@ func fromGGUF(g *embed.GGUFFile) (*Tokenizer, error) {
 		}
 	}
 
-	// Merge ranks: the merges array is the older space-joined form ("▁ t"); a
-	// piece never contains a literal space (it is ▁), so the first space splits
-	// the pair unambiguously. Position in the list is the priority.
+	// Merge ranks: the merges array is the space-joined form ("▁ t" for SPM,
+	// "Ġ Ġ" for byte-level); a piece never contains a literal space (it is the
+	// ▁/Ġ marker), so the first space splits the pair unambiguously. Position in
+	// the list is the priority.
 	merges, err := ggufStringArray(g, ggufTokMerges)
 	if err != nil {
 		return nil, err
@@ -132,6 +135,44 @@ func fromGGUF(g *embed.GGUFFile) (*Tokenizer, error) {
 		}
 	}
 
+	// Per-family pipeline setup: SPM byte-fallback (llama) vs byte-level (gpt2).
+	switch model {
+	case "llama":
+		setupGGUFSPM(t, g, tokens)
+	case "gpt2":
+		setupGGUFByteLevel(t, g)
+	}
+
+	// Added-vocabulary trie: every non-NORMAL, non-BYTE token (UNKNOWN /
+	// CONTROL / USER_DEFINED) is split out of raw text before normalization —
+	// HF's AddedVocabulary behavior. Falls back to the resolved specials when
+	// the type array is absent.
+	t.added = newAddedTrie()
+	types := ggufIntArray(g, ggufTokTypes)
+	if len(types) == len(tokens) {
+		for i, ty := range types {
+			switch ty {
+			case ggufTokUnknown, ggufTokControl, ggufTokUserDefined:
+				t.added.add(tokens[i], int32(i))
+			}
+		}
+	} else {
+		for _, id := range []int{t.special.BOS, t.special.EOS, t.special.Pad} {
+			if id >= 0 && id < len(tokens) {
+				t.added.add(tokens[id], int32(id))
+			}
+		}
+	}
+
+	return t, nil
+}
+
+// setupGGUFSPM configures the SentencePiece byte-fallback pipeline (modeGemma)
+// for tokenizer.ggml.model == "llama": the <0xNN> byte map, the unknown token,
+// and the ▁ dummy prefix (prepend on encode, strip one leading space on decode).
+func setupGGUFSPM(t *Tokenizer, g *embed.GGUFFile, tokens []string) {
+	t.mode = modeGemma
+
 	// Byte-fallback "<0xNN>" pieces (token type BYTE) → the byte map.
 	hasByte := false
 	for b := 0; b < 256; b++ {
@@ -160,29 +201,35 @@ func fromGGUF(g *embed.GGUFFile) (*Tokenizer, error) {
 		t.prependSpace = v
 	}
 	t.stripLeadingSpace = t.prependSpace
+}
 
-	// Added-vocabulary trie: every non-NORMAL, non-BYTE token (UNKNOWN /
-	// CONTROL / USER_DEFINED) is split out of raw text before normalization —
-	// HF's AddedVocabulary behavior. Falls back to the resolved specials when
-	// the type array is absent.
-	t.added = newAddedTrie()
-	types := ggufIntArray(g, ggufTokTypes)
-	if len(types) == len(tokens) {
-		for i, ty := range types {
-			switch ty {
-			case ggufTokUnknown, ggufTokControl, ggufTokUserDefined:
-				t.added.add(tokens[i], int32(i))
-			}
-		}
-	} else {
-		for _, id := range []int{t.special.BOS, t.special.EOS, t.special.Pad} {
-			if id >= 0 && id < len(tokens) {
-				t.added.add(tokens[id], int32(id))
-			}
-		}
+// setupGGUFByteLevel configures the GPT-2/Llama-3/Qwen byte-level pipeline
+// (modeByteLevel) for tokenizer.ggml.model == "gpt2": the byte↔rune tables plus
+// the pretokenizer knobs (digit-run cap, NFC, ignore_merges) selected from
+// tokenizer.ggml.pre — the GGUF analogue of reading them from tokenizer.json's
+// normalizer/pre_tokenizer.
+func setupGGUFByteLevel(t *Tokenizer, g *embed.GGUFFile) {
+	t.mode = modeByteLevel
+	t.byteEncoder, t.byteDecoder = buildByteLevelTables()
+	pre, _ := g.Str(ggufTokPre)
+	t.maxDigits, t.normForm, t.normOn, t.ignoreMerges = byteLevelKnobs(pre)
+}
+
+// byteLevelKnobs maps a tokenizer.ggml.pre identifier to the byte-level pipeline
+// knobs (digit-run cap, normalization form + on, ignore_merges). The values
+// reproduce what Load derives from each family's tokenizer.json: Llama-3 groups
+// digits in runs of ≤3 with no normalizer and ignore_merges; Qwen takes one
+// digit, NFC-normalizes, and honors merges; GPT-2 takes one digit, no NFC, and
+// honors merges. Unknown pre falls back to the GPT-2-like defaults.
+func byteLevelKnobs(pre string) (maxDigits int, form norm.Form, normOn, ignoreMerges bool) {
+	switch pre {
+	case "llama-bpe", "llama3", "llama-v3":
+		return 3, norm.NFC, false, true
+	case "qwen2", "qwen2.5", "qwen":
+		return 1, norm.NFC, true, false
+	default: // "gpt-2", "default", "", and unrecognized
+		return 1, norm.NFC, false, false
 	}
-
-	return t, nil
 }
 
 // ggufStringArray reads a GGUF metadata array of strings.

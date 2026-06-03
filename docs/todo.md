@@ -9,17 +9,19 @@ Ranked recommendation for the decoder follow-ups, grounded in
 
 ## The four decoder follow-ups, ranked (value × effort × risk)
 
-### 1. GGUF tokenizer + more K-quants (Q5_K/Q3_K) — **SPM tokenizer DONE** ⭐ · S
+### 1. GGUF tokenizer — **DONE** (both families) ✅ · S
 
-Closes the loop v0.2.0 opened. ✅ **`tokenizer.LoadGGUF` shipped** for the
-SentencePiece byte-fallback family (`tokenizer.ggml.model == "llama"`:
-Llama-2/Mistral/TinyLlama), HF-parity-gated on TinyLlama, and `demo/gemma` now
-chats from a bare `.gguf` end-to-end. Still open, both deferred for lack of a
-parity fixture (the repo's bar is no unvalidated dequant/tokenizer code):
+Closes the loop v0.2.0 opened — `tokenizer.LoadGGUF` chats from a bare `.gguf`
+with no sidecar, for both GGUF tokenizer families:
 
-- **Byte-level GGUF tokenizer** (`gpt2` family: Llama-3/Qwen/GPT-2) — same
-  `modeByteLevel` machinery, knobs from `tokenizer.ggml.pre`; needs a committed
-  byte-level GGUF to gate (testdata has only the SPM/llama TinyLlama GGUF).
+- ✅ **SPM byte-fallback** (`tokenizer.ggml.model == "llama"`:
+  Llama-2/Mistral/TinyLlama) — HF-parity-gated on TinyLlama.
+- ✅ **Byte-level** (`gpt2`: Llama-3/Qwen/GPT-2) — `modeByteLevel`, pretokenizer
+  knobs from `tokenizer.ggml.pre`; parity-gated against a real Llama-3.2-1B GGUF
+  (`LoadGGUF` == `Load`(tokenizer.json) id-for-id, json itself HF-golden-validated).
+
+Still open:
+
 - **More K-quants (Q5_K/Q3_K/IQ\*)** — each "a `dequant*` func + a size entry",
   but needs a Q5_K fixture or the Python `gguf` reference to validate.
 
