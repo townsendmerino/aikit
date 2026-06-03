@@ -141,3 +141,61 @@ func TestGGUF_int8_resident(t *testing.T) {
 	}
 	t.Logf("gguf Q8_0 + int8 resident: argmax=%d (want %d) | cosine vs f32 = %v", argmax(logits), g.Argmax, cos)
 }
+
+// GGUF + resident int4 (group-wise 4-bit projections, int8 embedding/head). The
+// strict int4 accuracy gate: on TinyLlama (1.1B) 4-bit is well-tolerated — argmax
+// must still match the f32 oracle and the cosine clears 0.98 (≈ GGUF Q4_K_M's own
+// 0.9975). Proves the int4 resident path (~⅛ f32 on the projections) is wired
+// and faithful where int4 is meant to be used.
+func TestGGUF_int4_resident(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: loads + runs a TinyLlama GGUF")
+	}
+	raw, err := os.ReadFile(llamaForwardGolden)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no llama golden at %s — regenerate with scripts/pin_llama_forward.py", llamaForwardGolden)
+	}
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	var g forwardGolden
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatalf("parse golden: %v", err)
+	}
+	ggufPath := "../testdata/tinyllama-gguf/tinyllama-1.1b-chat-v1.0.Q8_0.gguf"
+	if _, err := os.Stat(ggufPath); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no GGUF at %s", ggufPath)
+	}
+
+	m, err := Load(ggufPath, Options{Quant: "int4"})
+	if err != nil {
+		t.Fatalf("Load int4: %v", err)
+	}
+	// Projections int4, embedding/head int8 (the embedding policy), f32 freed.
+	if gate := &m.w.Layers[0].GateProj; gate.q4 == nil || gate.f32 != nil {
+		t.Fatalf("GateProj not int4 (q4=%v f32=%v)", gate.q4 != nil, gate.f32 != nil)
+	}
+	if m.w.Embed.q8 == nil || m.w.Embed.f32 != nil {
+		t.Fatalf("Embed not int8 (q8=%v f32=%v)", m.w.Embed.q8 != nil, m.w.Embed.f32 != nil)
+	}
+
+	cache := m.NewCache(len(g.IDs))
+	for _, id := range g.IDs[:len(g.IDs)-1] {
+		if _, err := m.runLayers(id, cache); err != nil {
+			t.Fatalf("runLayers: %v", err)
+		}
+	}
+	logits, err := m.forward(g.IDs[len(g.IDs)-1], cache)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	if got := argmax(logits); got != g.Argmax {
+		t.Errorf("int4 argmax = %d, want %d (logit[got]=%.4f logit[want]=%.4f)",
+			got, g.Argmax, logits[got], logits[g.Argmax])
+	}
+	cos := cosineToFull(t, logits, llamaForwardFullPath)
+	if !math.IsNaN(cos) && cos < 0.98 {
+		t.Errorf("int4 cosine vs f32 oracle = %v, want ≥ 0.98", cos)
+	}
+	t.Logf("gguf + int4 resident: argmax=%d (want %d) | cosine vs f32 = %v", argmax(logits), g.Argmax, cos)
+}

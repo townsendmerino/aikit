@@ -115,16 +115,16 @@ func (w *Weights) matmulWeights() []*weightMat {
 //
 // Use LoadWeightsFromFS for fs.FS-backed (MapFS, embed.FS) paths — that
 // route stays heap-backed because fs.FS doesn't expose a file descriptor.
-func LoadWeights(dir string) (*Weights, error) { return loadWeights(dir, false) }
+func LoadWeights(dir string) (*Weights, error) { return loadWeights(dir, quantNone) }
 
-// loadWeights is the quant-aware internal load. When quant is true, each matmul
-// tensor is quantized to per-row int8 the moment it is read and its f32 backing
-// is freed before the next tensor loads — so the transient footprint is the
-// int8 model plus one tensor's f32, not the whole model in f32. That is what
-// lets a big quantized checkpoint load in roughly a quarter of the RAM the
-// load-everything-then-quantize path needed. The forward output is identical to
-// quantizing after load; only the peak memory differs.
-func loadWeights(dir string, quant bool) (*Weights, error) {
+// loadWeights is the quant-aware internal load. When quant is int8/int4, each
+// matmul tensor is quantized the moment it is read and its f32 backing is freed
+// before the next tensor loads — so the transient footprint is the quantized
+// model plus one tensor's f32, not the whole model in f32. That is what lets a
+// big quantized checkpoint load in a quarter (int8) or eighth (int4) of the RAM
+// the load-everything-then-quantize path needed. The forward output is identical
+// to quantizing after load; only the peak memory differs.
+func loadWeights(dir string, quant quantMode) (*Weights, error) {
 	if strings.HasSuffix(dir, ".gguf") {
 		return loadGGUFWeights(dir, quant) // quantized llama.cpp checkpoint (G7)
 	}
@@ -170,12 +170,12 @@ func openCheckpointMmap(dir string) (*embed.SafetensorsFile, error) {
 // Cfg, and returns the populated bundle. Heap-backed (fs.ReadFile); use
 // LoadWeights for the mmap path on a real directory.
 func LoadWeightsFromFS(fsys fs.FS, dir string) (*Weights, error) {
-	return loadWeightsFromFS(fsys, dir, false)
+	return loadWeightsFromFS(fsys, dir, quantNone)
 }
 
 // loadWeightsFromFS is the quant-aware internal counterpart of loadWeights for
 // fs.FS-backed paths (see loadWeights for the streaming-quant rationale).
-func loadWeightsFromFS(fsys fs.FS, dir string, quant bool) (*Weights, error) {
+func loadWeightsFromFS(fsys fs.FS, dir string, quant quantMode) (*Weights, error) {
 	cfg, err := loadConfig(fsys, path.Join(dir, "config.json"))
 	if err != nil {
 		return nil, err
@@ -214,7 +214,7 @@ func openCheckpointFromFS(fsys fs.FS, dir string) (*embed.SafetensorsFile, error
 // against Cfg. Factored out so the heap (fs.FS) and mmap paths share one
 // tensor-name + shape contract — a schema change is one edit, not two.
 // Mirrors encoder.buildWeightsFromSafetensors.
-func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchema, st *embed.SafetensorsFile, quant bool) (*Weights, error) {
+func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchema, st *embed.SafetensorsFile, quant quantMode) (*Weights, error) {
 	if arch.Name == "gpt2" {
 		return buildGPT2Weights(cfg, arch, st, quant) // Conv1D layout + fused QKV need a dedicated path
 	}
@@ -232,16 +232,19 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 	// and stay f32.
 	loadMatQ := func(name string, rows, cols int) (weightMat, error) {
 		m, merr := loadMat(st, name, rows, cols)
-		if merr == nil && quant {
-			m.quantizeInt8()
+		if merr == nil {
+			m.quantize(quant)
 		}
 		return m, merr
 	}
 
-	// Input embedding + final norm.
-	if w.Embed, err = loadMatQ(s.Embed, cfg.VocabSize, hd); err != nil {
+	// Input embedding + final norm. The embedding is the (tied or untied) LM
+	// head, so it is logit-critical — quantize it with the embedding policy
+	// (int8 even in int4 mode), not the projection mode.
+	if w.Embed, err = loadMat(st, s.Embed, cfg.VocabSize, hd); err != nil {
 		return nil, err
 	}
+	w.Embed.quantize(quant.embedding())
 	if w.FinalNorm, err = loadF32(st, s.FinalNorm, []int{hd}); err != nil {
 		return nil, err
 	}
@@ -250,7 +253,8 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 	// checkpoint that ties despite its family default still loads.
 	arch.TiedLMHead = true
 	if s.LMHead != "" {
-		if head, herr := loadMatQ(s.LMHead, cfg.VocabSize, hd); herr == nil {
+		if head, herr := loadMat(st, s.LMHead, cfg.VocabSize, hd); herr == nil {
+			head.quantize(quant.embedding())
 			w.LMHead = head
 			arch.TiedLMHead = false
 		}
@@ -574,7 +578,7 @@ func conv1DTransposed(st *embed.SafetensorsFile, name string, in, out int) ([]fl
 // projection weights use the Conv1D [in, out] layout (transposed on load), and
 // it carries a learned position table (wpe) plus LayerNorm biases. Tensor names
 // are the flat h.N.* / wte / wpe / ln_f scheme.
-func buildGPT2Weights(cfg *Config, arch *Architecture, st *embed.SafetensorsFile, quant bool) (*Weights, error) {
+func buildGPT2Weights(cfg *Config, arch *Architecture, st *embed.SafetensorsFile, quant quantMode) (*Weights, error) {
 	hidden, inter, vocab := arch.HiddenDim, arch.IntermediateDim, arch.VocabSize
 	w := &Weights{Cfg: *cfg, arch: arch, st: st, Layers: make([]LayerWeights, arch.NumLayers)}
 	var err error
@@ -584,19 +588,18 @@ func buildGPT2Weights(cfg *Config, arch *Architecture, st *embed.SafetensorsFile
 	// newWeightMat (post-transpose), so the quantization is applied here rather
 	// than in a loader closure.
 	maybeQuant := func(m weightMat) weightMat {
-		if quant {
-			m.quantizeInt8()
-		}
+		m.quantize(quant)
 		return m
 	}
 
 	// Token + learned position embeddings (wte doubles as the tied LM head).
-	// wte is a matmul weight (the tied head) → quantizable; wpe is a positional
-	// lookup table added to the embedding, never matmul'd → stays f32.
+	// wte is the tied head → logit-critical, so quantize with the embedding
+	// policy (int8 even in int4 mode); wpe is a positional lookup table added to
+	// the embedding, never matmul'd → stays f32.
 	if w.Embed, err = loadMat(st, "wte.weight", vocab, hidden); err != nil {
 		return nil, err
 	}
-	w.Embed = maybeQuant(w.Embed)
+	w.Embed.quantize(quant.embedding())
 	if w.PosEmbed, err = loadMat(st, "wpe.weight", arch.MaxPositions, hidden); err != nil {
 		return nil, err
 	}

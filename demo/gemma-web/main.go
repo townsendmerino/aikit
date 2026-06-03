@@ -75,7 +75,7 @@ func main() {
 		addr     = flag.String("addr", "127.0.0.1:8080", "listen address")
 		modelDir = flag.String("model", "", "path to a checkpoint dir (config.json + model.safetensors + tokenizer); Gemma 3 or Qwen/Llama-3")
 		backend  = flag.String("backend", "cpu", "compute backend: cpu | webgpu")
-		quant    = flag.String("quant", "", "weight quantization: \"\" (f32) | int8")
+		quant    = flag.String("quant", "", "weight quantization: \"\" (f32) | int8 | int4")
 	)
 	flag.Parse()
 	if *modelDir == "" {

@@ -58,7 +58,7 @@ func ggufConfig(g *embed.GGUFFile) (*Config, error) {
 
 // loadGGUFWeights parses a .gguf file and builds the weight bundle, mapping
 // llama.cpp tensor names to the descriptor and un-permuting q/k.
-func loadGGUFWeights(path string, quant bool) (*Weights, error) {
+func loadGGUFWeights(path string, quant quantMode) (*Weights, error) {
 	// mmap, not heap-read: the raw quantized bytes stay in reclaimable page
 	// cache while we dequantize tensor-by-tensor. The weights end up as fresh
 	// (f32 or int8) copies, so the mapping is unneeded once the build returns.
@@ -79,19 +79,18 @@ func loadGGUFWeights(path string, quant bool) (*Weights, error) {
 }
 
 // buildWeightsFromGGUF dequantizes the GGUF tensors into the weight bundle.
-// When quant is set, each matmul tensor is re-quantized to per-row int8 right
-// after it is dequantized (and un-permuted) and its f32 is freed — so a Q4/Q8
-// GGUF lands resident as int8 (~¼ f32) without ever materializing the whole
-// model in f32 (see loadWeights). The GGUF's own quant is lossy and so is the
-// int8 re-quant, but int8 captures nearly all of what a Q4_K_M file carries.
-func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, quant bool) (*Weights, error) {
+// When quant is set, each matmul tensor is re-quantized (per-row int8 or
+// group-wise int4) right after it is dequantized (and un-permuted) and its f32
+// is freed — so a Q4/Q8 GGUF lands resident as int8/int4 (~¼ / ~⅛ f32) without
+// ever materializing the whole model in f32 (see loadWeights). The GGUF's own
+// quant is lossy and so is the re-quant, but it captures nearly all of what a
+// Q4_K_M file carries.
+func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, quant quantMode) (*Weights, error) {
 	hidden, hd := arch.HiddenDim, arch.HeadDim
 	w := &Weights{Cfg: *cfg, arch: arch, Layers: make([]LayerWeights, arch.NumLayers)}
 
 	maybeQuant := func(m weightMat) weightMat {
-		if quant {
-			m.quantizeInt8()
-		}
+		m.quantize(quant)
 		return m
 	}
 	// mat loads a tensor as a [out, in] weightMat, shape-checked, quantized when
@@ -105,6 +104,21 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 			return weightMat{}, fmt.Errorf("decoder(gguf): %q dims %v, want [in=%d, out=%d]", name, dims, in, out)
 		}
 		return maybeQuant(newWeightMat(data, out, in)), nil
+	}
+	// embMat loads the embedding / LM head, which is logit-critical — quantize
+	// it with the embedding policy (int8 even in int4 mode), not the projection
+	// mode.
+	embMat := func(name string, out, in int) (weightMat, error) {
+		dims, data, err := g.Tensor(name)
+		if err != nil {
+			return weightMat{}, err
+		}
+		if len(dims) != 2 || dims[0] != in || dims[1] != out {
+			return weightMat{}, fmt.Errorf("decoder(gguf): %q dims %v, want [in=%d, out=%d]", name, dims, in, out)
+		}
+		m := newWeightMat(data, out, in)
+		m.quantize(quant.embedding())
+		return m, nil
 	}
 	// vec loads a 1-D tensor (norm).
 	vec := func(name string, n int) ([]float32, error) {
@@ -132,7 +146,7 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 	}
 
 	var err error
-	if w.Embed, err = mat("token_embd.weight", cfg.VocabSize, hidden); err != nil {
+	if w.Embed, err = embMat("token_embd.weight", cfg.VocabSize, hidden); err != nil {
 		return nil, err
 	}
 	if w.FinalNorm, err = vec("output_norm.weight", hidden); err != nil {
@@ -141,7 +155,7 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 	// Separate output head when present; else tied to the embedding.
 	arch.TiedLMHead = true
 	if g.Has("output.weight") {
-		if w.LMHead, err = mat("output.weight", cfg.VocabSize, hidden); err != nil {
+		if w.LMHead, err = embMat("output.weight", cfg.VocabSize, hidden); err != nil {
 			return nil, err
 		}
 		arch.TiedLMHead = false

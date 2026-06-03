@@ -20,7 +20,7 @@ type Model struct {
 // Options configures Load.
 type Options struct {
 	Backend string // "cpu" (default) or "webgpu"
-	Quant   string // "" (f32, default) or "int8" — per-row int8 weight quant (M8)
+	Quant   string // "" (f32, default), "int8" (per-row), or "int4" (group-wise) weight quant (M8)
 }
 
 // Load reads a Gemma 3 snapshot (config.json + model.safetensors) from dir
@@ -31,18 +31,21 @@ func Load(dir string, opts Options) (*Model, error) {
 	// beErr is non-nil for the not-yet-implemented webgpu fallback; keep the
 	// (cpu) backend and surface the note rather than abort.
 
-	// Resolve the quant mode first so the weights stream straight into int8 at
-	// load — no whole-model f32 spike (see loadWeights).
-	var quant bool
+	// Resolve the quant mode first so the weights stream straight into the
+	// chosen precision at load — no whole-model f32 spike (see loadWeights).
+	var quant quantMode
 	switch opts.Quant {
 	case "", "f32":
+		quant = quantNone
 	case "int8":
-		quant = true
+		quant = quantInt8
+	case "int4":
+		quant = quantInt4
 	default:
 		if be != nil {
 			_ = be.Close()
 		}
-		return nil, fmt.Errorf("decoder.Load: unknown quant %q (have: int8)", opts.Quant)
+		return nil, fmt.Errorf("decoder.Load: unknown quant %q (have: int8, int4)", opts.Quant)
 	}
 
 	w, err := loadWeights(dir, quant)

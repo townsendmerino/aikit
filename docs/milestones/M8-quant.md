@@ -52,11 +52,18 @@ vs 1072 MB f32). int4 group-quant is left as a documented follow-up.
 
 ## Known follow-ups (not blocking M8)
 
-- **int4 group-quant** (plan §8) — the real unlock for 1B/4B: group-size 32–128,
-  per-group scale, packed nibbles, on the embedding + projections. `MatmulBTQ8`
-  and this `weightMat` seam are the template. The streaming-quant load path is
-  now in place, so int4 only needs its own `weightMat` variant + dequant-per-tile
-  kernel; the loader already quantizes per-tensor.
+- **int4 group-quant** (plan §8) — DONE. `Load(…, Quant:"int4")` quantizes the
+  projections to group-wise symmetric 4-bit (group 32: a per-group f32 scale,
+  two nibbles/byte; `linalg.QuantizeGroupsInt4` + `MatmulBTQ4` dequant-per-tile),
+  ~⅛ f32 on the projections (~6.4× there; less overall when a big embedding is
+  kept int8). The embedding **and** LM head stay int8 (the `quantMode.embedding`
+  policy) — they are the tied head, so 4-bit there flips the argmax; this mirrors
+  GGUF Q4_K_M keeping `token_embd`/`output` at Q6_K. Validated by
+  `TestGGUF_int4_resident` (TinyLlama 1.1B: argmax preserved, cosine 0.994 vs
+  f32 — on par with Q4_K_M). int4 is a big-model tool: on the 270M it is lossy
+  enough to move the top token (`TestQuantInt4_accuracy` checks structure +
+  footprint + loose correlation only). Follow-up: an int4×int4 or
+  nibble-unpack-SIMD kernel for speed (the matmul is correctness-first scalar).
 - **Streaming quantize-at-load** — DONE. `Load(…, Quant:"int8")` quantizes each
   matmul tensor as it is read and frees the f32 immediately, for the safetensors,
   GPT-2, and GGUF paths. No whole-model f32 spike; a quantized `.gguf` loads

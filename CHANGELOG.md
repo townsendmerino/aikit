@@ -10,6 +10,19 @@ it.
 
 ## [Unreleased]
 
+### Added
+
+- **int4 weight quantization** (`decoder.Load(…, Quant: "int4")`) — group-wise
+  symmetric 4-bit on the projections (group size 32: a per-group f32 scale, two
+  nibbles per byte; `linalg.QuantizeGroupsInt4` + a dequant-per-tile
+  `MatmulBTQ4`), ~⅛ f32 on those weights. The token embedding **and** LM head
+  stay int8 (they are the tied head — 4-bit there flips the argmax), mirroring
+  how GGUF Q4_K_M keeps `token_embd`/`output` at Q6_K. Streams at load and works
+  for safetensors, GPT-2, and GGUF (the demo chats from a bare `.gguf` under
+  `--quant int4`). Validated on TinyLlama 1.1B: argmax preserved, cosine 0.994
+  vs f32 (on par with Q4_K_M's own 0.9975). int4 is a big-model tool — on a 270M
+  it is lossy enough to move the top token, so its strict gate runs on TinyLlama.
+
 ### Changed
 
 - **`embed.OpenGGUFMmap`** — memory-map a `.gguf` (read-only, MAP_PRIVATE)

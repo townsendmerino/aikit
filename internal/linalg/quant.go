@@ -82,3 +82,122 @@ func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, 
 		}
 	})
 }
+
+// Group-wise symmetric int4 weight quantization (gemma-decoder-plan §8 / M8
+// int4). Per-ROW int8 is too coarse at 4 bits, so each row is split into groups
+// of `group` consecutive input features (along K), and each group gets its own
+// f32 scale: W[i, g*group+e] ≈ (nibble-8) * scale[i,g], with the nibble a 4-bit
+// code in [1,15] (8 = zero, symmetric range [-7,7]). Two nibbles pack per byte
+// (even k = low nibble, odd k = high). At group 32 this is ~0.625 byte/element
+// (4-bit code + the per-group scale amortized), ≈ 6.4× smaller than f32 and
+// ~1.6× smaller than per-row int8 — the footprint that fits a 7B-class model in
+// laptop RAM. The matmul (MatmulBTQ4) dequantizes per group inside the inner
+// loop; activations stay f32.
+
+// groupsFor returns the number of groups a K-wide row splits into (the final
+// group is ragged when group does not divide K) and the packed bytes per row.
+func groupsFor(cols, group int) (nGroups, bytesPerRow int) {
+	return (cols + group - 1) / group, (cols + 1) / 2
+}
+
+// QuantizeGroupsInt4 quantizes a [rows, cols] f32 matrix (row-major) to packed
+// 4-bit codes + per-group f32 scales. Reconstruct: W[i, k] ≈ (nibble(i,k)-8) *
+// scales[i*nGroups + k/group]. An all-zero group gets scale 1 (codes all 8).
+func QuantizeGroupsInt4(w []float32, rows, cols, group int) (packed []byte, scales []float32) {
+	if rows*cols != len(w) {
+		panic("linalg: QuantizeGroupsInt4 shape mismatch")
+	}
+	nGroups, bpr := groupsFor(cols, group)
+	packed = make([]byte, rows*bpr)
+	scales = make([]float32, rows*nGroups)
+	for i := range rows {
+		row := w[i*cols : (i+1)*cols]
+		for g := range nGroups {
+			ks := g * group
+			ke := min(ks+group, cols)
+			var maxAbs float32
+			for k := ks; k < ke; k++ {
+				if v := row[k]; v > maxAbs {
+					maxAbs = v
+				} else if -v > maxAbs {
+					maxAbs = -v
+				}
+			}
+			s := float32(1)
+			if maxAbs > 0 {
+				s = maxAbs / 7
+			}
+			scales[i*nGroups+g] = s
+			inv := 1.0 / s
+			for k := ks; k < ke; k++ {
+				q := int(math.Round(float64(row[k] * inv)))
+				if q > 7 {
+					q = 7
+				} else if q < -7 {
+					q = -7
+				}
+				nib := byte(q + 8) // [1,15]; 8 = zero
+				bi := i*bpr + k/2
+				if k&1 == 0 {
+					packed[bi] = (packed[bi] &^ 0x0F) | (nib & 0x0F)
+				} else {
+					packed[bi] = (packed[bi] &^ 0xF0) | (nib << 4)
+				}
+			}
+		}
+	}
+	return packed, scales
+}
+
+// DequantizeRowInt4 reconstructs one row into dst[:cols] from its packed nibbles
+// and per-group scales (both already sliced to the row). Used for the tied
+// embedding lookup when the table is stored int4.
+func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []float32) {
+	for k := range cols {
+		b := packed[k/2]
+		var nib byte
+		if k&1 == 0 {
+			nib = b & 0x0F
+		} else {
+			nib = b >> 4
+		}
+		dst[k] = float32(int(nib)-8) * scales[k/group]
+	}
+}
+
+// MatmulBTQ4 computes dst[M,N] = a[M,K] · bᵀ where b is the [N,K] matrix stored
+// as group-wise int4 (bPacked nibbles + bScales per group; see
+// QuantizeGroupsInt4). Mirrors MatmulBTQ8 but dequantizes per group: accumulate
+// the a·(nibble-8) products within a group, scale by that group's f32 scale,
+// sum across groups. Parallelized over the N columns; activations stay f32.
+func MatmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
+	nGroups, bpr := groupsFor(K, group)
+	parallelCols(M*N*K, N, func(j0, j1 int) {
+		for i := range M {
+			arow := a[i*K : i*K+K]
+			drow := dst[i*N : i*N+N]
+			for j := j0; j < j1; j++ {
+				prow := bPacked[j*bpr : j*bpr+bpr]
+				srow := bScales[j*nGroups : j*nGroups+nGroups]
+				var total float32
+				for g := range nGroups {
+					ks := g * group
+					ke := min(ks+group, K)
+					var gsum float32
+					for k := ks; k < ke; k++ {
+						b := prow[k/2]
+						var nib byte
+						if k&1 == 0 {
+							nib = b & 0x0F
+						} else {
+							nib = b >> 4
+						}
+						gsum += arow[k] * float32(int(nib)-8)
+					}
+					total += gsum * srow[g]
+				}
+				drow[j] = total
+			}
+		}
+	})
+}

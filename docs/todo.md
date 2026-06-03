@@ -23,10 +23,10 @@ parity fixture (the repo's bar is no unvalidated dequant/tokenizer code):
 - **More K-quants (Q5_K/Q3_K/IQ\*)** — each "a `dequant*` func + a size entry",
   but needs a Q5_K fixture or the Python `gguf` reference to validate.
 
-### 2. Resident int8/int4 matmul (dequant-per-tile) — **int8 + mmap DONE** · M–L
+### 2. Resident int8/int4 matmul (dequant-per-tile) — **DONE** ✅ · M–L
 
 Both planning docs flagged this as "the way to actually run big quantized models
-in small memory." Two pieces shipped:
+in small memory." All three pieces shipped:
 
 - ✅ **Streaming int8**: `Load(…, Quant:"int8")` quantizes each matmul tensor as
   it loads and frees the f32 before the next (safetensors, GPT-2, GGUF) — no
@@ -39,6 +39,15 @@ in small memory." Two pieces shipped:
   steady state. Bonus: `tokenizer.LoadGGUF` no longer pages in the weights to
   read metadata (its test went ~0.5 s → ~0.03 s). Parse is bit-identical to the
   heap path.
+- ✅ **int4 group-quant** (`Load(…, Quant:"int4"`): projections → group-wise
+  symmetric 4-bit (group 32, `MatmulBTQ4` dequant-per-tile), ~⅛ f32 there;
+  embedding + LM head stay int8 (logit-critical, like Q4_K_M keeps them at Q6_K).
+  Validated on TinyLlama: argmax preserved, cosine 0.994 vs f32. (Lossy on the
+  270M — int4 is a big-model tool.) Follow-up: a SIMD nibble-unpack kernel for
+  speed (the matmul is correctness-first scalar today).
+
+The remaining memory lever is mmap'ing **safetensors GGUF-style on the fs.FS
+path** and an int4×int4 SIMD kernel for speed — both incremental.
 
 Still open — **int4 group-quant** (≈⅛ f32, matches native Q4 footprint): the
 streaming-quant load path is now in place, so this needs only its own
