@@ -11,6 +11,17 @@ rather than repeating them.
 > git clone https://github.com/townsendmerino/aikit.git && cd aikit
 > ```
 
+> **▶ Resume point (2026-06-02).** Done: Gemma decoder M1–M9 + the multi-model
+> track **G0 (descriptor), G1 (sharded loader), G2 (Qwen3 dense)** — see the
+> table in §3. **Next up: G3 — the byte-level BPE tokenizer** (Qwen/Llama-3
+> family; reuse the M2 merge machinery, different pre/post-processing: GPT-2
+> split regex, `Ġ` spaces, byte-level map). G3 is the last piece before the
+> **demo target, Qwen3 dense**, chats end-to-end in `demo/gemma-web` in pure Go
+> (today the Qwen3 forward is parity-proven but needs HF-supplied token ids).
+> Per-machine, NOT in git: `.venv/` (torch/transformers), the models under
+> `testdata/` (gemma-3-270m, qwen3-1.7b, *-sharded), and `docs/keepers.txt`
+> (HF token — rotate + delete). Plan: `docs/multi-model-plan.md`.
+
 ## 0. Sanity: a fresh checkout is green
 
 No model assets, no GPU, no Python needed for this:
