@@ -2,7 +2,8 @@
 
 Pure-Go, no-cgo packages extracted from [`ken`](https://github.com/townsendmerino/ken)'s
 code-search pipeline. Each package is independently importable; the dependency
-DAG is shallow (most are leaves; only `encoder` requires `embed`).
+DAG is shallow (most are leaves; `encoder` requires `embed`, and `decoder`
+requires `embed` + `tokenizer`).
 
 | Package | Purpose | Deps (beyond stdlib) |
 |---|---|---|
@@ -12,6 +13,8 @@ DAG is shallow (most are leaves; only `encoder` requires `embed`).
 | `fuse` | reciprocal-rank fusion (RRF) — blend lexical + dense rankings for hybrid search | — |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `golang.org/x/text` |
 | `encoder` | CodeRankEmbed transformer encoder (NomicBert, 12-layer; NEON-accelerated on arm64, AVX2/FMA on amd64, with intra-op row-parallel matmul for single-forward latency) | — |
+| `decoder` | generic decoder-only LLM forward pass — Gemma 3, Qwen2.5/3, Llama-2/3, Mistral, GPT-2, Mixtral (MoE); f32/bf16/f16 + int8/int4, safetensors/sharded/GGUF; HF logit parity | `embed`, `tokenizer`, `github.com/cogentcore/webgpu` (WebGPU backend) |
+| `tokenizer` | BPE tokenizers the decoder LLMs ship — Gemma byte-fallback SentencePiece + GPT-2/Llama-3/Qwen byte-level, from `tokenizer.json`; HF-exact id parity | `golang.org/x/text` |
 | `chunk` | language-aware code chunker registry + 3 concrete chunkers (`regex`, `markdown`, `treesitter`) | `github.com/odvcencio/gotreesitter` (treesitter only) |
 
 `aikit` is "the parts of ken another project could reuse." The application
@@ -51,6 +54,12 @@ Mirroring [ken ADR-032](https://github.com/townsendmerino/ken/blob/main/docs/DEC
   the `Hit` / `Query` surface is stable, but graph internals and Config defaults may tune
 - `fuse.RRF` / `fuse.RRFWeighted` / `fuse.Keys` — new; the RRF math is fixed but the
   helper surface is young
+- `decoder` (`Load`, `Model.Generate`, `Sampler`, `KVCache`, `Backend`, the
+  `Architecture` descriptor) — new in v0.2.0; numerics are parity-gated against
+  HuggingFace, but the loader/descriptor surface will keep moving as more
+  families and quant formats land
+- `tokenizer` (`Load`, `Tokenizer`, `SpecialTokens`, `ChatStyle`) — new in
+  v0.2.0; HF-exact id parity is the contract, the API is young
 - GPU backend (`encoder/gpu`, `-tags gpu`) — optional, cgo, foundation stage only
 
 ---
