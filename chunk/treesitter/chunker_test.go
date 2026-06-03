@@ -152,7 +152,7 @@ func TestSupportedLanguages(t *testing.T) {
 	}
 	want := []string{"python", "go", "typescript", "javascript", "java", "rust",
 		"c", "cpp", "ruby", "php", "swift", "kotlin", "scala",
-		"haskell", "elixir", "lua", "zig"}
+		"haskell", "elixir", "lua", "zig", "dart"}
 	have := make(map[string]bool, len(got))
 	for _, l := range got {
 		have[l] = true

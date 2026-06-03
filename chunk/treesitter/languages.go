@@ -43,6 +43,7 @@ var KenToTreeSitter = map[string]string{
 	"elixir":     "elixir",
 	"lua":        "lua",
 	"zig":        "zig",
+	"dart":       "dart",
 
 	// Deliberately omitted:
 	//   csharp ("c_sharp") — the gotreesitter v0.18.0 C# grammar's parse
