@@ -30,13 +30,13 @@ func causalAttention(
 	layer int,
 	h []float32,
 	lw *LayerWeights,
-	cfg *Config,
+	arch *Architecture,
 	cache *KVCache,
 	be Backend,
 ) ([]float32, error) {
-	hidden, nH, nKV, hd := cfg.HiddenDim, cfg.NumHeads, cfg.NumKVHeads, cfg.HeadDim
+	hidden, nH, nKV, hd := arch.HiddenDim, arch.NumHeads, arch.NumKVHeads, arch.HeadDim
 	qDim, kvDim := nH*hd, nKV*hd
-	global := cfg.IsGlobalLayer(layer)
+	global := arch.isGlobalLayer(layer)
 	pos := cache.Pos() // this token's absolute position (stable across layers in one forward)
 
 	// 1. Project to q/k/v for the new position.
@@ -47,15 +47,14 @@ func causalAttention(
 	lw.KProj.matmul(be, h, k, 1)
 	lw.VProj.matmul(be, h, v, 1)
 
-	// 2. QK-norm: Gemma 3 RMSNorm((1+w)) over head_dim, per head, before RoPE.
-	rmsNorm(q, lw.QNorm, nH, hd, cfg.RMSNormEps)
-	rmsNorm(k, lw.KNorm, nKV, hd, cfg.RMSNormEps)
-
-	// 3. RoPE at pos with the per-layer base (local 10k vs global 1e6).
-	base := cfg.RoPELocalBase
-	if global {
-		base = cfg.RoPEGlobalBase
+	// 2. QK-norm (Gemma 3, Qwen3): RMSNorm over head_dim, per head, before RoPE.
+	if arch.QKNorm {
+		rmsNorm(q, lw.QNorm, nH, hd, arch.NormEps, arch.RMSAddOne)
+		rmsNorm(k, lw.KNorm, nKV, hd, arch.NormEps, arch.RMSAddOne)
 	}
+
+	// 3. RoPE at pos with the per-layer base (Gemma: local 10k vs global 1e6).
+	base := arch.ropeBase(layer)
 	applyRoPE(q, nH, hd, pos, base)
 	applyRoPE(k, nKV, hd, pos, base)
 
@@ -64,8 +63,8 @@ func causalAttention(
 	keys, vals := cache.Keys(layer), cache.Vals(layer)
 	nKeys := len(keys) / kvDim // == pos+1
 	start := cache.WindowStart(pos, global)
-	scale := math.Pow(cfg.QueryPreAttnScalar, -0.5)
-	group := nH / nKV // GQA: query heads per KV head
+	scale := arch.AttnScale // resolved: query_pre_attn_scalar^-0.5 (Gemma) or 1/sqrt(headDim)
+	group := nH / nKV       // GQA: query heads per KV head
 
 	ctx := make([]float32, qDim)
 	scores := make([]float32, nKeys)

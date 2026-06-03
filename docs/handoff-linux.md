@@ -113,6 +113,8 @@ validates every schema entry across all layers and returned no error. Shapes
 | decoder M7 perf (shared SIMD linalg) | ✅ done 2026-06-02 — dot kernels lifted to `internal/linalg`, decoder matmul parallel; ~18 tok/s on Ryzen 7 3700X (>10 target); see `milestones/M7-perf.md` |
 | decoder M8 int8 quant | ✅ done 2026-06-02 — `--quant int8`, argmax preserved (cosine 0.9996), weights 3.98× smaller; int4 + streaming-quant follow-ups; see `milestones/M8-quant.md` |
 | decoder M9 WebGPU backend | ✅ done 2026-06-02 — `--backend webgpu` runs on RTX 2070 (Vulkan), resident weights, argmax parity; trails CPU for M=1 decode (latency-bound); see `milestones/M9-webgpu.md` |
+| decoder G0 multi-model descriptor | ✅ done 2026-06-02 — forward pass reads `Architecture` (registry by `model_type`); Gemma goldens byte-identical. Toward running Llama/Qwen/etc. (multi-model-plan G1+); see `milestones/G0-descriptor.md` |
+| demo/gemma-web | ✅ done — stdlib net/http + SSE chat GUI over the decoder (`go run ./demo/gemma-web --model testdata/gemma-3-270m`) |
 
 Reference docs: [`cpu-acceleration.md`](cpu-acceleration.md),
 [`gemma-decoder-plan.md`](gemma-decoder-plan.md),

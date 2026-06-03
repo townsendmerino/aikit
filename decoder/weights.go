@@ -42,8 +42,9 @@ type LayerWeights struct {
 // separate output projection tensor.
 type Weights struct {
 	Cfg       Config
-	Embed     weightMat // [VocabSize, HiddenDim] — input embedding AND tied LM head
-	FinalNorm []float32 // [HiddenDim] RMSNorm before the LM head
+	arch      *Architecture // resolved descriptor the forward pass reads
+	Embed     weightMat     // [VocabSize, HiddenDim] — input embedding AND tied LM head
+	FinalNorm []float32     // [HiddenDim] RMSNorm before the LM head
 	Layers    []LayerWeights
 
 	st *embed.SafetensorsFile // retained so alias-backed slices stay valid
@@ -88,14 +89,15 @@ func LoadWeights(dir string) (*Weights, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := cfg.ValidateAssumptions(); err != nil {
+	arch, err := resolveArchitecture(cfg) // selects + validates the family descriptor
+	if err != nil {
 		return nil, err
 	}
 	st, err := embed.OpenSafetensorsMmap(filepath.Join(dir, "model.safetensors"))
 	if err != nil {
 		return nil, fmt.Errorf("decoder: open safetensors: %w", err)
 	}
-	return buildWeightsFromSafetensors(cfg, st)
+	return buildWeightsFromSafetensors(cfg, arch, st)
 }
 
 // LoadWeightsFromFS mirrors encoder.LoadWeightsFromFS: reads config.json +
@@ -107,14 +109,15 @@ func LoadWeightsFromFS(fsys fs.FS, dir string) (*Weights, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := cfg.ValidateAssumptions(); err != nil {
+	arch, err := resolveArchitecture(cfg)
+	if err != nil {
 		return nil, err
 	}
 	st, err := embed.OpenSafetensorsFromFS(fsys, path.Join(dir, "model.safetensors"))
 	if err != nil {
 		return nil, fmt.Errorf("decoder: open safetensors: %w", err)
 	}
-	return buildWeightsFromSafetensors(cfg, st)
+	return buildWeightsFromSafetensors(cfg, arch, st)
 }
 
 // buildWeightsFromSafetensors fills a *Weights from an already-opened
@@ -122,13 +125,13 @@ func LoadWeightsFromFS(fsys fs.FS, dir string) (*Weights, error) {
 // against Cfg. Factored out so the heap (fs.FS) and mmap paths share one
 // tensor-name + shape contract — a schema change is one edit, not two.
 // Mirrors encoder.buildWeightsFromSafetensors.
-func buildWeightsFromSafetensors(cfg *Config, st *embed.SafetensorsFile) (*Weights, error) {
+func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, st *embed.SafetensorsFile) (*Weights, error) {
 	s := gemma3TensorSchema
 	hd := cfg.HiddenDim
 	qDim := cfg.NumHeads * cfg.HeadDim    // query projection rows (270M: 1024)
 	kvDim := cfg.NumKVHeads * cfg.HeadDim // key/value projection rows (270M: 256)
 
-	w := &Weights{Cfg: *cfg, st: st, Layers: make([]LayerWeights, cfg.NumLayers)}
+	w := &Weights{Cfg: *cfg, arch: arch, st: st, Layers: make([]LayerWeights, cfg.NumLayers)}
 	var err error
 
 	// Tied embedding table (also the LM head) + final norm.

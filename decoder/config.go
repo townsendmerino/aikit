@@ -15,6 +15,7 @@ import (
 // Values that vary per layer (the 5:1 local:global attention pattern) are
 // derived from SlidingWindowPattern at load time, not stored per layer.
 type Config struct {
+	ModelType            string  `json:"model_type"`              // "gemma3_text" — selects the arch adapter
 	VocabSize            int     `json:"vocab_size"`              // 262144
 	HiddenDim            int     `json:"hidden_size"`             // 640 (270M)
 	NumLayers            int     `json:"num_hidden_layers"`       // 18 (270M)

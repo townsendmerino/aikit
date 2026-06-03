@@ -1,23 +1,35 @@
 package decoder
 
-// geGLU runs one block's GeGLU MLP for the current position and returns the
-// output (caller applies the post-MLP norm + residual add).
+import "fmt"
+
+// gatedMLP runs one block's gated MLP for the current position and returns the
+// output (caller applies the post-MLP norm + residual add). The gate/up/down
+// structure is shared by GeGLU (Gemma) and SwiGLU (Llama/Mistral/Qwen); only
+// the gate activation differs (Architecture.Act).
 //
 //	gate = GateProj·h            // [IntermediateDim]
 //	up   = UpProj·h              // [IntermediateDim]
-//	mid  = geluTanh(gate) ⊙ up   // [IntermediateDim]   (gate is the activated branch)
+//	mid  = act(gate) ⊙ up        // [IntermediateDim]
 //	out  = DownProj·mid          // [HiddenDim]
 //
-// geluTanh (rmsnorm.go) is the "gelu_pytorch_tanh" activation Gemma uses.
 // No biases on any projection.
-func geGLU(h []float32, lw *LayerWeights, cfg *Config, be Backend) ([]float32, error) {
-	inter, hidden := cfg.IntermediateDim, cfg.HiddenDim
+func gatedMLP(h []float32, lw *LayerWeights, arch *Architecture, be Backend) ([]float32, error) {
+	inter, hidden := arch.IntermediateDim, arch.HiddenDim
 	gate := make([]float32, inter)
 	up := make([]float32, inter)
 	lw.GateProj.matmul(be, h, gate, 1) // [1,inter] = h · GateProjᵀ
 	lw.UpProj.matmul(be, h, up, 1)
-	for i := range gate {
-		gate[i] = geluTanh(gate[i]) * up[i]
+	switch arch.Act {
+	case ActGeluTanh:
+		for i := range gate {
+			gate[i] = geluTanh(gate[i]) * up[i]
+		}
+	case ActSiLU:
+		for i := range gate {
+			gate[i] = silu(gate[i]) * up[i]
+		}
+	default:
+		return nil, fmt.Errorf("decoder: unsupported activation %d (have GeGLU/SwiGLU)", arch.Act)
 	}
 	out := make([]float32, hidden)
 	lw.DownProj.matmul(be, gate, out, 1) // [1,hidden] = mid · DownProjᵀ

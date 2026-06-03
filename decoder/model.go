@@ -59,63 +59,75 @@ func (m *Model) Config() *Config { return &m.w.Cfg }
 // NewCache allocates a KV cache sized for this model. capHint pre-sizes for
 // a known max length (0 = grow on demand).
 func (m *Model) NewCache(capHint int) *KVCache {
-	c := &m.w.Cfg
-	return NewKVCache(c.NumLayers, c.NumKVHeads, c.HeadDim, c.SlidingWindow, capHint)
+	a := m.w.arch
+	return NewKVCache(a.NumLayers, a.NumKVHeads, a.HeadDim, a.SlidingWindow, capHint)
 }
 
 // runLayers advances one decode step for token id at position cache.Pos():
-// it embeds the token, runs the full Gemma 3 block stack (appending this
-// position's K/V to the cache), and returns the residual-stream hidden state
-// after the final layer — BEFORE the final norm and LM head. Splitting it out
-// lets prefill skip the (vocab-sized) LM head on every token but the last.
+// it embeds the token, runs the block stack (appending this position's K/V to
+// the cache), and returns the residual-stream hidden state after the final
+// layer — BEFORE the final norm and LM head. Splitting it out lets prefill skip
+// the (vocab-sized) LM head on every token but the last.
 //
-//  1. h = Embed[id] * sqrt(HiddenDim)        // embedding scale (invariant)
-//  2. for each layer l:                       // Gemma "sandwich" norms
-//     a. n  = rmsNorm(h, PreAttnNorm)
-//     b. a  = causalAttention(l, n, ...)    // GQA + RoPE + QK-norm + cache
-//     c. a  = rmsNorm(a, PostAttnNorm)
-//     d. h  = h + a                          // residual
-//     e. n2 = rmsNorm(h, PreMLPNorm)
-//     f. g  = geGLU(n2, ...)
-//     g. g  = rmsNorm(g, PostMLPNorm)
-//     h. h  = h + g                          // residual
+// The loop is generic over the Architecture descriptor (G0): embedding scale,
+// norm placement (Gemma's 4-norm sandwich vs Llama's pre-2), the (1+w) RMS
+// offset, and the activation are all knobs. Gemma 3 is one descriptor:
+//
+//	h = Embed[id] * EmbedScale
+//	for each layer l:
+//	  n  = rmsNorm(h, PreAttnNorm)
+//	  a  = causalAttention(l, n, …)
+//	  if Sandwich4 { a = rmsNorm(a, PostAttnNorm) }
+//	  h += a
+//	  n2 = rmsNorm(h, PreMLPNorm)
+//	  g  = gatedMLP(n2, …)
+//	  if Sandwich4 { g = rmsNorm(g, PostMLPNorm) }
+//	  h += g
 func (m *Model) runLayers(id int, cache *KVCache) ([]float32, error) {
-	c := &m.w.Cfg
+	arch := m.w.arch
 	if m.w.Embed.rows == 0 {
 		return nil, fmt.Errorf("decoder.forward: weights not loaded %w [M1]", errNotImplemented)
 	}
-	h := make([]float32, c.HiddenDim)
+	hidden := arch.HiddenDim
+	h := make([]float32, hidden)
 	m.w.Embed.embedRow(id, h) // f32 copy, or int8 dequant when quantized
-	// Embedding scale. NOTE: HF computes this normalizer as sqrt(hidden) cast
-	// to the model's dtype — bf16 for a bf16 checkpoint (≈25.25 here) — then
-	// multiplies. We use the f32 value (≈25.2982). It matches our parity gate
-	// because the very next op (PreAttnNorm RMSNorm) divides out a global
-	// scalar, so the difference only survives in the residual and stays well
-	// under the ≥1−1e-4 cosine bar. If that bar is ever tightened past ~1e-5,
-	// round `scale` to bf16 first to match HF exactly. See M3-forward.md.
-	scale := float32(math.Sqrt(float64(c.HiddenDim)))
-	for i := range h {
-		h[i] *= scale
+	// Embedding scale (Gemma = √hidden; 0/1 = none). NOTE: HF computes this
+	// normalizer as sqrt(hidden) cast to the model's dtype — bf16 for a bf16
+	// checkpoint (≈25.25 here) — then multiplies. We use the f32 value
+	// (≈25.2982). It matches our parity gate because the next op (PreAttnNorm
+	// RMSNorm) divides out a global scalar, so the difference only survives in
+	// the residual and stays well under the ≥1−1e-4 cosine bar. If that bar is
+	// ever tightened past ~1e-5, round the scale to bf16. See M3-forward.md.
+	if arch.EmbedScale != 0 && arch.EmbedScale != 1 {
+		scale := float32(arch.EmbedScale)
+		for i := range h {
+			h[i] *= scale
+		}
 	}
-	for l := 0; l < c.NumLayers; l++ {
+	sandwich := arch.NormPlacement == NormSandwich4
+	for l := 0; l < arch.NumLayers; l++ {
 		lw := &m.w.Layers[l]
 		n := append([]float32(nil), h...)
-		rmsNorm(n, lw.PreAttnNorm, 1, c.HiddenDim, c.RMSNormEps)
-		a, err := causalAttention(l, n, lw, c, cache, m.be)
+		rmsNorm(n, lw.PreAttnNorm, 1, hidden, arch.NormEps, arch.RMSAddOne)
+		att, err := causalAttention(l, n, lw, arch, cache, m.be)
 		if err != nil {
 			return nil, err
 		}
-		rmsNorm(a, lw.PostAttnNorm, 1, c.HiddenDim, c.RMSNormEps)
+		if sandwich {
+			rmsNorm(att, lw.PostAttnNorm, 1, hidden, arch.NormEps, arch.RMSAddOne)
+		}
 		for i := range h {
-			h[i] += a[i]
+			h[i] += att[i]
 		}
 		n2 := append([]float32(nil), h...)
-		rmsNorm(n2, lw.PreMLPNorm, 1, c.HiddenDim, c.RMSNormEps)
-		g, err := geGLU(n2, lw, c, m.be)
+		rmsNorm(n2, lw.PreMLPNorm, 1, hidden, arch.NormEps, arch.RMSAddOne)
+		g, err := gatedMLP(n2, lw, arch, m.be)
 		if err != nil {
 			return nil, err
 		}
-		rmsNorm(g, lw.PostMLPNorm, 1, c.HiddenDim, c.RMSNormEps)
+		if sandwich {
+			rmsNorm(g, lw.PostMLPNorm, 1, hidden, arch.NormEps, arch.RMSAddOne)
+		}
 		for i := range h {
 			h[i] += g[i]
 		}
@@ -123,19 +135,28 @@ func (m *Model) runLayers(id int, cache *KVCache) ([]float32, error) {
 	return h, nil
 }
 
-// forward runs runLayers then the final norm + tied LM head, returning the
-// logit vector ([VocabSize]) for the next token. logits = rmsNorm(h)·Embedᵀ —
-// the embedding table doubles as the output projection (tied weights), and
-// Gemma 3 has no final logit soft-capping.
+// forward runs runLayers then the final norm + LM head, returning the logit
+// vector ([VocabSize]) for the next token. The head is the tied embedding
+// (Gemma) or a separate lm_head (untied; multi-model-plan G2). Optional final
+// logit soft-capping (Gemma 2; Gemma 3 = none).
 func (m *Model) forward(id int, cache *KVCache) ([]float32, error) {
-	c := &m.w.Cfg
+	arch := m.w.arch
 	h, err := m.runLayers(id, cache)
 	if err != nil {
 		return nil, err
 	}
-	rmsNorm(h, m.w.FinalNorm, 1, c.HiddenDim, c.RMSNormEps)
-	logits := make([]float32, c.VocabSize)
+	rmsNorm(h, m.w.FinalNorm, 1, arch.HiddenDim, arch.NormEps, arch.RMSAddOne)
+	logits := make([]float32, arch.VocabSize)
+	if !arch.TiedLMHead {
+		return nil, fmt.Errorf("decoder: untied LM head not implemented [G2]")
+	}
 	m.w.Embed.matmul(m.be, h, logits, 1) // tied LM head (int8 or f32)
+	if arch.FinalLogitSoftcap > 0 {
+		softcap := float32(arch.FinalLogitSoftcap)
+		for i, v := range logits {
+			logits[i] = softcap * float32(math.Tanh(float64(v/softcap)))
+		}
+	}
 	return logits, nil
 }
 

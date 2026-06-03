@@ -223,9 +223,11 @@ It unlocks a meaningful slice of frontier open models, but it's optional for
 Each ends green with a per-family logit/greedy golden (the M3/M4 discipline,
 new fixture per family). Parallel to M7–M9.
 
-- **G0 — refactor to the descriptor.** Introduce `Architecture` + the generic
-  `runLayers`; express Gemma 3 as a descriptor. **Acceptance: the existing
-  M1–M6 Gemma goldens still pass unchanged.** Pure refactor, no new models.
+- **G0 — refactor to the descriptor.** ✅ **DONE 2026-06-02.** `Architecture`
+  descriptor + registry (`model_type` → adapter) + generic
+  `runLayers`/`forward`/`attention`/`gatedMLP`; Gemma 3 is one descriptor. All
+  M1–M9 Gemma goldens pass **byte-identical** (cosine unchanged). See
+  [`milestones/G0-descriptor.md`](milestones/G0-descriptor.md).
 - **G1 — sharded safetensors loader** (§5.1). Acceptance: load a multi-shard
   checkpoint (e.g. Gemma 3 4B) and reproduce M1-style tensor checksums.
 - **G2 — Llama / Mistral / Qwen2 family.** Knobs: RMS no-offset, Pre2 norms,
