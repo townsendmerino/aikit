@@ -198,9 +198,11 @@ chatty host↔device round-trip per layer.
   (`layer_types` vs null `sliding_window_pattern`) — see
   [`milestones/M3-forward.md`](milestones/M3-forward.md). Cache-based single-step
   path (lays M4 groundwork); naive backend (M7 perf).
-- **M4 — KV cache + multi-token decode.** Append K/V per step, attend over the
-  cache, advance RoPE position offset. Greedy-decode 32 tokens; assert the
-  string matches HF greedy decode exactly.
+- **M4 — KV cache + multi-token decode.** ✅ **DONE 2026-06-02.** Append K/V per
+  step, attend over the cache, advance RoPE position. 48-token greedy
+  continuation matches HF **id-for-id** and the decoded string matches end to
+  end; EOS/stop wired (`isStop`, `Config.EOSIDs`). See
+  [`milestones/M4-decode.md`](milestones/M4-decode.md).
 - **M5 — sliding window.** Local layers mask to the last 512 keys; global
   layers see all. Parity past 512 tokens.
 - **M6 — sampler + streaming.** Temperature, top-k, top-p, repetition handling,

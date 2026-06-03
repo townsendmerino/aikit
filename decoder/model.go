@@ -11,8 +11,9 @@ import (
 // sequence state (the KV cache) is owned by each Generate call, so distinct
 // sequences can run concurrently, but a single KVCache is not shared.
 type Model struct {
-	w  *Weights
-	be Backend
+	w      *Weights
+	be     Backend
+	eosIDs []int // end-of-sequence ids from config (generation stops on these)
 }
 
 // Options configures Load.
@@ -38,7 +39,7 @@ func Load(dir string, opts Options) (*Model, error) {
 		// webgpu requested but fell back — not fatal.
 		fmt.Println(beErr)
 	}
-	return &Model{w: w, be: be}, nil
+	return &Model{w: w, be: be, eosIDs: w.Cfg.EOSIDs()}, nil
 }
 
 // Config exposes the loaded architecture config.
@@ -179,11 +180,20 @@ func (m *Model) Generate(ctx context.Context, prompt []int, maxTokens int, sp Sa
 	return out, g
 }
 
-// isStop reports whether id ends generation (EOS or a configured stop).
-// SCAFFOLD: EOS id wiring comes from the tokenizer at M2/M6.
+// isStop reports whether id ends generation: a checkpoint EOS id (from
+// config) or a caller-supplied stop id (SamplingParams.StopIDs, e.g.
+// <end_of_turn> for chat).
 func (m *Model) isStop(id int, sp SamplingParams) bool {
-	_ = id
-	_ = sp
+	for _, e := range m.eosIDs {
+		if id == e {
+			return true
+		}
+	}
+	for _, s := range sp.StopIDs {
+		if id == s {
+			return true
+		}
+	}
 	return false
 }
 

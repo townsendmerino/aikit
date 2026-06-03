@@ -38,6 +38,10 @@ type Config struct {
 	// this is the authoritative source when present (see IsGlobalLayer).
 	LayerTypes []string `json:"layer_types"`
 
+	// EOSTokenID is the checkpoint's end-of-sequence id(s). HF stores it as
+	// either a scalar or a list, so it's kept raw and decoded by EOSIDs.
+	EOSTokenID json.RawMessage `json:"eos_token_id"`
+
 	// Gemma 2 fields that MUST be absent/zero in a Gemma 3 checkpoint.
 	// ValidateAssumptions rejects a checkpoint that still sets them so we
 	// fail loudly rather than silently skip soft-capping.
@@ -93,6 +97,24 @@ func (c *Config) ValidateAssumptions() error {
 		if lt != "sliding_attention" && lt != "full_attention" {
 			return fmt.Errorf("decoder: layer_types[%d]=%q unsupported (want sliding_attention/full_attention)", i, lt)
 		}
+	}
+	return nil
+}
+
+// EOSIDs returns the configured end-of-sequence token ids, handling both the
+// scalar (eos_token_id: 1) and list (eos_token_id: [1, 106]) JSON shapes HF
+// emits. Empty when the field is absent.
+func (c *Config) EOSIDs() []int {
+	if len(c.EOSTokenID) == 0 {
+		return nil
+	}
+	var one int
+	if err := json.Unmarshal(c.EOSTokenID, &one); err == nil {
+		return []int{one}
+	}
+	var many []int
+	if err := json.Unmarshal(c.EOSTokenID, &many); err == nil {
+		return many
 	}
 	return nil
 }

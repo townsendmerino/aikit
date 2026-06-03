@@ -14,6 +14,7 @@ type SamplingParams struct {
 	TopK        int     // 0 = disabled; keep the K highest-prob tokens
 	TopP        float64 // 0 = disabled; nucleus — smallest set with cumprob ≥ TopP
 	Seed        int64   // RNG seed for reproducible sampling
+	StopIDs     []int   // extra ids that end generation (besides config EOS), e.g. <end_of_turn>
 }
 
 // Sampler turns a logit vector into a token id. It owns its RNG so a run is
