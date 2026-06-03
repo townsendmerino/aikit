@@ -224,8 +224,11 @@ chatty host↔device round-trip per layer.
   smaller (270 MB vs 1072 MB). int4 group-quant + streaming quantize-at-load +
   bf16-resident tiling remain for the 1B/4B story. See
   [`milestones/M8-quant.md`](milestones/M8-quant.md).
-- **M9 — WebGPU backend (optional).** WGSL matmul kernel behind the §5 seam for
-  the checkpoints CPU can't serve interactively.
+- **M9 — WebGPU backend (optional).** ✅ **DONE 2026-06-02.** `--backend webgpu`
+  runs the whole decoder on a real GPU (validated on an RTX 2070 via Vulkan),
+  with **resident weights** (uploaded once, not per token). Correct end-to-end
+  (argmax parity); trails CPU for M=1 decode (latency-bound) as predicted — the
+  win is large-batch / 1B+. See [`milestones/M9-webgpu.md`](milestones/M9-webgpu.md).
 
 A fresh checkout with no model assets present should `go test ./...` green with
 the Gemma parity tests **skipped** (same convention `encoder/` uses).

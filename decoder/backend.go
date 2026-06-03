@@ -33,9 +33,12 @@ func NewBackend(name string) (Backend, error) {
 	case "", "cpu":
 		return &cpuBackend{}, nil
 	case "webgpu":
-		// M9: real WGSL matmul kernel + weight upload. Until then, fall
-		// back to CPU so --backend=webgpu still runs.
-		return &cpuBackend{}, fmt.Errorf("decoder: webgpu backend not implemented yet (M9), using cpu: %w", errNotImplemented)
+		// Real WGSL matmul on a WebGPU adapter (M9), built only under
+		// -tags gpu. newWebGPUBackend is defined per build tag: the gpu
+		// build returns a live GPU backend (or falls back to cpu with a note
+		// if no adapter); the default build returns cpu + a "needs -tags gpu"
+		// note. Either way NewBackend never hard-fails on --backend webgpu.
+		return newWebGPUBackend()
 	default:
 		return nil, fmt.Errorf("decoder: unknown backend %q (have: cpu, webgpu)", name)
 	}

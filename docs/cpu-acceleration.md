@@ -230,6 +230,13 @@ gate behind a `hasAVX512` flag.
 
 ### E. GPU: resident buffers (the transfer fix — do this before anything else GPU)
 
+> **Partly landed (decoder M9, 2026-06-02).** `encoder/gpu` now has the
+> resident-buffer primitives — `UploadMatrix` + `ResidentMatrix` +
+> `MatmulBTResident` — and the **decoder** uses them (weights uploaded once, not
+> per call; see `milestones/M9-webgpu.md`). The **encoder** still calls the
+> re-upload-everything `MatmulBT`; wiring it to keep its layer weights resident
+> across an `EncodeBatch` is the remaining piece of this item.
+
 The foundation re-uploads a+b and reads back dst on every `MatmulBT` call; the table above shows
 transfer dominates. The fix that unlocks the GPU is to keep data resident:
 

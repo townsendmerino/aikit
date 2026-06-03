@@ -130,12 +130,71 @@ func (c *Context) Close() {
 	c.instance.Release()
 }
 
+// ResidentMatrix is a weight matrix [rows, cols] uploaded to a GPU storage
+// buffer once and reused across many MatmulBTResident calls — the fix for the
+// per-call weight re-upload. The decoder uploads each constant weight matrix
+// once at first use and keeps the handle for every subsequent token. Release
+// frees the GPU buffer.
+type ResidentMatrix struct {
+	buf  *wgpu.Buffer
+	rows int // N (out features)
+	cols int // K (in features)
+}
+
+// Release frees the resident GPU buffer. Safe to call once.
+func (rm *ResidentMatrix) Release() {
+	if rm.buf != nil {
+		rm.buf.Release()
+		rm.buf = nil
+	}
+}
+
+// UploadMatrix copies a [rows, cols] f32 matrix to a resident GPU storage
+// buffer. b must hold ≥ rows*cols f32s. The returned ResidentMatrix is reused
+// by MatmulBTResident; the caller owns it and must Release it.
+func (c *Context) UploadMatrix(b []float32, rows, cols int) (*ResidentMatrix, error) {
+	if rows <= 0 || cols <= 0 {
+		return nil, fmt.Errorf("gpu: UploadMatrix non-positive dim rows=%d cols=%d", rows, cols)
+	}
+	if len(b) < rows*cols {
+		return nil, fmt.Errorf("gpu: UploadMatrix input too small: len(b)=%d need %d", len(b), rows*cols)
+	}
+	buf, err := c.device.CreateBufferInit(&wgpu.BufferInitDescriptor{
+		Label: "resident-b", Contents: wgpu.ToBytes(b[:rows*cols]), Usage: wgpu.BufferUsageStorage,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("gpu: create resident buffer: %w", err)
+	}
+	return &ResidentMatrix{buf: buf, rows: rows, cols: cols}, nil
+}
+
+// MatmulBTResident computes dst = a · rm.bᵀ ([M, rm.rows]), uploading only the
+// (small) activation a and reading back the result — the weight rm stays
+// resident. This removes the dominant transfer cost for repeated matmuls
+// against a constant weight (the decoder's per-token projections + LM head).
+func (c *Context) MatmulBTResident(a []float32, rm *ResidentMatrix, M int) ([]float32, error) {
+	K, N := rm.cols, rm.rows
+	if M <= 0 {
+		return nil, fmt.Errorf("gpu: MatmulBTResident non-positive M=%d", M)
+	}
+	if len(a) < M*K {
+		return nil, fmt.Errorf("gpu: MatmulBTResident input too small: len(a)=%d need %d", len(a), M*K)
+	}
+	aBuf, err := c.device.CreateBufferInit(&wgpu.BufferInitDescriptor{
+		Label: "a", Contents: wgpu.ToBytes(a[:M*K]), Usage: wgpu.BufferUsageStorage,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("gpu: create a buffer: %w", err)
+	}
+	defer aBuf.Release()
+	return c.run(aBuf, rm.buf, M, K, N)
+}
+
 // MatmulBT computes dst = a·bᵀ on the GPU and returns the [M,N] result.
 // a must hold ≥ M*K f32s, b ≥ N*K. This allocates fresh GPU buffers,
 // uploads a and b, dispatches the kernel, and reads the result back —
-// so it pays full host↔device transfer on every call. That is the
-// foundation's known cost; resident weights/activations are the
-// follow-up that makes the GPU actually win.
+// so it pays full host↔device transfer on every call. Use UploadMatrix +
+// MatmulBTResident when b is constant across calls (the decoder's weights).
 func (c *Context) MatmulBT(a, b []float32, M, K, N int) ([]float32, error) {
 	if M <= 0 || K <= 0 || N <= 0 {
 		return nil, fmt.Errorf("gpu: matmulBT non-positive dim M=%d K=%d N=%d", M, K, N)
@@ -144,8 +203,6 @@ func (c *Context) MatmulBT(a, b []float32, M, K, N int) ([]float32, error) {
 		return nil, fmt.Errorf("gpu: matmulBT input too small: len(a)=%d need %d, len(b)=%d need %d",
 			len(a), M*K, len(b), N*K)
 	}
-	dstSize := uint64(M * N * 4)
-
 	aBuf, err := c.device.CreateBufferInit(&wgpu.BufferInitDescriptor{
 		Label: "a", Contents: wgpu.ToBytes(a[:M*K]), Usage: wgpu.BufferUsageStorage,
 	})
@@ -161,6 +218,15 @@ func (c *Context) MatmulBT(a, b []float32, M, K, N int) ([]float32, error) {
 		return nil, fmt.Errorf("gpu: create b buffer: %w", err)
 	}
 	defer bBuf.Release()
+	return c.run(aBuf, bBuf, M, K, N)
+}
+
+// run dispatches the matmul pipeline against already-created a and b buffers:
+// allocate dst+dims+staging, bind, dispatch the M×N grid, copy dst→staging,
+// submit, and block on the readback. Shared by MatmulBT (fresh b) and
+// MatmulBTResident (resident b).
+func (c *Context) run(aBuf, bBuf *wgpu.Buffer, M, K, N int) ([]float32, error) {
+	dstSize := uint64(M * N * 4)
 
 	dstBuf, err := c.device.CreateBuffer(&wgpu.BufferDescriptor{
 		Label: "dst", Size: dstSize,

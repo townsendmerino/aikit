@@ -112,7 +112,7 @@ validates every schema entry across all layers and returned no error. Shapes
 | decoder M6 sampler + streaming demo | ✅ done 2026-06-02 — temp/top-k/top-p sampling, `demo/gemma` generates from a real checkpoint; see `milestones/M6-sampler.md` |
 | decoder M7 perf (shared SIMD linalg) | ✅ done 2026-06-02 — dot kernels lifted to `internal/linalg`, decoder matmul parallel; ~18 tok/s on Ryzen 7 3700X (>10 target); see `milestones/M7-perf.md` |
 | decoder M8 int8 quant | ✅ done 2026-06-02 — `--quant int8`, argmax preserved (cosine 0.9996), weights 3.98× smaller; int4 + streaming-quant follow-ups; see `milestones/M8-quant.md` |
-| decoder M9 (WebGPU backend) | not started — for the checkpoints CPU can't serve |
+| decoder M9 WebGPU backend | ✅ done 2026-06-02 — `--backend webgpu` runs on RTX 2070 (Vulkan), resident weights, argmax parity; trails CPU for M=1 decode (latency-bound); see `milestones/M9-webgpu.md` |
 
 Reference docs: [`cpu-acceleration.md`](cpu-acceleration.md),
 [`gemma-decoder-plan.md`](gemma-decoder-plan.md),
