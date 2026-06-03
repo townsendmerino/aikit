@@ -1,0 +1,481 @@
+package embed
+
+import (
+	"encoding/binary"
+	"fmt"
+	"math"
+	"os"
+)
+
+// GGUF reader (multi-model-plan G7) — the llama.cpp container format that makes
+// quantized models laptop-runnable. This parses the header, metadata key-values
+// (which carry the architecture config), and the tensor directory, and
+// dequantizes the common block types to float32. Only the types this build
+// needs are implemented (F32, F16, Q8_0, Q4_0); the K-quants (Q4_K/Q6_K) are a
+// follow-up — Tensor returns a clear error for an unimplemented type.
+//
+// Format reference: https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
+
+const ggufMagic = 0x46554747 // "GGUF" little-endian
+
+// ggml tensor (quantization) types.
+const (
+	ggmlTypeF32  uint32 = 0
+	ggmlTypeF16  uint32 = 1
+	ggmlTypeQ4_0 uint32 = 2
+	ggmlTypeQ8_0 uint32 = 8
+	ggmlTypeQ4_K uint32 = 12
+	ggmlTypeQ6_K uint32 = 14
+)
+
+// qkK is the K-quant super-block size (elements per super-block).
+const qkK = 256
+
+// gguf metadata value types.
+const (
+	ggufUint8 uint32 = iota
+	ggufInt8
+	ggufUint16
+	ggufInt16
+	ggufUint32
+	ggufInt32
+	ggufFloat32
+	ggufBool
+	ggufString
+	ggufArray
+	ggufUint64
+	ggufInt64
+	ggufFloat64
+)
+
+type ggufTensorInfo struct {
+	dims   []uint64
+	typ    uint32
+	offset uint64 // relative to the data section start
+}
+
+// GGUFFile is a parsed GGUF checkpoint: its metadata (architecture config,
+// tokenizer, …) and a directory of dequantizable tensors over the mapped data.
+type GGUFFile struct {
+	Metadata map[string]any
+	tensors  map[string]ggufTensorInfo
+	data     []byte // the tensor-data section (file bytes after the aligned header)
+}
+
+// gcur is a little-endian cursor over a byte slice with bounds checks.
+type gcur struct {
+	b   []byte
+	pos int
+	err error
+}
+
+func (c *gcur) need(n int) bool {
+	if c.err != nil {
+		return false
+	}
+	if c.pos+n > len(c.b) {
+		c.err = fmt.Errorf("gguf: unexpected EOF (need %d at %d of %d)", n, c.pos, len(c.b))
+		return false
+	}
+	return true
+}
+
+func (c *gcur) u8() uint8 {
+	if !c.need(1) {
+		return 0
+	}
+	v := c.b[c.pos]
+	c.pos++
+	return v
+}
+func (c *gcur) u16() uint16 {
+	if !c.need(2) {
+		return 0
+	}
+	v := binary.LittleEndian.Uint16(c.b[c.pos:])
+	c.pos += 2
+	return v
+}
+func (c *gcur) u32() uint32 {
+	if !c.need(4) {
+		return 0
+	}
+	v := binary.LittleEndian.Uint32(c.b[c.pos:])
+	c.pos += 4
+	return v
+}
+func (c *gcur) u64() uint64 {
+	if !c.need(8) {
+		return 0
+	}
+	v := binary.LittleEndian.Uint64(c.b[c.pos:])
+	c.pos += 8
+	return v
+}
+func (c *gcur) f32() float32 { return math.Float32frombits(c.u32()) }
+func (c *gcur) f64() float64 { return math.Float64frombits(c.u64()) }
+
+// str reads a gguf string: uint64 length + raw bytes.
+func (c *gcur) str() string {
+	n := int(c.u64())
+	if !c.need(n) {
+		return ""
+	}
+	s := string(c.b[c.pos : c.pos+n])
+	c.pos += n
+	return s
+}
+
+// value reads one metadata value of the given type (arrays recurse).
+func (c *gcur) value(vtype uint32) any {
+	switch vtype {
+	case ggufUint8:
+		return c.u8()
+	case ggufInt8:
+		return int8(c.u8())
+	case ggufUint16:
+		return c.u16()
+	case ggufInt16:
+		return int16(c.u16())
+	case ggufUint32:
+		return c.u32()
+	case ggufInt32:
+		return int32(c.u32())
+	case ggufFloat32:
+		return c.f32()
+	case ggufBool:
+		return c.u8() != 0
+	case ggufString:
+		return c.str()
+	case ggufUint64:
+		return c.u64()
+	case ggufInt64:
+		return int64(c.u64())
+	case ggufFloat64:
+		return c.f64()
+	case ggufArray:
+		et := c.u32()
+		n := int(c.u64())
+		arr := make([]any, 0, n)
+		for i := 0; i < n && c.err == nil; i++ {
+			arr = append(arr, c.value(et))
+		}
+		return arr
+	default:
+		c.err = fmt.Errorf("gguf: unknown metadata value type %d", vtype)
+		return nil
+	}
+}
+
+// OpenGGUF reads and parses a .gguf file. The whole file is read into memory;
+// tensor data is dequantized into fresh slices by Tensor, so callers needn't
+// retain the file.
+func OpenGGUF(path string) (*GGUFFile, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("gguf: %w", err)
+	}
+	c := &gcur{b: raw}
+	if c.u32() != ggufMagic {
+		return nil, fmt.Errorf("gguf: bad magic (not a GGUF file)")
+	}
+	version := c.u32()
+	if version != 2 && version != 3 {
+		return nil, fmt.Errorf("gguf: unsupported version %d (want 2 or 3)", version)
+	}
+	tensorCount := c.u64()
+	kvCount := c.u64()
+
+	g := &GGUFFile{Metadata: make(map[string]any, kvCount), tensors: make(map[string]ggufTensorInfo, tensorCount)}
+	for i := uint64(0); i < kvCount && c.err == nil; i++ {
+		key := c.str()
+		vtype := c.u32()
+		g.Metadata[key] = c.value(vtype)
+	}
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	names := make([]string, 0, tensorCount)
+	for i := uint64(0); i < tensorCount && c.err == nil; i++ {
+		name := c.str()
+		nd := int(c.u32())
+		dims := make([]uint64, nd)
+		for d := 0; d < nd; d++ {
+			dims[d] = c.u64()
+		}
+		typ := c.u32()
+		off := c.u64()
+		g.tensors[name] = ggufTensorInfo{dims: dims, typ: typ, offset: off}
+		names = append(names, name)
+	}
+	if c.err != nil {
+		return nil, c.err
+	}
+
+	// The tensor data section begins at the next `alignment` boundary after the
+	// header (default 32; overridable via general.alignment).
+	align := uint64(32)
+	if a, ok := g.Uint("general.alignment"); ok && a > 0 {
+		align = a
+	}
+	start := uint64(c.pos)
+	if start%align != 0 {
+		start += align - start%align
+	}
+	if start > uint64(len(raw)) {
+		return nil, fmt.Errorf("gguf: data section start %d past EOF %d", start, len(raw))
+	}
+	g.data = raw[start:]
+	return g, nil
+}
+
+// Names returns the tensor names present in the file.
+func (g *GGUFFile) Names() []string {
+	out := make([]string, 0, len(g.tensors))
+	for n := range g.tensors {
+		out = append(out, n)
+	}
+	return out
+}
+
+// Has reports whether a tensor is present.
+func (g *GGUFFile) Has(name string) bool { _, ok := g.tensors[name]; return ok }
+
+// Tensor dequantizes a tensor to float32 and returns its dimensions in GGUF
+// order (dims[0] is the fastest/innermost = input features; dims[1] the row
+// count = output features). The f32 data is row-major over the outer dims, i.e.
+// for a 2-D weight it is [out, in] — the layout decoder.weightMat expects.
+func (g *GGUFFile) Tensor(name string) (dims []int, data []float32, err error) {
+	info, ok := g.tensors[name]
+	if !ok {
+		return nil, nil, fmt.Errorf("gguf: tensor %q not found", name)
+	}
+	n := 1
+	dims = make([]int, len(info.dims))
+	for i, d := range info.dims {
+		dims[i] = int(d)
+		n *= int(d)
+	}
+	raw, err := g.tensorBytes(info, n)
+	if err != nil {
+		return nil, nil, fmt.Errorf("gguf: tensor %q: %w", name, err)
+	}
+	switch info.typ {
+	case ggmlTypeF32:
+		data = make([]float32, n)
+		for i := 0; i < n; i++ {
+			data[i] = math.Float32frombits(binary.LittleEndian.Uint32(raw[4*i:]))
+		}
+	case ggmlTypeF16:
+		data = make([]float32, n)
+		for i := 0; i < n; i++ {
+			data[i] = halfBitsToF32(binary.LittleEndian.Uint16(raw[2*i:]))
+		}
+	case ggmlTypeQ8_0:
+		data = dequantQ8_0(raw, n)
+	case ggmlTypeQ4_0:
+		data = dequantQ4_0(raw, n)
+	case ggmlTypeQ6_K:
+		data = dequantQ6K(raw, n)
+	case ggmlTypeQ4_K:
+		data = dequantQ4K(raw, n)
+	default:
+		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0)", name, info.typ)
+	}
+	return dims, data, nil
+}
+
+// tensorBytes returns the raw bytes for a tensor, validating the element count
+// against the type's block size.
+func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
+	var nbytes int
+	switch info.typ {
+	case ggmlTypeF32:
+		nbytes = n * 4
+	case ggmlTypeF16:
+		nbytes = n * 2
+	case ggmlTypeQ8_0, ggmlTypeQ4_0:
+		if n%32 != 0 {
+			return nil, fmt.Errorf("element count %d not a multiple of 32 (block size)", n)
+		}
+		blocks := n / 32
+		if info.typ == ggmlTypeQ8_0 {
+			nbytes = blocks * 34 // 2-byte f16 scale + 32 int8
+		} else {
+			nbytes = blocks * 18 // 2-byte f16 scale + 16 packed nibbles
+		}
+	case ggmlTypeQ6_K, ggmlTypeQ4_K:
+		if n%qkK != 0 {
+			return nil, fmt.Errorf("element count %d not a multiple of %d (super-block)", n, qkK)
+		}
+		sb := n / qkK
+		if info.typ == ggmlTypeQ6_K {
+			nbytes = sb * 210 // ql[128] + qh[64] + scales[16] + d(f16)
+		} else {
+			nbytes = sb * 144 // d + dmin (f16 each) + scales[12] + qs[128]
+		}
+	default:
+		return nil, fmt.Errorf("unsupported ggml type %d", info.typ)
+	}
+	if info.offset+uint64(nbytes) > uint64(len(g.data)) {
+		return nil, fmt.Errorf("data range [%d:%d] past section end %d", info.offset, info.offset+uint64(nbytes), len(g.data))
+	}
+	return g.data[info.offset : info.offset+uint64(nbytes)], nil
+}
+
+// dequantQ8_0: blocks of 32 — one f16 scale d then 32 int8 q; value = d*q.
+func dequantQ8_0(raw []byte, n int) []float32 {
+	out := make([]float32, n)
+	for b := 0; b*32 < n; b++ {
+		base := b * 34
+		d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+		qs := raw[base+2 : base+34]
+		for i := 0; i < 32; i++ {
+			out[b*32+i] = float32(int8(qs[i])) * d
+		}
+	}
+	return out
+}
+
+// dequantQ4_0: blocks of 32 — one f16 scale d then 16 bytes of packed nibbles;
+// low nibble of byte i is element i, high nibble is element i+16, each
+// recentered by -8: value = d*(nibble-8).
+func dequantQ4_0(raw []byte, n int) []float32 {
+	out := make([]float32, n)
+	for b := 0; b*32 < n; b++ {
+		base := b * 18
+		d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+		qs := raw[base+2 : base+18]
+		for i := 0; i < 16; i++ {
+			v := qs[i]
+			out[b*32+i] = float32(int(v&0x0F)-8) * d
+			out[b*32+i+16] = float32(int(v>>4)-8) * d
+		}
+	}
+	return out
+}
+
+// dequantQ6K dequantizes ggml's Q6_K (6-bit K-quant). Each 256-element
+// super-block (210 bytes) is: ql[128] (low 4 bits), qh[64] (high 2 bits),
+// scales[16] (int8), d (f16 super-scale). Mirrors ggml's dequantize_row_q6_K:
+// a 6-bit quant q∈[0,63] recentered by -32, scaled by its sub-block int8 scale
+// and the super-block d.
+func dequantQ6K(raw []byte, n int) []float32 {
+	out := make([]float32, n)
+	for sb := 0; sb*qkK < n; sb++ {
+		base := sb * 210
+		ql := raw[base : base+128]
+		qh := raw[base+128 : base+192]
+		sc := raw[base+192 : base+208] // int8 scales
+		d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+208:]))
+		y := out[sb*qkK : sb*qkK+qkK]
+		for chunk := 0; chunk < 2; chunk++ {
+			n0 := chunk * 128
+			qlo := ql[chunk*64:]
+			qho := qh[chunk*32:]
+			sco := sc[chunk*8:]
+			for l := 0; l < 32; l++ {
+				is := l / 16
+				q1 := int8((qlo[l]&0x0F)|(((qho[l]>>0)&3)<<4)) - 32
+				q2 := int8((qlo[l+32]&0x0F)|(((qho[l]>>2)&3)<<4)) - 32
+				q3 := int8((qlo[l]>>4)|(((qho[l]>>4)&3)<<4)) - 32
+				q4 := int8((qlo[l+32]>>4)|(((qho[l]>>6)&3)<<4)) - 32
+				y[n0+l+0] = d * float32(int8(sco[is+0])) * float32(q1)
+				y[n0+l+32] = d * float32(int8(sco[is+2])) * float32(q2)
+				y[n0+l+64] = d * float32(int8(sco[is+4])) * float32(q3)
+				y[n0+l+96] = d * float32(int8(sco[is+6])) * float32(q4)
+			}
+		}
+	}
+	return out
+}
+
+// dequantQ4K dequantizes ggml's Q4_K (4-bit K-quant). Each 256-element
+// super-block (144 bytes) is: d (f16), dmin (f16), scales[12] (6-bit scales and
+// mins, packed), qs[128] (4-bit quants). Mirrors ggml's dequantize_row_q4_K:
+// y = d·scale·q − dmin·min, with scale/min unpacked by get_scale_min_k4.
+func dequantQ4K(raw []byte, n int) []float32 {
+	out := make([]float32, n)
+	for sb := 0; sb*qkK < n; sb++ {
+		base := sb * 144
+		d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+		dmin := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))
+		scales := raw[base+4 : base+16]
+		qs := raw[base+16 : base+144]
+		y := out[sb*qkK : sb*qkK+qkK]
+		yi := 0
+		for j := 0; j < 4; j++ { // four 64-element groups
+			is := 2 * j
+			sc1, m1 := q4kScaleMin(is+0, scales)
+			sc2, m2 := q4kScaleMin(is+1, scales)
+			d1, off1 := d*float32(sc1), dmin*float32(m1)
+			d2, off2 := d*float32(sc2), dmin*float32(m2)
+			q := qs[j*32 : j*32+32]
+			for l := 0; l < 32; l++ {
+				y[yi] = d1*float32(q[l]&0x0F) - off1
+				yi++
+			}
+			for l := 0; l < 32; l++ {
+				y[yi] = d2*float32(q[l]>>4) - off2
+				yi++
+			}
+		}
+	}
+	return out
+}
+
+// q4kScaleMin unpacks the j-th 6-bit scale and min from a Q4_K super-block's
+// 12-byte scales array (ggml's get_scale_min_k4).
+func q4kScaleMin(j int, q []byte) (scale, min uint8) {
+	if j < 4 {
+		return q[j] & 63, q[j+4] & 63
+	}
+	scale = (q[j+4] & 0x0F) | ((q[j-4] >> 6) << 4)
+	min = (q[j+4] >> 4) | ((q[j] >> 6) << 4)
+	return scale, min
+}
+
+// --- typed metadata accessors ---
+
+// Str returns a string metadata value.
+func (g *GGUFFile) Str(key string) (string, bool) {
+	v, ok := g.Metadata[key].(string)
+	return v, ok
+}
+
+// Uint returns an integer metadata value, accepting any of GGUF's int widths.
+func (g *GGUFFile) Uint(key string) (uint64, bool) {
+	switch v := g.Metadata[key].(type) {
+	case uint8:
+		return uint64(v), true
+	case uint16:
+		return uint64(v), true
+	case uint32:
+		return uint64(v), true
+	case uint64:
+		return v, true
+	case int8:
+		return uint64(v), true
+	case int16:
+		return uint64(v), true
+	case int32:
+		return uint64(v), true
+	case int64:
+		return uint64(v), true
+	default:
+		return 0, false
+	}
+}
+
+// Float returns a floating-point metadata value (f32 or f64).
+func (g *GGUFFile) Float(key string) (float64, bool) {
+	switch v := g.Metadata[key].(type) {
+	case float32:
+		return float64(v), true
+	case float64:
+		return v, true
+	default:
+		return 0, false
+	}
+}

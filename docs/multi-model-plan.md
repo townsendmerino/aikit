@@ -240,17 +240,69 @@ new fixture per family). Parallel to M7–M9.
   scale, 1/√hd scale, untied head, single-base RoPE (QK-norm came free from G0).
   See [`milestones/G2-qwen3.md`](milestones/G2-qwen3.md). **Qwen3 dense is the
   coding-demo target** (pending G3 tokenizer). Llama/Mistral/Qwen2 are a small
-  delta (Qwen2 adds QKV bias) on this schema — follow-ups.
-- **G3 — byte-level BPE tokenizer** (§5.2). Acceptance: HF-exact id parity for
-  Llama-3 and Qwen tokenizers.
-- **G4 — RoPE scaling + partial rotary + QK-norm-on-others.** llama3 / linear /
-  NTK / YaRN scaling; `partial_rotary_factor` (Phi); Qwen3 QK-norm. Acceptance:
-  long-context Llama-3.1 and Phi-3 parity.
-- **G5 — LayerNorm + non-gated MLP** (GPT-2/NeoX class) and untie the last
-  Gemma-only assumptions. Acceptance: GPT-2 small parity.
-- **G6 — MoE** (§6). Acceptance: Mixtral or Qwen-MoE greedy parity.
-- **G7 — quantized weights** (GGUF / GPTQ / AWQ): the format that makes the big
-  ones runnable on a laptop. Couples with M8.
+  delta (Qwen2 adds QKV bias) on this schema — follow-ups. **Llama dense DONE
+  2026-06-03:** `llama` adapter (Qwen3 minus QK-norm, `head_dim` derived from
+  hidden/heads, untied head) + `llamaTensorSchema`; TinyLlama-1.1B (Llama-2 arch)
+  matches HF at cosine 1−3e-13 (argmax ' Paris') through the generic forward.
+  Scaled RoPE (Llama-3.1+/3.2) landed in G4. **Qwen2/Qwen2.5 DONE 2026-06-03**
+  (the QKV-bias axis): `qwen2` adapter = llama descriptor + a `QKVBias` knob (q/k/v
+  projection bias, o_proj biasless) + `qwen2TensorSchema`; Qwen2.5-0.5B matches HF
+  at cosine 1−1e-12 (argmax ' Paris'), tokenizer ids HF-identical, generates
+  end-to-end. See [`milestones/G2b-qwen2.md`](milestones/G2b-qwen2.md). The
+  Llama/Mistral/Qwen2 "cheap wins" bucket is now **Llama ✓ Qwen2 ✓ Mistral ✓**.
+  Mistral (DONE 2026-06-03) is the llama descriptor with sliding-window attention
+  on every layer — Gemma's M5 window machinery, all-local rather than 5:1.
+  TinyMistral-248M matches HF at cosine 1−4e-14 over a 67-token prompt against a
+  32-token window (the window is genuinely exercised). See
+  [`milestones/G2c-mistral.md`](milestones/G2c-mistral.md).
+- **G3 — byte-level BPE tokenizer** (§5.2). ✅ **DONE 2026-06-02.** Pure-Go
+  byte-level BPE (NFC + hand-written GPT-2 split regex + byte→rune map +
+  `ignore_merges`) reproduces HF id-for-id on Qwen3: committed golden + a
+  throwaway 161,972-input differential, 0 mismatches; M2 Gemma golden
+  byte-identical (shared merge core). **Qwen3-1.7B now generates end-to-end in
+  pure Go** (`demo/gemma --model testdata/qwen3-1.7b`). See
+  [`milestones/G3-tokenizer.md`](milestones/G3-tokenizer.md). **Llama-3
+  tokenizer DONE 2026-06-03:** same pipeline (digit-run cap, no normalizer);
+  the only code change was teaching the merge parser the older flat
+  space-joined `["a b",…]` encoding alongside Qwen3's pair-array `[["a","b"],…]`.
+  Llama-3 matches HF id-for-id (committed golden, 20 cases); Gemma/Qwen3 goldens
+  unchanged.
+- **G4 — RoPE scaling + partial rotary.** ✅ **DONE 2026-06-03.** `rope_scaling`
+  resolved into a precomputed inv-freq table at load: **linear + llama3**
+  (Llama-3.1+/3.2) implemented; YaRN/longrope/dynamic rejected loudly.
+  `partial_rotary_factor` (Phi) wired through `applyRoPE` + unit-tested.
+  Llama-3.2-1B (llama3 factor 32) matches HF at cosine 1−8e-13 — and the Go
+  byte-level tokenizer reproduces its ids, so this is the first **full Llama-3
+  pure-Go end-to-end**. QK-norm-on-others was already covered (Qwen3, from G0).
+  See [`milestones/G4-rope-scaling.md`](milestones/G4-rope-scaling.md). Open: a
+  Phi *family* adapter (QKV bias + fused gate_up) and YaRN's mscale.
+- **G5 — LayerNorm + non-gated MLP** (GPT-2/NeoX class). ✅ **DONE 2026-06-03.**
+  GPT-2 small through the generic forward at cosine 1−7e-14 (argmax ' the'),
+  generates end-to-end in pure Go. Five new descriptor knobs — LayerNorm (with
+  bias), learned absolute positions (RoPE skipped), non-gated GELU MLP (with
+  biases), attention output bias, and the Conv1D `[in,out]` weight layout
+  (transposed on load) + fused `c_attn` split — all feeding the same forward
+  pass via `normalize()`/`mlp()` dispatch. Needed a dedicated `buildGPT2Weights`
+  loader (the layout doesn't fit the per-suffix schema). The byte-level tokenizer
+  now also accepts GPT-2's typeless `tokenizer.json`. See
+  [`milestones/G5-gpt2.md`](milestones/G5-gpt2.md).
+- **G6 — MoE** (§6). ✅ **DONE 2026-06-03.** Router + sparse experts replace the
+  dense FFN as a third `mlp()` variant; Mixtral-tiny (8 experts, top-2) matches HF
+  at cosine 1−1e-13. Exactly HF's order: softmax over all experts → top-k →
+  renormalize → weighted sum of the chosen SwiGLU experts. The loader gained a
+  router + per-expert branch (int8-quantizable). Shared-expert variants
+  (Qwen-MoE/DeepSeek) are a couple more `MoEConfig` knobs on this base. See
+  [`milestones/G6-moe.md`](milestones/G6-moe.md).
+- **G7 — quantized weights** (GGUF / GPTQ / AWQ). ✅ **GGUF DONE 2026-06-03.**
+  Pure-Go GGUF reader (`embed/gguf.go`): container parse + block dequant for
+  F32/F16/Q8_0/Q4_0/Q4_K/Q6_K. A `.gguf` path is self-describing (metadata →
+  Config, tensors → weights) and feeds the same forward; the one subtlety is
+  un-permuting llama.cpp's interleaved q/k RoPE layout back to HF rotate_half.
+  TinyLlama Q8_0/Q4_0/**Q4_K_M** match the f32 oracle at cosine
+  0.99996/0.9944/0.9975 (argmax ' Paris'). Q4_K_M is the dominant laptop quant,
+  so real ecosystem files load. See [`milestones/G7-gguf.md`](milestones/G7-gguf.md).
+  Remaining G7: more GGUF quant types (Q5_K/Q3_K/IQ*), the GGUF tokenizer, other
+  GGUF architectures, and GPTQ/AWQ (safetensors-resident int4).
 
 Order rationale: **G0→G1→G2→G3 unlocks the majority of community checkpoints**
 (the Llama/Mistral/Qwen universe). G4–G5 mop up the long tail. G6–G7 are the

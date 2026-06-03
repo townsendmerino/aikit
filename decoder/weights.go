@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 
 	"github.com/townsendmerino/aikit/embed"
 )
@@ -23,30 +24,58 @@ type LayerWeights struct {
 	KProj weightMat // [NumKVHeads*HeadDim, HiddenDim]
 	VProj weightMat // [NumKVHeads*HeadDim, HiddenDim]
 	OProj weightMat // [HiddenDim, NumHeads*HeadDim]
-	// Norms (elementwise → stay f32).
-	QNorm        []float32 // [HeadDim] QK-norm on queries (Gemma 3)
-	KNorm        []float32 // [HeadDim] QK-norm on keys (Gemma 3)
-	PreAttnNorm  []float32 // [HiddenDim] input RMSNorm
-	PostAttnNorm []float32 // [HiddenDim] RMSNorm after attention, before residual add
+	// Projection biases ([out]; Qwen2 q/k/v only). Nil when the family/checkpoint
+	// has no bias.
+	QBias []float32 // [NumHeads*HeadDim]
+	KBias []float32 // [NumKVHeads*HeadDim]
+	VBias []float32 // [NumKVHeads*HeadDim]
+	OBias []float32 // [HiddenDim] attention output-projection bias (GPT-2)
+	// Norms (elementwise → stay f32). The *Bias slices are set only for
+	// LayerNorm families (GPT-2); RMSNorm leaves them nil.
+	QNorm           []float32 // [HeadDim] QK-norm on queries (Gemma 3)
+	KNorm           []float32 // [HeadDim] QK-norm on keys (Gemma 3)
+	PreAttnNorm     []float32 // [HiddenDim] input norm
+	PreAttnNormBias []float32 // [HiddenDim] LayerNorm bias (GPT-2 ln_1)
+	PostAttnNorm    []float32 // [HiddenDim] norm after attention, before residual add
 
-	// MLP (GeGLU): projections quantizable, norms f32.
-	GateProj    weightMat // [IntermediateDim, HiddenDim]
-	UpProj      weightMat // [IntermediateDim, HiddenDim]
-	DownProj    weightMat // [HiddenDim, IntermediateDim]
-	PreMLPNorm  []float32 // [HiddenDim]
-	PostMLPNorm []float32 // [HiddenDim]
+	// MLP: projections quantizable, norms f32. UpBias/DownBias are set only for
+	// the non-gated MLP (GPT-2 c_fc/c_proj); gated families leave them nil.
+	GateProj       weightMat // [IntermediateDim, HiddenDim] (unused for non-gated MLP)
+	UpProj         weightMat // [IntermediateDim, HiddenDim]
+	UpBias         []float32 // [IntermediateDim] (GPT-2 c_fc bias)
+	DownProj       weightMat // [HiddenDim, IntermediateDim]
+	DownBias       []float32 // [HiddenDim] (GPT-2 c_proj bias)
+	PreMLPNorm     []float32 // [HiddenDim]
+	PreMLPNormBias []float32 // [HiddenDim] LayerNorm bias (GPT-2 ln_2)
+	PostMLPNorm    []float32 // [HiddenDim]
+
+	// Mixture-of-experts FFN (Mixtral; set only when arch.MoE != nil). Router
+	// scores experts; each expert is a gated (SwiGLU) MLP. The dense GateProj/
+	// UpProj/DownProj above are unused in that case.
+	Router  weightMat       // [NumExperts, HiddenDim] router/gate logits
+	Experts []expertWeights // [NumExperts] gated MLPs
+}
+
+// expertWeights is one MoE expert: a gated (SwiGLU) MLP with no biases.
+// Mixtral names these w1=gate, w3=up, w2=down.
+type expertWeights struct {
+	Gate weightMat // [IntermediateDim, HiddenDim] (w1)
+	Up   weightMat // [IntermediateDim, HiddenDim] (w3)
+	Down weightMat // [HiddenDim, IntermediateDim] (w2)
 }
 
 // Weights is the immutable per-checkpoint bundle. Embeddings are TIED:
 // Embed doubles as the LM head (logits = h · Embedᵀ), so there is no
 // separate output projection tensor.
 type Weights struct {
-	Cfg       Config
-	arch      *Architecture // resolved descriptor the forward pass reads
-	Embed     weightMat     // [VocabSize, HiddenDim] — input embedding (AND tied LM head when LMHead unset)
-	LMHead    weightMat     // [VocabSize, HiddenDim] — separate output head (untied families); zero value when tied
-	FinalNorm []float32     // [HiddenDim] RMSNorm before the LM head
-	Layers    []LayerWeights
+	Cfg           Config
+	arch          *Architecture // resolved descriptor the forward pass reads
+	Embed         weightMat     // [VocabSize, HiddenDim] — input embedding (AND tied LM head when LMHead unset)
+	LMHead        weightMat     // [VocabSize, HiddenDim] — separate output head (untied families); zero value when tied
+	PosEmbed      weightMat     // [MaxPositions, HiddenDim] — learned position embedding (GPT-2); zero value otherwise
+	FinalNorm     []float32     // [HiddenDim] final norm before the LM head
+	FinalNormBias []float32     // [HiddenDim] final LayerNorm bias (GPT-2 ln_f)
+	Layers        []LayerWeights
 
 	st *embed.SafetensorsFile // retained so alias-backed slices stay valid
 }
@@ -61,6 +90,13 @@ func (w *Weights) matmulWeights() []*weightMat {
 	for i := range w.Layers {
 		l := &w.Layers[i]
 		ms = append(ms, &l.QProj, &l.KProj, &l.VProj, &l.OProj, &l.GateProj, &l.UpProj, &l.DownProj)
+		if l.Router.rows > 0 {
+			ms = append(ms, &l.Router)
+		}
+		for e := range l.Experts {
+			ex := &l.Experts[e]
+			ms = append(ms, &ex.Gate, &ex.Up, &ex.Down)
+		}
 	}
 	return ms
 }
@@ -89,6 +125,9 @@ func (w *Weights) quantizeInt8() {
 // Use LoadWeightsFromFS for fs.FS-backed (MapFS, embed.FS) paths — that
 // route stays heap-backed because fs.FS doesn't expose a file descriptor.
 func LoadWeights(dir string) (*Weights, error) {
+	if strings.HasSuffix(dir, ".gguf") {
+		return loadGGUFWeights(dir) // quantized llama.cpp checkpoint (G7)
+	}
 	cfg, err := loadConfig(os.DirFS(dir), "config.json")
 	if err != nil {
 		return nil, err
@@ -170,9 +209,13 @@ func openCheckpointFromFS(fsys fs.FS, dir string) (*embed.SafetensorsFile, error
 // tensor-name + shape contract — a schema change is one edit, not two.
 // Mirrors encoder.buildWeightsFromSafetensors.
 func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchema, st *embed.SafetensorsFile) (*Weights, error) {
+	if arch.Name == "gpt2" {
+		return buildGPT2Weights(cfg, arch, st) // Conv1D layout + fused QKV need a dedicated path
+	}
 	hd := cfg.HiddenDim
-	qDim := cfg.NumHeads * cfg.HeadDim    // query projection rows
-	kvDim := cfg.NumKVHeads * cfg.HeadDim // key/value projection rows (narrower under GQA)
+	headDim := arch.HeadDim           // resolved (Llama configs may omit head_dim; arch derives it)
+	qDim := cfg.NumHeads * headDim    // query projection rows
+	kvDim := cfg.NumKVHeads * headDim // key/value projection rows (narrower under GQA)
 
 	w := &Weights{Cfg: *cfg, arch: arch, st: st, Layers: make([]LayerWeights, cfg.NumLayers)}
 	var err error
@@ -219,12 +262,24 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 		if l.OProj, err = loadMat(st, tensorName(i, s.OProj), hd, qDim); err != nil {
 			return nil, err
 		}
-		// QK-norm (Gemma 3, Qwen3): RMSNorm over head_dim. Absent → empty suffix.
-		if s.QNorm != "" {
-			if l.QNorm, err = loadF32(st, tensorName(i, s.QNorm), []int{cfg.HeadDim}); err != nil {
+		// Projection bias (Qwen2 q/k/v; o_proj stays biasless). Absent → empty suffix.
+		if s.QBias != "" {
+			if l.QBias, err = loadF32(st, tensorName(i, s.QBias), []int{qDim}); err != nil {
 				return nil, err
 			}
-			if l.KNorm, err = loadF32(st, tensorName(i, s.KNorm), []int{cfg.HeadDim}); err != nil {
+			if l.KBias, err = loadF32(st, tensorName(i, s.KBias), []int{kvDim}); err != nil {
+				return nil, err
+			}
+			if l.VBias, err = loadF32(st, tensorName(i, s.VBias), []int{kvDim}); err != nil {
+				return nil, err
+			}
+		}
+		// QK-norm (Gemma 3, Qwen3): RMSNorm over head_dim. Absent → empty suffix.
+		if s.QNorm != "" {
+			if l.QNorm, err = loadF32(st, tensorName(i, s.QNorm), []int{headDim}); err != nil {
+				return nil, err
+			}
+			if l.KNorm, err = loadF32(st, tensorName(i, s.KNorm), []int{headDim}); err != nil {
 				return nil, err
 			}
 		}
@@ -240,6 +295,27 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 		}
 		if l.PostMLPNorm, err = optNorm(i, s.PostMLPNorm); err != nil {
 			return nil, err
+		}
+		// FFN: sparse MoE (Mixtral) or dense gated MLP. The schema's MoE name
+		// templates carry a %d for the expert index.
+		if arch.MoE != nil {
+			if l.Router, err = loadMat(st, tensorName(i, s.Router), arch.MoE.NumExperts, hd); err != nil {
+				return nil, err
+			}
+			l.Experts = make([]expertWeights, arch.MoE.NumExperts)
+			for e := 0; e < arch.MoE.NumExperts; e++ {
+				ex := &l.Experts[e]
+				if ex.Gate, err = loadMat(st, tensorName(i, fmt.Sprintf(s.ExpertGate, e)), cfg.IntermediateDim, hd); err != nil {
+					return nil, err
+				}
+				if ex.Up, err = loadMat(st, tensorName(i, fmt.Sprintf(s.ExpertUp, e)), cfg.IntermediateDim, hd); err != nil {
+					return nil, err
+				}
+				if ex.Down, err = loadMat(st, tensorName(i, fmt.Sprintf(s.ExpertDown, e)), hd, cfg.IntermediateDim); err != nil {
+					return nil, err
+				}
+			}
+			continue
 		}
 		// Gated MLP (GeGLU / SwiGLU — same weights, activation differs).
 		if l.GateProj, err = loadMat(st, tensorName(i, s.GateProj), cfg.IntermediateDim, hd); err != nil {
@@ -329,10 +405,15 @@ type tensorSchema struct {
 	FinalNorm string
 	// per-layer suffixes passed to tensorName(layer, suffix); "" = absent
 	QProj, KProj, VProj, OProj string
+	QBias, KBias, VBias        string // "" = no projection bias (Qwen2 sets q/k/v)
 	QNorm, KNorm               string // "" = no QK-norm
 	PreAttnNorm, PostAttnNorm  string
 	GateProj, UpProj, DownProj string
 	PreMLPNorm, PostMLPNorm    string
+	// MoE (Mixtral): router + per-expert gate/up/down. The Expert* templates
+	// contain a single %d for the expert index. Empty ⇒ dense FFN.
+	Router                           string
+	ExpertGate, ExpertUp, ExpertDown string
 }
 
 // gemma3TensorSchema: tied head, 4-norm sandwich, QK-norm.
@@ -375,4 +456,190 @@ var qwen3TensorSchema = tensorSchema{
 	DownProj:     "mlp.down_proj.weight",
 	PreMLPNorm:   "post_attention_layernorm.weight", // HF name; positionally the pre-MLP norm
 	PostMLPNorm:  "",                                // Pre2: no post-MLP norm
+}
+
+// llamaTensorSchema: Llama-2/3 dense. Identical to qwen3TensorSchema except
+// Llama has no QK-norm tensors (QNorm/KNorm empty) — RoPE applies to raw q/k.
+// Same Pre2 norm layout and SwiGLU MLP; LM head tied (small) or untied (8B+),
+// resolved from lm_head.weight presence at load.
+var llamaTensorSchema = tensorSchema{
+	Embed:        "model.embed_tokens.weight",
+	LMHead:       "lm_head.weight",
+	FinalNorm:    "model.norm.weight",
+	QProj:        "self_attn.q_proj.weight",
+	KProj:        "self_attn.k_proj.weight",
+	VProj:        "self_attn.v_proj.weight",
+	OProj:        "self_attn.o_proj.weight",
+	QNorm:        "", // no QK-norm
+	KNorm:        "",
+	PreAttnNorm:  "input_layernorm.weight",
+	PostAttnNorm: "", // Pre2: no post-attn norm
+	GateProj:     "mlp.gate_proj.weight",
+	UpProj:       "mlp.up_proj.weight",
+	DownProj:     "mlp.down_proj.weight",
+	PreMLPNorm:   "post_attention_layernorm.weight", // HF name; positionally the pre-MLP norm
+	PostMLPNorm:  "",                                // Pre2: no post-MLP norm
+}
+
+// mixtralTensorSchema: Mixtral — the llama attention/norm names with a sparse
+// MoE FFN in place of the dense gate/up/down. Router + 8 experts (w1=gate,
+// w3=up, w2=down) per layer. No QK-norm, no bias, untied head.
+var mixtralTensorSchema = tensorSchema{
+	Embed:       "model.embed_tokens.weight",
+	LMHead:      "lm_head.weight",
+	FinalNorm:   "model.norm.weight",
+	QProj:       "self_attn.q_proj.weight",
+	KProj:       "self_attn.k_proj.weight",
+	VProj:       "self_attn.v_proj.weight",
+	OProj:       "self_attn.o_proj.weight",
+	PreAttnNorm: "input_layernorm.weight",
+	PreMLPNorm:  "post_attention_layernorm.weight",
+	Router:      "block_sparse_moe.gate.weight",
+	ExpertGate:  "block_sparse_moe.experts.%d.w1.weight",
+	ExpertUp:    "block_sparse_moe.experts.%d.w3.weight",
+	ExpertDown:  "block_sparse_moe.experts.%d.w2.weight",
+}
+
+// gpt2TensorSchema is a marker — GPT-2's fused c_attn + Conv1D weight layout
+// don't fit the per-suffix schema, so buildGPT2Weights handles its tensors
+// directly. Kept non-empty so the adapter returns a valid (if unused) schema.
+var gpt2TensorSchema = tensorSchema{Embed: "wte.weight"}
+
+// qwen2TensorSchema: Qwen2/Qwen2.5 dense. Identical to llamaTensorSchema plus
+// the q/k/v projection biases Qwen2 carries (o_proj stays biasless), and still
+// no QK-norm (that arrived in Qwen3). Pre2 norms, SwiGLU; tied head on the small
+// models / untied on the large, resolved from lm_head.weight presence at load.
+var qwen2TensorSchema = tensorSchema{
+	Embed:        "model.embed_tokens.weight",
+	LMHead:       "lm_head.weight",
+	FinalNorm:    "model.norm.weight",
+	QProj:        "self_attn.q_proj.weight",
+	KProj:        "self_attn.k_proj.weight",
+	VProj:        "self_attn.v_proj.weight",
+	OProj:        "self_attn.o_proj.weight",
+	QBias:        "self_attn.q_proj.bias",
+	KBias:        "self_attn.k_proj.bias",
+	VBias:        "self_attn.v_proj.bias",
+	QNorm:        "", // no QK-norm
+	KNorm:        "",
+	PreAttnNorm:  "input_layernorm.weight",
+	PostAttnNorm: "", // Pre2: no post-attn norm
+	GateProj:     "mlp.gate_proj.weight",
+	UpProj:       "mlp.up_proj.weight",
+	DownProj:     "mlp.down_proj.weight",
+	PreMLPNorm:   "post_attention_layernorm.weight", // HF name; positionally the pre-MLP norm
+	PostMLPNorm:  "",                                // Pre2: no post-MLP norm
+}
+
+// conv1DTransposed loads a GPT-2 Conv1D weight and returns it transposed to the
+// [out, in] row-major layout the rest of the decoder (MatmulBT) expects. GPT-2
+// stores these weights as [in, out] (nn.Conv1D, not nn.Linear), so a plain load
+// would compute the wrong product.
+func conv1DTransposed(st *embed.SafetensorsFile, name string, in, out int) ([]float32, error) {
+	src, err := loadF32(st, name, []int{in, out}) // [in, out] row-major
+	if err != nil {
+		return nil, err
+	}
+	dst := make([]float32, in*out)
+	for i := 0; i < in; i++ {
+		row := src[i*out : i*out+out]
+		for o := 0; o < out; o++ {
+			dst[o*in+i] = row[o]
+		}
+	}
+	return dst, nil
+}
+
+// buildGPT2Weights loads a GPT-2 checkpoint. GPT-2 diverges from the
+// schema-driven families on three axes the generic loader can't express: the
+// q/k/v projection is a single fused c_attn tensor (split into thirds here), all
+// projection weights use the Conv1D [in, out] layout (transposed on load), and
+// it carries a learned position table (wpe) plus LayerNorm biases. Tensor names
+// are the flat h.N.* / wte / wpe / ln_f scheme.
+func buildGPT2Weights(cfg *Config, arch *Architecture, st *embed.SafetensorsFile) (*Weights, error) {
+	hidden, inter, vocab := arch.HiddenDim, arch.IntermediateDim, arch.VocabSize
+	w := &Weights{Cfg: *cfg, arch: arch, st: st, Layers: make([]LayerWeights, arch.NumLayers)}
+	var err error
+
+	// Token + learned position embeddings (wte doubles as the tied LM head).
+	if w.Embed, err = loadMat(st, "wte.weight", vocab, hidden); err != nil {
+		return nil, err
+	}
+	if w.PosEmbed, err = loadMat(st, "wpe.weight", arch.MaxPositions, hidden); err != nil {
+		return nil, err
+	}
+	// Final LayerNorm (weight + bias).
+	if w.FinalNorm, err = loadF32(st, "ln_f.weight", []int{hidden}); err != nil {
+		return nil, err
+	}
+	if w.FinalNormBias, err = loadF32(st, "ln_f.bias", []int{hidden}); err != nil {
+		return nil, err
+	}
+
+	for i := 0; i < arch.NumLayers; i++ {
+		l := &w.Layers[i]
+		p := fmt.Sprintf("h.%d.", i)
+
+		// ln_1 (pre-attention LayerNorm).
+		if l.PreAttnNorm, err = loadF32(st, p+"ln_1.weight", []int{hidden}); err != nil {
+			return nil, err
+		}
+		if l.PreAttnNormBias, err = loadF32(st, p+"ln_1.bias", []int{hidden}); err != nil {
+			return nil, err
+		}
+
+		// Fused c_attn → q/k/v. Conv1D weight is [hidden, 3*hidden]; transpose to
+		// [3*hidden, hidden] then split the rows into thirds.
+		qkv, cerr := conv1DTransposed(st, p+"attn.c_attn.weight", hidden, 3*hidden)
+		if cerr != nil {
+			return nil, cerr
+		}
+		l.QProj = newWeightMat(qkv[0:hidden*hidden], hidden, hidden)
+		l.KProj = newWeightMat(qkv[hidden*hidden:2*hidden*hidden], hidden, hidden)
+		l.VProj = newWeightMat(qkv[2*hidden*hidden:3*hidden*hidden], hidden, hidden)
+		qkvB, berr := loadF32(st, p+"attn.c_attn.bias", []int{3 * hidden})
+		if berr != nil {
+			return nil, berr
+		}
+		l.QBias, l.KBias, l.VBias = qkvB[0:hidden], qkvB[hidden:2*hidden], qkvB[2*hidden:3*hidden]
+
+		// Attention output projection (Conv1D [hidden, hidden]) + bias.
+		oData, oerr := conv1DTransposed(st, p+"attn.c_proj.weight", hidden, hidden)
+		if oerr != nil {
+			return nil, oerr
+		}
+		l.OProj = newWeightMat(oData, hidden, hidden)
+		if l.OBias, err = loadF32(st, p+"attn.c_proj.bias", []int{hidden}); err != nil {
+			return nil, err
+		}
+
+		// ln_2 (pre-MLP LayerNorm).
+		if l.PreMLPNorm, err = loadF32(st, p+"ln_2.weight", []int{hidden}); err != nil {
+			return nil, err
+		}
+		if l.PreMLPNormBias, err = loadF32(st, p+"ln_2.bias", []int{hidden}); err != nil {
+			return nil, err
+		}
+
+		// Non-gated MLP: c_fc (up, [hidden, inter]) → gelu → c_proj (down,
+		// [inter, hidden]), both Conv1D, both with bias.
+		upData, uerr := conv1DTransposed(st, p+"mlp.c_fc.weight", hidden, inter)
+		if uerr != nil {
+			return nil, uerr
+		}
+		l.UpProj = newWeightMat(upData, inter, hidden)
+		if l.UpBias, err = loadF32(st, p+"mlp.c_fc.bias", []int{inter}); err != nil {
+			return nil, err
+		}
+		downData, derr := conv1DTransposed(st, p+"mlp.c_proj.weight", inter, hidden)
+		if derr != nil {
+			return nil, derr
+		}
+		l.DownProj = newWeightMat(downData, hidden, inter)
+		if l.DownBias, err = loadF32(st, p+"mlp.c_proj.bias", []int{hidden}); err != nil {
+			return nil, err
+		}
+	}
+	arch.TiedLMHead = true // GPT-2 has no separate lm_head tensor
+	return w, nil
 }

@@ -1,6 +1,11 @@
-// Command gemma-web serves a local, single-page web chat GUI for a Gemma 3
+// Command gemma-web serves a local, single-page web chat GUI for a decoder LLM
 // checkpoint running on aikit's pure-Go decoder. Pure standard library only
 // (net/http + Server-Sent Events); no external assets, no cgo.
+//
+// It runs any family the decoder + tokenizer support — Gemma 3 and the
+// byte-level (Qwen/Llama-3) families — picking the chat template (ChatStyle)
+// and stop tokens from the loaded checkpoint, so the same binary chats with
+// either.
 //
 // The model + tokenizer are loaded ONCE at startup and reused across requests;
 // the naive CPU backend is single-stream, so generations are serialized (a
@@ -9,6 +14,7 @@
 // Usage:
 //
 //	go run ./demo/gemma-web --model ~/models/gemma-3-270m
+//	go run ./demo/gemma-web --model ~/models/qwen3-1.7b
 //	# then open the printed http://127.0.0.1:8080
 package main
 
@@ -67,13 +73,13 @@ type server struct {
 func main() {
 	var (
 		addr     = flag.String("addr", "127.0.0.1:8080", "listen address")
-		modelDir = flag.String("model", "", "path to a Gemma 3 checkpoint dir (config.json + model.safetensors + tokenizer)")
+		modelDir = flag.String("model", "", "path to a checkpoint dir (config.json + model.safetensors + tokenizer); Gemma 3 or Qwen/Llama-3")
 		backend  = flag.String("backend", "cpu", "compute backend: cpu | webgpu")
 		quant    = flag.String("quant", "", "weight quantization: \"\" (f32) | int8")
 	)
 	flag.Parse()
 	if *modelDir == "" {
-		fmt.Fprintln(log.Writer(), "error: --model is required (path to a Gemma 3 checkpoint dir)")
+		fmt.Fprintln(log.Writer(), "error: --model is required (path to a checkpoint dir)")
 		flag.Usage()
 		return
 	}
@@ -146,7 +152,7 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 	defer s.mu.Unlock()
 
-	promptIDs, err := s.tk.Encode(buildPrompt(req), true /* addBOS */)
+	promptIDs, err := s.tk.Encode(buildPrompt(req, s.tk.ChatStyle()), true /* addBOS */)
 	if err != nil {
 		http.Error(w, "encode: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -163,12 +169,16 @@ func (s *server) handleChat(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
+	var stopIDs []int
+	if s.special.EndOfTurn >= 0 {
+		stopIDs = []int{s.special.EndOfTurn} // end the model turn cleanly (config EOS handled too)
+	}
 	s.stream(r.Context(), w, flusher, promptIDs, maxTok, decoder.SamplingParams{
 		Temperature: req.Temperature,
 		TopK:        req.TopK,
 		TopP:        req.TopP,
 		Seed:        req.Seed,
-		StopIDs:     []int{s.special.EndOfTurn}, // end the model turn cleanly (config EOS handled too)
+		StopIDs:     stopIDs,
 	})
 }
 
@@ -226,13 +236,22 @@ func (s *server) stream(ctx context.Context, w http.ResponseWriter, f http.Flush
 	})
 }
 
-// buildPrompt renders the conversation into Gemma's chat-template string. Each
-// turn is "<start_of_turn>{role}\n{content}<end_of_turn>\n" (role is "user" or
-// "model"); the system text is folded into the first user turn (Gemma has no
-// system role); it ends with "<start_of_turn>model\n" for the model to
-// continue. The <start_of_turn>/<end_of_turn> markers are added-vocabulary
-// tokens the tokenizer recognizes; BOS is prepended by Encode(addBOS=true).
-func buildPrompt(req chatRequest) string {
+// buildPrompt renders the conversation into the chat-template string the model
+// was trained on, picked from the tokenizer's special tokens (ChatStyle). The
+// turn markers are added-vocabulary tokens the tokenizer recognizes; BOS, if
+// the family uses one, is prepended by Encode(addBOS=true).
+func buildPrompt(req chatRequest, style tokenizer.ChatStyle) string {
+	if style == tokenizer.ChatStyleChatML {
+		return buildChatML(req)
+	}
+	return buildGemmaPrompt(req)
+}
+
+// buildGemmaPrompt renders Gemma's template: each turn is
+// "<start_of_turn>{role}\n{content}<end_of_turn>\n" (role "user" or "model"),
+// the system text folded into the first user turn (Gemma has no system role),
+// ending with "<start_of_turn>model\n" for the model to continue.
+func buildGemmaPrompt(req chatRequest) string {
 	var b strings.Builder
 	system := strings.TrimSpace(req.System)
 	firstUser := true
@@ -258,6 +277,36 @@ func buildPrompt(req chatRequest) string {
 		b.WriteString("<end_of_turn>\n")
 	}
 	b.WriteString("<start_of_turn>model\n")
+	return b.String()
+}
+
+// buildChatML renders ChatML — the template Qwen/Llama-3 and most byte-level
+// families use: each turn is "<|im_start|>{role}\n{content}<|im_end|>\n" with a
+// native system role, ending with "<|im_start|>assistant\n" for the model to
+// continue.
+func buildChatML(req chatRequest) string {
+	var b strings.Builder
+	turn := func(role, content string) {
+		b.WriteString("<|im_start|>")
+		b.WriteString(role)
+		b.WriteString("\n")
+		b.WriteString(content)
+		b.WriteString("<|im_end|>\n")
+	}
+	if system := strings.TrimSpace(req.System); system != "" {
+		turn("system", system)
+	}
+	for _, m := range req.Messages {
+		role := m.Role
+		if role == "model" {
+			role = "assistant"
+		}
+		if role != "user" && role != "assistant" && role != "system" {
+			role = "user"
+		}
+		turn(role, m.Content)
+	}
+	b.WriteString("<|im_start|>assistant\n")
 	return b.String()
 }
 

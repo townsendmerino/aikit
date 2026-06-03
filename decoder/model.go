@@ -51,7 +51,7 @@ func Load(dir string, opts Options) (*Model, error) {
 		// webgpu requested but fell back — not fatal.
 		fmt.Println(beErr)
 	}
-	return &Model{w: w, be: be, eosIDs: w.Cfg.EOSIDs()}, nil
+	return &Model{w: w, be: be, eosIDs: resolveEOSIDs(dir, &w.Cfg)}, nil
 }
 
 // Config exposes the loaded architecture config.
@@ -105,35 +105,56 @@ func (m *Model) runLayers(id int, cache *KVCache) ([]float32, error) {
 			h[i] *= scale
 		}
 	}
+	// Learned absolute position embedding (GPT-2): add wpe[pos], where pos is
+	// this token's absolute position (the cache advances on Append inside
+	// attention, so cache.Pos() here is still this step's position).
+	if arch.LearnedPosEmbed {
+		pe := make([]float32, hidden)
+		m.w.PosEmbed.embedRow(cache.Pos(), pe)
+		for i := range h {
+			h[i] += pe[i]
+		}
+	}
 	sandwich := arch.NormPlacement == NormSandwich4
 	for l := 0; l < arch.NumLayers; l++ {
 		lw := &m.w.Layers[l]
 		n := append([]float32(nil), h...)
-		rmsNorm(n, lw.PreAttnNorm, 1, hidden, arch.NormEps, arch.RMSAddOne)
+		normalize(arch, n, lw.PreAttnNorm, lw.PreAttnNormBias, hidden)
 		att, err := causalAttention(l, n, lw, arch, cache, m.be)
 		if err != nil {
 			return nil, err
 		}
 		if sandwich {
-			rmsNorm(att, lw.PostAttnNorm, 1, hidden, arch.NormEps, arch.RMSAddOne)
+			normalize(arch, att, lw.PostAttnNorm, nil, hidden)
 		}
 		for i := range h {
 			h[i] += att[i]
 		}
 		n2 := append([]float32(nil), h...)
-		rmsNorm(n2, lw.PreMLPNorm, 1, hidden, arch.NormEps, arch.RMSAddOne)
-		g, err := gatedMLP(n2, lw, arch, m.be)
+		normalize(arch, n2, lw.PreMLPNorm, lw.PreMLPNormBias, hidden)
+		g, err := mlp(n2, lw, arch, m.be)
 		if err != nil {
 			return nil, err
 		}
 		if sandwich {
-			rmsNorm(g, lw.PostMLPNorm, 1, hidden, arch.NormEps, arch.RMSAddOne)
+			normalize(arch, g, lw.PostMLPNorm, nil, hidden)
 		}
 		for i := range h {
 			h[i] += g[i]
 		}
 	}
 	return h, nil
+}
+
+// normalize applies the architecture's normalization in place over one row:
+// LayerNorm (mean-centered, with bias) for GPT-2/NeoX, else RMSNorm. bias is
+// ignored by RMSNorm (and nil for the Sandwich4 post-norms).
+func normalize(arch *Architecture, x, weight, bias []float32, dim int) {
+	if arch.Norm == NormLayer {
+		layerNorm(x, weight, bias, 1, dim, arch.NormEps)
+		return
+	}
+	rmsNorm(x, weight, 1, dim, arch.NormEps, arch.RMSAddOne)
 }
 
 // forward runs runLayers then the final norm + LM head, returning the logit
@@ -146,7 +167,7 @@ func (m *Model) forward(id int, cache *KVCache) ([]float32, error) {
 	if err != nil {
 		return nil, err
 	}
-	rmsNorm(h, m.w.FinalNorm, 1, arch.HiddenDim, arch.NormEps, arch.RMSAddOne)
+	normalize(arch, h, m.w.FinalNorm, m.w.FinalNormBias, arch.HiddenDim)
 	logits := make([]float32, arch.VocabSize)
 	if arch.TiedLMHead {
 		m.w.Embed.matmul(m.be, h, logits, 1) // tied: embedding doubles as the head

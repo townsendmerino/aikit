@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode/utf8"
+
+	"golang.org/x/text/unicode/norm"
 )
 
 var errNotImplemented = errors.New("tokenizer: not implemented (see docs/gemma-decoder-plan.md §9, M2)")
@@ -31,31 +33,88 @@ type SpecialTokens struct {
 // (left, right) → its merge rank (lower = higher priority, merged first).
 type bigram struct{ left, right string }
 
-// Tokenizer is a loaded Gemma 3 byte-fallback BPE tokenizer.
+// tokMode selects the pre/post-processing pipeline wrapped around the shared
+// ordered-merge BPE core. The merge table is reused verbatim across families;
+// only how text becomes initial symbols (and ids become text) differs.
+type tokMode int
+
+const (
+	// modeGemma is Gemma 3's SentencePiece-style byte-fallback BPE: normalize
+	// ASCII space → ▁, no pretokenizer, per-rune symbols with <0xNN> fallback
+	// for out-of-vocab runes. (M2.)
+	modeGemma tokMode = iota
+	// modeByteLevel is the GPT-2 / Llama-3 / Qwen byte-level BPE: NFC
+	// normalize, a GPT-2 split-regex pretokenizer, then map each UTF-8 *byte*
+	// to a printable rune (space → Ġ) so every symbol is in-vocab — no
+	// byte-fallback. (G3.)
+	modeByteLevel
+)
+
+// Tokenizer is a loaded BPE tokenizer. It serves two families behind one
+// merge core (see tokMode): Gemma 3's byte-fallback SentencePiece-style model
+// (M2) and the byte-level GPT-2/Llama-3/Qwen model (G3). Load reads the HF
+// tokenizer.json and resolves the mode + special tokens from it.
 //
-// Despite the file name, Gemma 3 ships a *BPE* model (with an explicit ordered
-// merge table) rather than a unigram one — we load it from the HF
-// tokenizer.json. The pipeline mirrors HF `tokenizers` exactly so ids match
-// the M2 golden: split out added/special tokens (longest match on the raw
-// text), normalize ASCII space → ▁ in the gaps, then BPE each gap with
-// per-rune byte-fallback for out-of-vocab runes.
+// The pipeline mirrors HF `tokenizers` exactly so ids match the per-family
+// golden: split out added/special tokens (longest match on the raw text),
+// normalize the gaps, pretokenize (byte-level only), then BPE each piece.
 type Tokenizer struct {
 	vocab     map[string]int32 // piece → id
 	idToPiece []string         // id → piece (len == vocab size)
 	pairRank  map[bigram]int32 // BPE merge rank
 	special   SpecialTokens
 
+	mode tokMode
+
+	// modeGemma: byte-fallback.
 	byteFallback bool
 	bytePiece    [256]string // b → "<0xNN>" piece (the byte-fallback tokens)
 	byteToVal    map[int32]byte
 	unkPiece     string
 	unkID        int32
 
+	// modeByteLevel: byte↔unicode map + the whole-piece-wins flag, plus the
+	// two pipeline knobs that vary across byte-level families (read from
+	// tokenizer.json): the normalizer and the pretokenizer's digit-run cap.
+	ignoreMerges bool
+	byteEncoder  [256]rune     // byte → printable rune (GPT-2 bytes_to_unicode)
+	byteDecoder  map[rune]byte // rune → byte (inverse)
+	maxDigits    int           // pretokenizer digit-run cap: Qwen \p{N}=1, Llama-3 \p{N}{1,3}=3
+	normForm     norm.Form     // Unicode normalization form (when normOn)
+	normOn       bool          // Qwen normalizes NFC; Llama-3 has no normalizer
+
 	added *addedTrie // added/special token surface forms → id
 }
 
 // Special returns the resolved special-token ids.
 func (t *Tokenizer) Special() SpecialTokens { return t.special }
+
+// ChatStyle names the conversation template a checkpoint was trained on.
+type ChatStyle int
+
+const (
+	// ChatStyleNone: no recognized chat markers (raw completion only).
+	ChatStyleNone ChatStyle = iota
+	// ChatStyleGemma: "<start_of_turn>{role}\n…<end_of_turn>\n"; roles
+	// "user"/"model"; no native system role (fold system into the first turn).
+	ChatStyleGemma
+	// ChatStyleChatML: "<|im_start|>{role}\n…<|im_end|>\n"; roles
+	// "system"/"user"/"assistant" (Llama-3/Qwen/most byte-level families).
+	ChatStyleChatML
+)
+
+// ChatStyle reports which chat template the loaded special tokens imply,
+// detected from the markers present in the vocab. The demos use it to render
+// the conversation in the form the model expects.
+func (t *Tokenizer) ChatStyle() ChatStyle {
+	if _, ok := t.vocab["<|im_start|>"]; ok {
+		return ChatStyleChatML
+	}
+	if _, ok := t.vocab["<start_of_turn>"]; ok {
+		return ChatStyleGemma
+	}
+	return ChatStyleNone
+}
 
 // --- tokenizer.json schema (only the fields we need) ---
 
@@ -67,10 +126,60 @@ type tokenizerJSON struct {
 	Model struct {
 		Type         string           `json:"type"`
 		ByteFallback bool             `json:"byte_fallback"`
+		IgnoreMerges bool             `json:"ignore_merges"`
 		UnkToken     *string          `json:"unk_token"`
 		Vocab        map[string]int32 `json:"vocab"`
-		Merges       [][]string       `json:"merges"`
+		// Merges has two HF encodings: the newer pair-array form
+		// [["a","b"],…] (Qwen3) and the older flat space-joined form
+		// ["a b",…] (Llama-3, GPT-2). Kept raw and normalized by parseMerges.
+		Merges json.RawMessage `json:"merges"`
 	} `json:"model"`
+	// Decoder.Type selects the pipeline family: "ByteLevel" → modeByteLevel
+	// (GPT-2/Qwen/Llama-3), anything else → modeGemma (SentencePiece-style).
+	Decoder struct {
+		Type string `json:"type"`
+	} `json:"decoder"`
+	// Normalizer + PreTokenizer drive the two byte-level knobs that vary by
+	// family (NFC-or-none, digit-run cap); kept raw and parsed in initByteLevel.
+	Normalizer   json.RawMessage `json:"normalizer"`
+	PreTokenizer json.RawMessage `json:"pre_tokenizer"`
+}
+
+// parseMerges normalizes the two HF merge encodings into [left,right] pairs.
+// Newer files use a pair array ([["a","b"],…]); older ones (Llama-3, GPT-2)
+// use one space-joined string per merge ("a b"). Byte-level pieces never
+// contain a literal space (it is encoded as Ġ), so the single separating
+// space is unambiguous.
+func parseMerges(raw json.RawMessage) ([][2]string, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	// Pair-array form.
+	var pairs [][]string
+	if err := json.Unmarshal(raw, &pairs); err == nil {
+		out := make([][2]string, len(pairs))
+		for i, p := range pairs {
+			if len(p) != 2 {
+				return nil, fmt.Errorf("merge %d has %d parts, want 2", i, len(p))
+			}
+			out[i] = [2]string{p[0], p[1]}
+		}
+		return out, nil
+	}
+	// Flat space-joined form.
+	var flat []string
+	if err := json.Unmarshal(raw, &flat); err != nil {
+		return nil, fmt.Errorf("merges: not a pair array or string array: %w", err)
+	}
+	out := make([][2]string, len(flat))
+	for i, m := range flat {
+		l, r, ok := strings.Cut(m, " ")
+		if !ok {
+			return nil, fmt.Errorf("merge %d %q has no space separator", i, m)
+		}
+		out[i] = [2]string{l, r}
+	}
+	return out, nil
 }
 
 // Load reads a SentencePiece/BPE model. path may point directly at a
@@ -91,78 +200,73 @@ func Load(path string) (*Tokenizer, error) {
 	if err := json.Unmarshal(raw, &tj); err != nil {
 		return nil, fmt.Errorf("tokenizer.Load: parse %s: %w", jsonPath, err)
 	}
-	if tj.Model.Type != "BPE" {
+	// model.type is "BPE" for Gemma/Qwen3/Llama-3; GPT-2's tokenizer.json omits
+	// it, but its merges + byte-level pipeline are the same BPE machinery, so an
+	// empty type is accepted (anything else is a genuine mismatch).
+	if tj.Model.Type != "BPE" && tj.Model.Type != "" {
 		return nil, fmt.Errorf("tokenizer.Load: unsupported model type %q (want BPE)", tj.Model.Type)
 	}
 	if len(tj.Model.Vocab) == 0 {
 		return nil, fmt.Errorf("tokenizer.Load: empty vocab in %s", jsonPath)
 	}
 
+	merges, err := parseMerges(tj.Model.Merges)
+	if err != nil {
+		return nil, fmt.Errorf("tokenizer.Load: parse %s: %w", jsonPath, err)
+	}
+
 	t := &Tokenizer{
 		vocab:        tj.Model.Vocab,
-		pairRank:     make(map[bigram]int32, len(tj.Model.Merges)),
+		pairRank:     make(map[bigram]int32, len(merges)),
 		byteFallback: tj.Model.ByteFallback,
+		ignoreMerges: tj.Model.IgnoreMerges,
 		byteToVal:    make(map[int32]byte, 256),
+	}
+	if tj.Decoder.Type == "ByteLevel" {
+		t.mode = modeByteLevel
 	}
 
 	// id → piece, sized to the max id so every produced id is renderable.
+	// Added/special tokens may live outside model.vocab with higher ids (Qwen
+	// keeps its <|im_*|> tokens only in added_tokens), so fold them in too —
+	// otherwise Decode can't render an emitted special id.
 	maxID := int32(-1)
 	for _, id := range tj.Model.Vocab {
 		if id > maxID {
 			maxID = id
 		}
 	}
+	for _, a := range tj.AddedTokens {
+		if a.ID > maxID {
+			maxID = a.ID
+		}
+	}
 	t.idToPiece = make([]string, maxID+1)
 	for piece, id := range tj.Model.Vocab {
 		t.idToPiece[id] = piece
 	}
+	for _, a := range tj.AddedTokens {
+		t.idToPiece[a.ID] = a.Content
+		if _, ok := t.vocab[a.Content]; !ok {
+			t.vocab[a.Content] = a.ID
+		}
+	}
 
 	// Merge ranks: position in the list is the priority.
-	for i, m := range tj.Model.Merges {
-		if len(m) != 2 {
-			return nil, fmt.Errorf("tokenizer.Load: merge %d has %d parts, want 2", i, len(m))
-		}
+	for i, m := range merges {
 		t.pairRank[bigram{m[0], m[1]}] = int32(i)
 	}
 
-	// Byte-fallback tokens: "<0x00>".."<0xFF>".
-	for b := range 256 {
-		p := fmt.Sprintf("<0x%02X>", b)
-		t.bytePiece[b] = p
-		if id, ok := t.vocab[p]; ok {
-			t.byteToVal[id] = byte(b)
-		} else if t.byteFallback {
-			return nil, fmt.Errorf("tokenizer.Load: byte_fallback set but %q missing from vocab", p)
-		}
-	}
-
-	// Unk + resolved specials.
-	t.unkPiece = "<unk>"
-	if tj.Model.UnkToken != nil {
-		t.unkPiece = *tj.Model.UnkToken
-	}
-	mustID := func(piece string) (int32, error) {
-		id, ok := t.vocab[piece]
-		if !ok {
-			return 0, fmt.Errorf("tokenizer.Load: required token %q not in vocab", piece)
-		}
-		return id, nil
-	}
-	if t.unkID, err = mustID(t.unkPiece); err != nil {
-		return nil, err
-	}
-	for _, r := range []struct {
-		piece string
-		dst   *int
-	}{
-		{"<bos>", &t.special.BOS}, {"<eos>", &t.special.EOS}, {"<pad>", &t.special.Pad},
-		{"<start_of_turn>", &t.special.StartOfTurn}, {"<end_of_turn>", &t.special.EndOfTurn},
-	} {
-		id, err := mustID(r.piece)
-		if err != nil {
+	// Per-family setup: byte tables + special-token resolution differ.
+	switch t.mode {
+	case modeGemma:
+		if err := t.initGemma(&tj); err != nil {
 			return nil, err
 		}
-		*r.dst = int(id)
+	case modeByteLevel:
+		if err := t.initByteLevel(&tj, filepath.Dir(jsonPath)); err != nil {
+			return nil, err
+		}
 	}
 
 	// Added-vocabulary trie: every added-token surface form is matched
@@ -175,12 +279,62 @@ func Load(path string) (*Tokenizer, error) {
 	return t, nil
 }
 
+// initGemma sets up the Gemma 3 byte-fallback path: the "<0xNN>" byte tokens
+// and the (required) Gemma special tokens. These are mandatory for this
+// family, so a missing one is a load error — the M2 golden depends on them.
+func (t *Tokenizer) initGemma(tj *tokenizerJSON) error {
+	// Byte-fallback tokens: "<0x00>".."<0xFF>".
+	for b := 0; b < 256; b++ {
+		p := fmt.Sprintf("<0x%02X>", b)
+		t.bytePiece[b] = p
+		if id, ok := t.vocab[p]; ok {
+			t.byteToVal[id] = byte(b)
+		} else if t.byteFallback {
+			return fmt.Errorf("tokenizer.Load: byte_fallback set but %q missing from vocab", p)
+		}
+	}
+
+	t.unkPiece = "<unk>"
+	if tj.Model.UnkToken != nil {
+		t.unkPiece = *tj.Model.UnkToken
+	}
+	mustID := func(piece string) (int32, error) {
+		id, ok := t.vocab[piece]
+		if !ok {
+			return 0, fmt.Errorf("tokenizer.Load: required token %q not in vocab", piece)
+		}
+		return id, nil
+	}
+	var err error
+	if t.unkID, err = mustID(t.unkPiece); err != nil {
+		return err
+	}
+	for _, r := range []struct {
+		piece string
+		dst   *int
+	}{
+		{"<bos>", &t.special.BOS}, {"<eos>", &t.special.EOS}, {"<pad>", &t.special.Pad},
+		{"<start_of_turn>", &t.special.StartOfTurn}, {"<end_of_turn>", &t.special.EndOfTurn},
+	} {
+		id, err := mustID(r.piece)
+		if err != nil {
+			return err
+		}
+		*r.dst = int(id)
+	}
+	return nil
+}
+
 // Encode turns text into token ids. If addBOS, prepend the BOS token (the
-// generation prefill expects it for Gemma). Added/special tokens written
-// literally in the text are recognized and emitted as their own ids.
+// generation prefill expects it for Gemma; byte-level families with no BOS
+// ignore the flag). Added/special tokens written literally in the text are
+// recognized and emitted as their own ids.
 func (t *Tokenizer) Encode(text string, addBOS bool) ([]int, error) {
 	if t.vocab == nil {
 		return nil, fmt.Errorf("tokenizer.Encode: %w", errors.New("tokenizer not loaded"))
+	}
+	if t.mode == modeByteLevel {
+		return t.encodeByteLevel(text, addBOS)
 	}
 	var out []int32
 	if addBOS {
@@ -247,6 +401,25 @@ func (t *Tokenizer) bpe(gap string) []int32 {
 		syms = append(syms, t.unkPiece)
 	}
 
+	syms = t.mergeSymbols(syms)
+
+	ids := make([]int32, len(syms))
+	for k, s := range syms {
+		if id, ok := t.vocab[s]; ok {
+			ids[k] = id
+		} else {
+			ids[k] = t.unkID // unreachable under byte fallback
+		}
+	}
+	return ids
+}
+
+// mergeSymbols is the shared BPE core: repeatedly merge the lowest-rank
+// adjacent pair (leftmost on ties) until no adjacent pair has a known rank.
+// Both families call it; only the initial symbol construction (per-rune +
+// byte-fallback vs byte-level) and the id mapping around it differ. The merge
+// table itself is identical HF data, so the merge loop is too.
+func (t *Tokenizer) mergeSymbols(syms []string) []string {
 	for len(syms) >= 2 {
 		const maxRank = int32(1<<31 - 1)
 		bestRank := maxRank
@@ -263,16 +436,7 @@ func (t *Tokenizer) bpe(gap string) []int32 {
 		syms[bestI] += syms[bestI+1]
 		syms = append(syms[:bestI+1], syms[bestI+2:]...)
 	}
-
-	ids := make([]int32, len(syms))
-	for k, s := range syms {
-		if id, ok := t.vocab[s]; ok {
-			ids[k] = id
-		} else {
-			ids[k] = t.unkID // unreachable under byte fallback
-		}
-	}
-	return ids
+	return syms
 }
 
 // Decode turns token ids back into text: render each piece (with ▁ → space),
@@ -280,6 +444,9 @@ func (t *Tokenizer) bpe(gap string) []int32 {
 // tokens render as their literal surface form (e.g. "<eos>") — the generation
 // loop is responsible for stopping at EOS, not Decode.
 func (t *Tokenizer) Decode(ids []int) (string, error) {
+	if t.mode == modeByteLevel {
+		return t.decodeByteLevel(ids)
+	}
 	var sb strings.Builder
 	var pending []byte
 	flush := func() {

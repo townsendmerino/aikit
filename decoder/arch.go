@@ -17,6 +17,7 @@ type Architecture struct {
 	// Dims (mirrors config.json; the loader also reads these for tensor shapes).
 	HiddenDim, NumLayers, NumHeads, NumKVHeads, HeadDim int
 	IntermediateDim, VocabSize                          int
+	MaxPositions                                        int // learned-position table size (GPT-2 wpe); 0 for RoPE families
 
 	// Norm.
 	Norm          NormKind
@@ -25,16 +26,35 @@ type Architecture struct {
 	NormPlacement NormPlacement // Pre2 (Llama) | Sandwich4 (Gemma)
 
 	// MLP.
-	Act ActKind
+	Act         ActKind
+	NonGatedMLP bool       // GPT-2: up → act → down (no gate), with biases; else gated (GeGLU/SwiGLU)
+	MoE         *MoEConfig // non-nil ⇒ sparse mixture-of-experts FFN (Mixtral); nil ⇒ dense
 
 	// Attention.
-	QKNorm        bool             // RMSNorm on Q and K per head before RoPE (Gemma3, Qwen3)
-	AttnScale     float64          // explicit q·k multiplier (resolved: query_pre_attn_scalar^-0.5 or 1/sqrt(headDim))
-	SlidingWindow int              // 0 = none
-	layerIsGlobal func(i int) bool // per-layer global(full) vs local(sliding) attention
+	QKVBias         bool             // additive bias on the q/k/v projections (Qwen2, GPT-2)
+	OutBias         bool             // additive bias on the attention output projection (GPT-2)
+	QKNorm          bool             // RMSNorm on Q and K per head before RoPE (Gemma3, Qwen3)
+	LearnedPosEmbed bool             // GPT-2: add a learned position embedding and SKIP RoPE
+	AttnScale       float64          // explicit q·k multiplier (resolved: query_pre_attn_scalar^-0.5 or 1/sqrt(headDim))
+	SlidingWindow   int              // 0 = none
+	layerIsGlobal   func(i int) bool // per-layer global(full) vs local(sliding) attention
 
 	// RoPE (dual base for Gemma's local/global layers; equal bases = single-base).
 	RoPELocalBase, RoPEGlobalBase float64
+	// RotaryDim is the number of head dims RoPE rotates; 0 means the full
+	// HeadDim. <HeadDim is partial rotary (Phi's partial_rotary_factor), where
+	// the trailing dims pass through unrotated.
+	RotaryDim int
+	// ropeScaling transforms the inv-freq table (Llama-3 llama3 / linear);
+	// nil = none. Set by the adapter, consumed when the tables are built.
+	ropeScaling *ropeScaling
+
+	// Precomputed inverse-frequency tables (base + scaling baked in), built by
+	// finalizeRoPE at resolve time so the forward pass never recomputes pow/scaling
+	// per token. Local serves sliding layers, global the full-attention layers
+	// (equal for single-base families).
+	ropeInvFreqLocal  []float64
+	ropeInvFreqGlobal []float64
 
 	// Embedding / head.
 	EmbedScale float64 // 0 or 1 = none; Gemma = sqrt(hidden)
@@ -43,6 +63,16 @@ type Architecture struct {
 	// Output soft-capping (Gemma 2; 0 = none, which is Gemma 3).
 	FinalLogitSoftcap float64
 	AttnLogitSoftcap  float64
+}
+
+// MoEConfig describes a sparse mixture-of-experts FFN (multi-model-plan G6).
+// A router scores all experts, the top-k run as gated MLPs, and their outputs
+// combine weighted by the (renormalized) router probabilities. Mixtral:
+// NumExperts=8, TopK=2, NormTopKProb=true.
+type MoEConfig struct {
+	NumExperts   int  // experts per layer (E)
+	TopK         int  // experts evaluated per token (k)
+	NormTopKProb bool // renormalize the top-k router weights to sum to 1 (Mixtral)
 }
 
 // NormKind selects the normalization. Only RMSNorm is implemented today;
@@ -89,4 +119,38 @@ func (a *Architecture) ropeBase(i int) float64 {
 		return a.RoPEGlobalBase
 	}
 	return a.RoPELocalBase
+}
+
+// rotaryDim returns the number of head dims RoPE rotates, defaulting to the
+// full HeadDim when RotaryDim is unset.
+func (a *Architecture) rotaryDim() int {
+	if a.RotaryDim > 0 {
+		return a.RotaryDim
+	}
+	return a.HeadDim
+}
+
+// finalizeRoPE precomputes the local/global inverse-frequency tables from the
+// bases, rotary dim, and scaling. Called once by resolveArchitecture after the
+// adapter populates the descriptor, so the forward pass reads a ready table.
+func (a *Architecture) finalizeRoPE() {
+	if a.LearnedPosEmbed || a.RoPEGlobalBase <= 0 {
+		return // no RoPE (GPT-2 uses learned positions); tables stay nil
+	}
+	rd := a.rotaryDim()
+	a.ropeInvFreqGlobal = computeInvFreq(a.RoPEGlobalBase, rd, a.ropeScaling)
+	if a.RoPELocalBase == a.RoPEGlobalBase {
+		a.ropeInvFreqLocal = a.ropeInvFreqGlobal
+	} else {
+		// Gemma's local base; scaling is single-base only, so it does not apply here.
+		a.ropeInvFreqLocal = computeInvFreq(a.RoPELocalBase, rd, nil)
+	}
+}
+
+// ropeInvFreq returns the precomputed inverse-frequency table for layer i.
+func (a *Architecture) ropeInvFreq(i int) []float64 {
+	if a.isGlobalLayer(i) {
+		return a.ropeInvFreqGlobal
+	}
+	return a.ropeInvFreqLocal
 }

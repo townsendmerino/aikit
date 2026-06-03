@@ -11,16 +11,31 @@ rather than repeating them.
 > git clone https://github.com/townsendmerino/aikit.git && cd aikit
 > ```
 
-> **▶ Resume point (2026-06-02).** Done: Gemma decoder M1–M9 + the multi-model
-> track **G0 (descriptor), G1 (sharded loader), G2 (Qwen3 dense)** — see the
-> table in §3. **Next up: G3 — the byte-level BPE tokenizer** (Qwen/Llama-3
-> family; reuse the M2 merge machinery, different pre/post-processing: GPT-2
-> split regex, `Ġ` spaces, byte-level map). G3 is the last piece before the
-> **demo target, Qwen3 dense**, chats end-to-end in `demo/gemma-web` in pure Go
-> (today the Qwen3 forward is parity-proven but needs HF-supplied token ids).
-> Per-machine, NOT in git: `.venv/` (torch/transformers), the models under
-> `testdata/` (gemma-3-270m, qwen3-1.7b, *-sharded), and `docs/keepers.txt`
-> (HF token — rotate + delete). Plan: `docs/multi-model-plan.md`.
+> **▶ Resume point (2026-06-03).** Done: Gemma decoder M1–M9 + the multi-model
+> track **G0 (descriptor), G1 (sharded loader), G2 (Qwen3 + Llama dense), G3
+> (byte-level BPE tokenizer, incl. Llama-3), G4 (RoPE scaling — linear + llama3 —
+> + partial rotary)** — see the table in §3. **Qwen3-1.7B and Llama-3.2-1B both
+> generate end-to-end in pure Go**; the `gemma-web` chat wires Qwen3 (ChatML +
+> multi-EOS via `resolveEOSIDs`). The `llama` adapter is validated against
+> TinyLlama-1.1B (Llama-2, cosine 1−3e-13) and Llama-3.2-1B (llama3 scaling
+> factor 32, cosine 1−8e-13, tokenizer ids HF-identical). **Next up:** YaRN /
+> longrope scaling (currently rejected — Phi-3-128k, long-context Qwen/Yi); a
+> **Phi family adapter** (partial rotary is done at the RoPE layer; Phi adds
+> parallel attention/MLP blocks + a fused QKV — close to GPT-2 plus rotary);
+> **GPT-NeoX/Pythia/GPT-J** (LayerNorm + parallel blocks, on the G5 base);
+> **Qwen-MoE/DeepSeek** (shared-expert MoE — a couple more knobs on G6's base);
+> **YaRN/longrope** RoPE scaling (currently rejected); more **GGUF quant types**
+> (Q5_K/Q3_K/IQ*), the **GGUF tokenizer**, and **GPTQ/AWQ** (the safetensors-
+> resident half of G7). Pairing GGUF/quant with M8-style resident int8/int4
+> (dequant per-tile in matmul) is what actually runs the big quantized models in
+> small RAM. **Mistral, G5/GPT-2, G6/MoE, and G7/GGUF landed 2026-06-03.**
+> Pure-Go, parity-validated families now: Gemma 3, Qwen3, Qwen2.5, Llama-2/3,
+> Mistral, GPT-2, Mixtral (MoE) — plus **quantized GGUF** (Q8_0/Q4_0/Q4_K_M).
+> Per-machine, NOT in git: `.venv/` (torch/transformers/tokenizers), the models
+> under `testdata/` (gemma-3-270m, qwen3-1.7b, tinyllama-1.1b, llama3.2-1b,
+> qwen2.5-0.5b, tinymistral-248m, gpt2, mixtral-tiny, tinyllama-gguf, *-sharded),
+> and `docs/keepers.txt` (HF token — rotate + delete). Plan:
+> `docs/multi-model-plan.md`.
 
 ## 0. Sanity: a fresh checkout is green
 
@@ -126,9 +141,15 @@ validates every schema entry across all layers and returned no error. Shapes
 | decoder M9 WebGPU backend | ✅ done 2026-06-02 — `--backend webgpu` runs on RTX 2070 (Vulkan), resident weights, argmax parity; trails CPU for M=1 decode (latency-bound); see `milestones/M9-webgpu.md` |
 | decoder G0 multi-model descriptor | ✅ done 2026-06-02 — forward pass reads `Architecture` (registry by `model_type`); Gemma goldens byte-identical. Toward running Llama/Qwen/etc. (multi-model-plan G1+); see `milestones/G0-descriptor.md` |
 | decoder G1 sharded loader | ✅ done 2026-06-02 — `embed` mmaps + merges N shards (index.json); 3-shard 270m reproduces M1 checksums. Unblocks ≥7B/MoE. See `milestones/G1-sharded.md` |
-| decoder G2 Qwen3 family | ✅ done 2026-06-02 — Qwen3-1.7B runs through the generic forward, cosine 1−1e-12 vs HF (per-family tensor schema + untied head). **Qwen3 dense = coding-demo target**, pending G3 tokenizer. See `milestones/G2-qwen3.md` |
-| decoder G3 byte-level BPE tokenizer | not started — the last piece before Qwen3 chats in `gemma-web` in pure Go |
-| demo/gemma-web | ✅ done — stdlib net/http + SSE chat GUI over the decoder (`go run ./demo/gemma-web --model testdata/gemma-3-270m`) |
+| decoder G2 Qwen3 + Llama family | ✅ Qwen3 done 2026-06-02 (cosine 1−1e-12 vs HF, untied head). ✅ **Llama dense done 2026-06-03** — `llama` adapter (Qwen3 minus QK-norm, derived `head_dim`) + `llamaTensorSchema`; TinyLlama-1.1B cosine 1−3e-13 (argmax ' Paris'); scaled RoPE + `attention_bias` rejected loudly (G4 / later). See `milestones/G2-qwen3.md` |
+| decoder G3 byte-level BPE tokenizer | ✅ done 2026-06-02 — pure-Go byte-level BPE (hand-written GPT-2 split regex + byte→rune map + `ignore_merges`), HF-exact on Qwen3 + **Llama-3** (id-for-id, 20-case golden; merge parser now also reads the older flat `["a b",…]` encoding); M2 Gemma byte-identical. **Qwen3-1.7B generates end-to-end in pure Go**; see `milestones/G3-tokenizer.md` |
+| decoder G7 GGUF (quantized) | ✅ done 2026-06-03 — pure-Go GGUF reader (`embed/gguf.go`): container parse + F32/F16/Q8_0/Q4_0/Q4_K/Q6_K dequant; `.gguf` path self-describes (metadata→config) + un-permutes llama.cpp q/k RoPE. TinyLlama Q8_0/Q4_0/Q4_K_M cosine 0.99996/0.9944/0.9975 vs f32 (argmax ' Paris'). See `milestones/G7-gguf.md` |
+| decoder G6 MoE (Mixtral) | ✅ done 2026-06-03 — router + sparse experts as a third `mlp()` variant (softmax→top-k→renorm→weighted SwiGLU experts); Mixtral-tiny (8x top-2) cosine 1−1e-13. Loader + int8 quant cover router/experts. See `milestones/G6-moe.md` |
+| decoder G5 GPT-2 (LayerNorm class) | ✅ done 2026-06-03 — LayerNorm+bias, learned positions (no RoPE), non-gated GELU MLP, q/k/v + output bias, Conv1D transpose + fused c_attn split (dedicated `buildGPT2Weights`); GPT-2 small cosine 1−7e-14 (argmax ' the'), tokenizer + generation end-to-end in pure Go. See `milestones/G5-gpt2.md` |
+| decoder Mistral family | ✅ done 2026-06-03 — llama + all-layer sliding window (Gemma M5 machinery); TinyMistral-248M cosine 1−4e-14 over a 67-tok prompt vs a 32-tok window. See `milestones/G2c-mistral.md` |
+| decoder Qwen2/Qwen2.5 family | ✅ done 2026-06-03 — llama descriptor + `QKVBias` knob (q/k/v projection bias) + `qwen2TensorSchema`; Qwen2.5-0.5B matches HF cosine 1−1e-12 (argmax ' Paris'), tokenizer ids identical, generates end-to-end. See `milestones/G2b-qwen2.md` |
+| decoder G4 RoPE scaling + partial rotary | ✅ done 2026-06-03 — `rope_scaling` (linear + llama3) baked into a precomputed inv-freq table at load; `partial_rotary_factor` wired through `applyRoPE`; YaRN/longrope/dynamic rejected loudly. **Llama-3.2-1B (llama3 factor 32) matches HF cosine 1−8e-13** + Go tokenizer ids HF-identical = first full Llama-3 pure-Go end-to-end. See `milestones/G4-rope-scaling.md` |
+| demo/gemma-web | ✅ done — stdlib net/http + SSE chat GUI over the decoder. **Qwen3 chat wired 2026-06-03**: ChatML template (`<|im_start|>`/`<|im_end|>`) via `ChatStyle()` + multi-EOS stop (151645/151643) from `resolveEOSIDs` reading `generation_config.json`; verified end-to-end. `go run ./demo/gemma-web --model testdata/qwen3-1.7b` |
 
 Reference docs: [`cpu-acceleration.md`](cpu-acceleration.md),
 [`gemma-decoder-plan.md`](gemma-decoder-plan.md),

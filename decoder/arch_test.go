@@ -50,12 +50,12 @@ func TestResolveArchitecture_gemma3(t *testing.T) {
 
 func TestResolveArchitecture_unknownModelType(t *testing.T) {
 	cfg := validGemma3Config()
-	cfg.ModelType = "llama"
+	cfg.ModelType = "mamba" // not a registered decoder family
 	_, _, err := resolveArchitecture(cfg)
 	if err == nil {
 		t.Fatal("expected error for unknown model_type")
 	}
-	if !strings.Contains(err.Error(), "unsupported model_type") || !strings.Contains(err.Error(), "llama") {
+	if !strings.Contains(err.Error(), "unsupported model_type") || !strings.Contains(err.Error(), "mamba") {
 		t.Errorf("error = %q, want it to name the unsupported model_type", err)
 	}
 }

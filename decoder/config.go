@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"os"
 )
 
 // Config captures the Gemma 3 architecture constants the forward pass
@@ -33,6 +34,35 @@ type Config struct {
 	UseQKNorm            bool    `json:"use_qk_norm"`            // true in Gemma 3
 	HiddenActivation     string  `json:"hidden_activation"`      // Gemma: "gelu_pytorch_tanh"
 	HiddenAct            string  `json:"hidden_act"`             // Llama/Qwen: "silu" (different JSON key)
+	AttentionBias        bool    `json:"attention_bias"`         // Qwen2/GPT-2 add q/k/v/o bias; Llama-3/Qwen3 don't
+	UseSlidingWindow     bool    `json:"use_sliding_window"`     // Qwen2: gate for sliding-window attention (usually false)
+
+	// Mixture-of-experts (Mixtral, multi-model-plan G6). NormTopKProb is a
+	// *bool so an absent field can default to true (HF's MixtralConfig default).
+	NumLocalExperts  int   `json:"num_local_experts"`
+	NumExpertsPerTok int   `json:"num_experts_per_tok"`
+	NormTopKProb     *bool `json:"norm_topk_prob"`
+
+	// RopeScaling is HF's rope_scaling object (llama3 / linear / yarn / …).
+	// Plain Llama-3.0 and Qwen3 leave it null; Llama-3.1+/3.2 set it. Kept raw
+	// and decoded by parseRopeScaling (G4: linear + llama3 supported).
+	RopeScaling json.RawMessage `json:"rope_scaling"`
+
+	// PartialRotaryFactor is the fraction of head_dim RoPE rotates (Phi: 0.4);
+	// 0/absent means full rotary. Consumed via Config.rotaryDim.
+	PartialRotaryFactor float64 `json:"partial_rotary_factor"`
+
+	// GPT-2 (multi-model-plan G5) uses a different config vocabulary: n_embd /
+	// n_head / n_layer / n_positions / n_inner / layer_norm_epsilon /
+	// activation_function instead of hidden_size etc. The gpt2 adapter reads
+	// these directly.
+	NEmbd              int     `json:"n_embd"`
+	NHead              int     `json:"n_head"`
+	NLayer             int     `json:"n_layer"`
+	NPositions         int     `json:"n_positions"`
+	NInner             int     `json:"n_inner"` // null/0 ⇒ 4*n_embd
+	LayerNormEpsilon   float64 `json:"layer_norm_epsilon"`
+	ActivationFunction string  `json:"activation_function"` // GPT-2: "gelu_new"
 
 	// LayerTypes is the per-layer attention kind ("sliding_attention" /
 	// "full_attention"). Gemma 3's checkpoints carry the local:global pattern
@@ -69,6 +99,21 @@ func (c *Config) IsGlobalLayer(i int) bool {
 		return true // no pattern configured → all-global (degenerate)
 	}
 	return (i+1)%p == 0
+}
+
+// headDim returns the per-head dimension, falling back to hidden/heads when
+// config.json omits head_dim. Gemma and Qwen3 always set it explicitly (and
+// for Gemma heads*head_dim != hidden, so the field is load-bearing there);
+// many Llama/Mistral configs omit it, where hidden_size/num_attention_heads
+// is the definition.
+func (c *Config) headDim() int {
+	if c.HeadDim > 0 {
+		return c.HeadDim
+	}
+	if c.NumHeads > 0 {
+		return c.HiddenDim / c.NumHeads
+	}
+	return 0
 }
 
 // ValidateAssumptions fails loudly on any config the scaffolded forward pass
@@ -127,6 +172,95 @@ func (c *Config) validateQwen3() error {
 	return nil
 }
 
+// validateQwen2 pins the assumptions the qwen2 forward path makes: like llama
+// (dense, SwiGLU, GQA, single-base RoPE, no QK-norm, derived head_dim) but with
+// q/k/v projection bias. Sliding-window attention (use_sliding_window) is a
+// follow-up — reject it rather than silently run full attention.
+func (c *Config) validateQwen2() error {
+	if err := c.validateLlama(); err != nil {
+		return err
+	}
+	if c.UseSlidingWindow {
+		return fmt.Errorf("decoder(qwen2): use_sliding_window=true not yet supported (full-attention checkpoints only)")
+	}
+	return nil
+}
+
+// validateMixtral pins the Mixtral assumptions: the llama dense constraints
+// (reused) plus a valid MoE config — top-k experts of num_local_experts, both
+// positive and k ≤ E.
+func (c *Config) validateMixtral() error {
+	if err := c.validateLlama(); err != nil {
+		return err
+	}
+	switch {
+	case c.NumLocalExperts <= 0:
+		return fmt.Errorf("decoder(mixtral): num_local_experts must be >0, got %d", c.NumLocalExperts)
+	case c.NumExpertsPerTok <= 0 || c.NumExpertsPerTok > c.NumLocalExperts:
+		return fmt.Errorf("decoder(mixtral): num_experts_per_tok %d out of range (1..%d)", c.NumExpertsPerTok, c.NumLocalExperts)
+	}
+	return nil
+}
+
+// validateGPT2 pins the assumptions the gpt2 forward path makes: LayerNorm,
+// learned absolute positions (no RoPE), a non-gated GELU MLP, fused q/k/v with
+// bias, and tied embeddings. GPT-2's config uses the n_embd/n_head/n_layer keys.
+func (c *Config) validateGPT2() error {
+	switch {
+	case c.NEmbd == 0 || c.NLayer == 0 || c.NHead == 0:
+		return fmt.Errorf("decoder(gpt2): missing required dim (n_embd=%d n_layer=%d n_head=%d)", c.NEmbd, c.NLayer, c.NHead)
+	case c.NEmbd%c.NHead != 0:
+		return fmt.Errorf("decoder(gpt2): n_embd %d not divisible by n_head %d", c.NEmbd, c.NHead)
+	case c.VocabSize == 0:
+		return fmt.Errorf("decoder(gpt2): vocab_size is zero")
+	case c.NPositions == 0:
+		return fmt.Errorf("decoder(gpt2): n_positions is zero (need the learned position table size)")
+	case c.LayerNormEpsilon <= 0:
+		return fmt.Errorf("decoder(gpt2): layer_norm_epsilon must be >0, got %v", c.LayerNormEpsilon)
+	case c.ActivationFunction != "" && c.ActivationFunction != "gelu_new" && c.ActivationFunction != "gelu":
+		return fmt.Errorf("decoder(gpt2): activation_function=%q unsupported (gelu_new/gelu)", c.ActivationFunction)
+	}
+	return nil
+}
+
+// validateLlama pins the assumptions the llama forward path makes (dense,
+// SwiGLU, GQA, single-base RoPE, no QK-norm). It differs from validateQwen3 by
+// allowing head_dim to be derived (headDim()). RoPE scaling (rope_scaling) is
+// handled by the adapter via parseRopeScaling (G4: linear + llama3). Attention
+// bias (Qwen2/GPT-2 q/k/v/o bias) is rejected — a later add.
+// Plain Llama-2/3 / Mistral checkpoints pass.
+func (c *Config) validateLlama() error {
+	switch {
+	case c.HiddenDim == 0 || c.NumLayers == 0 || c.NumHeads == 0 || c.headDim() == 0:
+		return fmt.Errorf("decoder(llama): missing required dim (hidden=%d layers=%d heads=%d headDim=%d)",
+			c.HiddenDim, c.NumLayers, c.NumHeads, c.headDim())
+	case c.NumKVHeads == 0 || c.NumHeads%c.NumKVHeads != 0:
+		return fmt.Errorf("decoder(llama): num_heads %d not a multiple of num_kv_heads %d (GQA)", c.NumHeads, c.NumKVHeads)
+	case c.VocabSize == 0:
+		return fmt.Errorf("decoder(llama): vocab_size is zero")
+	case c.IntermediateDim == 0:
+		return fmt.Errorf("decoder(llama): intermediate_size is zero")
+	case c.HiddenAct != "" && c.HiddenAct != "silu":
+		return fmt.Errorf("decoder(llama): hidden_act=%q unsupported (silu/SwiGLU only)", c.HiddenAct)
+	case c.RMSNormEps <= 0:
+		return fmt.Errorf("decoder(llama): rms_norm_eps must be >0, got %v", c.RMSNormEps)
+	case c.RoPEGlobalBase <= 0:
+		return fmt.Errorf("decoder(llama): rope_theta must be >0, got %v", c.RoPEGlobalBase)
+	case c.AttentionBias:
+		return fmt.Errorf("decoder(llama): attention_bias=true (q/k/v/o bias) not yet supported")
+	}
+	return nil
+}
+
+// rotaryDim returns the number of head dims RoPE rotates: partial_rotary_factor
+// × head_dim when set (Phi), else 0 (the descriptor reads that as full head_dim).
+func (c *Config) rotaryDim() int {
+	if c.PartialRotaryFactor > 0 && c.PartialRotaryFactor < 1 {
+		return int(c.PartialRotaryFactor * float64(c.headDim()))
+	}
+	return 0
+}
+
 // EOSIDs returns the configured end-of-sequence token ids, handling both the
 // scalar (eos_token_id: 1) and list (eos_token_id: [1, 106]) JSON shapes HF
 // emits. Empty when the field is absent.
@@ -143,6 +277,47 @@ func (c *Config) EOSIDs() []int {
 		return many
 	}
 	return nil
+}
+
+// resolveEOSIDs returns the ids that end generation: config.json's
+// eos_token_id, plus any extra ids from generation_config.json. The latter is
+// HF's authoritative generation source and often lists more than config.json —
+// Qwen3's config.json carries only <|im_end|> (151645) while its
+// generation_config adds <|endoftext|> (151643), and both must stop a chat
+// turn. Deduped, config.json's ids first. generation_config is best-effort
+// (absent file → ignored).
+func resolveEOSIDs(dir string, cfg *Config) []int {
+	seen := map[int]bool{}
+	var out []int
+	add := func(ids []int) {
+		for _, id := range ids {
+			if !seen[id] {
+				seen[id] = true
+				out = append(out, id)
+			}
+		}
+	}
+	add(cfg.EOSIDs())
+	add(eosFromGenerationConfig(os.DirFS(dir), "generation_config.json"))
+	return out
+}
+
+// eosFromGenerationConfig reads eos_token_id from generation_config.json,
+// reusing EOSIDs' scalar-or-list handling. Returns nil when the file is
+// absent or has no eos_token_id.
+func eosFromGenerationConfig(fsys fs.FS, name string) []int {
+	b, err := fs.ReadFile(fsys, name)
+	if err != nil {
+		return nil
+	}
+	var g struct {
+		EOSTokenID json.RawMessage `json:"eos_token_id"`
+	}
+	if json.Unmarshal(b, &g) != nil {
+		return nil
+	}
+	gc := Config{EOSTokenID: g.EOSTokenID}
+	return gc.EOSIDs()
 }
 
 // loadConfig reads and parses config.json from fsys.

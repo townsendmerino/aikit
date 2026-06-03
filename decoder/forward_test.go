@@ -24,9 +24,10 @@ const (
 )
 
 type forwardGolden struct {
-	IDs    []int `json:"ids"`
-	Argmax int   `json:"argmax"`
-	Vocab  int   `json:"vocab_size"`
+	Prompt string `json:"prompt"` // source text (for end-to-end tokenizer checks)
+	IDs    []int  `json:"ids"`
+	Argmax int    `json:"argmax"`
+	Vocab  int    `json:"vocab_size"`
 	Stats  struct {
 		N     int     `json:"n"`
 		Sum   float64 `json:"sum"`
@@ -126,6 +127,17 @@ func TestForward_logitParity(t *testing.T) {
 // gitignored full dump at path is present, else math.NaN() (logged, not
 // failed). Shared by the M3 forward and M5 sliding-window parity tests.
 func fullCosine(t *testing.T, logits []float32, path string) float64 {
+	cos := cosineToFull(t, logits, path)
+	if !math.IsNaN(cos) && cos < 1-1e-4 {
+		t.Errorf("full cosine = %.8f, want ≥ %.8f", cos, 1-1e-4)
+	}
+	return cos
+}
+
+// cosineToFull computes the cosine of logits against a committed full-logit
+// dump, WITHOUT asserting a threshold — callers pick their own bar (f32 parity
+// is ~1−1e-4; quantized GGUF/int8 is looser). Returns NaN if the dump is absent.
+func cosineToFull(t *testing.T, logits []float32, path string) float64 {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return math.NaN()
@@ -148,11 +160,7 @@ func fullCosine(t *testing.T, logits []float32, path string) float64 {
 		na += a * a
 		nb += b * b
 	}
-	cos := dot / (math.Sqrt(na) * math.Sqrt(nb))
-	if cos < 1-1e-4 {
-		t.Errorf("full cosine = %.8f, want ≥ %.8f", cos, 1-1e-4)
-	}
-	return cos
+	return dot / (math.Sqrt(na) * math.Sqrt(nb))
 }
 
 func relDiff(a, b float64) float64 {

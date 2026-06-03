@@ -2,6 +2,14 @@ package decoder
 
 import "math"
 
+// addBias adds a per-output bias vector to a projection result in place
+// (Qwen2's q/k/v projections). len(b) must equal len(x).
+func addBias(x, b []float32) {
+	for i := range x {
+		x[i] += b[i]
+	}
+}
+
 // causalAttention runs one decoder block's grouped-query causal attention
 // for a single decode step (the query is the one new position; keys/values
 // come from the KV cache plus this step's own K/V).
@@ -46,6 +54,11 @@ func causalAttention(
 	lw.QProj.matmul(be, h, q, 1)
 	lw.KProj.matmul(be, h, k, 1)
 	lw.VProj.matmul(be, h, v, 1)
+	if arch.QKVBias {
+		addBias(q, lw.QBias)
+		addBias(k, lw.KBias)
+		addBias(v, lw.VBias)
+	}
 
 	// 2. QK-norm (Gemma 3, Qwen3): RMSNorm over head_dim, per head, before RoPE.
 	if arch.QKNorm {
@@ -53,10 +66,14 @@ func causalAttention(
 		rmsNorm(k, lw.KNorm, nKV, hd, arch.NormEps, arch.RMSAddOne)
 	}
 
-	// 3. RoPE at pos with the per-layer base (Gemma: local 10k vs global 1e6).
-	base := arch.ropeBase(layer)
-	applyRoPE(q, nH, hd, pos, base)
-	applyRoPE(k, nKV, hd, pos, base)
+	// 3. RoPE at pos with the per-layer inv-freq table (Gemma: local 10k vs
+	// global 1e6 base; Llama-3: llama3 scaling baked in; Phi: partial rotary).
+	// GPT-2 uses learned absolute positions instead, so it skips RoPE.
+	if !arch.LearnedPosEmbed {
+		invFreq := arch.ropeInvFreq(layer)
+		applyRoPE(q, nH, hd, pos, invFreq)
+		applyRoPE(k, nKV, hd, pos, invFreq)
+	}
 
 	// 4. Append this position's K/V, then attend over the stored history.
 	cache.Append(layer, k, v)
@@ -105,8 +122,11 @@ func causalAttention(
 		}
 	}
 
-	// 7. Output projection; caller applies post-attn norm + residual.
+	// 7. Output projection (+ bias for GPT-2); caller applies post-attn norm + residual.
 	out := make([]float32, hidden)
 	lw.OProj.matmul(be, ctx, out, 1)
+	if arch.OutBias {
+		addBias(out, lw.OBias)
+	}
 	return out, nil
 }

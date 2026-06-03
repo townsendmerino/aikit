@@ -17,8 +17,13 @@ type archAdapter func(*Config) (*Architecture, *tensorSchema, error)
 // forward pass itself doesn't change.
 var registry = map[string]archAdapter{
 	"gemma3":      gemma3Architecture,
-	"gemma3_text": gemma3Architecture, // the 270M/1B text checkpoints
-	"qwen3":       qwen3Architecture,  // Qwen3 dense (0.6B/1.7B/4B/8B/…)
+	"gemma3_text": gemma3Architecture,  // the 270M/1B text checkpoints
+	"qwen3":       qwen3Architecture,   // Qwen3 dense (0.6B/1.7B/4B/8B/…)
+	"qwen2":       qwen2Architecture,   // Qwen2/Qwen2.5 dense (llama + q/k/v bias)
+	"llama":       llamaArchitecture,   // Llama-2/3 dense (single-base RoPE, no QK-norm)
+	"mistral":     mistralArchitecture, // Llama + all-layer sliding-window attention
+	"gpt2":        gpt2Architecture,    // GPT-2: LayerNorm, learned pos, non-gated GELU MLP, fused QKV
+	"mixtral":     mixtralArchitecture, // Llama + sparse MoE FFN (router + top-k experts)
 }
 
 // resolveArchitecture picks the adapter for cfg.ModelType and builds the
@@ -29,7 +34,12 @@ func resolveArchitecture(cfg *Config) (*Architecture, *tensorSchema, error) {
 	if !ok {
 		return nil, nil, fmt.Errorf("decoder: unsupported model_type %q (have: %s)", cfg.ModelType, knownModelTypes())
 	}
-	return adapter(cfg)
+	arch, schema, err := adapter(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	arch.finalizeRoPE() // precompute inv-freq tables (base + scaling + rotary dim)
+	return arch, schema, nil
 }
 
 func knownModelTypes() string {
@@ -109,4 +119,235 @@ func qwen3Architecture(cfg *Config) (*Architecture, *tensorSchema, error) {
 		EmbedScale:      0,     // none
 		TiedLMHead:      false, // finalized from lm_head.weight presence at load
 	}, &qwen3TensorSchema, nil
+}
+
+// llamaArchitecture expresses Llama-2/3 dense: like Qwen3 (RMSNorm no-offset,
+// Pre2 placement, SwiGLU, 1/√head_dim scale, single-base RoPE, no embed scale)
+// but WITHOUT QK-norm — Llama's attention applies RoPE to raw q/k. head_dim is
+// derived (headDim()) since many Llama configs omit it. The LM head is tied on
+// the small text models (1B/3B) and untied on 8B+, finalized from
+// lm_head.weight presence at load. validateLlama rejects scaled RoPE (G4) and
+// attention bias (a later add), so reaching here implies a plain checkpoint.
+func llamaArchitecture(cfg *Config) (*Architecture, *tensorSchema, error) {
+	if err := cfg.validateLlama(); err != nil {
+		return nil, nil, err
+	}
+	scaling, err := parseRopeScaling(cfg.RopeScaling) // G4: linear + llama3; unsupported types error here
+	if err != nil {
+		return nil, nil, fmt.Errorf("decoder(llama): %w", err)
+	}
+	hd := cfg.headDim()
+	return &Architecture{
+		Name:            "llama",
+		HiddenDim:       cfg.HiddenDim,
+		NumLayers:       cfg.NumLayers,
+		NumHeads:        cfg.NumHeads,
+		NumKVHeads:      cfg.NumKVHeads,
+		HeadDim:         hd,
+		IntermediateDim: cfg.IntermediateDim,
+		VocabSize:       cfg.VocabSize,
+		Norm:            NormRMS,
+		RMSAddOne:       false,
+		NormEps:         cfg.RMSNormEps,
+		NormPlacement:   NormPre2,
+		Act:             ActSiLU,
+		QKNorm:          false, // the one knob that differs from Qwen3
+		AttnScale:       math.Pow(float64(hd), -0.5),
+		SlidingWindow:   0,                  // Llama dense: full attention
+		layerIsGlobal:   nil,                // all-global
+		RoPELocalBase:   cfg.RoPEGlobalBase, // single base (rope_theta)
+		RoPEGlobalBase:  cfg.RoPEGlobalBase,
+		RotaryDim:       cfg.rotaryDim(), // 0 = full head_dim (Llama); partial for Phi
+		ropeScaling:     scaling,         // llama3 (3.1+/3.2) / linear; nil = none
+		EmbedScale:      0,               // none
+		TiedLMHead:      false,           // finalized from lm_head.weight presence at load
+	}, &llamaTensorSchema, nil
+}
+
+// mistralArchitecture expresses Mistral dense: the llama descriptor (RMS
+// no-offset, Pre2, SwiGLU, single-base RoPE, no QK-norm, no bias, derived
+// head_dim) with sliding-window attention on EVERY layer (Gemma's window
+// machinery, but all-local rather than 5:1). A checkpoint with sliding_window
+// null/0 (Mistral-v0.2+) falls back to full attention. The tensor schema is
+// llamaTensorSchema (Mistral and Llama share tensor names).
+func mistralArchitecture(cfg *Config) (*Architecture, *tensorSchema, error) {
+	if err := cfg.validateLlama(); err != nil {
+		return nil, nil, err
+	}
+	scaling, err := parseRopeScaling(cfg.RopeScaling)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decoder(mistral): %w", err)
+	}
+	hd := cfg.headDim()
+	// All layers local when a window is set; else all global (full attention).
+	var layerIsGlobal func(int) bool
+	if cfg.SlidingWindow > 0 {
+		layerIsGlobal = func(int) bool { return false }
+	}
+	return &Architecture{
+		Name:            "mistral",
+		HiddenDim:       cfg.HiddenDim,
+		NumLayers:       cfg.NumLayers,
+		NumHeads:        cfg.NumHeads,
+		NumKVHeads:      cfg.NumKVHeads,
+		HeadDim:         hd,
+		IntermediateDim: cfg.IntermediateDim,
+		VocabSize:       cfg.VocabSize,
+		Norm:            NormRMS,
+		RMSAddOne:       false,
+		NormEps:         cfg.RMSNormEps,
+		NormPlacement:   NormPre2,
+		Act:             ActSiLU,
+		QKNorm:          false,
+		AttnScale:       math.Pow(float64(hd), -0.5),
+		SlidingWindow:   cfg.SlidingWindow, // 0 ⇒ full attention
+		layerIsGlobal:   layerIsGlobal,     // all-local when windowed
+		RoPELocalBase:   cfg.RoPEGlobalBase,
+		RoPEGlobalBase:  cfg.RoPEGlobalBase,
+		RotaryDim:       cfg.rotaryDim(),
+		ropeScaling:     scaling,
+		EmbedScale:      0,
+		TiedLMHead:      false, // finalized from lm_head.weight presence at load
+	}, &llamaTensorSchema, nil
+}
+
+// gpt2Architecture expresses GPT-2 (multi-model-plan G5): the GPT-2/NeoX class
+// that breaks the Llama mold on several axes — LayerNorm (mean-centered, with
+// bias) instead of RMSNorm, learned absolute position embeddings instead of
+// RoPE, a non-gated GELU MLP (up→gelu→down) instead of a gated one, fused q/k/v
+// with bias, an attention output bias, and tied embeddings. The Conv1D weight
+// layout + fused projections need a dedicated loader (buildGPT2Weights), so
+// this returns the gpt2TensorSchema as a marker; the schema's field names are
+// unused.
+func gpt2Architecture(cfg *Config) (*Architecture, *tensorSchema, error) {
+	if err := cfg.validateGPT2(); err != nil {
+		return nil, nil, err
+	}
+	hd := cfg.NEmbd / cfg.NHead
+	inter := cfg.NInner
+	if inter == 0 {
+		inter = 4 * cfg.NEmbd // GPT-2 default feed-forward width
+	}
+	// Canonicalize the standard Config dims from GPT-2's n_* keys so Model.Config()
+	// (used by the demos for the load banner) reports them uniformly. cfg is a
+	// freshly-parsed, per-Load pointer, so this mutation is local.
+	cfg.HiddenDim, cfg.NumLayers, cfg.NumHeads = cfg.NEmbd, cfg.NLayer, cfg.NHead
+	cfg.NumKVHeads, cfg.HeadDim, cfg.IntermediateDim = cfg.NHead, hd, inter
+	cfg.MaxPositions = cfg.NPositions
+	return &Architecture{
+		Name:            "gpt2",
+		HiddenDim:       cfg.NEmbd,
+		NumLayers:       cfg.NLayer,
+		NumHeads:        cfg.NHead,
+		NumKVHeads:      cfg.NHead, // no GQA
+		HeadDim:         hd,
+		IntermediateDim: inter,
+		VocabSize:       cfg.VocabSize,
+		MaxPositions:    cfg.NPositions,
+		Norm:            NormLayer,
+		NormEps:         cfg.LayerNormEpsilon,
+		NormPlacement:   NormPre2, // ln_1 pre-attn, ln_2 pre-MLP
+		Act:             ActGeluTanh,
+		NonGatedMLP:     true,
+		QKVBias:         true,
+		OutBias:         true,
+		QKNorm:          false,
+		LearnedPosEmbed: true,
+		AttnScale:       math.Pow(float64(hd), -0.5),
+		EmbedScale:      0,
+		TiedLMHead:      true, // GPT-2 ties wte as the LM head
+	}, &gpt2TensorSchema, nil
+}
+
+// mixtralArchitecture expresses Mixtral (multi-model-plan G6): the llama
+// descriptor (RMS no-offset, Pre2, SwiGLU experts, single-base RoPE, no QK-norm,
+// no bias, untied head) with the dense FFN replaced by a sparse mixture of
+// experts — a router picks top-k of NumExperts experts per token. Recent HF
+// Mixtral uses full attention (the config's sliding_window is vestigial), so
+// this does too. The tensor schema is mixtralTensorSchema.
+func mixtralArchitecture(cfg *Config) (*Architecture, *tensorSchema, error) {
+	if err := cfg.validateMixtral(); err != nil {
+		return nil, nil, err
+	}
+	scaling, err := parseRopeScaling(cfg.RopeScaling)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decoder(mixtral): %w", err)
+	}
+	hd := cfg.headDim()
+	normTopK := true // HF MixtralConfig default
+	if cfg.NormTopKProb != nil {
+		normTopK = *cfg.NormTopKProb
+	}
+	return &Architecture{
+		Name:            "mixtral",
+		HiddenDim:       cfg.HiddenDim,
+		NumLayers:       cfg.NumLayers,
+		NumHeads:        cfg.NumHeads,
+		NumKVHeads:      cfg.NumKVHeads,
+		HeadDim:         hd,
+		IntermediateDim: cfg.IntermediateDim,
+		VocabSize:       cfg.VocabSize,
+		Norm:            NormRMS,
+		RMSAddOne:       false,
+		NormEps:         cfg.RMSNormEps,
+		NormPlacement:   NormPre2,
+		Act:             ActSiLU,
+		MoE: &MoEConfig{
+			NumExperts:   cfg.NumLocalExperts,
+			TopK:         cfg.NumExpertsPerTok,
+			NormTopKProb: normTopK,
+		},
+		QKNorm:         false,
+		AttnScale:      math.Pow(float64(hd), -0.5),
+		SlidingWindow:  0, // full attention (HF Mixtral ignores config sliding_window)
+		layerIsGlobal:  nil,
+		RoPELocalBase:  cfg.RoPEGlobalBase,
+		RoPEGlobalBase: cfg.RoPEGlobalBase,
+		RotaryDim:      cfg.rotaryDim(),
+		ropeScaling:    scaling,
+		EmbedScale:     0,
+		TiedLMHead:     false, // finalized from lm_head.weight presence at load
+	}, &mixtralTensorSchema, nil
+}
+
+// qwen2Architecture expresses Qwen2/Qwen2.5 dense: identical to the llama
+// descriptor (RMS no-offset, Pre2, SwiGLU, single-base RoPE, no QK-norm, derived
+// head_dim, tied-or-untied head) plus QKVBias — Qwen2 carries an additive bias
+// on the q/k/v projections (o_proj stays biasless). The tensor schema is
+// qwen2TensorSchema.
+func qwen2Architecture(cfg *Config) (*Architecture, *tensorSchema, error) {
+	if err := cfg.validateQwen2(); err != nil {
+		return nil, nil, err
+	}
+	scaling, err := parseRopeScaling(cfg.RopeScaling) // linear + llama3 (Qwen2.5 leaves it null)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decoder(qwen2): %w", err)
+	}
+	hd := cfg.headDim()
+	return &Architecture{
+		Name:            "qwen2",
+		HiddenDim:       cfg.HiddenDim,
+		NumLayers:       cfg.NumLayers,
+		NumHeads:        cfg.NumHeads,
+		NumKVHeads:      cfg.NumKVHeads,
+		HeadDim:         hd,
+		IntermediateDim: cfg.IntermediateDim,
+		VocabSize:       cfg.VocabSize,
+		Norm:            NormRMS,
+		RMSAddOne:       false,
+		NormEps:         cfg.RMSNormEps,
+		NormPlacement:   NormPre2,
+		Act:             ActSiLU,
+		QKVBias:         true, // the one knob that differs from llama
+		QKNorm:          false,
+		AttnScale:       math.Pow(float64(hd), -0.5),
+		SlidingWindow:   0,   // validateQwen2 rejects use_sliding_window=true
+		layerIsGlobal:   nil, // all-global
+		RoPELocalBase:   cfg.RoPEGlobalBase,
+		RoPEGlobalBase:  cfg.RoPEGlobalBase,
+		RotaryDim:       cfg.rotaryDim(),
+		ropeScaling:     scaling,
+		EmbedScale:      0,
+		TiedLMHead:      false, // finalized from lm_head.weight presence at load
+	}, &qwen2TensorSchema, nil
 }
