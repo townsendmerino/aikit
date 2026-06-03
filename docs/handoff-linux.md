@@ -5,12 +5,10 @@ importantly an **amd64/Linux** box, where the things this repo *couldn't*
 run on the arm64 Mac finally execute. This points at the detailed docs
 rather than repeating them.
 
-> Everything is on the **`encoder-accel-retrieval`** branch (not yet
-> merged to `main`). After cloning:
+> Everything is on **`main`** now — a plain clone has it all:
 >
 > ```bash
 > git clone https://github.com/townsendmerino/aikit.git && cd aikit
-> git checkout encoder-accel-retrieval
 > ```
 
 ## 0. Sanity: a fresh checkout is green
