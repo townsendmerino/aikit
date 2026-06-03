@@ -1,6 +1,6 @@
 //go:build amd64
 
-package encoder
+package linalg
 
 import (
 	"math/rand/v2"

@@ -111,8 +111,3 @@ func causalAttention(
 	be.MatmulBT(ctx, lw.OProj, out, 1, qDim, hidden)
 	return out, nil
 }
-
-// groupForHead maps a query head to its KV head under GQA.
-func groupForHead(qHead, numHeads, numKVHeads int) int {
-	return qHead / (numHeads / numKVHeads)
-}

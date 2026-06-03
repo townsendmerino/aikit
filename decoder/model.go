@@ -75,6 +75,13 @@ func (m *Model) runLayers(id int, cache *KVCache) ([]float32, error) {
 	}
 	h := make([]float32, c.HiddenDim)
 	copy(h, m.w.Embed[id*c.HiddenDim:(id+1)*c.HiddenDim])
+	// Embedding scale. NOTE: HF computes this normalizer as sqrt(hidden) cast
+	// to the model's dtype — bf16 for a bf16 checkpoint (≈25.25 here) — then
+	// multiplies. We use the f32 value (≈25.2982). It matches our parity gate
+	// because the very next op (PreAttnNorm RMSNorm) divides out a global
+	// scalar, so the difference only survives in the residual and stays well
+	// under the ≥1−1e-4 cosine bar. If that bar is ever tightened past ~1e-5,
+	// round `scale` to bf16 first to match HF exactly. See M3-forward.md.
 	scale := float32(math.Sqrt(float64(c.HiddenDim)))
 	for i := range h {
 		h[i] *= scale

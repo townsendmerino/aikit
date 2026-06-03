@@ -1,6 +1,10 @@
 package encoder
 
-import "math"
+import (
+	"math"
+
+	"github.com/townsendmerino/aikit/internal/linalg"
+)
 
 // matmulBT computes dst = a · bᵀ where:
 //
@@ -206,7 +210,7 @@ func matmulBTBlockedFillIntoTiled(a, b, dst []float32, M, K, N, mBlock, nBlock, 
 					nEndAligned8 := n0 + ((nEnd-n0)/8)*8
 					var sums8 [32]float32
 					for ; n < nEndAligned8; n += 8 {
-						dotNEON8x4(aRowPtr,
+						linalg.Dot8x4(aRowPtr,
 							&b[n*K+k0], &b[(n+1)*K+k0], &b[(n+2)*K+k0], &b[(n+3)*K+k0],
 							&b[(n+4)*K+k0], &b[(n+5)*K+k0], &b[(n+6)*K+k0], &b[(n+7)*K+k0],
 							k4, &sums8)
@@ -242,7 +246,7 @@ func matmulBTBlockedFillIntoTiled(a, b, dst []float32, M, K, N, mBlock, nBlock, 
 					nEndAligned4 := n0 + ((nEnd-n0)/4)*4
 					var sums [16]float32
 					for ; n < nEndAligned4; n += 4 {
-						dotNEON4x4(aRowPtr,
+						linalg.Dot4x4(aRowPtr,
 							&b[n*K+k0], &b[(n+1)*K+k0], &b[(n+2)*K+k0], &b[(n+3)*K+k0],
 							k4, &sums)
 						s0 := sums[0] + sums[1] + sums[2] + sums[3]

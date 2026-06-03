@@ -25,9 +25,14 @@ The transformer's hot inner loop is three arch-neutral kernel functions — `dot
 
 | Arch | File | Path |
 |---|---|---|
-| arm64 | `encoder/dot_arm64.{go,s}` | hand-written NEON (M-series, pre-existing) |
-| amd64 | `encoder/dot_amd64.{go,s}` | AVX2+FMA `dotFMA`, runtime-detected, scalar fallback |
-| other | `encoder/dot_other.go` → `dot_generic.go` | scalar |
+| arm64 | `internal/linalg/dot_arm64.{go,s}` | hand-written NEON (M-series, pre-existing) |
+| amd64 | `internal/linalg/dot_amd64.{go,s}` | AVX2+FMA `dotFMA`, runtime-detected, scalar fallback |
+| other | `internal/linalg/dot_other.go` → `dot_generic.go` | scalar |
+
+> **Moved (M7, 2026-06-02):** the dot kernels were lifted out of `encoder/` into
+> `internal/linalg` so the encoder and the Gemma decoder share one copy of the
+> assembly (gemma-decoder-plan §1). The encoder imports `linalg.Dot4x4`/`Dot8x4`;
+> the decoder's matmul backend calls `linalg.MatmulBT`. See `milestones/M7-perf.md`.
 
 On top of that, `encoder/parallel.go` row-splits the big linear-layer matmuls across cores
 **only** when a single forward pass is running alone (a lone `Encode` call) — never under
@@ -165,7 +170,7 @@ to measure, which is exactly what the Linux box gives you. Roughly in priority o
 
 ### A. amd64 register-blocked micro-kernel — DONE & VALIDATED on Linux (2026-06-02)
 
-**Implemented and now executed.** `dotFMA4` / `dotFMA8` in `encoder/dot_amd64.s` load each 8-float
+**Implemented and now executed.** `dotFMA4` / `dotFMA8` in `internal/linalg/dot_amd64.s` load each 8-float
 chunk of the shared `a` row ONCE and run 4/8 FMA chains against the b-rows into separate YMM
 accumulators — the a-reuse register-blocking arm64's NEON kernel uses. `dotNEON4x4`/`dotNEON8x4` in
 `dot_amd64.go` dispatch to them (scalar fallback when `!hasAVX2`). Cross-compiled + `go vet`/
@@ -255,11 +260,12 @@ The Metal device reports `maxStorageBufferBindingSize` = 128 MB. Big-batch activ
 ## Quick reference: files
 
 ```
-encoder/dot_generic.go     scalar kernels (build !arm64)
-encoder/dot_other.go       aliases for !arm64 && !amd64
-encoder/dot_amd64.go       AVX2 dispatch + CPUID/XGETBV detection
-encoder/dot_amd64.s        dotFMA asm + cpuid/xgetbv asm
-encoder/dot_amd64_test.go  asm-vs-generic differential test
+internal/linalg/dot_generic.go  scalar kernels (build !arm64)
+internal/linalg/dot_other.go    aliases for !arm64 && !amd64
+internal/linalg/dot_amd64.go    AVX2 dispatch + CPUID/XGETBV detection
+internal/linalg/dot_amd64.s     dotFMA asm + cpuid/xgetbv asm
+internal/linalg/linalg.go       exported Dot/Dot4x4/Dot8x4 + row-parallel MatmulBT
+internal/linalg/dot_amd64_test.go  asm-vs-generic differential test
 encoder/parallel.go        in-flight counter + row-parallel blocked matmul
 encoder/parallel_test.go   exactness test + threshold benchmarks
 encoder/linalg.go          matmulBTInto dispatch (naive / blocked / parallel)

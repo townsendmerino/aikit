@@ -1,6 +1,6 @@
 //go:build amd64
 
-package encoder
+package linalg
 
 // amd64 kernel path. The three arch-neutral kernel names dispatch at
 // runtime: AVX2+FMA when the CPU supports it (dotFMA in dot_amd64.s),

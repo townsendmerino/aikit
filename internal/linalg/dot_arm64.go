@@ -1,6 +1,6 @@
 //go:build arm64
 
-package encoder
+package linalg
 
 // dotNEON4 fills *sums with the 4 NEON-lane partial sums of the dot
 // product over the first n4*4 elements of a and b. Caller (dotF32)

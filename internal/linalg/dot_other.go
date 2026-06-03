@@ -1,6 +1,6 @@
 //go:build !arm64 && !amd64
 
-package encoder
+package linalg
 
 // Catch-all kernel path: architectures with neither NEON asm (arm64)
 // nor AVX2 asm (amd64) alias the arch-neutral interface straight to

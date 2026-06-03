@@ -47,23 +47,24 @@ streaming token channel.
 
 ---
 
-## 1. Shared linalg — the prerequisite refactor
+## 1. Shared linalg — the prerequisite refactor  ✅ core done (M7, 2026-06-02)
 
-The SIMD matmul/dot lives **unexported inside `encoder/`** today. The decoder
-needs it too, and a WebGPU backend needs a clean seam to substitute for it.
+The SIMD matmul/dot used to live **unexported inside `encoder/`**. It now lives
+in **`internal/linalg`**, shared by the encoder and the Gemma decoder (and the
+clean seam a WebGPU backend substitutes for).
 
-Plan: lift the compute primitives into `internal/linalg` (or a public
-`linalg` if we want third parties to reuse it):
+Done in M7 ([`milestones/M7-perf.md`](milestones/M7-perf.md)):
 
-- `MatmulBT(a, b, dst []float32, M, K, N int)` and the blocked/parallel/tiled
-  variants, plus the `dot*` asm and its `_arm64` / `_amd64` / `_other` build-tag
-  trio.
-- `SoftmaxRow`, `LayerNorm`, and the new `RMSNorm`, `GeluTanh`.
+- The `dot*` asm and its `_arm64` / `_amd64` / `_other` build-tag trio (the
+  single copy of the hand-written SIMD) + `Dot` / `Dot4x4` / `Dot8x4`.
+- A row-parallel `MatmulBT(a, b, dst, M, K, N)` built on `Dot`. `encoder/`
+  imports the shared kernels; its public API and cache-blocked matmul driver
+  are unchanged; the decoder's `cpuBackend` calls `linalg.MatmulBT`.
 
-`encoder/` then imports it instead of owning it (a pure move + re-export; the
-encoder's public API is unchanged, the package's "Hard, 1.0-committed" surface
-in the README is untouched). This is mechanical but must land first because
-everything below sits on it.
+Still on the list (not blocking): unifying the encoder's blocked matmul driver
+with the decoder's M=1 path into one shared `MatmulBT`, and moving the cheap
+elementwise ops (`SoftmaxRow`, `LayerNorm`, `RMSNorm`, `GeluTanh`) — each
+package has its own today and they aren't the bottleneck.
 
 ---
 
@@ -212,9 +213,12 @@ chatty host↔device round-trip per layer.
   generates from a real checkpoint (UTF-8-correct byte-fallback streaming).
   Repetition penalty / chat template are open follow-ups. See
   [`milestones/M6-sampler.md`](milestones/M6-sampler.md).
-- **M7 — perf.** Wire the SIMD/parallel `linalg` backend, scratch-pool the
-  decode arena, profile tokens/sec on 270M and 1B. Target: interactive
-  (>10 tok/s) on an M-series laptop for 270M.
+- **M7 — perf.** ✅ **DONE 2026-06-02 (core).** Shared SIMD kernels in
+  `internal/linalg` (§1), decoder matmul parallelized over output columns:
+  ~**18 tok/s** on a Ryzen 7 3700X (270M) — past the >10 tok/s interactive
+  target, ~3.5× over naive. Parity unchanged. Goroutine-pool reuse, matmul-
+  driver unification, and scratch-pooling remain as follow-ups. See
+  [`milestones/M7-perf.md`](milestones/M7-perf.md).
 - **M8 — memory / quant.** int8 (reuse `quant.go`) and int4 group-quant for the
   larger checkpoints; bf16-resident matmul tiling (§2). Makes 1B comfortable
   and 4B feasible on a laptop.

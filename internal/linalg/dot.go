@@ -1,4 +1,4 @@
-package encoder
+package linalg
 
 // dotF32 computes Σ a[i] * b[i] with NEON acceleration on arm64 and
 // a Go scalar loop elsewhere. len(a) must equal len(b).

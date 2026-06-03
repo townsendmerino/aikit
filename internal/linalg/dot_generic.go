@@ -1,6 +1,6 @@
 //go:build !arm64
 
-package encoder
+package linalg
 
 import "unsafe"
 

@@ -1,6 +1,10 @@
 package decoder
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/internal/linalg"
+)
 
 // Backend abstracts the one hot primitive the decoder forward pass is
 // bound by — the big weight matmuls. Norms, RoPE, softmax and elementwise
@@ -37,28 +41,16 @@ func NewBackend(name string) (Backend, error) {
 	}
 }
 
-// cpuBackend is a correct, naive matmul so the Backend interface is
-// exercised end-to-end by the scaffold. M7 swaps the body for the shared
-// SIMD/row-parallel linalg lifted out of encoder/ (plan §1) — a one-line
-// change here, the interface and all callers stay put.
+// cpuBackend dispatches the hot matmul to the shared internal/linalg package
+// (M7): SIMD dot kernels (AVX2/NEON) parallelized across output columns. The
+// math is identical to the previous naive triple-loop — the decoder parity
+// tests (which match HF exactly) still pass — just multiple-× faster.
 type cpuBackend struct{}
 
 func (*cpuBackend) Name() string { return "cpu" }
 
 func (*cpuBackend) MatmulBT(a, b, dst []float32, M, K, N int) {
-	// dst[i,j] = Σ_k a[i,k] * b[j,k]
-	for i := 0; i < M; i++ {
-		arow := a[i*K : i*K+K]
-		drow := dst[i*N : i*N+N]
-		for j := 0; j < N; j++ {
-			brow := b[j*K : j*K+K]
-			var s float32
-			for k := 0; k < K; k++ {
-				s += arow[k] * brow[k]
-			}
-			drow[j] = s
-		}
-	}
+	linalg.MatmulBT(a, b, dst, M, K, N)
 }
 
 func (*cpuBackend) Close() error { return nil }

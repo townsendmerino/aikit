@@ -110,7 +110,8 @@ validates every schema entry across all layers and returned no error. Shapes
 | decoder M4 multi-token decode | ✅ done 2026-06-02 — 48-tok greedy continuation matches HF id-for-id + string; EOS wired; see `milestones/M4-decode.md` |
 | decoder M5 sliding window | ✅ done 2026-06-02 — 748-tok prompt matches HF (cosine 1−1e-11); fixed 2 latent window bugs; see `milestones/M5-window.md` |
 | decoder M6 sampler + streaming demo | ✅ done 2026-06-02 — temp/top-k/top-p sampling, `demo/gemma` generates from a real checkpoint; see `milestones/M6-sampler.md` |
-| decoder M7+ (perf: SIMD/parallel backend, quant, GPU) | scaffold only — naive backend; ~0.2 s/token |
+| decoder M7 perf (shared SIMD linalg) | ✅ done 2026-06-02 — dot kernels lifted to `internal/linalg`, decoder matmul parallel; ~18 tok/s on Ryzen 7 3700X (>10 target); see `milestones/M7-perf.md` |
+| decoder M8/M9 (int4/int8 quant, WebGPU) | not started — for the 1B+ checkpoints |
 
 Reference docs: [`cpu-acceleration.md`](cpu-acceleration.md),
 [`gemma-decoder-plan.md`](gemma-decoder-plan.md),
