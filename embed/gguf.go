@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"runtime"
+	"syscall"
 )
 
 // GGUF reader (multi-model-plan G7) — the llama.cpp container format that makes
@@ -60,6 +62,7 @@ type GGUFFile struct {
 	Metadata map[string]any
 	tensors  map[string]ggufTensorInfo
 	data     []byte // the tensor-data section (file bytes after the aligned header)
+	mmap     []byte // full mmap region iff opened via OpenGGUFMmap; nil for OpenGGUF
 }
 
 // gcur is a little-endian cursor over a byte slice with bounds checks.
@@ -167,14 +170,60 @@ func (c *gcur) value(vtype uint32) any {
 	}
 }
 
-// OpenGGUF reads and parses a .gguf file. The whole file is read into memory;
-// tensor data is dequantized into fresh slices by Tensor, so callers needn't
-// retain the file.
+// OpenGGUF reads and parses a .gguf file. The whole file is read into memory
+// (heap); tensor data is dequantized into fresh slices by Tensor, so callers
+// needn't retain the file. For large checkpoints prefer OpenGGUFMmap, which
+// maps the file instead of heap-copying it — the raw quantized bytes then live
+// in reclaimable page cache rather than the Go heap, and metadata-only readers
+// (e.g. a tokenizer) never page in the weights at all.
 func OpenGGUF(path string) (*GGUFFile, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("gguf: %w", err)
 	}
+	return parseGGUF(raw)
+}
+
+// OpenGGUFMmap memory-maps a .gguf file (read-only, MAP_PRIVATE) and parses it,
+// so the raw quantized bytes are file-backed page cache, not heap. Metadata
+// strings are copied during parse and Tensor dequantizes into fresh slices, so
+// nothing aliases the mapping — call Close (or let the finalizer run) once the
+// tensors have been read to munmap. Platform: unix only (syscall.Mmap), same as
+// OpenSafetensorsMmap; use OpenGGUF on unsupported platforms.
+func OpenGGUFMmap(path string) (*GGUFFile, error) {
+	data, err := mmapReadOnly(path)
+	if err != nil {
+		return nil, fmt.Errorf("gguf: %w", err)
+	}
+	g, err := parseGGUF(data)
+	if err != nil {
+		_ = syscall.Munmap(data)
+		return nil, err
+	}
+	g.mmap = data
+	runtime.SetFinalizer(g, finalizeGGUFMmap)
+	return g, nil
+}
+
+// Close releases the mmap backing a GGUFFile opened via OpenGGUFMmap; its tensor
+// data must not be read afterward. No-op for OpenGGUF (heap-backed). Safe to
+// call more than once.
+func (g *GGUFFile) Close() error {
+	if g.mmap == nil {
+		return nil
+	}
+	err := syscall.Munmap(g.mmap)
+	g.mmap = nil
+	g.data = nil
+	return err
+}
+
+func finalizeGGUFMmap(g *GGUFFile) { _ = g.Close() }
+
+// parseGGUF parses the header, metadata key-values and tensor directory from an
+// already-loaded (heap or mmap) byte slice. The data section is referenced in
+// place via GGUFFile.data, so raw must outlive the GGUFFile's tensor reads.
+func parseGGUF(raw []byte) (*GGUFFile, error) {
 	c := &gcur{b: raw}
 	if c.u32() != ggufMagic {
 		return nil, fmt.Errorf("gguf: bad magic (not a GGUF file)")

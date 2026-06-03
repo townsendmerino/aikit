@@ -23,15 +23,22 @@ parity fixture (the repo's bar is no unvalidated dequant/tokenizer code):
 - **More K-quants (Q5_K/Q3_K/IQ\*)** — each "a `dequant*` func + a size entry",
   but needs a Q5_K fixture or the Python `gguf` reference to validate.
 
-### 2. Resident int8/int4 matmul (dequant-per-tile) — **int8 streaming DONE** · M–L
+### 2. Resident int8/int4 matmul (dequant-per-tile) — **int8 + mmap DONE** · M–L
 
 Both planning docs flagged this as "the way to actually run big quantized models
-in small memory." ✅ **Streaming int8 shipped**: `Load(…, Quant:"int8")` now
-quantizes each matmul tensor as it loads and frees the f32 before the next, for
-the safetensors, GPT-2, and GGUF paths — no whole-model f32 spike, so a big
-quantized checkpoint loads in ~¼ the RAM, and a bare `.gguf` lands resident as
-int8 (validated by `TestGGUF_int8_resident`, argmax + 0.9998 cosine vs f32).
-Reused the existing `MatmulBTQ8` dequant-per-tile kernel.
+in small memory." Two pieces shipped:
+
+- ✅ **Streaming int8**: `Load(…, Quant:"int8")` quantizes each matmul tensor as
+  it loads and frees the f32 before the next (safetensors, GPT-2, GGUF) — no
+  whole-model f32 spike, so a checkpoint loads in ~¼ the RAM and a bare `.gguf`
+  lands resident as int8 (`TestGGUF_int8_resident`: argmax + 0.9998 cosine vs
+  f32). Reuses the `MatmulBTQ8` dequant-per-tile kernel.
+- ✅ **mmap GGUF** (`embed.OpenGGUFMmap`): maps the `.gguf` instead of
+  heap-reading it, so the raw quantized bytes are reclaimable page cache rather
+  than a heap copy — removes the load-time peak that otherwise exceeded the int8
+  steady state. Bonus: `tokenizer.LoadGGUF` no longer pages in the weights to
+  read metadata (its test went ~0.5 s → ~0.03 s). Parse is bit-identical to the
+  heap path.
 
 Still open — **int4 group-quant** (≈⅛ f32, matches native Q4 footprint): the
 streaming-quant load path is now in place, so this needs only its own

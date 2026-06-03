@@ -59,10 +59,14 @@ func ggufConfig(g *embed.GGUFFile) (*Config, error) {
 // loadGGUFWeights parses a .gguf file and builds the weight bundle, mapping
 // llama.cpp tensor names to the descriptor and un-permuting q/k.
 func loadGGUFWeights(path string, quant bool) (*Weights, error) {
-	g, err := embed.OpenGGUF(path)
+	// mmap, not heap-read: the raw quantized bytes stay in reclaimable page
+	// cache while we dequantize tensor-by-tensor. The weights end up as fresh
+	// (f32 or int8) copies, so the mapping is unneeded once the build returns.
+	g, err := embed.OpenGGUFMmap(path)
 	if err != nil {
 		return nil, err
 	}
+	defer g.Close()
 	cfg, err := ggufConfig(g)
 	if err != nil {
 		return nil, err

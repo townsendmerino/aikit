@@ -54,10 +54,13 @@ const (
 // SentencePiece byte-fallback family (tokenizer.ggml.model == "llama") is
 // supported today; see the package note for the byte-level follow-up.
 func LoadGGUF(path string) (*Tokenizer, error) {
-	g, err := embed.OpenGGUF(path)
+	// mmap, not heap-read: the tokenizer only needs the metadata at the head of
+	// the file, so mapping avoids paging in the (multi-GB) weights entirely.
+	g, err := embed.OpenGGUFMmap(path)
 	if err != nil {
 		return nil, fmt.Errorf("tokenizer.LoadGGUF: %w", err)
 	}
+	defer g.Close()
 	t, err := fromGGUF(g)
 	if err != nil {
 		return nil, fmt.Errorf("tokenizer.LoadGGUF %s: %w", path, err)

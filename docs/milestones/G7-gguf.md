@@ -92,6 +92,11 @@ rendering.
 - **GPTQ / AWQ** (safetensors-resident int4): the other half of the plan's G7 —
   different packing (`qweight`/`qzeros`/`scales`/`g_idx`), same dequant-to-f32
   idea, and our safetensors loader already handles the container.
-- **Memory**: dequant-to-f32 on load loses the quant's RAM win; pairing GGUF
-  with M8-style resident int8/int4 (dequant per-tile in matmul) is the way to
-  actually run the big quantized models in small memory.
+- **Memory** — largely addressed. Two changes pair GGUF with the M8 resident
+  path so big quantized models load in small RAM: (1) `embed.OpenGGUFMmap` maps
+  the file instead of heap-reading it, so the raw quantized bytes are reclaimable
+  page cache (and a metadata-only reader like the tokenizer never pages in the
+  weights); (2) `Load(…, Quant:"int8")` streams each tensor straight to resident
+  per-row int8 (dequant per-tile in `MatmulBTQ8`), no whole-model f32. Remaining:
+  **int4 group-quant** for ~⅛ f32 (≈ native Q4 footprint) — the streaming load
+  path is in place, so it needs only its own `weightMat` variant + kernel.

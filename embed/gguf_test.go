@@ -2,6 +2,7 @@ package embed
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"os"
 	"testing"
@@ -90,5 +91,58 @@ func TestGGUF_realFile(t *testing.T) {
 		if math.Abs(float64(data[i]-w)) > 1e-9 {
 			t.Errorf("attn_q[%d] = %v, want %v", i, data[i], w)
 		}
+	}
+}
+
+// TestGGUFMmap_matchesHeap: OpenGGUFMmap must parse identically to OpenGGUF —
+// same metadata and bit-identical dequantized tensors — so the mmap path is a
+// pure memory optimization, not a behavior change. After Close the mapping is
+// released (the weights were copied out, so nothing dangles).
+func TestGGUFMmap_matchesHeap(t *testing.T) {
+	path := "../testdata/tinyllama-gguf/tinyllama-1.1b-chat-v1.0.Q8_0.gguf"
+	if _, err := os.Stat(path); err != nil {
+		t.Skip("no TinyLlama GGUF")
+	}
+	heap, err := OpenGGUF(path)
+	if err != nil {
+		t.Fatalf("OpenGGUF: %v", err)
+	}
+	mm, err := OpenGGUFMmap(path)
+	if err != nil {
+		t.Fatalf("OpenGGUFMmap: %v", err)
+	}
+
+	// Metadata: same key set and same scalar values on a representative few.
+	if len(mm.Metadata) != len(heap.Metadata) {
+		t.Errorf("metadata count: mmap %d, heap %d", len(mm.Metadata), len(heap.Metadata))
+	}
+	for _, k := range []string{"general.architecture", "llama.block_count", "llama.embedding_length"} {
+		if a, b := fmt.Sprint(mm.Metadata[k]), fmt.Sprint(heap.Metadata[k]); a != b {
+			t.Errorf("metadata[%q]: mmap %s, heap %s", k, a, b)
+		}
+	}
+
+	// Tensors: dequant must be bit-identical on a few of each layout.
+	for _, name := range []string{"token_embd.weight", "blk.0.attn_q.weight", "blk.0.ffn_down.weight", "output_norm.weight"} {
+		_, hd, herr := heap.Tensor(name)
+		_, md, merr := mm.Tensor(name)
+		if herr != nil || merr != nil {
+			t.Fatalf("Tensor(%q): heap err=%v mmap err=%v", name, herr, merr)
+		}
+		if len(md) != len(hd) {
+			t.Fatalf("Tensor(%q): len mmap %d, heap %d", name, len(md), len(hd))
+		}
+		for i := range hd {
+			if md[i] != hd[i] {
+				t.Fatalf("Tensor(%q)[%d]: mmap %v != heap %v", name, i, md[i], hd[i])
+			}
+		}
+	}
+
+	if err := mm.Close(); err != nil {
+		t.Errorf("Close: %v", err)
+	}
+	if err := mm.Close(); err != nil { // idempotent
+		t.Errorf("second Close: %v", err)
 	}
 }

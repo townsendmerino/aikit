@@ -12,6 +12,17 @@ it.
 
 ### Changed
 
+- **`embed.OpenGGUFMmap`** — memory-map a `.gguf` (read-only, MAP_PRIVATE)
+  instead of `os.ReadFile`-ing it onto the heap, so the raw quantized bytes live
+  in reclaimable page cache. `decoder` and `tokenizer` GGUF loads now use it:
+  the decoder dequantizes tensor-by-tensor off the mapping then `Close`s it
+  (weights are fresh copies, so nothing dangles), and `tokenizer.LoadGGUF` no
+  longer pages in the multi-GB weights at all to read head-of-file metadata (its
+  GGUF test dropped from ~0.5 s to ~0.03 s). Parse is bit-identical to the heap
+  path (`TestGGUFMmap_matchesHeap`). Combined with streaming int8 below, a big
+  quantized `.gguf` no longer needs the whole file on the heap *plus* the model
+  in f32 to load. Unix only (`syscall.Mmap`), like `OpenSafetensorsMmap`;
+  `OpenGGUF` (heap) remains for other platforms.
 - **Streaming int8 quantization at load** — `decoder.Load(…, Quant: "int8")` now
   quantizes each matmul tensor to per-row int8 the moment it is read and frees
   its f32 before the next tensor loads, instead of materializing the whole model
