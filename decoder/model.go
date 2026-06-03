@@ -147,10 +147,11 @@ func (m *Model) forward(id int, cache *KVCache) ([]float32, error) {
 	}
 	rmsNorm(h, m.w.FinalNorm, 1, arch.HiddenDim, arch.NormEps, arch.RMSAddOne)
 	logits := make([]float32, arch.VocabSize)
-	if !arch.TiedLMHead {
-		return nil, fmt.Errorf("decoder: untied LM head not implemented [G2]")
+	if arch.TiedLMHead {
+		m.w.Embed.matmul(m.be, h, logits, 1) // tied: embedding doubles as the head
+	} else {
+		m.w.LMHead.matmul(m.be, h, logits, 1) // separate output projection
 	}
-	m.w.Embed.matmul(m.be, h, logits, 1) // tied LM head (int8 or f32)
 	if arch.FinalLogitSoftcap > 0 {
 		softcap := float32(arch.FinalLogitSoftcap)
 		for i, v := range logits {

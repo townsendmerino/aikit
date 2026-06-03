@@ -18,7 +18,7 @@ func validGemma3Config() *Config {
 }
 
 func TestResolveArchitecture_gemma3(t *testing.T) {
-	a, err := resolveArchitecture(validGemma3Config())
+	a, _, err := resolveArchitecture(validGemma3Config())
 	if err != nil {
 		t.Fatalf("resolveArchitecture: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestResolveArchitecture_gemma3(t *testing.T) {
 func TestResolveArchitecture_unknownModelType(t *testing.T) {
 	cfg := validGemma3Config()
 	cfg.ModelType = "llama"
-	_, err := resolveArchitecture(cfg)
+	_, _, err := resolveArchitecture(cfg)
 	if err == nil {
 		t.Fatal("expected error for unknown model_type")
 	}

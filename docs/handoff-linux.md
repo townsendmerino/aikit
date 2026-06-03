@@ -115,6 +115,8 @@ validates every schema entry across all layers and returned no error. Shapes
 | decoder M9 WebGPU backend | ✅ done 2026-06-02 — `--backend webgpu` runs on RTX 2070 (Vulkan), resident weights, argmax parity; trails CPU for M=1 decode (latency-bound); see `milestones/M9-webgpu.md` |
 | decoder G0 multi-model descriptor | ✅ done 2026-06-02 — forward pass reads `Architecture` (registry by `model_type`); Gemma goldens byte-identical. Toward running Llama/Qwen/etc. (multi-model-plan G1+); see `milestones/G0-descriptor.md` |
 | decoder G1 sharded loader | ✅ done 2026-06-02 — `embed` mmaps + merges N shards (index.json); 3-shard 270m reproduces M1 checksums. Unblocks ≥7B/MoE. See `milestones/G1-sharded.md` |
+| decoder G2 Qwen3 family | ✅ done 2026-06-02 — Qwen3-1.7B runs through the generic forward, cosine 1−1e-12 vs HF (per-family tensor schema + untied head). **Qwen3 dense = coding-demo target**, pending G3 tokenizer. See `milestones/G2-qwen3.md` |
+| decoder G3 byte-level BPE tokenizer | not started — the last piece before Qwen3 chats in `gemma-web` in pure Go |
 | demo/gemma-web | ✅ done — stdlib net/http + SSE chat GUI over the decoder (`go run ./demo/gemma-web --model testdata/gemma-3-270m`) |
 
 Reference docs: [`cpu-acceleration.md`](cpu-acceleration.md),

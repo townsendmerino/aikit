@@ -233,10 +233,14 @@ new fixture per family). Parallel to M7–M9.
   the sharded path when `model.safetensors.index.json` is present. A 3-shard
   split of the 270M reproduces the M1 checksums + matches end-to-end. See
   [`milestones/G1-sharded.md`](milestones/G1-sharded.md).
-- **G2 — Llama / Mistral / Qwen2 family.** Knobs: RMS no-offset, Pre2 norms,
-  SwiGLU, no embed scale, 1/√hd scale, untied head, optional QKV bias, optional
-  all-sliding (Mistral). Acceptance: logit parity vs HF for one checkpoint each
-  (e.g. Llama-3.2-1B, Mistral-7B-v0.3, Qwen2.5-0.5B).
+- **G2 — Llama / Mistral / Qwen family.** ✅ **Qwen3 DONE 2026-06-02.** Per-family
+  tensor schema + untied LM head + the qwen3 adapter; Qwen3-1.7B matches HF at
+  cosine 1−1e-12 (argmax ' Paris') through the generic forward, Gemma goldens
+  byte-identical. Knobs flipped: RMS no-offset, Pre2 norms, SwiGLU, no embed
+  scale, 1/√hd scale, untied head, single-base RoPE (QK-norm came free from G0).
+  See [`milestones/G2-qwen3.md`](milestones/G2-qwen3.md). **Qwen3 dense is the
+  coding-demo target** (pending G3 tokenizer). Llama/Mistral/Qwen2 are a small
+  delta (Qwen2 adds QKV bias) on this schema — follow-ups.
 - **G3 — byte-level BPE tokenizer** (§5.2). Acceptance: HF-exact id parity for
   Llama-3 and Qwen tokenizers.
 - **G4 — RoPE scaling + partial rotary + QK-norm-on-others.** llama3 / linear /

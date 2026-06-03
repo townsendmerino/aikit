@@ -31,7 +31,8 @@ type Config struct {
 	SlidingWindowPattern int     `json:"sliding_window_pattern"` // 6 → 5 local : 1 global
 	QueryPreAttnScalar   float64 `json:"query_pre_attn_scalar"`  // 256 (270M)
 	UseQKNorm            bool    `json:"use_qk_norm"`            // true in Gemma 3
-	HiddenActivation     string  `json:"hidden_activation"`      // "gelu_pytorch_tanh"
+	HiddenActivation     string  `json:"hidden_activation"`      // Gemma: "gelu_pytorch_tanh"
+	HiddenAct            string  `json:"hidden_act"`             // Llama/Qwen: "silu" (different JSON key)
 
 	// LayerTypes is the per-layer attention kind ("sliding_attention" /
 	// "full_attention"). Gemma 3's checkpoints carry the local:global pattern
@@ -98,6 +99,30 @@ func (c *Config) ValidateAssumptions() error {
 		if lt != "sliding_attention" && lt != "full_attention" {
 			return fmt.Errorf("decoder: layer_types[%d]=%q unsupported (want sliding_attention/full_attention)", i, lt)
 		}
+	}
+	return nil
+}
+
+// validateQwen3 pins the assumptions the qwen3 forward path makes (dense,
+// SwiGLU, GQA, single-base RoPE). The Qwen3-MoE model_type isn't registered, so
+// reaching here already implies a dense checkpoint; this guards the rest.
+func (c *Config) validateQwen3() error {
+	switch {
+	case c.HiddenDim == 0 || c.NumLayers == 0 || c.NumHeads == 0 || c.HeadDim == 0:
+		return fmt.Errorf("decoder(qwen3): missing required dim (hidden=%d layers=%d heads=%d headDim=%d)",
+			c.HiddenDim, c.NumLayers, c.NumHeads, c.HeadDim)
+	case c.NumKVHeads == 0 || c.NumHeads%c.NumKVHeads != 0:
+		return fmt.Errorf("decoder(qwen3): num_heads %d not a multiple of num_kv_heads %d (GQA)", c.NumHeads, c.NumKVHeads)
+	case c.VocabSize == 0:
+		return fmt.Errorf("decoder(qwen3): vocab_size is zero")
+	case c.IntermediateDim == 0:
+		return fmt.Errorf("decoder(qwen3): intermediate_size is zero")
+	case c.HiddenAct != "" && c.HiddenAct != "silu":
+		return fmt.Errorf("decoder(qwen3): hidden_act=%q unsupported (silu/SwiGLU only)", c.HiddenAct)
+	case c.RMSNormEps <= 0:
+		return fmt.Errorf("decoder(qwen3): rms_norm_eps must be >0, got %v", c.RMSNormEps)
+	case c.RoPEGlobalBase <= 0:
+		return fmt.Errorf("decoder(qwen3): rope_theta must be >0, got %v", c.RoPEGlobalBase)
 	}
 	return nil
 }

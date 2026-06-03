@@ -43,17 +43,21 @@ type LayerWeights struct {
 type Weights struct {
 	Cfg       Config
 	arch      *Architecture // resolved descriptor the forward pass reads
-	Embed     weightMat     // [VocabSize, HiddenDim] — input embedding AND tied LM head
+	Embed     weightMat     // [VocabSize, HiddenDim] — input embedding (AND tied LM head when LMHead unset)
+	LMHead    weightMat     // [VocabSize, HiddenDim] — separate output head (untied families); zero value when tied
 	FinalNorm []float32     // [HiddenDim] RMSNorm before the LM head
 	Layers    []LayerWeights
 
 	st *embed.SafetensorsFile // retained so alias-backed slices stay valid
 }
 
-// matmulWeights returns every quantizable matrix in the bundle (the projections
-// and the tied embedding); the norms are elementwise and stay f32.
+// matmulWeights returns every quantizable matrix in the bundle (the projections,
+// the embedding, and the untied head if present); norms stay f32.
 func (w *Weights) matmulWeights() []*weightMat {
 	ms := []*weightMat{&w.Embed}
+	if w.LMHead.rows > 0 {
+		ms = append(ms, &w.LMHead)
+	}
 	for i := range w.Layers {
 		l := &w.Layers[i]
 		ms = append(ms, &l.QProj, &l.KProj, &l.VProj, &l.OProj, &l.GateProj, &l.UpProj, &l.DownProj)
@@ -89,7 +93,7 @@ func LoadWeights(dir string) (*Weights, error) {
 	if err != nil {
 		return nil, err
 	}
-	arch, err := resolveArchitecture(cfg) // selects + validates the family descriptor
+	arch, schema, err := resolveArchitecture(cfg) // selects + validates the family descriptor
 	if err != nil {
 		return nil, err
 	}
@@ -97,7 +101,7 @@ func LoadWeights(dir string) (*Weights, error) {
 	if err != nil {
 		return nil, err
 	}
-	return buildWeightsFromSafetensors(cfg, arch, st)
+	return buildWeightsFromSafetensors(cfg, arch, schema, st)
 }
 
 const shardIndexFile = "model.safetensors.index.json"
@@ -131,7 +135,7 @@ func LoadWeightsFromFS(fsys fs.FS, dir string) (*Weights, error) {
 	if err != nil {
 		return nil, err
 	}
-	arch, err := resolveArchitecture(cfg)
+	arch, schema, err := resolveArchitecture(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +143,7 @@ func LoadWeightsFromFS(fsys fs.FS, dir string) (*Weights, error) {
 	if err != nil {
 		return nil, err
 	}
-	return buildWeightsFromSafetensors(cfg, arch, st)
+	return buildWeightsFromSafetensors(cfg, arch, schema, st)
 }
 
 // openCheckpointFromFS is the fs.FS counterpart of openCheckpointMmap (heap):
@@ -165,26 +169,44 @@ func openCheckpointFromFS(fsys fs.FS, dir string) (*embed.SafetensorsFile, error
 // against Cfg. Factored out so the heap (fs.FS) and mmap paths share one
 // tensor-name + shape contract — a schema change is one edit, not two.
 // Mirrors encoder.buildWeightsFromSafetensors.
-func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, st *embed.SafetensorsFile) (*Weights, error) {
-	s := gemma3TensorSchema
+func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchema, st *embed.SafetensorsFile) (*Weights, error) {
 	hd := cfg.HiddenDim
-	qDim := cfg.NumHeads * cfg.HeadDim    // query projection rows (270M: 1024)
-	kvDim := cfg.NumKVHeads * cfg.HeadDim // key/value projection rows (270M: 256)
+	qDim := cfg.NumHeads * cfg.HeadDim    // query projection rows
+	kvDim := cfg.NumKVHeads * cfg.HeadDim // key/value projection rows (narrower under GQA)
 
 	w := &Weights{Cfg: *cfg, arch: arch, st: st, Layers: make([]LayerWeights, cfg.NumLayers)}
 	var err error
 
-	// Tied embedding table (also the LM head) + final norm.
+	// Input embedding + final norm.
 	if w.Embed, err = loadMat(st, s.Embed, cfg.VocabSize, hd); err != nil {
 		return nil, err
 	}
 	if w.FinalNorm, err = loadF32(st, s.FinalNorm, []int{hd}); err != nil {
 		return nil, err
 	}
+	// LM head: separate tensor when the family/checkpoint is untied, else the
+	// tied embedding serves as the head. Determined by tensor presence so a
+	// checkpoint that ties despite its family default still loads.
+	arch.TiedLMHead = true
+	if s.LMHead != "" {
+		if head, herr := loadMat(st, s.LMHead, cfg.VocabSize, hd); herr == nil {
+			w.LMHead = head
+			arch.TiedLMHead = false
+		}
+	}
+
+	// optNorm loads a [HiddenDim] norm whose schema suffix may be empty (the
+	// Post*Norm tensors are absent for Pre2 families).
+	optNorm := func(i int, suffix string) ([]float32, error) {
+		if suffix == "" {
+			return nil, nil
+		}
+		return loadF32(st, tensorName(i, suffix), []int{hd})
+	}
 
 	for i := 0; i < cfg.NumLayers; i++ {
 		l := &w.Layers[i]
-		// Attention projections ([out, in] row-major, GQA: K/V are narrower).
+		// Attention projections ([out, in] row-major).
 		if l.QProj, err = loadMat(st, tensorName(i, s.QProj), qDim, hd); err != nil {
 			return nil, err
 		}
@@ -197,21 +219,29 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, st *embed.Safe
 		if l.OProj, err = loadMat(st, tensorName(i, s.OProj), hd, qDim); err != nil {
 			return nil, err
 		}
-		// QK-norm (Gemma 3): RMSNorm over the per-head dimension.
-		if l.QNorm, err = loadF32(st, tensorName(i, s.QNorm), []int{cfg.HeadDim}); err != nil {
+		// QK-norm (Gemma 3, Qwen3): RMSNorm over head_dim. Absent → empty suffix.
+		if s.QNorm != "" {
+			if l.QNorm, err = loadF32(st, tensorName(i, s.QNorm), []int{cfg.HeadDim}); err != nil {
+				return nil, err
+			}
+			if l.KNorm, err = loadF32(st, tensorName(i, s.KNorm), []int{cfg.HeadDim}); err != nil {
+				return nil, err
+			}
+		}
+		// Block norms — Pre2 has only Pre*; Sandwich4 adds Post*.
+		if l.PreAttnNorm, err = optNorm(i, s.PreAttnNorm); err != nil {
 			return nil, err
 		}
-		if l.KNorm, err = loadF32(st, tensorName(i, s.KNorm), []int{cfg.HeadDim}); err != nil {
+		if l.PostAttnNorm, err = optNorm(i, s.PostAttnNorm); err != nil {
 			return nil, err
 		}
-		// Pre/post norms around attention and MLP (all [HiddenDim]).
-		if l.PreAttnNorm, err = loadF32(st, tensorName(i, s.PreAttnNorm), []int{hd}); err != nil {
+		if l.PreMLPNorm, err = optNorm(i, s.PreMLPNorm); err != nil {
 			return nil, err
 		}
-		if l.PostAttnNorm, err = loadF32(st, tensorName(i, s.PostAttnNorm), []int{hd}); err != nil {
+		if l.PostMLPNorm, err = optNorm(i, s.PostMLPNorm); err != nil {
 			return nil, err
 		}
-		// GeGLU MLP.
+		// Gated MLP (GeGLU / SwiGLU — same weights, activation differs).
 		if l.GateProj, err = loadMat(st, tensorName(i, s.GateProj), cfg.IntermediateDim, hd); err != nil {
 			return nil, err
 		}
@@ -219,12 +249,6 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, st *embed.Safe
 			return nil, err
 		}
 		if l.DownProj, err = loadMat(st, tensorName(i, s.DownProj), hd, cfg.IntermediateDim); err != nil {
-			return nil, err
-		}
-		if l.PreMLPNorm, err = loadF32(st, tensorName(i, s.PreMLPNorm), []int{hd}); err != nil {
-			return nil, err
-		}
-		if l.PostMLPNorm, err = loadF32(st, tensorName(i, s.PostMLPNorm), []int{hd}); err != nil {
 			return nil, err
 		}
 	}
@@ -289,20 +313,32 @@ func tensorName(layer int, suffix string) string {
 	return fmt.Sprintf("model.layers.%d.%s", layer, suffix)
 }
 
-// gemma3TensorSchema documents the keys the M1 loader will read. Referenced
-// by name here (not used yet) so the schema is version-controlled alongside
-// the struct it fills.
-var gemma3TensorSchema = struct {
+// tensorSchema maps each weight role to its safetensors key (per-layer roles
+// are suffixes for tensorName). An empty string means the tensor is ABSENT for
+// this family — e.g. Pre2 families have no Post*Norm, and a tied head has no
+// LMHead. The per-family adapter (registry.go) picks the schema; the loader is
+// schema-driven so one buildWeightsFromSafetensors serves every family.
+//
+// The norm roles are by POSITION in the block, not by HF tensor name: Gemma's
+// "post_attention_layernorm" is a post-attn norm (PostAttnNorm) while Qwen's
+// same-named tensor is the pre-MLP norm (PreMLPNorm) — exactly why the schema
+// is per-family.
+type tensorSchema struct {
 	Embed     string
+	LMHead    string // "" = tied (use Embed)
 	FinalNorm string
-	// per-layer suffixes passed to tensorName(layer, suffix)
+	// per-layer suffixes passed to tensorName(layer, suffix); "" = absent
 	QProj, KProj, VProj, OProj string
-	QNorm, KNorm               string
+	QNorm, KNorm               string // "" = no QK-norm
 	PreAttnNorm, PostAttnNorm  string
 	GateProj, UpProj, DownProj string
 	PreMLPNorm, PostMLPNorm    string
-}{
+}
+
+// gemma3TensorSchema: tied head, 4-norm sandwich, QK-norm.
+var gemma3TensorSchema = tensorSchema{
 	Embed:        "model.embed_tokens.weight",
+	LMHead:       "", // tied
 	FinalNorm:    "model.norm.weight",
 	QProj:        "self_attn.q_proj.weight",
 	KProj:        "self_attn.k_proj.weight",
@@ -317,4 +353,26 @@ var gemma3TensorSchema = struct {
 	DownProj:     "mlp.down_proj.weight",
 	PreMLPNorm:   "pre_feedforward_layernorm.weight",
 	PostMLPNorm:  "post_feedforward_layernorm.weight",
+}
+
+// qwen3TensorSchema: separate lm_head, 2-norm Pre2 (input_layernorm pre-attn,
+// post_attention_layernorm pre-MLP), QK-norm, SwiGLU. Llama/Mistral/Qwen2 reuse
+// this minus QNorm/KNorm (and Qwen2 adds q/k/v bias — a later add).
+var qwen3TensorSchema = tensorSchema{
+	Embed:        "model.embed_tokens.weight",
+	LMHead:       "lm_head.weight",
+	FinalNorm:    "model.norm.weight",
+	QProj:        "self_attn.q_proj.weight",
+	KProj:        "self_attn.k_proj.weight",
+	VProj:        "self_attn.v_proj.weight",
+	OProj:        "self_attn.o_proj.weight",
+	QNorm:        "self_attn.q_norm.weight",
+	KNorm:        "self_attn.k_norm.weight",
+	PreAttnNorm:  "input_layernorm.weight",
+	PostAttnNorm: "", // Pre2: no post-attn norm
+	GateProj:     "mlp.gate_proj.weight",
+	UpProj:       "mlp.up_proj.weight",
+	DownProj:     "mlp.down_proj.weight",
+	PreMLPNorm:   "post_attention_layernorm.weight", // HF name; positionally the pre-MLP norm
+	PostMLPNorm:  "",                                // Pre2: no post-MLP norm
 }
