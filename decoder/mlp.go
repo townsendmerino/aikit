@@ -14,12 +14,12 @@ func geGLU(h []float32, lw *LayerWeights, cfg *Config, be Backend) ([]float32, e
 	inter, hidden := cfg.IntermediateDim, cfg.HiddenDim
 	gate := make([]float32, inter)
 	up := make([]float32, inter)
-	be.MatmulBT(h, lw.GateProj, gate, 1, hidden, inter) // [1,inter] = h · GateProjᵀ
-	be.MatmulBT(h, lw.UpProj, up, 1, hidden, inter)
+	lw.GateProj.matmul(be, h, gate, 1) // [1,inter] = h · GateProjᵀ
+	lw.UpProj.matmul(be, h, up, 1)
 	for i := range gate {
 		gate[i] = geluTanh(gate[i]) * up[i]
 	}
 	out := make([]float32, hidden)
-	be.MatmulBT(gate, lw.DownProj, out, 1, inter, hidden) // [1,hidden] = mid · DownProjᵀ
+	lw.DownProj.matmul(be, gate, out, 1) // [1,hidden] = mid · DownProjᵀ
 	return out, nil
 }

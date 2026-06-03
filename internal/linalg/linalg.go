@@ -36,8 +36,23 @@ const parThreshold = 1 << 15
 // the N output columns (always large in the transformer projections, and the
 // only dimension with parallelism on the M=1 single-token decode path).
 func MatmulBT(a, b, dst []float32, M, K, N int) {
-	if M*N*K < parThreshold || N < 2 {
-		matmulBTSerial(a, b, dst, M, K, N)
+	parallelCols(M*N*K, N, func(j0, j1 int) {
+		for i := 0; i < M; i++ {
+			arow := a[i*K : i*K+K]
+			drow := dst[i*N : i*N+N]
+			for j := j0; j < j1; j++ {
+				drow[j] = dotF32(arow, b[j*K:j*K+K])
+			}
+		}
+	})
+}
+
+// parallelCols runs fn over the [0,N) output columns, split into one chunk per
+// worker. Serial below parThreshold MACs (work) where the goroutine fan-out
+// would cost more than it saves. Both the f32 and int8 matmuls share it.
+func parallelCols(work, N int, fn func(j0, j1 int)) {
+	if work < parThreshold || N < 2 {
+		fn(0, N)
 		return
 	}
 	workers := runtime.GOMAXPROCS(0)
@@ -54,24 +69,8 @@ func MatmulBT(a, b, dst []float32, M, K, N int) {
 		wg.Add(1)
 		go func(j0, j1 int) {
 			defer wg.Done()
-			for i := 0; i < M; i++ {
-				arow := a[i*K : i*K+K]
-				drow := dst[i*N : i*N+N]
-				for j := j0; j < j1; j++ {
-					drow[j] = dotF32(arow, b[j*K:j*K+K])
-				}
-			}
+			fn(j0, j1)
 		}(j0, j1)
 	}
 	wg.Wait()
-}
-
-func matmulBTSerial(a, b, dst []float32, M, K, N int) {
-	for i := 0; i < M; i++ {
-		arow := a[i*K : i*K+K]
-		drow := dst[i*N : i*N+N]
-		for j := 0; j < N; j++ {
-			drow[j] = dotF32(arow, b[j*K:j*K+K])
-		}
-	}
 }

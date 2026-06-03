@@ -111,7 +111,8 @@ validates every schema entry across all layers and returned no error. Shapes
 | decoder M5 sliding window | ✅ done 2026-06-02 — 748-tok prompt matches HF (cosine 1−1e-11); fixed 2 latent window bugs; see `milestones/M5-window.md` |
 | decoder M6 sampler + streaming demo | ✅ done 2026-06-02 — temp/top-k/top-p sampling, `demo/gemma` generates from a real checkpoint; see `milestones/M6-sampler.md` |
 | decoder M7 perf (shared SIMD linalg) | ✅ done 2026-06-02 — dot kernels lifted to `internal/linalg`, decoder matmul parallel; ~18 tok/s on Ryzen 7 3700X (>10 target); see `milestones/M7-perf.md` |
-| decoder M8/M9 (int4/int8 quant, WebGPU) | not started — for the 1B+ checkpoints |
+| decoder M8 int8 quant | ✅ done 2026-06-02 — `--quant int8`, argmax preserved (cosine 0.9996), weights 3.98× smaller; int4 + streaming-quant follow-ups; see `milestones/M8-quant.md` |
+| decoder M9 (WebGPU backend) | not started — for the checkpoints CPU can't serve |
 
 Reference docs: [`cpu-acceleration.md`](cpu-acceleration.md),
 [`gemma-decoder-plan.md`](gemma-decoder-plan.md),

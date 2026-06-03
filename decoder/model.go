@@ -19,6 +19,7 @@ type Model struct {
 // Options configures Load.
 type Options struct {
 	Backend string // "cpu" (default) or "webgpu"
+	Quant   string // "" (f32, default) or "int8" — per-row int8 weight quant (M8)
 }
 
 // Load reads a Gemma 3 snapshot (config.json + model.safetensors) from dir
@@ -34,6 +35,16 @@ func Load(dir string, opts Options) (*Model, error) {
 			_ = be.Close()
 		}
 		return nil, err
+	}
+	switch opts.Quant {
+	case "", "f32":
+	case "int8":
+		w.quantizeInt8() // per-row int8, frees the f32 weights
+	default:
+		if be != nil {
+			_ = be.Close()
+		}
+		return nil, fmt.Errorf("decoder.Load: unknown quant %q (have: int8)", opts.Quant)
 	}
 	if beErr != nil {
 		// webgpu requested but fell back — not fatal.
@@ -70,11 +81,11 @@ func (m *Model) NewCache(capHint int) *KVCache {
 //     h. h  = h + g                          // residual
 func (m *Model) runLayers(id int, cache *KVCache) ([]float32, error) {
 	c := &m.w.Cfg
-	if len(m.w.Embed) == 0 {
+	if m.w.Embed.rows == 0 {
 		return nil, fmt.Errorf("decoder.forward: weights not loaded %w [M1]", errNotImplemented)
 	}
 	h := make([]float32, c.HiddenDim)
-	copy(h, m.w.Embed[id*c.HiddenDim:(id+1)*c.HiddenDim])
+	m.w.Embed.embedRow(id, h) // f32 copy, or int8 dequant when quantized
 	// Embedding scale. NOTE: HF computes this normalizer as sqrt(hidden) cast
 	// to the model's dtype — bf16 for a bf16 checkpoint (≈25.25 here) — then
 	// multiplies. We use the f32 value (≈25.2982). It matches our parity gate
@@ -124,7 +135,7 @@ func (m *Model) forward(id int, cache *KVCache) ([]float32, error) {
 	}
 	rmsNorm(h, m.w.FinalNorm, 1, c.HiddenDim, c.RMSNormEps)
 	logits := make([]float32, c.VocabSize)
-	m.be.MatmulBT(h, m.w.Embed, logits, 1, c.HiddenDim, c.VocabSize)
+	m.w.Embed.matmul(m.be, h, logits, 1) // tied LM head (int8 or f32)
 	return logits, nil
 }
 

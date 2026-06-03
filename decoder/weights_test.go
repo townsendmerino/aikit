@@ -74,9 +74,9 @@ func TestLoadWeights_goldenChecksums(t *testing.T) {
 
 	// Map each sampled tensor name to the loaded slice it should populate.
 	loaded := map[string][]float32{
-		"model.embed_tokens.weight":              w.Embed,
+		"model.embed_tokens.weight":              w.Embed.f32,
 		"model.norm.weight":                      w.FinalNorm,
-		"model.layers.0.self_attn.q_proj.weight": w.Layers[0].QProj,
+		"model.layers.0.self_attn.q_proj.weight": w.Layers[0].QProj.f32,
 	}
 
 	const relTol = 1e-6

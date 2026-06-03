@@ -219,9 +219,11 @@ chatty host↔device round-trip per layer.
   target, ~3.5× over naive. Parity unchanged. Goroutine-pool reuse, matmul-
   driver unification, and scratch-pooling remain as follow-ups. See
   [`milestones/M7-perf.md`](milestones/M7-perf.md).
-- **M8 — memory / quant.** int8 (reuse `quant.go`) and int4 group-quant for the
-  larger checkpoints; bf16-resident matmul tiling (§2). Makes 1B comfortable
-  and 4B feasible on a laptop.
+- **M8 — memory / quant.** ✅ **int8 DONE 2026-06-02.** Per-row int8 weight quant
+  (`--quant int8`): argmax preserved, cosine 0.9996 vs f32, matmul weights 3.98×
+  smaller (270 MB vs 1072 MB). int4 group-quant + streaming quantize-at-load +
+  bf16-resident tiling remain for the 1B/4B story. See
+  [`milestones/M8-quant.md`](milestones/M8-quant.md).
 - **M9 — WebGPU backend (optional).** WGSL matmul kernel behind the §5 seam for
   the checkpoints CPU can't serve interactively.
 

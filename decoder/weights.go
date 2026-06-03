@@ -18,20 +18,21 @@ import (
 // pre- AND post-norms on both the attention and MLP sub-blocks, and
 // optional QK-norm weights.
 type LayerWeights struct {
-	// Attention.
-	QProj        []float32 // [NumHeads*HeadDim, HiddenDim]
-	KProj        []float32 // [NumKVHeads*HeadDim, HiddenDim]
-	VProj        []float32 // [NumKVHeads*HeadDim, HiddenDim]
-	OProj        []float32 // [HiddenDim, NumHeads*HeadDim]
+	// Attention projections (matmul'd → weightMat, quantizable).
+	QProj weightMat // [NumHeads*HeadDim, HiddenDim]
+	KProj weightMat // [NumKVHeads*HeadDim, HiddenDim]
+	VProj weightMat // [NumKVHeads*HeadDim, HiddenDim]
+	OProj weightMat // [HiddenDim, NumHeads*HeadDim]
+	// Norms (elementwise → stay f32).
 	QNorm        []float32 // [HeadDim] QK-norm on queries (Gemma 3)
 	KNorm        []float32 // [HeadDim] QK-norm on keys (Gemma 3)
 	PreAttnNorm  []float32 // [HiddenDim] input RMSNorm
 	PostAttnNorm []float32 // [HiddenDim] RMSNorm after attention, before residual add
 
-	// MLP (GeGLU).
-	GateProj    []float32 // [IntermediateDim, HiddenDim]
-	UpProj      []float32 // [IntermediateDim, HiddenDim]
-	DownProj    []float32 // [HiddenDim, IntermediateDim]
+	// MLP (GeGLU): projections quantizable, norms f32.
+	GateProj    weightMat // [IntermediateDim, HiddenDim]
+	UpProj      weightMat // [IntermediateDim, HiddenDim]
+	DownProj    weightMat // [HiddenDim, IntermediateDim]
 	PreMLPNorm  []float32 // [HiddenDim]
 	PostMLPNorm []float32 // [HiddenDim]
 }
@@ -41,11 +42,31 @@ type LayerWeights struct {
 // separate output projection tensor.
 type Weights struct {
 	Cfg       Config
-	Embed     []float32 // [VocabSize, HiddenDim] — input embedding AND tied LM head
+	Embed     weightMat // [VocabSize, HiddenDim] — input embedding AND tied LM head
 	FinalNorm []float32 // [HiddenDim] RMSNorm before the LM head
 	Layers    []LayerWeights
 
 	st *embed.SafetensorsFile // retained so alias-backed slices stay valid
+}
+
+// matmulWeights returns every quantizable matrix in the bundle (the projections
+// and the tied embedding); the norms are elementwise and stay f32.
+func (w *Weights) matmulWeights() []*weightMat {
+	ms := []*weightMat{&w.Embed}
+	for i := range w.Layers {
+		l := &w.Layers[i]
+		ms = append(ms, &l.QProj, &l.KProj, &l.VProj, &l.OProj, &l.GateProj, &l.UpProj, &l.DownProj)
+	}
+	return ms
+}
+
+// quantizeInt8 converts every matmul weight to per-row int8 in place, freeing
+// the f32 copy (the M8 memory win). Idempotent; embedding lookups and the LM
+// head then run off the int8 store.
+func (w *Weights) quantizeInt8() {
+	for _, m := range w.matmulWeights() {
+		m.quantizeInt8()
+	}
 }
 
 // LoadWeights reads config.json + model.safetensors from a real on-disk
@@ -111,7 +132,7 @@ func buildWeightsFromSafetensors(cfg *Config, st *embed.SafetensorsFile) (*Weigh
 	var err error
 
 	// Tied embedding table (also the LM head) + final norm.
-	if w.Embed, err = loadF32(st, s.Embed, []int{cfg.VocabSize, hd}); err != nil {
+	if w.Embed, err = loadMat(st, s.Embed, cfg.VocabSize, hd); err != nil {
 		return nil, err
 	}
 	if w.FinalNorm, err = loadF32(st, s.FinalNorm, []int{hd}); err != nil {
@@ -121,16 +142,16 @@ func buildWeightsFromSafetensors(cfg *Config, st *embed.SafetensorsFile) (*Weigh
 	for i := 0; i < cfg.NumLayers; i++ {
 		l := &w.Layers[i]
 		// Attention projections ([out, in] row-major, GQA: K/V are narrower).
-		if l.QProj, err = loadF32(st, tensorName(i, s.QProj), []int{qDim, hd}); err != nil {
+		if l.QProj, err = loadMat(st, tensorName(i, s.QProj), qDim, hd); err != nil {
 			return nil, err
 		}
-		if l.KProj, err = loadF32(st, tensorName(i, s.KProj), []int{kvDim, hd}); err != nil {
+		if l.KProj, err = loadMat(st, tensorName(i, s.KProj), kvDim, hd); err != nil {
 			return nil, err
 		}
-		if l.VProj, err = loadF32(st, tensorName(i, s.VProj), []int{kvDim, hd}); err != nil {
+		if l.VProj, err = loadMat(st, tensorName(i, s.VProj), kvDim, hd); err != nil {
 			return nil, err
 		}
-		if l.OProj, err = loadF32(st, tensorName(i, s.OProj), []int{hd, qDim}); err != nil {
+		if l.OProj, err = loadMat(st, tensorName(i, s.OProj), hd, qDim); err != nil {
 			return nil, err
 		}
 		// QK-norm (Gemma 3): RMSNorm over the per-head dimension.
@@ -148,13 +169,13 @@ func buildWeightsFromSafetensors(cfg *Config, st *embed.SafetensorsFile) (*Weigh
 			return nil, err
 		}
 		// GeGLU MLP.
-		if l.GateProj, err = loadF32(st, tensorName(i, s.GateProj), []int{cfg.IntermediateDim, hd}); err != nil {
+		if l.GateProj, err = loadMat(st, tensorName(i, s.GateProj), cfg.IntermediateDim, hd); err != nil {
 			return nil, err
 		}
-		if l.UpProj, err = loadF32(st, tensorName(i, s.UpProj), []int{cfg.IntermediateDim, hd}); err != nil {
+		if l.UpProj, err = loadMat(st, tensorName(i, s.UpProj), cfg.IntermediateDim, hd); err != nil {
 			return nil, err
 		}
-		if l.DownProj, err = loadF32(st, tensorName(i, s.DownProj), []int{hd, cfg.IntermediateDim}); err != nil {
+		if l.DownProj, err = loadMat(st, tensorName(i, s.DownProj), hd, cfg.IntermediateDim); err != nil {
 			return nil, err
 		}
 		if l.PreMLPNorm, err = loadF32(st, tensorName(i, s.PreMLPNorm), []int{hd}); err != nil {
@@ -194,6 +215,17 @@ func loadF32(st *embed.SafetensorsFile, name string, want []int) ([]float32, err
 		return nil, fmt.Errorf("decoder: tensor %q decode: %w", name, err)
 	}
 	return data, nil
+}
+
+// loadMat loads + shape-validates a [rows, cols] matrix and wraps it as a
+// (f32) weightMat ready for matmul/quantization. Mirrors loadF32 for the
+// matmul'd projections; the norms keep loadF32 (they stay f32).
+func loadMat(st *embed.SafetensorsFile, name string, rows, cols int) (weightMat, error) {
+	data, err := loadF32(st, name, []int{rows, cols})
+	if err != nil {
+		return weightMat{}, err
+	}
+	return newWeightMat(data, rows, cols), nil
 }
 
 func shapeEqual(a, b []int) bool {

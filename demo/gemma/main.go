@@ -42,6 +42,7 @@ func main() {
 		topP     = flag.Float64("top-p", 0.0, "top-p / nucleus (0 = off)")
 		seed     = flag.Int64("seed", 0, "sampling RNG seed")
 		backend  = flag.String("backend", "cpu", "compute backend: cpu | webgpu")
+		quant    = flag.String("quant", "", "weight quantization: \"\" (f32) | int8")
 	)
 	flag.Parse()
 
@@ -51,7 +52,7 @@ func main() {
 		os.Exit(2)
 	}
 
-	if err := run(*modelDir, *prompt, *maxTok, *backend, decoder.SamplingParams{
+	if err := run(*modelDir, *prompt, *maxTok, *backend, *quant, decoder.SamplingParams{
 		Temperature: *temp,
 		TopK:        *topK,
 		TopP:        *topP,
@@ -63,7 +64,7 @@ func main() {
 	}
 }
 
-func run(modelDir, prompt string, maxTok int, backend string, sp decoder.SamplingParams) error {
+func run(modelDir, prompt string, maxTok int, backend, quant string, sp decoder.SamplingParams) error {
 	// 1) Tokenizer.
 	tk, err := tokenizer.Load(filepath.Join(modelDir))
 	if err != nil {
@@ -72,13 +73,17 @@ func run(modelDir, prompt string, maxTok int, backend string, sp decoder.Samplin
 
 	// 2) Model + backend.
 	t0 := time.Now()
-	model, err := decoder.Load(modelDir, decoder.Options{Backend: backend})
+	model, err := decoder.Load(modelDir, decoder.Options{Backend: backend, Quant: quant})
 	if err != nil {
 		return fmt.Errorf("load model: %w", err)
 	}
 	cfg := model.Config()
-	fmt.Fprintf(os.Stderr, "loaded %d-layer model (hidden %d, vocab %d) in %s [backend=%s]\n",
-		cfg.NumLayers, cfg.HiddenDim, cfg.VocabSize, time.Since(t0).Round(time.Millisecond), backend)
+	q := quant
+	if q == "" {
+		q = "f32"
+	}
+	fmt.Fprintf(os.Stderr, "loaded %d-layer model (hidden %d, vocab %d) in %s [backend=%s quant=%s]\n",
+		cfg.NumLayers, cfg.HiddenDim, cfg.VocabSize, time.Since(t0).Round(time.Millisecond), backend, q)
 
 	// 3) Encode prompt.
 	ids, err := tk.Encode(prompt, true /* addBOS */)

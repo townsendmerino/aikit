@@ -43,9 +43,9 @@ func causalAttention(
 	q := make([]float32, qDim)
 	k := make([]float32, kvDim)
 	v := make([]float32, kvDim)
-	be.MatmulBT(h, lw.QProj, q, 1, hidden, qDim)
-	be.MatmulBT(h, lw.KProj, k, 1, hidden, kvDim)
-	be.MatmulBT(h, lw.VProj, v, 1, hidden, kvDim)
+	lw.QProj.matmul(be, h, q, 1)
+	lw.KProj.matmul(be, h, k, 1)
+	lw.VProj.matmul(be, h, v, 1)
 
 	// 2. QK-norm: Gemma 3 RMSNorm((1+w)) over head_dim, per head, before RoPE.
 	rmsNorm(q, lw.QNorm, nH, hd, cfg.RMSNormEps)
@@ -108,6 +108,6 @@ func causalAttention(
 
 	// 7. Output projection; caller applies post-attn norm + residual.
 	out := make([]float32, hidden)
-	be.MatmulBT(ctx, lw.OProj, out, 1, qDim, hidden)
+	lw.OProj.matmul(be, ctx, out, 1)
 	return out, nil
 }
