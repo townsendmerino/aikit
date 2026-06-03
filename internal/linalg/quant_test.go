@@ -163,6 +163,49 @@ func benchInt4(b *testing.B, simd bool) {
 func BenchmarkMatmulBTQ4(b *testing.B)       { benchInt4(b, true) }
 func BenchmarkMatmulBTQ4Scalar(b *testing.B) { benchInt4(b, false) }
 
+// matmulBTQ8Scalar is the pre-SIMD int8 reference (scalar widen-in-loop MAC),
+// kept to benchmark the SIMD kernel's speedup.
+func matmulBTQ8Scalar(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
+	for i := range M {
+		arow := a[i*K : i*K+K]
+		drow := dst[i*N : i*N+N]
+		for j := range N {
+			bq := bQ[j*K : j*K+K]
+			var s float32
+			for k := range K {
+				s += arow[k] * float32(bq[k])
+			}
+			drow[j] = s * bScales[j]
+		}
+	}
+}
+
+func benchInt8(b *testing.B, simd bool) {
+	const M, K, N = 1, 2048, 2048
+	rng := rand.New(rand.NewSource(7))
+	a := make([]float32, M*K)
+	w := make([]float32, N*K)
+	for i := range a {
+		a[i] = float32(rng.NormFloat64())
+	}
+	for i := range w {
+		w[i] = float32(rng.NormFloat64())
+	}
+	q, scales := QuantizeRowsInt8(w, N, K)
+	dst := make([]float32, M*N)
+	b.ResetTimer()
+	for range b.N {
+		if simd {
+			MatmulBTQ8(a, q, scales, dst, M, K, N)
+		} else {
+			matmulBTQ8Scalar(a, q, scales, dst, M, K, N)
+		}
+	}
+}
+
+func BenchmarkMatmulBTQ8(b *testing.B)       { benchInt8(b, true) }
+func BenchmarkMatmulBTQ8Scalar(b *testing.B) { benchInt8(b, false) }
+
 func TestMatmulBTQ8_closeToF32(t *testing.T) {
 	rng := rand.New(rand.NewSource(2))
 	randVec := func(n int) []float32 {

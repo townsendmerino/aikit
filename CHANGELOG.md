@@ -35,13 +35,13 @@ it.
 
 ### Changed
 
-- **int4 matmul is now SIMD** — `linalg.MatmulBTQ4` unpacks each group's nibbles
-  into a reused scratch buffer (centered floats) and runs the AVX2/NEON `dotF32`
-  kernel over the group (then applies the per-group scale), instead of a fused
-  scalar multiply-accumulate. **~6.7×** faster on a decode-step shape (M=1,
-  K=N=2048: 8.3 ms → 1.2 ms). Output is unchanged within float reassociation
-  (`TestMatmulBTQ4_matchesDequant`, relL2 ≤ 1e-5); the decoder int4 accuracy is
-  identical. (The same trick would speed the int8 matmul — a follow-up.)
+- **Quantized matmuls are now SIMD** — `linalg.MatmulBTQ4` and `MatmulBTQ8` widen
+  each weight group/row into a reused scratch buffer and run the AVX2/NEON
+  `dotF32` kernel over it (applying the scale at write-back), instead of a scalar
+  multiply-accumulate loop. On a decode-step shape (M=1, K=N=2048): int4 **~6.7×**
+  (8.3 → 1.2 ms), int8 **~6.9×** (3.0 → 0.43 ms). Outputs unchanged within float
+  reassociation (`TestMatmulBTQ4_matchesDequant` relL2 ≤ 1e-5); decoder quant
+  accuracy identical. (An int8×int8→int32 fixed-point kernel could go further.)
 - **`embed.OpenGGUFMmap`** — memory-map a `.gguf` (read-only, MAP_PRIVATE)
   instead of `os.ReadFile`-ing it onto the heap, so the raw quantized bytes live
   in reclaimable page cache. `decoder` and `tokenizer` GGUF loads now use it:

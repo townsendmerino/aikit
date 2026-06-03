@@ -46,13 +46,12 @@ in small memory." All three pieces shipped:
   embedding + LM head stay int8 (logit-critical, like Q4_K_M keeps them at Q6_K).
   Validated on TinyLlama: argmax preserved, cosine 0.994 vs f32. (Lossy on the
   270M — int4 is a big-model tool.)
-- ✅ **int4 SIMD matmul**: `MatmulBTQ4` unpacks each group to a reused scratch +
-  runs the SIMD `dotF32` kernel — **6.7×** over the scalar loop (8.3 ms → 1.2 ms
-  on M=1, K=N=2048).
+- ✅ **int4 + int8 SIMD matmuls**: both widen to a reused scratch + run the SIMD
+  `dotF32` kernel — int4 **6.7×** (8.3 → 1.2 ms), int8 **6.9×** (3.0 → 0.43 ms)
+  over the scalar loops (M=1, K=N=2048).
 
-Remaining, both incremental: the same SIMD widen-to-scratch + `dotF32` trick for
-`MatmulBTQ8` (int8 is still scalar widen-in-loop), and mmap'ing safetensors on
-the fs.FS path GGUF-style.
+Remaining, both incremental: an int8×int8→int32 fixed-point SIMD kernel (cuts the
+multiply further), and mmap'ing safetensors on the fs.FS path GGUF-style.
 
 Still open — **int4 group-quant** (≈⅛ f32, matches native Q4 footprint): the
 streaming-quant load path is now in place, so this needs only its own

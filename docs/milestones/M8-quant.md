@@ -46,9 +46,11 @@ vs 1072 MB f32). int4 group-quant is left as a documented follow-up.
   also covers the GGUF path (a quantized `.gguf` lands resident as int8 without
   materializing the whole model in f32 first). The retained-weight win (3.98×)
   is unchanged.
-- **Speed:** int8 here is memory-oriented; the multiply is still f32 (int8→f32
-  widen in the loop), so it isn't faster than the AVX2 f32 path on the 270M.
-  An int8×int8 SIMD kernel (int32 accumulate) is where the speed win lives.
+- **Speed:** the quantized matmuls now widen to a scratch row/group and run the
+  SIMD `dotF32` kernel (see the follow-ups), so they match the AVX2/NEON f32
+  path rather than the old scalar loop. The multiply is still f32 (widen-then-
+  dot); an int8×int8→int32 fixed-point SIMD kernel would cut it further and is
+  the remaining speed lever.
 
 ## Known follow-ups (not blocking M8)
 
@@ -63,13 +65,15 @@ vs 1072 MB f32). int4 group-quant is left as a documented follow-up.
   f32 — on par with Q4_K_M). int4 is a big-model tool: on the 270M it is lossy
   enough to move the top token (`TestQuantInt4_accuracy` checks structure +
   footprint + loose correlation only).
-- **int4 SIMD matmul** — DONE. `MatmulBTQ4` unpacks each group's nibbles into a
-  reused scratch (centered floats, no scale), runs the SIMD `dotF32` kernel
-  (AVX2/NEON — the primitive `MatmulBT` uses) over the group, then applies the
-  per-group scale; only the cheap nibble unpack stays scalar. **6.7×** over the
-  fused-scalar loop on a decode shape (M=1, K=N=2048: 8.3 ms → 1.2 ms;
-  `BenchmarkMatmulBTQ4` vs `…Scalar`). The same widen-to-scratch + `dotF32` trick
-  would speed `MatmulBTQ8` (int8 is still scalar widen-in-loop) — the next step.
+- **int4 + int8 SIMD matmuls** — DONE. Both quantized matmuls now widen each
+  weight row/group into a reused scratch buffer and run the SIMD `dotF32` kernel
+  (AVX2/NEON — the primitive `MatmulBT` uses) over it, applying the scale at
+  write-back; only the cheap unpack/widen stays scalar. `MatmulBTQ4` does it per
+  group (32) then scales per group; `MatmulBTQ8` widens the whole row (per-row
+  scale). On a decode shape (M=1, K=N=2048): int4 **6.7×** (8.3 → 1.2 ms), int8
+  **6.9×** (3.0 → 0.43 ms) over the prior scalar loops (`BenchmarkMatmulBTQ{4,8}`
+  vs `…Scalar`). Outputs unchanged within float reassociation; decoder quant
+  accuracy identical. (int8×int8→int32 fixed-point is a further speed option.)
 - **Streaming quantize-at-load** — DONE. `Load(…, Quant:"int8")` quantizes each
   matmul tensor as it is read and frees the f32 immediately, for the safetensors,
   GPT-2, and GGUF paths. No whole-model f32 spike; a quantized `.gguf` loads

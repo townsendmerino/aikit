@@ -64,20 +64,23 @@ func DequantizeRowInt8(q []int8, scale float32, dst []float32) {
 
 // MatmulBTQ8 computes dst[M,N] = a[M,K] · bᵀ where b is the [N,K] matrix stored
 // as int8 rows bQ + per-row f32 scales bScales (b[j,k] ≈ float32(bQ[j,k]) *
-// bScales[j]). Mirrors MatmulBT: a-row · b-row dot, widened int8→f32 in the
-// inner loop, scaled per row at write-back, parallelized over the N columns.
+// bScales[j]). Each output row is widened int8→f32 into a reused scratch buffer,
+// then the SIMD dotF32 kernel (AVX2/NEON — the primitive MatmulBT uses) runs over
+// the whole row and the per-row scale is applied at write-back. Only the cheap
+// int8→f32 widen stays scalar; the multiply-accumulate is vectorized. The scratch
+// is one row wide and allocated once per worker. Parallelized over the N columns.
 func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	parallelCols(M*N*K, N, func(j0, j1 int) {
+		deq := make([]float32, K) // per-worker scratch: one widened b-row
 		for i := range M {
 			arow := a[i*K : i*K+K]
 			drow := dst[i*N : i*N+N]
 			for j := j0; j < j1; j++ {
 				bq := bQ[j*K : j*K+K]
-				var s float32
 				for k := range K {
-					s += arow[k] * float32(bq[k])
+					deq[k] = float32(bq[k])
 				}
-				drow[j] = s * bScales[j]
+				drow[j] = dotF32(arow, deq) * bScales[j]
 			}
 		}
 	})
