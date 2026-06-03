@@ -35,6 +35,13 @@ func dotFMA4(a, b0, b1, b2, b3 *float32, n int, out *[4]float32)
 //go:noescape
 func dotFMA8(a, b0, b1, b2, b3, b4, b5, b6, b7 *float32, n int, out *[8]float32)
 
+// dotI8AVX2 returns Σ a[i]*b[i] as int32 over the first n int8 elements (n a
+// multiple of 16), via VPMOVSXBW+VPMADDWD+VPADDD. Implemented in dot_amd64.s;
+// used by dotI8 (quant_i8_amd64.go) for the W8A8 matmul.
+//
+//go:noescape
+func dotI8AVX2(a, b *int8, n int) int32
+
 // cpuid executes CPUID with the given leaf/subleaf. Implemented in
 // dot_amd64.s.
 //

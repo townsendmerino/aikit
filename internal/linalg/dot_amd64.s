@@ -294,6 +294,43 @@ dotFMA8_reduce:
 	VZEROUPPER
 	RET
 
+// func dotI8AVX2(a *int8, b *int8, n int) int32
+// Σ a[i]*b[i] over n int8 pairs (n a multiple of 16), accumulated in int32.
+// Each iteration sign-extends 16 int8 of each operand to int16 (VPMOVSXBW),
+// multiplies and pair-adds them to 8 int32 (VPMADDWD), and adds those into an
+// int32 accumulator (VPADDD). Fully signed — no unsigned-offset correction. The
+// 8 lanes are horizontally summed at the end. The caller handles the n%16 tail.
+TEXT ·dotI8AVX2(SB), NOSPLIT, $0-28
+	MOVQ a+0(FP), SI
+	MOVQ b+8(FP), DI
+	MOVQ n+16(FP), CX
+
+	VPXOR Y0, Y0, Y0 // int32 accumulator (8 lanes)
+
+dotI8_loop16:
+	CMPQ CX, $16
+	JL   dotI8_reduce
+	VMOVDQU   0(SI), X1   // 16 int8 from a
+	VMOVDQU   0(DI), X2   // 16 int8 from b
+	VPMOVSXBW X1, Y1      // → 16 int16
+	VPMOVSXBW X2, Y2
+	VPMADDWD  Y2, Y1, Y3  // 8 int32 = pair products of int16
+	VPADDD    Y3, Y0, Y0  // accumulate
+	ADDQ      $16, SI
+	ADDQ      $16, DI
+	SUBQ      $16, CX
+	JMP       dotI8_loop16
+
+dotI8_reduce:
+	VEXTRACTI128 $1, Y0, X1 // high 4 int32
+	VPADDD       X1, X0, X0 // 4 int32
+	VPHADDD      X0, X0, X0 // → 2 sums
+	VPHADDD      X0, X0, X0 // → 1 sum in the low lane
+	MOVD         X0, AX
+	MOVL         AX, ret+24(FP)
+	VZEROUPPER
+	RET
+
 // func cpuid(eaxIn, ecxIn uint32) (eax, ebx, ecx, edx uint32)
 TEXT ·cpuid(SB), NOSPLIT, $0-24
 	MOVL eaxIn+0(FP), AX

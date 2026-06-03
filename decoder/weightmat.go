@@ -11,6 +11,7 @@ const (
 	quantNone quantMode = iota
 	quantInt8
 	quantInt4
+	quantInt8I8 // weights int8 (as quantInt8) but matmul is full int8×int8 (W8A8)
 )
 
 // embedding returns the precision to use for the token-embedding table (and the
@@ -43,6 +44,7 @@ type weightMat struct {
 	q4     []byte    // [rows*((cols+1)/2)] packed nibbles, set for int4
 	q4s    []float32 // [rows*nGroups], per-group scale for int4
 	group  int       // int4 group size (0 unless int4)
+	w8a8   bool      // int8 weights but full int8×int8 matmul (quantInt8I8)
 	rows   int       // out features (N)
 	cols   int       // in features (K)
 }
@@ -57,6 +59,9 @@ func (w *weightMat) quantize(mode quantMode) {
 	switch mode {
 	case quantInt8:
 		w.quantizeInt8()
+	case quantInt8I8:
+		w.quantizeInt8()
+		w.w8a8 = true
 	case quantInt4:
 		w.quantizeInt4(int4GroupSize)
 	}
@@ -90,6 +95,8 @@ func (w *weightMat) matmul(be Backend, a, dst []float32, M int) {
 	switch {
 	case w.q4 != nil:
 		linalg.MatmulBTQ4(a, w.q4, w.q4s, dst, M, w.cols, w.rows, w.group)
+	case w.q8 != nil && w.w8a8:
+		linalg.MatmulBTW8A8(a, w.q8, w.scales, dst, M, w.cols, w.rows)
 	case w.q8 != nil:
 		linalg.MatmulBTQ8(a, w.q8, w.scales, dst, M, w.cols, w.rows)
 	default:

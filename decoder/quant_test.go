@@ -158,6 +158,57 @@ func TestQuantInt4_accuracy(t *testing.T) {
 	}
 }
 
+// M8 W8A8 (full int8×int8) accuracy. Like the weight-only int8 test, but the
+// activations are also quantized to int8 each matmul (the integer kernel), so it
+// is lossier — the argmax must still hold and the cosine clear a looser bar than
+// weight-only int8 (which keeps f32 activations). Confirms the int8 weights are
+// stored and the W8A8 matmul path is selected.
+func TestQuantInt8I8_accuracy(t *testing.T) {
+	raw, err := os.ReadFile(gemmaForwardGoldenPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no forward golden at %s — regenerate with scripts/pin_gemma_forward.py", gemmaForwardGoldenPath)
+	}
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	var g forwardGolden
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatalf("parse golden: %v", err)
+	}
+	if _, err := os.Stat(gemmaModelDir); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no checkpoint at %s", gemmaModelDir)
+	}
+
+	m, err := Load(gemmaModelDir, Options{Quant: "int8int8"})
+	if err != nil {
+		t.Fatalf("Load int8int8: %v", err)
+	}
+	// int8 weights stored, and the W8A8 matmul path selected.
+	if gate := &m.w.Layers[0].GateProj; gate.q8 == nil || !gate.w8a8 || gate.f32 != nil {
+		t.Fatalf("GateProj not W8A8 (q8=%v w8a8=%v f32=%v)", gate.q8 != nil, gate.w8a8, gate.f32 != nil)
+	}
+
+	cache := m.NewCache(len(g.IDs))
+	for _, id := range g.IDs[:len(g.IDs)-1] {
+		if _, err := m.runLayers(id, cache); err != nil {
+			t.Fatalf("runLayers: %v", err)
+		}
+	}
+	logits, err := m.forward(g.IDs[len(g.IDs)-1], cache)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	if got := argmax(logits); got != g.Argmax {
+		t.Errorf("W8A8 argmax = %d, want %d (f32) — activation quant flipped the top token", got, g.Argmax)
+	}
+	if cos := quantCosine(t, logits); !math.IsNaN(cos) {
+		if cos < 0.99 {
+			t.Errorf("W8A8 vs f32 cosine = %.6f, want ≥ 0.99", cos)
+		}
+		t.Logf("int8int8 (W8A8): argmax=%d (want %d) | cosine vs f32 = %.6f", argmax(logits), g.Argmax, cos)
+	}
+}
+
 // quantCosine returns cosine(int8-logits, f32-reference) from the per-machine
 // full dump, or NaN if absent.
 func quantCosine(t *testing.T, logits []float32) float64 {

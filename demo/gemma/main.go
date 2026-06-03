@@ -44,7 +44,7 @@ func main() {
 		topP     = flag.Float64("top-p", 0.0, "top-p / nucleus (0 = off)")
 		seed     = flag.Int64("seed", 0, "sampling RNG seed")
 		backend  = flag.String("backend", "cpu", "compute backend: cpu | webgpu")
-		quant    = flag.String("quant", "", "weight quantization: \"\" (f32) | int8 | int4")
+		quant    = flag.String("quant", "", "weight quantization: \"\" (f32) | int8 | int8int8 | int4")
 	)
 	flag.Parse()
 

@@ -49,9 +49,14 @@ in small memory." All three pieces shipped:
 - ✅ **int4 + int8 SIMD matmuls**: both widen to a reused scratch + run the SIMD
   `dotF32` kernel — int4 **6.7×** (8.3 → 1.2 ms), int8 **6.9×** (3.0 → 0.43 ms)
   over the scalar loops (M=1, K=N=2048).
+- ✅ **int8×int8 (W8A8)** (`Load(…, Quant:"int8int8")`): quantizes activations to
+  int8 too and runs a true integer kernel (`dotI8` — AVX2 VPMOVSXBW+VPMADDWD,
+  bit-exact, scalar fallback off amd64) — **3.4×** over the f32-widen int8
+  (428 → 125 µs). Lossier (gemma cosine 0.9979 vs 0.9996, argmax preserved), so
+  opt-in; plain `int8` stays weight-only.
 
-Remaining, both incremental: an int8×int8→int32 fixed-point SIMD kernel (cuts the
-multiply further), and mmap'ing safetensors on the fs.FS path GGUF-style.
+Remaining, both incremental: a NEON `dotI8` (SDOT) for the W8A8 path off amd64,
+and mmap'ing safetensors on the fs.FS path GGUF-style.
 
 Still open — **int4 group-quant** (≈⅛ f32, matches native Q4 footprint): the
 streaming-quant load path is now in place, so this needs only its own

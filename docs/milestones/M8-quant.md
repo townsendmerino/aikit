@@ -46,11 +46,13 @@ vs 1072 MB f32). int4 group-quant is left as a documented follow-up.
   also covers the GGUF path (a quantized `.gguf` lands resident as int8 without
   materializing the whole model in f32 first). The retained-weight win (3.98×)
   is unchanged.
-- **Speed:** the quantized matmuls now widen to a scratch row/group and run the
-  SIMD `dotF32` kernel (see the follow-ups), so they match the AVX2/NEON f32
-  path rather than the old scalar loop. The multiply is still f32 (widen-then-
-  dot); an int8×int8→int32 fixed-point SIMD kernel would cut it further and is
-  the remaining speed lever.
+- **Speed:** the weight-only quantized matmuls widen to a scratch row/group and
+  run the SIMD `dotF32` kernel, matching the AVX2/NEON f32 path. The full
+  int8×int8 path (`Quant:"int8int8"`, W8A8) goes further: it quantizes the
+  activations too and runs a true integer kernel (`dotI8` — AVX2
+  VPMOVSXBW+VPMADDWD+VPADDD on amd64), **3.4×** faster than the f32-widen int8 on
+  a decode shape (428 → 125 µs, K=N=2048). It is lossier (activations quantized);
+  see the W8A8 entry below.
 
 ## Known follow-ups (not blocking M8)
 
@@ -73,13 +75,21 @@ vs 1072 MB f32). int4 group-quant is left as a documented follow-up.
   scale). On a decode shape (M=1, K=N=2048): int4 **6.7×** (8.3 → 1.2 ms), int8
   **6.9×** (3.0 → 0.43 ms) over the prior scalar loops (`BenchmarkMatmulBTQ{4,8}`
   vs `…Scalar`). Outputs unchanged within float reassociation; decoder quant
-  accuracy identical. (int8×int8→int32 fixed-point is a further speed option.)
+  accuracy identical.
+- **int8×int8 (W8A8)** — DONE. `Load(…, Quant:"int8int8")` quantizes the
+  activations to int8 on the fly (dynamic per-row scale) too, so the matmul is a
+  true integer kernel: `dotI8` accumulates int8×int8→int32, with an AVX2 asm path
+  (`dotI8AVX2`: VPMOVSXBW sign-extend → VPMADDWD → VPADDD, bit-exact to the scalar
+  reference) and a scalar fallback off amd64. **3.4×** over the f32-widen int8 on
+  a decode shape (428 → 125 µs, K=N=2048), ¼ the scratch. Lossier than weight-only
+  int8 (activations quantized): gemma cosine 0.9979 (vs 0.9996), argmax preserved
+  (`TestQuantInt8I8_accuracy`). It is opt-in; plain `int8` stays weight-only
+  (f32 activations) for the higher accuracy. Next: a NEON `dotI8` (SDOT) off amd64.
 - **Streaming quantize-at-load** — DONE. `Load(…, Quant:"int8")` quantizes each
   matmul tensor as it is read and frees the f32 immediately, for the safetensors,
   GPT-2, and GGUF paths. No whole-model f32 spike; a quantized `.gguf` loads
   resident as int8. Validated by `TestGGUF_int8_resident` (argmax + cosine vs the
   f32 oracle) and the unchanged `TestQuantInt8_accuracy`.
-- **int8 SIMD kernel** (int8×int8→int32) for a speed win, not just memory.
 - **Dedup:** `encoder/quant.go` + `linalg_q8.go` still hold the encoder's own
   copy; unifying onto `internal/linalg` is a cleanup (the kernels legitimately
   differ — encoder blocked for M>1, decoder column-parallel for M=1).

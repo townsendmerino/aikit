@@ -20,7 +20,7 @@ type Model struct {
 // Options configures Load.
 type Options struct {
 	Backend string // "cpu" (default) or "webgpu"
-	Quant   string // "" (f32, default), "int8" (per-row), or "int4" (group-wise) weight quant (M8)
+	Quant   string // "" (f32), "int8" (weight-only per-row), "int8int8" (full int8×int8 W8A8), or "int4" (group-wise) (M8)
 }
 
 // Load reads a Gemma 3 snapshot (config.json + model.safetensors) from dir
@@ -39,13 +39,15 @@ func Load(dir string, opts Options) (*Model, error) {
 		quant = quantNone
 	case "int8":
 		quant = quantInt8
+	case "int8int8":
+		quant = quantInt8I8
 	case "int4":
 		quant = quantInt4
 	default:
 		if be != nil {
 			_ = be.Close()
 		}
-		return nil, fmt.Errorf("decoder.Load: unknown quant %q (have: int8, int4)", opts.Quant)
+		return nil, fmt.Errorf("decoder.Load: unknown quant %q (have: int8, int8int8, int4)", opts.Quant)
 	}
 
 	w, err := loadWeights(dir, quant)

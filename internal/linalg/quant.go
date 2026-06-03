@@ -86,6 +86,77 @@ func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, 
 	})
 }
 
+// dotI8Scalar returns Σ a[i]*b[i] as an int32 over two int8 vectors (the products
+// fit: 127*127*K stays well within int32 for transformer K). It is the portable
+// reference and the tail/fallback for the SIMD dotI8 dispatcher (see the per-arch
+// quant_i8_*.go).
+func dotI8Scalar(a, b []int8) int32 {
+	var s int32
+	for k := range a {
+		s += int32(a[k]) * int32(b[k])
+	}
+	return s
+}
+
+// quantizeRowInt8 dynamically quantizes one f32 activation row to int8 with a
+// single symmetric scale (maxabs/127). Returns the codes (into dst) and the
+// scale; an all-zero row gets scale 0 and zero codes.
+func quantizeRowInt8(a []float32, dst []int8) (scale float32) {
+	var maxAbs float32
+	for _, v := range a {
+		if v < 0 {
+			v = -v
+		}
+		if v > maxAbs {
+			maxAbs = v
+		}
+	}
+	if maxAbs == 0 {
+		for k := range dst {
+			dst[k] = 0
+		}
+		return 0
+	}
+	scale = maxAbs / 127
+	inv := 1.0 / scale
+	for k, v := range a {
+		x := math.Round(float64(v * inv))
+		if x > 127 {
+			x = 127
+		} else if x < -127 {
+			x = -127
+		}
+		dst[k] = int8(x)
+	}
+	return scale
+}
+
+// MatmulBTW8A8 computes dst[M,N] = a[M,K] · bᵀ as full int8×int8→int32 (W8A8):
+// the f32 activation row is quantized to int8 on the fly (dynamic per-row scale),
+// the integer dot accumulates in int32, and the result is rescaled by the
+// activation scale × the per-row weight scale. Unlike MatmulBTQ8 (weight-only
+// int8, f32 activations) this also quantizes the activations, so it is lossier —
+// the tradeoff for an integer kernel. Parallelized over the N columns.
+func MatmulBTW8A8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
+	parallelCols(M*N*K, N, func(j0, j1 int) {
+		aq := make([]int8, K) // per-worker scratch: the quantized activation row
+		for i := range M {
+			aScale := quantizeRowInt8(a[i*K:i*K+K], aq)
+			drow := dst[i*N : i*N+N]
+			if aScale == 0 {
+				for j := j0; j < j1; j++ {
+					drow[j] = 0
+				}
+				continue
+			}
+			for j := j0; j < j1; j++ {
+				acc := dotI8(aq, bQ[j*K:j*K+K])
+				drow[j] = float32(acc) * aScale * bScales[j]
+			}
+		}
+	})
+}
+
 // Group-wise symmetric int4 weight quantization (gemma-decoder-plan §8 / M8
 // int4). Per-ROW int8 is too coarse at 4 bits, so each row is split into groups
 // of `group` consecutive input features (along K), and each group gets its own

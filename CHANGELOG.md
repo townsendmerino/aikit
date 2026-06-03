@@ -12,6 +12,16 @@ it.
 
 ### Added
 
+- **int8×int8 (W8A8) quantization** (`decoder.Load(…, Quant: "int8int8")`) — in
+  addition to the weight-only int8, this quantizes the activations to int8 on the
+  fly (dynamic per-row scale) and runs a true integer matmul: `linalg.dotI8`
+  accumulates int8×int8→int32, with an AVX2 asm kernel (`dotI8AVX2`: VPMOVSXBW
+  sign-extend → VPMADDWD → VPADDD, bit-exact to the scalar reference) and a scalar
+  fallback off amd64. **~3.4×** faster than the f32-widen weight-only int8 on a
+  decode-step shape (428 → 125 µs, K=N=2048). It is lossier (activations are also
+  quantized): gemma cosine 0.9979 vs 0.9996, argmax preserved
+  (`TestQuantInt8I8_accuracy`) — so it is opt-in; plain `int8` stays weight-only
+  (f32 activations) for the higher accuracy.
 - **Byte-level GGUF tokenizer** — `tokenizer.LoadGGUF` now also handles the
   byte-level family (`tokenizer.ggml.model == "gpt2"`: Llama-3 / Qwen / GPT-2),
   not just SPM/llama. It dispatches "gpt2" to the existing `modeByteLevel`
