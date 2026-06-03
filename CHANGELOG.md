@@ -74,8 +74,7 @@ it.
   (it quantizes the same weights, just earlier); validated by the new
   `TestGGUF_int8_resident` (argmax + 0.9998 cosine vs the f32 oracle) and the
   unchanged `TestQuantInt8_accuracy`. Public `LoadWeights`/`LoadWeightsFromFS`
-  signatures are unchanged. int4 group-quant (≈⅛ f32) is the next step on this
-  seam.
+  signatures are unchanged.
 
 ### Added
 

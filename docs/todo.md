@@ -1,77 +1,85 @@
 # aikit todo — what to do next (post-v0.2.0)
 
-Ranked recommendation for the decoder follow-ups, grounded in
+State of the decoder follow-ups, grounded in
 [`multi-model-plan.md`](multi-model-plan.md) §7–§8 and
-[`milestones/G7-gguf.md`](milestones/G7-gguf.md) "Scope / next". Effort key:
-**S** = a few days, **M** = a week or two, **L** = a month+.
+[`milestones/G7-gguf.md`](milestones/G7-gguf.md). Effort key: **S** = a few days,
+**M** = a week or two, **L** = a month+. Everything under "Shipped" is in the
+[Unreleased] CHANGELOG, not yet tagged.
 
 ---
 
-## The four decoder follow-ups, ranked (value × effort × risk)
+## Shipped since v0.2.0
 
-### 1. GGUF tokenizer — **DONE** (both families) ✅ · S
+### GGUF tokenizer — both families ✅
 
-Closes the loop v0.2.0 opened — `tokenizer.LoadGGUF` chats from a bare `.gguf`
-with no sidecar, for both GGUF tokenizer families:
+`tokenizer.LoadGGUF` chats from a bare `.gguf` with no sidecar:
 
-- ✅ **SPM byte-fallback** (`tokenizer.ggml.model == "llama"`:
-  Llama-2/Mistral/TinyLlama) — HF-parity-gated on TinyLlama.
-- ✅ **Byte-level** (`gpt2`: Llama-3/Qwen/GPT-2) — `modeByteLevel`, pretokenizer
+- **SPM byte-fallback** (`tokenizer.ggml.model == "llama"`: Llama-2/Mistral/
+  TinyLlama) — HF-parity-gated on TinyLlama.
+- **Byte-level** (`gpt2`: Llama-3/Qwen/GPT-2) — `modeByteLevel`, pretokenizer
   knobs from `tokenizer.ggml.pre`; parity-gated against a real Llama-3.2-1B GGUF
   (`LoadGGUF` == `Load`(tokenizer.json) id-for-id, json itself HF-golden-validated).
 
-Still open:
+### Resident quantization — the full ladder ✅
 
-- **More K-quants (Q5_K/Q3_K/IQ\*)** — each "a `dequant*` func + a size entry",
-  but needs a Q5_K fixture or the Python `gguf` reference to validate.
+"The way to actually run big quantized models in small memory." All streamed at
+load (no whole-model f32 spike), off mmap'd GGUFs, all SIMD, all parity-gated:
 
-### 2. Resident int8/int4 matmul (dequant-per-tile) — **DONE** ✅ · M–L
+- **Streaming int8** (`Quant:"int8"`): quantize each tensor as it loads, free the
+  f32 before the next — loads in ~¼ the RAM; a bare `.gguf` lands resident as
+  int8 (`TestGGUF_int8_resident`).
+- **mmap GGUF** (`embed.OpenGGUFMmap`): raw quantized bytes are reclaimable page
+  cache, not a heap copy; the tokenizer no longer pages in the weights.
+- **int4 group-quant** (`Quant:"int4"`): projections → group-wise 4-bit
+  (`MatmulBTQ4`), ~⅛ f32; embedding + LM head stay int8 (logit-critical).
+  TinyLlama argmax preserved, cosine 0.994.
+- **int4 + int8 SIMD matmuls**: widen-to-scratch + `dotF32` — int4 **6.7×**,
+  int8 **6.9×** over the scalar loops.
+- **int8×int8 (W8A8)** (`Quant:"int8int8"`): activations also int8, true integer
+  kernel (`dotI8` — AVX2 `VPMOVSXBW`+`VPMADDWD`, bit-exact, scalar fallback off
+  amd64) — **3.4×** over the f32-widen int8. Lossier (cosine 0.9979), so opt-in.
 
-Both planning docs flagged this as "the way to actually run big quantized models
-in small memory." All three pieces shipped:
+The accuracy/speed ladder is now explicit: `f32 → int8 (0.9996) → int8int8
+(3.4× faster, 0.9979) → int4 (⅛ f32)`.
 
-- ✅ **Streaming int8**: `Load(…, Quant:"int8")` quantizes each matmul tensor as
-  it loads and frees the f32 before the next (safetensors, GPT-2, GGUF) — no
-  whole-model f32 spike, so a checkpoint loads in ~¼ the RAM and a bare `.gguf`
-  lands resident as int8 (`TestGGUF_int8_resident`: argmax + 0.9998 cosine vs
-  f32). Reuses the `MatmulBTQ8` dequant-per-tile kernel.
-- ✅ **mmap GGUF** (`embed.OpenGGUFMmap`): maps the `.gguf` instead of
-  heap-reading it, so the raw quantized bytes are reclaimable page cache rather
-  than a heap copy — removes the load-time peak that otherwise exceeded the int8
-  steady state. Bonus: `tokenizer.LoadGGUF` no longer pages in the weights to
-  read metadata (its test went ~0.5 s → ~0.03 s). Parse is bit-identical to the
-  heap path.
-- ✅ **int4 group-quant** (`Load(…, Quant:"int4"`): projections → group-wise
-  symmetric 4-bit (group 32, `MatmulBTQ4` dequant-per-tile), ~⅛ f32 there;
-  embedding + LM head stay int8 (logit-critical, like Q4_K_M keeps them at Q6_K).
-  Validated on TinyLlama: argmax preserved, cosine 0.994 vs f32. (Lossy on the
-  270M — int4 is a big-model tool.)
-- ✅ **int4 + int8 SIMD matmuls**: both widen to a reused scratch + run the SIMD
-  `dotF32` kernel — int4 **6.7×** (8.3 → 1.2 ms), int8 **6.9×** (3.0 → 0.43 ms)
-  over the scalar loops (M=1, K=N=2048).
-- ✅ **int8×int8 (W8A8)** (`Load(…, Quant:"int8int8")`): quantizes activations to
-  int8 too and runs a true integer kernel (`dotI8` — AVX2 VPMOVSXBW+VPMADDWD,
-  bit-exact, scalar fallback off amd64) — **3.4×** over the f32-widen int8
-  (428 → 125 µs). Lossier (gemma cosine 0.9979 vs 0.9996, argmax preserved), so
-  opt-in; plain `int8` stays weight-only.
+---
 
-Remaining, both incremental: a NEON `dotI8` (SDOT) for the W8A8 path off amd64,
-and mmap'ing safetensors on the fs.FS path GGUF-style.
+## Still open, ranked
 
-Still open — **int4 group-quant** (≈⅛ f32, matches native Q4 footprint): the
-streaming-quant load path is now in place, so this needs only its own
-group-quantized `weightMat` variant (group-size 32–128, per-group scale, packed
-nibbles) + a dequant-per-tile matmul kernel + a cosine-vs-f32 accuracy gate.
-`MatmulBTQ8` and the `weightMat` seam are the template.
+### 1. Tier-1: define what aikit *is* — highest value · M / M–L
 
-### 3. GPTQ / AWQ (safetensors-resident int4) — broadens coverage · M
+[`ideas.md`](ideas.md) argues the biggest wins are at a higher altitude than
+deepening the decoder. With the decoder + quant + GGUF depth essentially
+complete, these are now the most impactful next step:
+
+- **`rag`** — compose chunk → embed → ann/bm25 → fuse → encoder-rerank → decoder
+  into one `Answer(query) → (text, []Citation)` pipeline. The product; makes the
+  library more than the sum of its packages. Bigger integration, harder to
+  validate offline (needs real models).
+- **Constrained / structured generation** — logit-masking on the existing
+  `Sampler` so a small model *cannot* emit malformed JSON/invalid grammar.
+  Self-contained, builds on the `Sampler`, fully offline-validatable (the
+  constraint is a hard invariant).
+
+### 2. More GGUF quant types (Q5_K/Q3_K/IQ*) — incremental · S
+
+Each is "a `dequant*` func + a size entry" on the existing GGUF seam, but needs a
+Q5_K fixture or the Python `gguf` reference to parity-gate the dequant (Q4_K_M
+already covers the dominant laptop quant, so this is low marginal value).
+
+### 3. Incremental perf — incremental · S–M
+
+- A NEON `dotI8` (SDOT) so the W8A8 path is SIMD off amd64 (it's scalar there
+  today; mirror the f32 `dotNEON` path).
+- mmap safetensors on the `fs.FS` path GGUF-style.
+
+### 4. GPTQ / AWQ (safetensors-resident int4) — broadens coverage · M
 
 "The other half of G7." Different packing (`qweight`/`qzeros`/`scales`/`g_idx`),
-same dequant-to-f32 idea; the safetensors loader already handles the container.
-Adds the HF-hosted int4 ecosystem. Coverage-breadth, not loop-closing — inherits
-the same RAM caveat as #2 until it lands.
+same dequant idea; the safetensors loader already handles the container. Adds the
+HF-hosted int4 ecosystem.
 
-### 4. Shared-expert MoE + YaRN/longrope — most contained, lowest urgency · S–M
+### 5. Shared-expert MoE + YaRN/longrope — lowest urgency · S–M
 
 "A couple more `MoEConfig` knobs" on the G6 MoE base for Qwen-MoE/DeepSeek, plus
 YaRN's mscale for long context. Cleanly scoped, but only pays off for those
@@ -79,22 +87,9 @@ specific families.
 
 ---
 
-## Meta-note: the highest-value next thing may be none of the four
+## Recommendation
 
-[`ideas.md`](ideas.md) Tier 1 argues the biggest wins *define what aikit is*
-rather than deepen the decoder:
-
-- **`rag`** — compose all packages into one cited-answer pipeline (the product).
-- **Constrained / structured generation** — logit-masking on the existing
-  `Sampler` so a small model *cannot* emit malformed JSON.
-
-If the real question is "what's most impactful," `rag` ranks above all four
-above. The four deepen the decoder; the Tier-1 ideas define the library.
-
----
-
-## Decision
-
-**Now:** #1, the **GGUF tokenizer** (+ a couple more K-quants if cheap) — small,
-closes the v0.2.0 story, unblocks a clean "point at a `.gguf`, get a chat" demo.
-**Next substantial push:** #2, resident int4.
+The decoder/quant/GGUF arc is complete. The highest-leverage next step is the
+**Tier-1** work (#1) — `rag` for "the product," or constrained generation for a
+self-contained, rigorously-testable new capability. The rest (#2–#5) are
+incremental and can be picked up opportunistically.

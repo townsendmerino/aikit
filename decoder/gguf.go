@@ -8,14 +8,16 @@ import (
 
 // GGUF loading (multi-model-plan G7) — read a quantized llama.cpp checkpoint and
 // run it through the generic forward. The GGUF file carries both the
-// architecture config (metadata) and the weights (dequantized to f32 on load),
-// so no separate config.json/safetensors is needed. Two layout quirks vs the HF
+// architecture config (metadata) and the weights (dequantized from the mmap,
+// then optionally re-quantized to resident int8/int4 per the quant mode), so no
+// separate config.json/safetensors is needed. Two layout quirks vs the HF
 // safetensors path: tensors use llama.cpp's blk.N.* names, and the q/k
 // projections are stored in llama.cpp's interleaved-RoPE permutation, which is
 // inverted here to match this package's HF-convention rotate_half RoPE.
 //
-// Scope: the llama architecture with F32/F16/Q8_0/Q4_0 tensors. Other
-// architectures and the K-quants (Q4_K/Q6_K) are follow-ups — both fail loudly.
+// Scope: the llama architecture; F32/F16/Q8_0/Q4_0 and the K-quants Q4_K/Q6_K
+// (so Q4_K_M files load end-to-end). Other architectures and the remaining quant
+// types (Q5_K/Q3_K/IQ*) are follow-ups and fail loudly.
 
 // ggufConfig synthesizes a Config from GGUF metadata. Only llama is supported.
 func ggufConfig(g *embed.GGUFFile) (*Config, error) {

@@ -4,10 +4,11 @@ Parent plan: [`docs/gemma-decoder-plan.md`](../gemma-decoder-plan.md) §8, §6 (
 Touches: `internal/linalg/quant.go`, `decoder/weightmat.go`, `weights.go`,
 `model.go`, `attention.go`, `mlp.go`, `demo/gemma/main.go`.
 
-Status: **DONE (int8) & validated on Linux 2026-06-02.** `--quant int8` runs the
-270M generating coherent text; the int8 forward keeps the f32 argmax (`' Paris'`)
-at **cosine 0.9996**, and the matmul weight footprint drops **3.98×** (270 MB
-vs 1072 MB f32). int4 group-quant is left as a documented follow-up.
+Status: **DONE & validated on Linux 2026-06-02.** `--quant int8` runs the 270M
+generating coherent text; the int8 forward keeps the f32 argmax (`' Paris'`) at
+**cosine 0.9996**, and the matmul weight footprint drops **3.98×** (270 MB vs
+1072 MB f32). The follow-ups below (streaming load, int4 group-quant, the SIMD
+and W8A8 matmul kernels) have since shipped too — see each entry.
 
 ## What was implemented
 
