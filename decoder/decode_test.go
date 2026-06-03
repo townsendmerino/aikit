@@ -1,6 +1,7 @@
 package decoder
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -101,4 +102,51 @@ func TestDecode_greedyContinuationParity(t *testing.T) {
 		t.Errorf("continuation text mismatch:\n  got  %q\n  want %q", text, g.ContinuationText)
 	}
 	t.Logf("greedy continuation (%d tok) matches HF: %q", g.NNew, text)
+}
+
+// TestGenerate_streamMatchesGolden exercises the public Generate streaming path
+// end to end (prefill → decode loop → sampler → channel) and asserts the greedy
+// stream reproduces the M4 continuation ids. Covers the wiring TestDecode's
+// hand-rolled loop bypasses.
+func TestGenerate_streamMatchesGolden(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: greedy generate on the naive backend (M7 perf pending)")
+	}
+	raw, err := os.ReadFile(gemmaGenerateGoldenPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no generate golden at %s — regenerate with scripts/pin_gemma_generate.py", gemmaGenerateGoldenPath)
+	}
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	var g generateGolden
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatalf("parse golden: %v", err)
+	}
+	if _, err := os.Stat(gemmaModelDir); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no checkpoint at %s", gemmaModelDir)
+	}
+	m, err := Load(gemmaModelDir, Options{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	// Greedy (Temperature 0) over the same prompt; the golden's continuation
+	// has no EOS, so the stream runs to maxTokens.
+	stream, gen := m.Generate(context.Background(), g.PromptIDs, g.NNew, SamplingParams{})
+	var got []int
+	for id := range stream {
+		got = append(got, id)
+	}
+	if err := gen.Err(); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if len(got) != len(g.ContinuationIDs) {
+		t.Fatalf("streamed %d tokens, want %d", len(got), len(g.ContinuationIDs))
+	}
+	for i := range got {
+		if got[i] != g.ContinuationIDs[i] {
+			t.Fatalf("stream diverges at %d: got %d, want %d", i, got[i], g.ContinuationIDs[i])
+		}
+	}
 }

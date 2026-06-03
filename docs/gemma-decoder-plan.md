@@ -207,8 +207,11 @@ chatty host↔device round-trip per layer.
   512 keys; global layers see all. 748-token prompt matches HF (cosine 1−1e-11).
   Caught + fixed two latent windowing bugs (mutable position, off-by-one). See
   [`milestones/M5-window.md`](milestones/M5-window.md).
-- **M6 — sampler + streaming.** Temperature, top-k, top-p, repetition handling,
-  EOS/stop sequences; `Generate` streams tokens over a channel.
+- **M6 — sampler + streaming.** ✅ **DONE 2026-06-02.** Temperature / top-k /
+  top-p (seeded, reproducible), EOS/stop, and a streaming `demo/gemma` CLI that
+  generates from a real checkpoint (UTF-8-correct byte-fallback streaming).
+  Repetition penalty / chat template are open follow-ups. See
+  [`milestones/M6-sampler.md`](milestones/M6-sampler.md).
 - **M7 — perf.** Wire the SIMD/parallel `linalg` backend, scratch-pool the
   decode arena, profile tokens/sec on 270M and 1B. Target: interactive
   (>10 tok/s) on an M-series laptop for 270M.

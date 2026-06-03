@@ -2,11 +2,10 @@
 // checkpoint through aikit's pure-Go decoder and streams the completion to
 // stdout.
 //
-// Status: SCAFFOLD. The wiring (flags → tokenizer.Load → decoder.Load →
-// Generate → stream) is complete and compiles; the underlying forward pass,
-// tokenizer and BF16 loader are stubbed per docs/gemma-decoder-plan.md, so
-// the program runs and reports exactly which milestone is outstanding rather
-// than producing tokens. This is the harness the milestones fill in.
+// Status: working (M1–M6). Loads a real checkpoint, tokenizes the prompt,
+// and streams a completion — greedy by default, or temperature / top-k /
+// top-p sampling via the flags. Perf is the naive CPU backend until M7 wires
+// the SIMD/parallel linalg.
 //
 // Usage:
 //
@@ -27,6 +26,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"time"
+	"unicode/utf8"
 
 	"github.com/townsendmerino/aikit/decoder"
 	"github.com/townsendmerino/aikit/tokenizer"
@@ -86,19 +86,61 @@ func run(modelDir, prompt string, maxTok int, backend string, sp decoder.Samplin
 		return fmt.Errorf("encode prompt: %w", err)
 	}
 
-	// 4) Generate + stream.
+	// 4) Generate + stream. Decode the whole running id slice each step and
+	// print only the newly-completed bytes, holding back any trailing
+	// incomplete UTF-8 — a byte-fallback token is a single (possibly partial)
+	// byte, so per-token DecodePiece would emit broken multibyte characters.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
 	fmt.Printf("%s", prompt)
 	stream, gen := model.Generate(ctx, ids, maxTok, sp)
-	for id := range stream {
-		piece, derr := tk.DecodePiece(id)
+	var out []int
+	printed := 0
+	flush := func(final bool) error {
+		text, derr := tk.Decode(out)
 		if derr != nil {
-			return fmt.Errorf("decode token %d: %w", id, derr)
+			return derr
 		}
-		fmt.Print(piece)
+		b := []byte(text)
+		end := len(b)
+		if !final {
+			end = completeUTF8Len(b)
+		}
+		if end > printed {
+			os.Stdout.Write(b[printed:end])
+			printed = end
+		}
+		return nil
+	}
+	for id := range stream {
+		out = append(out, id)
+		if err := flush(false); err != nil {
+			return fmt.Errorf("decode: %w", err)
+		}
+	}
+	if err := flush(true); err != nil {
+		return fmt.Errorf("decode: %w", err)
 	}
 	fmt.Println()
 	return gen.Err()
+}
+
+// completeUTF8Len returns the length of the longest prefix of b that ends on a
+// complete UTF-8 rune boundary, so a partial trailing byte-fallback sequence is
+// held back until the bytes that finish the character arrive.
+func completeUTF8Len(b []byte) int {
+	i := 0
+	for i < len(b) {
+		if b[i] < utf8.RuneSelf {
+			i++
+			continue
+		}
+		if !utf8.FullRune(b[i:]) {
+			break // incomplete trailing sequence — hold back from here
+		}
+		_, size := utf8.DecodeRune(b[i:])
+		i += size
+	}
+	return i
 }

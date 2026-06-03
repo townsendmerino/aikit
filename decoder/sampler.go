@@ -31,20 +31,49 @@ func NewSampler(p SamplingParams) *Sampler {
 
 // Sample returns the chosen token id for the given logits ([VocabSize]).
 //
-// Greedy (Temperature == 0) is implemented — it is all M3/M4 parity needs.
-// The temperature/top-k/top-p path is stubbed for M6; it returns greedy plus
-// an error so a caller that wires sampling early gets a clear "not yet".
+//   - Temperature ≤ 0 is greedy (argmax) — deterministic, ignores top-k/top-p.
+//   - Temperature > 0: softmax at that temperature, optionally restricted to
+//     the top-k highest-prob tokens and/or the top-p nucleus, then a
+//     multinomial draw from the sampler's seeded RNG.
 func (s *Sampler) Sample(logits []float32) (int, error) {
 	if len(logits) == 0 {
 		return 0, fmt.Errorf("decoder.Sample: empty logits")
 	}
-	if s.p.Temperature == 0 && s.p.TopK == 0 && s.p.TopP == 0 {
+	if s.p.Temperature <= 0 {
 		return argmax(logits), nil
 	}
-	// M6: temperature scaling → optional top-k / top-p filter → softmax →
-	// multinomial draw from s.rng. The helper below is ready; the wiring +
-	// goldens are the remaining work.
-	return argmax(logits), fmt.Errorf("decoder.Sample: temperature/top-k/top-p path %w [M6] (returned greedy)", errNotImplemented)
+	probs := softmaxStable(logits, s.p.Temperature)
+	if s.p.TopK > 0 || s.p.TopP > 0 {
+		return s.drawFiltered(topFilter(probs, s.p.TopK, s.p.TopP)), nil
+	}
+	return s.drawFull(probs), nil
+}
+
+// drawFiltered samples one id from the renormalized (id, prob) pairs that
+// survived top-k/top-p filtering (the trailing return guards float rounding).
+func (s *Sampler) drawFiltered(ips []indexedProb) int {
+	r := s.rng.Float64()
+	var cum float64
+	for _, ip := range ips {
+		cum += ip.p
+		if r < cum {
+			return ip.id
+		}
+	}
+	return ips[len(ips)-1].id
+}
+
+// drawFull samples one id from a full probability vector by cumulative search.
+func (s *Sampler) drawFull(probs []float64) int {
+	r := s.rng.Float64()
+	var cum float64
+	for i, p := range probs {
+		cum += p
+		if r < cum {
+			return i
+		}
+	}
+	return len(probs) - 1
 }
 
 func argmax(logits []float32) int {
