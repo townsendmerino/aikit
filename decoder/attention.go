@@ -63,7 +63,7 @@ func causalAttention(
 	cache.Append(layer, k, v)
 	keys, vals := cache.Keys(layer), cache.Vals(layer)
 	nKeys := len(keys) / kvDim // == pos+1
-	start := cache.WindowStart(global)
+	start := cache.WindowStart(pos, global)
 	scale := math.Pow(cfg.QueryPreAttnScalar, -0.5)
 	group := nH / nKV // GQA: query heads per KV head
 

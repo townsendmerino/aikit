@@ -59,14 +59,20 @@ func (c *KVCache) Vals(layer int) []float32 { return c.vals[layer] }
 // Pos is the number of positions stored so far.
 func (c *KVCache) Pos() int { return c.pos }
 
-// WindowStart returns the first key index a query at the current position
-// may attend to on a local (sliding-window) layer. Global layers ignore
-// this and attend from 0. M5 wires this into attention.go.
-func (c *KVCache) WindowStart(global bool) int {
+// WindowStart returns the first key index a query at absolute position pos
+// may attend to on a local (sliding-window) layer. Gemma's window of size W
+// admits keys j with pos−W < j ≤ pos, i.e. the W most recent keys
+// [pos−W+1, pos] — matching HF's sliding mask (key j attends iff pos−j < W).
+// Global layers (and an unset window) attend from 0.
+//
+// Takes pos explicitly rather than reading c.pos: within one forward, c.pos
+// only advances on the last layer's Append, so reading it post-Append would
+// shift the window by one on that layer alone. The query position is stable.
+func (c *KVCache) WindowStart(pos int, global bool) int {
 	if global || c.window <= 0 {
 		return 0
 	}
-	start := c.pos - c.window
+	start := pos - c.window + 1
 	if start < 0 {
 		start = 0
 	}

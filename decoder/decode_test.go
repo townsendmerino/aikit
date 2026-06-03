@@ -29,6 +29,9 @@ type generateGolden struct {
 }
 
 func TestDecode_greedyContinuationParity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: 48-step greedy decode on the naive backend (M7 perf pending)")
+	}
 	raw, err := os.ReadFile(gemmaGenerateGoldenPath)
 	if errors.Is(err, fs.ErrNotExist) {
 		t.Skipf("no generate golden at %s — regenerate with scripts/pin_gemma_generate.py", gemmaGenerateGoldenPath)

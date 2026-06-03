@@ -203,8 +203,10 @@ chatty host↔device round-trip per layer.
   continuation matches HF **id-for-id** and the decoded string matches end to
   end; EOS/stop wired (`isStop`, `Config.EOSIDs`). See
   [`milestones/M4-decode.md`](milestones/M4-decode.md).
-- **M5 — sliding window.** Local layers mask to the last 512 keys; global
-  layers see all. Parity past 512 tokens.
+- **M5 — sliding window.** ✅ **DONE 2026-06-02.** Local layers mask to the last
+  512 keys; global layers see all. 748-token prompt matches HF (cosine 1−1e-11).
+  Caught + fixed two latent windowing bugs (mutable position, off-by-one). See
+  [`milestones/M5-window.md`](milestones/M5-window.md).
 - **M6 — sampler + streaming.** Temperature, top-k, top-p, repetition handling,
   EOS/stop sequences; `Generate` streams tokens over a channel.
 - **M7 — perf.** Wire the SIMD/parallel `linalg` backend, scratch-pool the

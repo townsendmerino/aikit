@@ -117,15 +117,16 @@ func TestForward_logitParity(t *testing.T) {
 	}
 
 	// 5. Full-vector cosine when the per-machine dump is present.
-	cos := fullCosine(t, logits)
+	cos := fullCosine(t, logits, gemmaForwardFullPath)
 	t.Logf("argmax=%d (want %d) | maxSampleΔ=%.5f | sum rel=%.2e | cosine=%v",
 		argmax(logits), g.Argmax, maxSampleΔ, relDiff(sum, g.Stats.Sum), cos)
 }
 
 // fullCosine returns cosine(go, hf) over the full logit vector if the
-// gitignored full dump is present, else math.NaN() (logged, not failed).
-func fullCosine(t *testing.T, logits []float32) float64 {
-	raw, err := os.ReadFile(gemmaForwardFullPath)
+// gitignored full dump at path is present, else math.NaN() (logged, not
+// failed). Shared by the M3 forward and M5 sliding-window parity tests.
+func fullCosine(t *testing.T, logits []float32, path string) float64 {
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return math.NaN()
 	}
