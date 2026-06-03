@@ -32,7 +32,7 @@ func selfAttention(h []float32, Wqkv, OutProj []float32, heads, headDim, D, L in
 	Q := s.Q[:L*D]
 	K := s.K[:L*D]
 	V := s.V[:L*D]
-	for i := 0; i < L; i++ {
+	for i := range L {
 		copy(Q[i*D:(i+1)*D], qkv[i*3*D:i*3*D+D])
 		copy(K[i*D:(i+1)*D], qkv[i*3*D+D:i*3*D+2*D])
 		copy(V[i*D:(i+1)*D], qkv[i*3*D+2*D:i*3*D+3*D])
@@ -52,8 +52,8 @@ func selfAttention(h []float32, Wqkv, OutProj []float32, heads, headDim, D, L in
 	vH := s.vH[:L*headDim]
 	scores := s.scores[:L*L]
 
-	for headIdx := 0; headIdx < heads; headIdx++ {
-		for i := 0; i < L; i++ {
+	for headIdx := range heads {
+		for i := range L {
 			src := i*D + headIdx*headDim
 			copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
 			copy(kH[i*headDim:(i+1)*headDim], K[src:src+headDim])
@@ -63,14 +63,14 @@ func selfAttention(h []float32, Wqkv, OutProj []float32, heads, headDim, D, L in
 		for i := range scores {
 			scores[i] *= scale
 		}
-		for i := 0; i < L; i++ {
+		for i := range L {
 			softmaxRow(scores[i*L : (i+1)*L])
 		}
-		for i := 0; i < L; i++ {
+		for i := range L {
 			scoresRow := scores[i*L : (i+1)*L]
-			for d := 0; d < headDim; d++ {
+			for d := range headDim {
 				var s float32
-				for j := 0; j < L; j++ {
+				for j := range L {
 					s += scoresRow[j] * vH[j*headDim+d]
 				}
 				ctx[i*D+headIdx*headDim+d] = s

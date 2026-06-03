@@ -42,16 +42,10 @@ func chunkSource(src string, n int) []string {
 	if n <= 0 {
 		n = 1
 	}
-	per := len(lines) / n
-	if per < 1 {
-		per = 1
-	}
+	per := max(len(lines)/n, 1)
 	out := make([]string, 0, n)
 	for i := 0; i < n && i*per < len(lines); i++ {
-		end := (i + 1) * per
-		if end > len(lines) {
-			end = len(lines)
-		}
+		end := min((i+1)*per, len(lines))
 		out = append(out, strings.Join(lines[i*per:end], "\n"))
 	}
 	return out

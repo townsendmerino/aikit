@@ -38,12 +38,12 @@ func matmulBT(a, b []float32, M, K, N int) []float32 {
 // both contiguous in row-major.
 func matmulBTNaive(a, b []float32, M, K, N int) []float32 {
 	dst := make([]float32, M*N)
-	for i := 0; i < M; i++ {
+	for i := range M {
 		aRow := a[i*K : (i+1)*K]
-		for n := 0; n < N; n++ {
+		for n := range N {
 			bRow := b[n*K : (n+1)*K]
 			var s float32
-			for k := 0; k < K; k++ {
+			for k := range K {
 				s += aRow[k] * bRow[k]
 			}
 			dst[i*N+n] = s
@@ -90,12 +90,12 @@ func matmulBTNaiveInto(a, b, dst []float32, M, K, N int) {
 	if len(dst) < M*N {
 		panic("encoder: matmulBTNaiveInto dst too small")
 	}
-	for i := 0; i < M; i++ {
+	for i := range M {
 		aRow := a[i*K : (i+1)*K]
-		for n := 0; n < N; n++ {
+		for n := range N {
 			bRow := b[n*K : (n+1)*K]
 			var s float32
-			for k := 0; k < K; k++ {
+			for k := range K {
 				s += aRow[k] * bRow[k]
 			}
 			dst[i*N+n] = s
@@ -177,20 +177,11 @@ const (
 // loosest constraint (any positive int).
 func matmulBTBlockedFillIntoTiled(a, b, dst []float32, M, K, N, mBlock, nBlock, kBlock int) {
 	for i0 := 0; i0 < M; i0 += mBlock {
-		iEnd := i0 + mBlock
-		if iEnd > M {
-			iEnd = M
-		}
+		iEnd := min(i0+mBlock, M)
 		for n0 := 0; n0 < N; n0 += nBlock {
-			nEnd := n0 + nBlock
-			if nEnd > N {
-				nEnd = N
-			}
+			nEnd := min(n0+nBlock, N)
 			for k0 := 0; k0 < K; k0 += kBlock {
-				kEnd := k0 + kBlock
-				if kEnd > K {
-					kEnd = K
-				}
+				kEnd := min(k0+kBlock, K)
 				kSpan := kEnd - k0
 				// kSpan should be a multiple of 4 because kBlock=128
 				// and K (model hidden / intermediate dims) is always
@@ -269,7 +260,7 @@ func matmulBTBlockedFillIntoTiled(a, b, dst []float32, M, K, N, mBlock, nBlock, 
 					for ; n < nEnd; n++ {
 						bRow := b[n*K+k0 : n*K+kEnd]
 						var s float32
-						for k := 0; k < kSpan; k++ {
+						for k := range kSpan {
 							s += a[i*K+k0+k] * bRow[k]
 						}
 						dstRow[n-n0] += s
@@ -288,9 +279,9 @@ func addBias(dst []float32, bias []float32, M, N int) {
 	if bias == nil {
 		return
 	}
-	for i := 0; i < M; i++ {
+	for i := range M {
 		row := dst[i*N : (i+1)*N]
-		for n := 0; n < N; n++ {
+		for n := range N {
 			row[n] += bias[n]
 		}
 	}

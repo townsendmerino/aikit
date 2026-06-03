@@ -22,7 +22,7 @@ func QuantizeRowsInt8(w []float32, rows, cols int) (q []int8, scales []float32) 
 	}
 	q = make([]int8, rows*cols)
 	scales = make([]float32, rows)
-	for i := 0; i < rows; i++ {
+	for i := range rows {
 		row := w[i*cols : (i+1)*cols]
 		var maxAbs float32
 		for _, v := range row {
@@ -68,13 +68,13 @@ func DequantizeRowInt8(q []int8, scale float32, dst []float32) {
 // inner loop, scaled per row at write-back, parallelized over the N columns.
 func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	parallelCols(M*N*K, N, func(j0, j1 int) {
-		for i := 0; i < M; i++ {
+		for i := range M {
 			arow := a[i*K : i*K+K]
 			drow := dst[i*N : i*N+N]
 			for j := j0; j < j1; j++ {
 				bq := bQ[j*K : j*K+K]
 				var s float32
-				for k := 0; k < K; k++ {
+				for k := range K {
 					s += arow[k] * float32(bq[k])
 				}
 				drow[j] = s * bScales[j]

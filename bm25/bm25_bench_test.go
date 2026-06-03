@@ -43,16 +43,10 @@ func buildBenchCorpus(src string, numDocs int) [][]string {
 	if numDocs <= 0 {
 		numDocs = 1
 	}
-	per := len(lines) / numDocs
-	if per < 1 {
-		per = 1
-	}
+	per := max(len(lines)/numDocs, 1)
 	docs := make([][]string, 0, numDocs)
 	for i := 0; i < numDocs && i*per < len(lines); i++ {
-		end := (i + 1) * per
-		if end > len(lines) {
-			end = len(lines)
-		}
+		end := min((i+1)*per, len(lines))
 		chunk := strings.Join(lines[i*per:end], "\n")
 		docs = append(docs, Tokenize(chunk))
 	}

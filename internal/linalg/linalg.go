@@ -37,7 +37,7 @@ const parThreshold = 1 << 15
 // only dimension with parallelism on the M=1 single-token decode path).
 func MatmulBT(a, b, dst []float32, M, K, N int) {
 	parallelCols(M*N*K, N, func(j0, j1 int) {
-		for i := 0; i < M; i++ {
+		for i := range M {
 			arow := a[i*K : i*K+K]
 			drow := dst[i*N : i*N+N]
 			for j := j0; j < j1; j++ {
@@ -55,17 +55,11 @@ func parallelCols(work, N int, fn func(j0, j1 int)) {
 		fn(0, N)
 		return
 	}
-	workers := runtime.GOMAXPROCS(0)
-	if workers > N {
-		workers = N
-	}
+	workers := min(runtime.GOMAXPROCS(0), N)
 	chunk := (N + workers - 1) / workers
 	var wg sync.WaitGroup
 	for j0 := 0; j0 < N; j0 += chunk {
-		j1 := j0 + chunk
-		if j1 > N {
-			j1 = N
-		}
+		j1 := min(j0+chunk, N)
 		wg.Add(1)
 		go func(j0, j1 int) {
 			defer wg.Done()

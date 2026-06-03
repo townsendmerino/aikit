@@ -42,7 +42,7 @@ func TestMmapLoad_cosineMatchesHeap(t *testing.T) {
 	// Compare a slice (full compare is 30528*768=23M elements; spot-check
 	// the first 1000 + last 1000 — if mmap parsing got the offsets wrong
 	// it shows up immediately at row boundaries).
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		if heapWE[i] != mmapWE[i] {
 			t.Fatalf("WordEmb[%d]: heap=%v mmap=%v", i, heapWE[i], mmapWE[i])
 		}

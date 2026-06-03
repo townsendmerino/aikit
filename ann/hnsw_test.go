@@ -49,7 +49,7 @@ func TestHNSW_recallVsFlat(t *testing.T) {
 
 	const queries = 200
 	var hit, total int
-	for q := 0; q < queries; q++ {
+	for range queries {
 		query := randUnit(rng, dim)
 		exact := flat.Query(query, k)
 		approx := h.Query(query, k)
@@ -97,7 +97,7 @@ func TestHNSW_higherEfHigherRecall(t *testing.T) {
 	recallAt := func(ef int) float64 {
 		var hit, total int
 		qrng := rand.New(rand.NewPCG(99, 100))
-		for q := 0; q < 100; q++ {
+		for range 100 {
 			query := randUnit(qrng, dim)
 			exact := flat.Query(query, k)
 			approx := h.QueryEf(query, k, ef)
@@ -135,7 +135,7 @@ func TestHNSW_determinism(t *testing.T) {
 	h2 := BuildHNSW(vecs, cfg)
 
 	qrng := rand.New(rand.NewPCG(7, 8))
-	for q := 0; q < 50; q++ {
+	for q := range 50 {
 		query := randUnit(qrng, 32)
 		r1 := h1.Query(query, 10)
 		r2 := h2.Query(query, 10)
@@ -158,7 +158,7 @@ func TestHNSW_exactSmall(t *testing.T) {
 	flat := New(vecs)
 	h := BuildHNSW(vecs, Config{Seed: 1})
 	qrng := rand.New(rand.NewPCG(13, 14))
-	for q := 0; q < 30; q++ {
+	for q := range 30 {
 		query := randUnit(qrng, 16)
 		want := flat.Query(query, 1)[0].Index
 		got := h.QueryEf(query, 1, 50)[0].Index

@@ -132,9 +132,9 @@ func TestRoPE_orthogonalityPreserved(t *testing.T) {
 	}
 	// L2 norms per position BEFORE.
 	preNorms := make([]float64, seqLen)
-	for m := 0; m < seqLen; m++ {
+	for m := range seqLen {
 		var s float64
-		for d := 0; d < headDim; d++ {
+		for d := range headDim {
 			v := float64(x[m*headDim+d])
 			s += v * v
 		}
@@ -145,9 +145,9 @@ func TestRoPE_orthogonalityPreserved(t *testing.T) {
 	rope.apply(x, heads)
 
 	// L2 norms per position AFTER must equal before (rotation preserves norm).
-	for m := 0; m < seqLen; m++ {
+	for m := range seqLen {
 		var s float64
-		for d := 0; d < headDim; d++ {
+		for d := range headDim {
 			v := float64(x[m*headDim+d])
 			s += v * v
 		}

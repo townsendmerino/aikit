@@ -56,7 +56,7 @@ func (w *Weights) forward(ids []int32) []float32 {
 		}
 		src := w.WordEmb[int(id)*D : int(id)*D+D]
 		dst := h[i*D : (i+1)*D]
-		for j := 0; j < D; j++ {
+		for j := range D {
 			dst[j] = src[j] + tte0[j]
 		}
 	}

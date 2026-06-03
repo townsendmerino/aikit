@@ -139,10 +139,7 @@ func (m *Model) EncodeBatch(texts []string, isQueries []bool, concurrency int) (
 	var wg sync.WaitGroup
 	for w := 0; w < concurrency; w++ {
 		start := w * chunkSize
-		end := start + chunkSize
-		if end > len(texts) {
-			end = len(texts)
-		}
+		end := min(start+chunkSize, len(texts))
 		if start >= end {
 			break
 		}
@@ -270,10 +267,7 @@ func (m *ModelQ8) EncodeBatch(texts []string, isQueries []bool, concurrency int)
 	var wg sync.WaitGroup
 	for w := 0; w < concurrency; w++ {
 		start := w * chunkSize
-		end := start + chunkSize
-		if end > len(texts) {
-			end = len(texts)
-		}
+		end := min(start+chunkSize, len(texts))
 		if start >= end {
 			break
 		}

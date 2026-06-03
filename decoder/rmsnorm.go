@@ -16,7 +16,7 @@ import "math"
 // the f32 round-off still matters at the ≥1−1e-4 parity bar, mirroring the
 // float64-accumulation discipline embed/ and encoder/ already rely on.
 func rmsNorm(x, weight []float32, rows, dim int, eps float64, addOne bool) {
-	for r := 0; r < rows; r++ {
+	for r := range rows {
 		row := x[r*dim : r*dim+dim]
 		var ss float64
 		for _, v := range row {

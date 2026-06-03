@@ -80,11 +80,11 @@ func TestEncodeConcurrent(t *testing.T) {
 	// goroutines, each encoding a distinct input, results compared to
 	// baseline.
 	const rounds = 20
-	for r := 0; r < rounds; r++ {
+	for r := range rounds {
 		results := make([][]float32, numInputs)
 		var wg sync.WaitGroup
 		wg.Add(numInputs)
-		for i := 0; i < numInputs; i++ {
+		for i := range numInputs {
 			i := i // capture per-iteration
 			go func() {
 				defer wg.Done()
@@ -97,7 +97,7 @@ func TestEncodeConcurrent(t *testing.T) {
 		// serial baseline. Any difference indicates either a data race
 		// (caught separately by -race) or shared mutable state we
 		// missed in the code-read audit.
-		for i := 0; i < numInputs; i++ {
+		for i := range numInputs {
 			if !reflect.DeepEqual(results[i], baseline[i]) {
 				t.Errorf("round %d input %d: concurrent Encode differs from serial baseline",
 					r, i)
@@ -118,10 +118,7 @@ func chunkInto(src string, n int) []string {
 	if n <= 0 {
 		n = 1
 	}
-	per := len(lines) / n
-	if per < 1 {
-		per = 1
-	}
+	per := max(len(lines)/n, 1)
 	out := make([]string, 0, n)
 	for i := 0; i < n && i*per < len(lines); i++ {
 		end := (i + 1) * per

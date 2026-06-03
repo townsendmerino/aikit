@@ -113,7 +113,7 @@ func Tokenize(text string) []string {
 	runStart := -1
 	n := len(text)
 
-	for i := 0; i < n; i++ {
+	for i := range n {
 		c := text[i]
 		if runStart < 0 {
 			if isIdentStartByte(c) {

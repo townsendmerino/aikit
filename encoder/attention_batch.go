@@ -34,14 +34,14 @@ func selfAttentionBatched(h []float32, Wqkv, OutProj []float32, heads, headDim, 
 	Q := s.Q[:BL*D]
 	K := s.K[:BL*D]
 	V := s.V[:BL*D]
-	for i := 0; i < BL; i++ {
+	for i := range BL {
 		copy(Q[i*D:(i+1)*D], qkv[i*3*D:i*3*D+D])
 		copy(K[i*D:(i+1)*D], qkv[i*3*D+D:i*3*D+2*D])
 		copy(V[i*D:(i+1)*D], qkv[i*3*D+2*D:i*3*D+3*D])
 	}
 
 	// 3) RoPE per sequence's [Lmax, D] slice.
-	for b := 0; b < B; b++ {
+	for b := range B {
 		off := b * Lmax * D
 		rope.apply(Q[off:off+Lmax*D], heads)
 		rope.apply(K[off:off+Lmax*D], heads)
@@ -63,17 +63,17 @@ func selfAttentionBatched(h []float32, Wqkv, OutProj []float32, heads, headDim, 
 	kH := s.kH[:Lmax*headDim]
 	vH := s.vH[:Lmax*headDim]
 	scores := s.scores[:Lmax*Lmax]
-	for b := 0; b < B; b++ {
+	for b := range B {
 		L := realLen[b]
 		if L == 0 {
 			continue
 		}
 		seqOff := b * Lmax * D
-		for headIdx := 0; headIdx < heads; headIdx++ {
+		for headIdx := range heads {
 			qH = qH[:L*headDim]
 			kH = kH[:L*headDim]
 			vH = vH[:L*headDim]
-			for i := 0; i < L; i++ {
+			for i := range L {
 				src := seqOff + i*D + headIdx*headDim
 				copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
 				copy(kH[i*headDim:(i+1)*headDim], K[src:src+headDim])
@@ -85,14 +85,14 @@ func selfAttentionBatched(h []float32, Wqkv, OutProj []float32, heads, headDim, 
 			for i := range scores {
 				scores[i] *= scale
 			}
-			for i := 0; i < L; i++ {
+			for i := range L {
 				softmaxRow(scores[i*L : (i+1)*L])
 			}
-			for i := 0; i < L; i++ {
+			for i := range L {
 				scoresRow := scores[i*L : (i+1)*L]
-				for d := 0; d < headDim; d++ {
+				for d := range headDim {
 					var sV float32
-					for j := 0; j < L; j++ {
+					for j := range L {
 						sV += scoresRow[j] * vH[j*headDim+d]
 					}
 					ctx[seqOff+i*D+headIdx*headDim+d] = sV

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 )
 
 // Model is a loaded Gemma 3 checkpoint plus the compute backend. Goroutine
@@ -195,7 +196,7 @@ func (m *Model) Generate(ctx context.Context, prompt []int, maxTokens int, sp Sa
 			return
 		}
 		// Decode loop.
-		for n := 0; n < maxTokens; n++ {
+		for range maxTokens {
 			select {
 			case <-ctx.Done():
 				g.err = ctx.Err()
@@ -224,17 +225,10 @@ func (m *Model) Generate(ctx context.Context, prompt []int, maxTokens int, sp Sa
 // config) or a caller-supplied stop id (SamplingParams.StopIDs, e.g.
 // <end_of_turn> for chat).
 func (m *Model) isStop(id int, sp SamplingParams) bool {
-	for _, e := range m.eosIDs {
-		if id == e {
-			return true
-		}
+	if slices.Contains(m.eosIDs, id) {
+		return true
 	}
-	for _, s := range sp.StopIDs {
-		if id == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(sp.StopIDs, id)
 }
 
 // Generation carries the terminal status of a Generate stream.

@@ -167,10 +167,7 @@ func (h *HNSW) Add(vec []float32) int {
 		ep = h.greedyClosest(vec, ep, layer)
 	}
 	// Insert layers min(l, maxLayer) … 0.
-	start := l
-	if h.maxLayer < start {
-		start = h.maxLayer
-	}
+	start := min(h.maxLayer, l)
 	for layer := start; layer >= 0; layer-- {
 		w := h.searchLayer(vec, []int{ep}, h.efConstruction, layer)
 		neighbors := selectNearest(w, h.mmax(layer))

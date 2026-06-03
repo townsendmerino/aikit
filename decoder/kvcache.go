@@ -33,7 +33,7 @@ func NewKVCache(numLayers, numKVHeads, headDim, window, capHint int) *KVCache {
 		keys:      make([][]float32, numLayers),
 		vals:      make([][]float32, numLayers),
 	}
-	for l := 0; l < numLayers; l++ {
+	for l := range numLayers {
 		c.keys[l] = make([]float32, 0, capHint*kvDim)
 		c.vals[l] = make([]float32, 0, capHint*kvDim)
 	}
@@ -72,9 +72,6 @@ func (c *KVCache) WindowStart(pos int, global bool) int {
 	if global || c.window <= 0 {
 		return 0
 	}
-	start := pos - c.window + 1
-	if start < 0 {
-		start = 0
-	}
+	start := max(pos-c.window+1, 0)
 	return start
 }

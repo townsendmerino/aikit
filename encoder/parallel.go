@@ -106,10 +106,7 @@ func matmulBTBlockedIntoParallel(a, b, dst []float32, M, K, N int) {
 		if iStart >= M {
 			break
 		}
-		iEnd := iStart + rowsPer
-		if iEnd > M {
-			iEnd = M
-		}
+		iEnd := min(iStart+rowsPer, M)
 		wg.Add(1)
 		go func(iStart, iEnd int) {
 			defer wg.Done()

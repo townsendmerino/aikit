@@ -9,10 +9,10 @@ import (
 // naiveMatmulBT is the obvious triple-loop reference MatmulBT must match.
 func naiveMatmulBT(a, b []float32, M, K, N int) []float32 {
 	dst := make([]float32, M*N)
-	for i := 0; i < M; i++ {
-		for j := 0; j < N; j++ {
+	for i := range M {
+		for j := range N {
 			var s float32
-			for k := 0; k < K; k++ {
+			for k := range K {
 				s += a[i*K+k] * b[j*K+k]
 			}
 			dst[i*N+j] = s

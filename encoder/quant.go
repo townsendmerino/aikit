@@ -39,7 +39,7 @@ func quantizeRowsInt8(w []float32, rows, cols int) (q []int8, scales []float32) 
 	}
 	q = make([]int8, rows*cols)
 	scales = make([]float32, rows)
-	for i := 0; i < rows; i++ {
+	for i := range rows {
 		row := w[i*cols : (i+1)*cols]
 		// max(|row|) — find the dynamic range of this row.
 		var maxAbs float32
@@ -83,10 +83,10 @@ func dequantizeRowsInt8(q []int8, scales []float32, rows, cols int) []float32 {
 		panic("encoder: dequantizeRowsInt8 shape mismatch")
 	}
 	w := make([]float32, rows*cols)
-	for i := 0; i < rows; i++ {
+	for i := range rows {
 		s := scales[i]
 		off := i * cols
-		for j := 0; j < cols; j++ {
+		for j := range cols {
 			w[off+j] = float32(q[off+j]) * s
 		}
 	}

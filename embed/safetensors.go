@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"math"
 	"os"
 	"path"
@@ -134,9 +135,7 @@ func parseShardIndex(indexBytes []byte) (files []string, weightMap map[string]st
 // files; this is the format-level logic shared by the mmap and fs paths.
 func mergeShards(agg *SafetensorsFile, shards []*SafetensorsFile, weightMap map[string]string) error {
 	for _, shard := range shards {
-		for name, t := range shard.tensors {
-			agg.tensors[name] = t
-		}
+		maps.Copy(agg.tensors, shard.tensors)
 	}
 	for name := range weightMap {
 		if _, ok := agg.tensors[name]; !ok {
@@ -445,7 +444,7 @@ func (t Tensor) BFloat16sToF32() ([]float32, error) {
 	}
 	n := len(t.raw) / 2
 	out := make([]float32, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		// Little-endian uint16 → high 16 bits of the float32 pattern.
 		bits := uint16(t.raw[2*i]) | uint16(t.raw[2*i+1])<<8
 		out[i] = math.Float32frombits(uint32(bits) << 16)
@@ -467,7 +466,7 @@ func (t Tensor) Float16sToF32() ([]float32, error) {
 	}
 	n := len(t.raw) / 2
 	out := make([]float32, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		h := uint16(t.raw[2*i]) | uint16(t.raw[2*i+1])<<8
 		out[i] = halfBitsToF32(h)
 	}

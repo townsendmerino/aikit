@@ -29,7 +29,7 @@ func (w *WeightsQ8) forward(ids []int32) []float32 {
 		}
 		src := w.WordEmb[int(id)*D : int(id)*D+D]
 		dst := h[i*D : (i+1)*D]
-		for j := 0; j < D; j++ {
+		for j := range D {
 			dst[j] = src[j] + tte0[j]
 		}
 	}
@@ -94,7 +94,7 @@ func (w *WeightsQ8) forwardBatch(idsList [][]int32) [][]float32 {
 			}
 			src := w.WordEmb[int(id)*D : int(id)*D+D]
 			dst := h[base+i*D : base+(i+1)*D]
-			for j := 0; j < D; j++ {
+			for j := range D {
 				dst[j] = src[j] + tte0[j]
 			}
 		}
@@ -111,7 +111,7 @@ func (w *WeightsQ8) forwardBatch(idsList [][]int32) [][]float32 {
 		layerNorm(h, l.Norm2W, l.Norm2B, B*Lmax, D, eps)
 	}
 	out := make([][]float32, B)
-	for b := 0; b < B; b++ {
+	for b := range B {
 		out[b] = make([]float32, D)
 		copy(out[b], h[b*Lmax*D:b*Lmax*D+D])
 	}
@@ -129,7 +129,7 @@ func selfAttentionQ8(h []float32, WqkvQ []int8, WqkvScales []float32,
 	Q := make([]float32, L*D)
 	K := make([]float32, L*D)
 	V := make([]float32, L*D)
-	for i := 0; i < L; i++ {
+	for i := range L {
 		copy(Q[i*D:(i+1)*D], qkv[i*3*D:i*3*D+D])
 		copy(K[i*D:(i+1)*D], qkv[i*3*D+D:i*3*D+2*D])
 		copy(V[i*D:(i+1)*D], qkv[i*3*D+2*D:i*3*D+3*D])
@@ -139,11 +139,11 @@ func selfAttentionQ8(h []float32, WqkvQ []int8, WqkvScales []float32,
 
 	scale := float32(1.0 / math.Sqrt(float64(headDim)))
 	ctx := make([]float32, L*D)
-	for headIdx := 0; headIdx < heads; headIdx++ {
+	for headIdx := range heads {
 		qH := make([]float32, L*headDim)
 		kH := make([]float32, L*headDim)
 		vH := make([]float32, L*headDim)
-		for i := 0; i < L; i++ {
+		for i := range L {
 			src := i*D + headIdx*headDim
 			copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
 			copy(kH[i*headDim:(i+1)*headDim], K[src:src+headDim])
@@ -153,14 +153,14 @@ func selfAttentionQ8(h []float32, WqkvQ []int8, WqkvScales []float32,
 		for i := range raw {
 			raw[i] *= scale
 		}
-		for i := 0; i < L; i++ {
+		for i := range L {
 			softmaxRow(raw[i*L : (i+1)*L])
 		}
-		for i := 0; i < L; i++ {
+		for i := range L {
 			scoresRow := raw[i*L : (i+1)*L]
-			for d := 0; d < headDim; d++ {
+			for d := range headDim {
 				var s float32
-				for j := 0; j < L; j++ {
+				for j := range L {
 					s += scoresRow[j] * vH[j*headDim+d]
 				}
 				ctx[i*D+headIdx*headDim+d] = s
@@ -183,29 +183,29 @@ func selfAttentionQ8Batched(h []float32, WqkvQ []int8, WqkvScales []float32,
 	Q := make([]float32, BL*D)
 	K := make([]float32, BL*D)
 	V := make([]float32, BL*D)
-	for i := 0; i < BL; i++ {
+	for i := range BL {
 		copy(Q[i*D:(i+1)*D], qkv[i*3*D:i*3*D+D])
 		copy(K[i*D:(i+1)*D], qkv[i*3*D+D:i*3*D+2*D])
 		copy(V[i*D:(i+1)*D], qkv[i*3*D+2*D:i*3*D+3*D])
 	}
-	for b := 0; b < B; b++ {
+	for b := range B {
 		off := b * Lmax * D
 		rope.apply(Q[off:off+Lmax*D], heads)
 		rope.apply(K[off:off+Lmax*D], heads)
 	}
 	scale := float32(1.0 / math.Sqrt(float64(headDim)))
 	ctx := make([]float32, BL*D)
-	for b := 0; b < B; b++ {
+	for b := range B {
 		L := realLen[b]
 		if L == 0 {
 			continue
 		}
 		seqOff := b * Lmax * D
-		for headIdx := 0; headIdx < heads; headIdx++ {
+		for headIdx := range heads {
 			qH := make([]float32, L*headDim)
 			kH := make([]float32, L*headDim)
 			vH := make([]float32, L*headDim)
-			for i := 0; i < L; i++ {
+			for i := range L {
 				src := seqOff + i*D + headIdx*headDim
 				copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
 				copy(kH[i*headDim:(i+1)*headDim], K[src:src+headDim])
@@ -215,14 +215,14 @@ func selfAttentionQ8Batched(h []float32, WqkvQ []int8, WqkvScales []float32,
 			for i := range scores {
 				scores[i] *= scale
 			}
-			for i := 0; i < L; i++ {
+			for i := range L {
 				softmaxRow(scores[i*L : (i+1)*L])
 			}
-			for i := 0; i < L; i++ {
+			for i := range L {
 				scoresRow := scores[i*L : (i+1)*L]
-				for d := 0; d < headDim; d++ {
+				for d := range headDim {
 					var s float32
-					for j := 0; j < L; j++ {
+					for j := range L {
 						s += scoresRow[j] * vH[j*headDim+d]
 					}
 					ctx[seqOff+i*D+headIdx*headDim+d] = s

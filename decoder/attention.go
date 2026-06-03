@@ -68,7 +68,7 @@ func causalAttention(
 
 	ctx := make([]float32, qDim)
 	scores := make([]float32, nKeys)
-	for qh := 0; qh < nH; qh++ {
+	for qh := range nH {
 		kvh := qh / group
 		qHead := q[qh*hd : qh*hd+hd]
 
@@ -77,7 +77,7 @@ func causalAttention(
 		for s := start; s < nKeys; s++ {
 			kHead := keys[s*kvDim+kvh*hd : s*kvDim+kvh*hd+hd]
 			var dot float64
-			for d := 0; d < hd; d++ {
+			for d := range hd {
 				dot += float64(qHead[d]) * float64(kHead[d])
 			}
 			sc := dot * scale
@@ -99,7 +99,7 @@ func causalAttention(
 		for s := start; s < nKeys; s++ {
 			w := float32(float64(scores[s]) * inv)
 			vHead := vals[s*kvDim+kvh*hd : s*kvDim+kvh*hd+hd]
-			for d := 0; d < hd; d++ {
+			for d := range hd {
 				oHead[d] += w * vHead[d]
 			}
 		}

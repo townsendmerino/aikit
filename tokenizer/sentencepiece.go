@@ -126,7 +126,7 @@ func Load(path string) (*Tokenizer, error) {
 	}
 
 	// Byte-fallback tokens: "<0x00>".."<0xFF>".
-	for b := 0; b < 256; b++ {
+	for b := range 256 {
 		p := fmt.Sprintf("<0x%02X>", b)
 		t.bytePiece[b] = p
 		if id, ok := t.vocab[p]; ok {

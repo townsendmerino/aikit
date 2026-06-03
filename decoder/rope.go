@@ -22,12 +22,12 @@ import "math"
 func applyRoPE(vec []float32, heads, headDim, pos int, base float64) {
 	half := headDim / 2
 	posF := float64(pos)
-	for d := 0; d < half; d++ {
+	for d := range half {
 		invFreq := math.Pow(base, -float64(2*d)/float64(headDim))
 		theta := posF * invFreq
 		c := math.Cos(theta)
 		s := math.Sin(theta)
-		for h := 0; h < heads; h++ {
+		for h := range heads {
 			off := h * headDim
 			x1 := float64(vec[off+d])
 			x2 := float64(vec[off+half+d])

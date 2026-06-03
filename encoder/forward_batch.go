@@ -96,7 +96,7 @@ func (w *Weights) forwardBatch(idsList [][]int32) [][]float32 {
 			}
 			src := w.WordEmb[int(id)*D : int(id)*D+D]
 			dst := h[base+i*D : base+(i+1)*D]
-			for j := 0; j < D; j++ {
+			for j := range D {
 				dst[j] = src[j] + tte0[j]
 			}
 		}
@@ -123,7 +123,7 @@ func (w *Weights) forwardBatch(idsList [][]int32) [][]float32 {
 	// 5) CLS pool: extract position 0 of each sequence. Pad positions
 	// (i > 0 past realLen[b]) are discarded; we only ever read i=0.
 	out := make([][]float32, B)
-	for b := 0; b < B; b++ {
+	for b := range B {
 		out[b] = make([]float32, D)
 		copy(out[b], h[b*Lmax*D:b*Lmax*D+D])
 	}

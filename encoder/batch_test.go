@@ -174,7 +174,7 @@ func BenchmarkEncodeBatch_rerankN50(b *testing.B) {
 	N := 50
 	texts := make([]string, N)
 	isQ := make([]bool, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		tmpl := templates[i%len(templates)]
 		name := names[i%len(names)]
 		texts[i] = fmt.Sprintf(tmpl, name, name, name)
@@ -226,7 +226,7 @@ func TestEncodeBatch_rerankN50(t *testing.T) {
 	N := 50
 	texts := make([]string, N)
 	isQ := make([]bool, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		tmpl := templates[i%len(templates)]
 		name := names[i%len(names)]
 		texts[i] = fmt.Sprintf(tmpl, name, name, name)

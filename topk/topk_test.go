@@ -29,7 +29,7 @@ func TestNew_NegativeK_Panics(t *testing.T) {
 
 func TestPush_UnderCapacity(t *testing.T) {
 	s := New[int](10)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		if !s.Push(i, float64(i)) {
 			t.Errorf("Push(%d) under-capacity returned false, want true", i)
 		}
@@ -155,7 +155,7 @@ func TestPush_LargeStream(t *testing.T) {
 	// 1000 items, K=10. Top 10 by score must come out in descending order
 	// and match the highest 10 input scores (995..986 here).
 	s := New[int](10)
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		s.Push(i, float64(i%1000)+0.5)
 	}
 	result := s.Result()

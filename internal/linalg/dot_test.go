@@ -18,12 +18,12 @@ func TestDotF32_matchesScalar(t *testing.T) {
 	for _, n := range cases {
 		a := make([]float32, n)
 		b := make([]float32, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			a[i] = float32(rng.NormFloat64() * 0.1)
 			b[i] = float32(rng.NormFloat64() * 0.1)
 		}
 		var ref float32
-		for i := 0; i < n; i++ {
+		for i := range n {
 			ref += a[i] * b[i]
 		}
 		got := dotF32(a, b)
@@ -69,7 +69,7 @@ func benchDot(b *testing.B, n int) {
 	rng := rand.New(rand.NewPCG(1, 2))
 	a := make([]float32, n)
 	bs := make([]float32, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		a[i] = float32(rng.NormFloat64() * 0.1)
 		bs[i] = float32(rng.NormFloat64() * 0.1)
 	}
@@ -88,7 +88,7 @@ func benchDotGo(b *testing.B, n int) {
 	rng := rand.New(rand.NewPCG(1, 2))
 	a := make([]float32, n)
 	bs := make([]float32, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		a[i] = float32(rng.NormFloat64() * 0.1)
 		bs[i] = float32(rng.NormFloat64() * 0.1)
 	}
@@ -96,7 +96,7 @@ func benchDotGo(b *testing.B, n int) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var s float32
-		for k := 0; k < n; k++ {
+		for k := range n {
 			s += a[k] * bs[k]
 		}
 		_ = s
@@ -119,7 +119,7 @@ func TestDot4x4_matchesScalar(t *testing.T) {
 		b1 := make([]float32, n)
 		b2 := make([]float32, n)
 		b3 := make([]float32, n)
-		for i := 0; i < n; i++ {
+		for i := range n {
 			a[i] = float32(rng.NormFloat64() * 0.1)
 			b0[i] = float32(rng.NormFloat64() * 0.1)
 			b1[i] = float32(rng.NormFloat64() * 0.1)
@@ -128,7 +128,7 @@ func TestDot4x4_matchesScalar(t *testing.T) {
 		}
 		// References: scalar dot products.
 		var ref [4]float32
-		for i := 0; i < n; i++ {
+		for i := range n {
 			ref[0] += a[i] * b0[i]
 			ref[1] += a[i] * b1[i]
 			ref[2] += a[i] * b2[i]
@@ -148,7 +148,7 @@ func TestDot4x4_matchesScalar(t *testing.T) {
 			sums[8] + sums[9] + sums[10] + sums[11],
 			sums[12] + sums[13] + sums[14] + sums[15],
 		}
-		for r := 0; r < 4; r++ {
+		for r := range 4 {
 			tol := float32(1e-4)*absF32(ref[r]) + 1e-6
 			if absF32(got[r]-ref[r]) > tol {
 				t.Errorf("n=%d row=%d: got %v want %v (tol %v)", n, r, got[r], ref[r], tol)
@@ -164,7 +164,7 @@ func benchDot4x4(b *testing.B, n int) {
 	b1 := make([]float32, n)
 	b2 := make([]float32, n)
 	b3 := make([]float32, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		a[i] = float32(rng.NormFloat64() * 0.1)
 		b0[i] = float32(rng.NormFloat64() * 0.1)
 		b1[i] = float32(rng.NormFloat64() * 0.1)
@@ -191,18 +191,18 @@ func TestDot8x4_matchesScalar(t *testing.T) {
 	for _, n := range cases {
 		a := make([]float32, n)
 		bs := [8][]float32{}
-		for r := 0; r < 8; r++ {
+		for r := range 8 {
 			bs[r] = make([]float32, n)
 		}
-		for i := 0; i < n; i++ {
+		for i := range n {
 			a[i] = float32(rng.NormFloat64() * 0.1)
-			for r := 0; r < 8; r++ {
+			for r := range 8 {
 				bs[r][i] = float32(rng.NormFloat64() * 0.1)
 			}
 		}
 		var ref [8]float32
-		for i := 0; i < n; i++ {
-			for r := 0; r < 8; r++ {
+		for i := range n {
+			for r := range 8 {
 				ref[r] += a[i] * bs[r][i]
 			}
 		}
@@ -213,7 +213,7 @@ func TestDot8x4_matchesScalar(t *testing.T) {
 				&bs[4][0], &bs[5][0], &bs[6][0], &bs[7][0],
 				n/4, &sums)
 		}
-		for r := 0; r < 8; r++ {
+		for r := range 8 {
 			got := sums[r*4] + sums[r*4+1] + sums[r*4+2] + sums[r*4+3]
 			tol := float32(1e-4)*absF32(ref[r]) + 1e-6
 			if absF32(got-ref[r]) > tol {
@@ -227,12 +227,12 @@ func benchDot8x4(b *testing.B, n int) {
 	rng := rand.New(rand.NewPCG(3, 7))
 	a := make([]float32, n)
 	bs := [8][]float32{}
-	for r := 0; r < 8; r++ {
+	for r := range 8 {
 		bs[r] = make([]float32, n)
 	}
-	for i := 0; i < n; i++ {
+	for i := range n {
 		a[i] = float32(rng.NormFloat64() * 0.1)
-		for r := 0; r < 8; r++ {
+		for r := range 8 {
 			bs[r][i] = float32(rng.NormFloat64() * 0.1)
 		}
 	}

@@ -69,13 +69,13 @@ func TestQuantizeRoundTrip(t *testing.T) {
 // drops the maxAbs==0 guard.
 func TestQuantize_zeroRow(t *testing.T) {
 	w := make([]float32, 4*8) // 4 rows × 8 cols; row 2 stays all-zero
-	for i := 0; i < 4*8; i++ {
+	for i := range 4 * 8 {
 		if i/8 != 2 {
 			w[i] = float32(i) * 0.01
 		}
 	}
 	q, scales := quantizeRowsInt8(w, 4, 8)
-	for j := 0; j < 8; j++ {
+	for j := range 8 {
 		if q[2*8+j] != 0 {
 			t.Errorf("zero-row q[%d]: got %d want 0", j, q[2*8+j])
 		}

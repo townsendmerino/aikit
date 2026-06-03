@@ -34,7 +34,7 @@ func TestQuantizeRowsInt8_roundTrip(t *testing.T) {
 		}
 		q, scales := QuantizeRowsInt8(w, rows, cols)
 		recon := make([]float32, rows*cols)
-		for i := 0; i < rows; i++ {
+		for i := range rows {
 			DequantizeRowInt8(q[i*cols:(i+1)*cols], scales[i], recon[i*cols:(i+1)*cols])
 		}
 		if e := relL2(recon, w); e > 1e-2 {

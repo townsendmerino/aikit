@@ -31,7 +31,7 @@ func TestSampler_greedy(t *testing.T) {
 func TestSampler_topK1IsArgmax(t *testing.T) {
 	logits := []float32{0.1, 3.0, -1, 2.9, 0.5}
 	s := NewSampler(SamplingParams{Temperature: 1.0, TopK: 1, Seed: 7})
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		if got, _ := s.Sample(logits); got != 1 {
 			t.Fatalf("top-k=1 draw %d = %d, want argmax 1", i, got)
 		}
@@ -72,7 +72,7 @@ func TestSampler_topKsupport(t *testing.T) {
 	logits := []float32{5, 4, 3, 2, 1, 0, -1, -2}
 	s := NewSampler(SamplingParams{Temperature: 2.0, TopK: 3, Seed: 1})
 	allowed := map[int]bool{0: true, 1: true, 2: true} // the 3 highest logits
-	for i := 0; i < 5000; i++ {
+	for range 5000 {
 		got, _ := s.Sample(logits)
 		if !allowed[got] {
 			t.Fatalf("top-k=3 drew id %d outside the top-3 support", got)
@@ -86,7 +86,7 @@ func TestSampler_topPsupport(t *testing.T) {
 	logits := []float32{2, 1, -2, -3, -4}
 	s := NewSampler(SamplingParams{Temperature: 1.0, TopP: 0.8, Seed: 3})
 	allowed := map[int]bool{0: true, 1: true}
-	for i := 0; i < 5000; i++ {
+	for range 5000 {
 		got, _ := s.Sample(logits)
 		if !allowed[got] {
 			t.Fatalf("top-p=0.8 drew id %d outside the nucleus {0,1}", got)
@@ -101,7 +101,7 @@ func TestSampler_distributionMatchesSoftmax(t *testing.T) {
 	s := NewSampler(SamplingParams{Temperature: temp, Seed: 12345})
 	const N = 200000
 	counts := make([]int, len(logits))
-	for i := 0; i < N; i++ {
+	for range N {
 		id, _ := s.Sample(logits)
 		counts[id]++
 	}

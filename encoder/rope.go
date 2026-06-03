@@ -35,13 +35,13 @@ func newRopeTable(seqLen, headDim int, base float64) *ropeTable {
 	// inv_freq[d] = 1 / base^(2d/headDim)  for d ∈ [0, half)
 	// Note: NeoX convention; matches HF rotary_emb_interleaved=false.
 	invFreq := make([]float64, half)
-	for d := 0; d < half; d++ {
+	for d := range half {
 		invFreq[d] = 1.0 / math.Pow(base, float64(2*d)/float64(headDim))
 	}
-	for m := 0; m < seqLen; m++ {
+	for m := range seqLen {
 		row := m * half
 		mf := float64(m)
-		for d := 0; d < half; d++ {
+		for d := range half {
 			theta := mf * invFreq[d]
 			t.cos[row+d] = float32(math.Cos(theta))
 			t.sin[row+d] = float32(math.Sin(theta))
@@ -67,9 +67,9 @@ func (t *ropeTable) apply(x []float32, heads int) {
 		cosRow := t.cos[m*half : (m+1)*half]
 		sinRow := t.sin[m*half : (m+1)*half]
 		base := m * stride
-		for h := 0; h < heads; h++ {
+		for h := range heads {
 			off := base + h*hd
-			for d := 0; d < half; d++ {
+			for d := range half {
 				x1 := x[off+d]
 				x2 := x[off+half+d]
 				c := cosRow[d]

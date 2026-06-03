@@ -132,7 +132,7 @@ func TestModelQ8_rerankN50_latency(t *testing.T) {
 	N := 50
 	texts := make([]string, N)
 	isQ := make([]bool, N)
-	for i := 0; i < N; i++ {
+	for i := range N {
 		texts[i] = fmt.Sprintf(templates[i%len(templates)], names[i], names[i], names[i])
 	}
 	t0 := time.Now()

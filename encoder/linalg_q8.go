@@ -37,20 +37,11 @@ func matmulBTQ8(a []float32, bQ []int8, bScales []float32, M, K, N int) []float3
 	)
 	dst := make([]float32, M*N)
 	for i0 := 0; i0 < M; i0 += mBlock {
-		iEnd := i0 + mBlock
-		if iEnd > M {
-			iEnd = M
-		}
+		iEnd := min(i0+mBlock, M)
 		for n0 := 0; n0 < N; n0 += nBlock {
-			nEnd := n0 + nBlock
-			if nEnd > N {
-				nEnd = N
-			}
+			nEnd := min(n0+nBlock, N)
 			for k0 := 0; k0 < K; k0 += kBlock {
-				kEnd := k0 + kBlock
-				if kEnd > K {
-					kEnd = K
-				}
+				kEnd := min(k0+kBlock, K)
 				// Micro-kernel: (iEnd-i0) × (nEnd-n0) tile, K strip [k0, kEnd).
 				for i := i0; i < iEnd; i++ {
 					aRow := a[i*K+k0 : i*K+kEnd]

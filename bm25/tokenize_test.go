@@ -220,7 +220,7 @@ func TestTokenize_StablePoolReuse(t *testing.T) {
 	// Replay each input many times; output must match the first-run
 	// expectation byte-for-byte every time.
 	const iterations = 100
-	for i := 0; i < iterations; i++ {
+	for i := range iterations {
 		for _, in := range inputs {
 			got := Tokenize(in)
 			if !reflect.DeepEqual(got, want[in]) {
@@ -260,7 +260,7 @@ func TestTokenize_LongInputNoPanic(t *testing.T) {
 	if len(first) == 0 {
 		t.Fatal("Tokenize returned no tokens for 4 KiB realistic input")
 	}
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		got := Tokenize(input)
 		if !reflect.DeepEqual(got, first) {
 			t.Fatalf("iteration %d drifted from first call (lens %d vs %d)",

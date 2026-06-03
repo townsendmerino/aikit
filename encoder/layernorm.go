@@ -16,7 +16,7 @@ import "math"
 // The unbiased=False variance (divisor D, not D-1) matches PyTorch's
 // default and is the load-bearing choice.
 func layerNorm(x, weight, bias []float32, L, D int, eps float64) {
-	for i := 0; i < L; i++ {
+	for i := range L {
 		row := x[i*D : (i+1)*D]
 		// mean in f64
 		var mean float64
@@ -42,7 +42,7 @@ func layerNorm(x, weight, bias []float32, L, D int, eps float64) {
 // accumulator. Zero-norm rows (degenerate inputs like empty string)
 // stay all-zero — never produce NaN.
 func l2Normalize(x []float32, L, D int) {
-	for i := 0; i < L; i++ {
+	for i := range L {
 		row := x[i*D : (i+1)*D]
 		var sumSq float64
 		for _, v := range row {

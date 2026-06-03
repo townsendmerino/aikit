@@ -99,7 +99,7 @@ func TestEncodeWithSpecials_truncatesRight(t *testing.T) {
 	if ids[0] != 101 || ids[9] != 102 {
 		t.Errorf("specials clipped: got first=%d last=%d", ids[0], ids[9])
 	}
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		if ids[i+1] != body[i] {
 			t.Errorf("ids[%d]: got %d want %d (body[%d])", i+1, ids[i+1], body[i], i)
 		}
