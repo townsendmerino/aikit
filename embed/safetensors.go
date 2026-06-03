@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"runtime"
 	"syscall"
@@ -285,6 +286,90 @@ func (t Tensor) Int64s() ([]int64, error) {
 		return nil, nil
 	}
 	return unsafe.Slice((*int64)(unsafe.Pointer(&t.raw[0])), len(t.raw)/8), nil
+}
+
+// BFloat16sToF32 decodes a BF16 tensor to a freshly-allocated []float32.
+// bfloat16 IS the top 16 bits of an IEEE-754 float32 (same sign, same
+// 8-bit exponent, mantissa truncated to 7 bits), so widening is exact and
+// branch-free: shift the 16-bit pattern up by 16 and reinterpret. NaN,
+// Inf, and subnormals all carry over for free. Requires DType "BF16".
+//
+// Unlike Float32s/Float64s this ALLOCATES (the f32 form is twice the
+// bytes and not a view into the file), so the result does not alias the
+// SafetensorsFile and is safe to keep past Close().
+func (t Tensor) BFloat16sToF32() ([]float32, error) {
+	if t.DType != "BF16" {
+		return nil, fmt.Errorf("tensor %q: expected BF16, got %s", t.Name, t.DType)
+	}
+	if len(t.raw)%2 != 0 {
+		return nil, fmt.Errorf("tensor %q: BF16 raw size %d not a multiple of 2", t.Name, len(t.raw))
+	}
+	n := len(t.raw) / 2
+	out := make([]float32, n)
+	for i := 0; i < n; i++ {
+		// Little-endian uint16 → high 16 bits of the float32 pattern.
+		bits := uint16(t.raw[2*i]) | uint16(t.raw[2*i+1])<<8
+		out[i] = math.Float32frombits(uint32(bits) << 16)
+	}
+	return out, nil
+}
+
+// Float16sToF32 decodes an IEEE-754 half-precision (F16) tensor to a
+// freshly-allocated []float32. Unlike bf16, f16 has a 5-bit exponent and
+// 10-bit mantissa, so widening is a real rebias (exponent 15→127) with
+// explicit handling of zeros/subnormals (exp==0) and Inf/NaN (exp==0x1f).
+// Requires DType "F16". Allocates (see BFloat16sToF32 on aliasing).
+func (t Tensor) Float16sToF32() ([]float32, error) {
+	if t.DType != "F16" {
+		return nil, fmt.Errorf("tensor %q: expected F16, got %s", t.Name, t.DType)
+	}
+	if len(t.raw)%2 != 0 {
+		return nil, fmt.Errorf("tensor %q: F16 raw size %d not a multiple of 2", t.Name, len(t.raw))
+	}
+	n := len(t.raw) / 2
+	out := make([]float32, n)
+	for i := 0; i < n; i++ {
+		h := uint16(t.raw[2*i]) | uint16(t.raw[2*i+1])<<8
+		out[i] = halfBitsToF32(h)
+	}
+	return out, nil
+}
+
+// halfBitsToF32 converts one IEEE-754 binary16 bit pattern to float32.
+// Standard three-case decode: subnormal/zero (exp==0), Inf/NaN
+// (exp==0x1f), and normal (rebias the 5-bit exponent to f32's 8-bit one).
+// Subnormals are renormalized into a float32 normal — exp is kept signed
+// because the normalization loop can drive it below zero before rebias.
+func halfBitsToF32(h uint16) float32 {
+	sign := uint32(h&0x8000) << 16
+	exp := int32(h>>10) & 0x1f
+	mant := uint32(h & 0x3ff)
+
+	var bits uint32
+	switch {
+	case exp == 0:
+		if mant == 0 {
+			bits = sign // ±0
+			break
+		}
+		// Subnormal: shift the mantissa left until the implicit leading
+		// 1 reaches bit 10, decrementing the exponent per shift, then drop
+		// that leading bit and rebias (15 → 127).
+		exp = 1
+		for mant&0x400 == 0 {
+			mant <<= 1
+			exp--
+		}
+		mant &= 0x3ff
+		bits = sign | uint32(exp+(127-15))<<23 | mant<<13
+	case exp == 0x1f:
+		// Inf (mant==0) or NaN (mant!=0); shift mantissa into f32 position.
+		bits = sign | 0x7f800000 | mant<<13
+	default:
+		// Normal: rebias exponent, shift 10-bit mantissa to 23-bit.
+		bits = sign | uint32(exp+(127-15))<<23 | mant<<13
+	}
+	return math.Float32frombits(bits)
 }
 
 // Elements returns the total number of elements (product of shape).
