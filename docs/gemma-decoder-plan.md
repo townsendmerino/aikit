@@ -191,11 +191,13 @@ chatty host↔device round-trip per layer.
   + `Encode`/`Decode`; golden parity on a prompt set and verified id-for-id over
   215k+ adversarial inputs (every BMP codepoint) vs HF. ids match exactly, BOS
   included.
-- **M3 — single-token forward, no cache.** Embedding (×scale) → N layers
-  (RMSNorm, GQA full-attention, QK-norm, GeGLU) → final norm → LM head. Run on
-  the M0 prompt; assert the logit vector matches M0 to ≥ 1−1e-4 cosine and the
-  argmax token is identical. **This is the correctness gate** — get one token
-  bit-faithful before optimizing anything.
+- **M3 — single-token forward.** ✅ **DONE 2026-06-02.** Embedding (×scale) →
+  18 layers (RMSNorm sandwich, GQA, QK-norm, dual-base RoPE, GeGLU) → final norm
+  → tied LM head. Matches the HF float32 oracle: **cosine 0.999999999999**,
+  argmax identical (`' Paris'`). The correctness gate caught a real RoPE-base bug
+  (`layer_types` vs null `sliding_window_pattern`) — see
+  [`milestones/M3-forward.md`](milestones/M3-forward.md). Cache-based single-step
+  path (lays M4 groundwork); naive backend (M7 perf).
 - **M4 — KV cache + multi-token decode.** Append K/V per step, attend over the
   cache, advance RoPE position offset. Greedy-decode 32 tokens; assert the
   string matches HF greedy decode exactly.

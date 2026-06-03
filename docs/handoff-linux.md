@@ -106,7 +106,8 @@ validates every schema entry across all layers and returned no error. Shapes
 | ann HNSW, fuse RRF | done, verified |
 | decoder M1 loader | ✅ golden parity validated 2026-06-02 against real gemma-3-270m checkpoint (§2); schema assumptions confirmed |
 | decoder M2 tokenizer | ✅ done 2026-06-02 — byte-fallback BPE, HF-exact (215k+ inputs, 0 mismatch); see `milestones/M2-tokenizer.md` |
-| decoder M3+ (forward, KV cache, sampler) | scaffold only — stubs return errNotImplemented |
+| decoder M3 forward pass | ✅ done 2026-06-02 — logits match HF f32 oracle, cosine 1−1e-12, argmax ' Paris'; see `milestones/M3-forward.md` |
+| decoder M4+ (multi-token decode, sliding window, sampler) | scaffold only — stubs return errNotImplemented |
 
 Reference docs: [`cpu-acceleration.md`](cpu-acceleration.md),
 [`gemma-decoder-plan.md`](gemma-decoder-plan.md),

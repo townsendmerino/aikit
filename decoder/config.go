@@ -15,13 +15,13 @@ import (
 // Values that vary per layer (the 5:1 local:global attention pattern) are
 // derived from SlidingWindowPattern at load time, not stored per layer.
 type Config struct {
-	VocabSize            int     `json:"vocab_size"`             // 262144
-	HiddenDim            int     `json:"hidden_size"`            // 640 (270M)
-	NumLayers            int     `json:"num_hidden_layers"`      // 18 (270M)
-	NumHeads             int     `json:"num_attention_heads"`    // 4 (270M)
-	NumKVHeads           int     `json:"num_key_value_heads"`    // 1 (270M) — GQA
-	HeadDim              int     `json:"head_dim"`               // 256 (270M); note heads*headDim != hidden
-	IntermediateDim      int     `json:"intermediate_size"`      // 2048 (270M) — GeGLU
+	VocabSize            int     `json:"vocab_size"`              // 262144
+	HiddenDim            int     `json:"hidden_size"`             // 640 (270M)
+	NumLayers            int     `json:"num_hidden_layers"`       // 18 (270M)
+	NumHeads             int     `json:"num_attention_heads"`     // 4 (270M)
+	NumKVHeads           int     `json:"num_key_value_heads"`     // 1 (270M) — GQA
+	HeadDim              int     `json:"head_dim"`                // 256 (270M); note heads*headDim != hidden
+	IntermediateDim      int     `json:"intermediate_size"`       // 2048 (270M) — GeGLU
 	MaxPositions         int     `json:"max_position_embeddings"` // 32768
 	RMSNormEps           float64 `json:"rms_norm_eps"`
 	RoPELocalBase        float64 `json:"rope_local_base_freq"`   // 10000
@@ -32,6 +32,12 @@ type Config struct {
 	UseQKNorm            bool    `json:"use_qk_norm"`            // true in Gemma 3
 	HiddenActivation     string  `json:"hidden_activation"`      // "gelu_pytorch_tanh"
 
+	// LayerTypes is the per-layer attention kind ("sliding_attention" /
+	// "full_attention"). Gemma 3's checkpoints carry the local:global pattern
+	// here explicitly; sliding_window_pattern is often null in config.json, so
+	// this is the authoritative source when present (see IsGlobalLayer).
+	LayerTypes []string `json:"layer_types"`
+
 	// Gemma 2 fields that MUST be absent/zero in a Gemma 3 checkpoint.
 	// ValidateAssumptions rejects a checkpoint that still sets them so we
 	// fail loudly rather than silently skip soft-capping.
@@ -40,10 +46,18 @@ type Config struct {
 }
 
 // IsGlobalLayer reports whether layer i is a global (full) attention layer
-// vs a local (sliding-window) one. Gemma 3's pattern places a global layer
-// every SlidingWindowPattern layers (the last in each group). With pattern=6
-// that's layers 5, 11, 17, ... → 3 global of 18 in the 270M.
+// vs a local (sliding-window) one. Gemma 3 carries this per-layer in
+// LayerTypes ("full_attention" vs "sliding_attention"), which is the
+// authoritative source. Only if LayerTypes is absent do we fall back to the
+// SlidingWindowPattern arithmetic (a global layer as the last of each group;
+// pattern=6 → layers 5, 11, 17 → 3 global of 18 in the 270M).
+//
+// Getting this right is load-bearing: local and global layers use different
+// RoPE bases (10k vs 1e6), so a misclassified layer silently corrupts logits.
 func (c *Config) IsGlobalLayer(i int) bool {
+	if i >= 0 && i < len(c.LayerTypes) {
+		return c.LayerTypes[i] == "full_attention"
+	}
 	p := c.SlidingWindowPattern
 	if p <= 0 {
 		return true // no pattern configured → all-global (degenerate)
@@ -72,6 +86,13 @@ func (c *Config) ValidateAssumptions() error {
 		return fmt.Errorf("decoder: rms_norm_eps must be >0, got %v", c.RMSNormEps)
 	case c.RoPELocalBase <= 0 || c.RoPEGlobalBase <= 0:
 		return fmt.Errorf("decoder: rope base must be >0 (local=%v global=%v)", c.RoPELocalBase, c.RoPEGlobalBase)
+	case len(c.LayerTypes) > 0 && len(c.LayerTypes) != c.NumLayers:
+		return fmt.Errorf("decoder: layer_types has %d entries, want num_hidden_layers=%d", len(c.LayerTypes), c.NumLayers)
+	}
+	for i, lt := range c.LayerTypes {
+		if lt != "sliding_attention" && lt != "full_attention" {
+			return fmt.Errorf("decoder: layer_types[%d]=%q unsupported (want sliding_attention/full_attention)", i, lt)
+		}
 	}
 	return nil
 }

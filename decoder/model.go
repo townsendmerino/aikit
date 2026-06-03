@@ -21,10 +21,8 @@ type Options struct {
 }
 
 // Load reads a Gemma 3 snapshot (config.json + model.safetensors) from dir
-// and selects a backend.
-//
-// SCAFFOLD: LoadWeights is unimplemented (M1), so this surfaces that error
-// while still constructing the backend so the wiring is exercised.
+// and selects a backend. The forward pass (M3) is implemented; the CPU
+// backend is the default and the only one wired (webgpu falls back to CPU).
 func Load(dir string, opts Options) (*Model, error) {
 	be, beErr := NewBackend(opts.Backend)
 	// beErr is non-nil for the not-yet-implemented webgpu fallback; keep the
@@ -53,33 +51,30 @@ func (m *Model) NewCache(capHint int) *KVCache {
 	return NewKVCache(c.NumLayers, c.NumKVHeads, c.HeadDim, c.SlidingWindow, capHint)
 }
 
-// forward runs one decode step for token id at position cache.Pos() and
-// returns the logit vector ([VocabSize]).
+// runLayers advances one decode step for token id at position cache.Pos():
+// it embeds the token, runs the full Gemma 3 block stack (appending this
+// position's K/V to the cache), and returns the residual-stream hidden state
+// after the final layer — BEFORE the final norm and LM head. Splitting it out
+// lets prefill skip the (vocab-sized) LM head on every token but the last.
 //
-// SCAFFOLD: spells out the exact Gemma 3 block order so M3 is a fill-in.
-// Returns errNotImplemented from the first unimplemented sub-op.
-//
-//	1. h = Embed[id] * sqrt(HiddenDim)        // embedding scale (invariant)
-//	2. for each layer l:
-//	     a. n  = rmsNorm(h, PreAttnNorm)
-//	     b. a  = causalAttention(l, n, ...)    // GQA + RoPE + QK-norm + cache
-//	     c. a  = rmsNorm(a, PostAttnNorm)
-//	     d. h  = h + a                          // residual
-//	     e. n2 = rmsNorm(h, PreMLPNorm)
-//	     f. g  = geGLU(n2, ...)
-//	     g. g  = rmsNorm(g, PostMLPNorm)
-//	     h. h  = h + g                          // residual
-//	3. h = rmsNorm(h, FinalNorm)
-//	4. logits = h · Embedᵀ                      // tied LM head (invariant)
-func (m *Model) forward(id int, cache *KVCache) ([]float32, error) {
+//  1. h = Embed[id] * sqrt(HiddenDim)        // embedding scale (invariant)
+//  2. for each layer l:                       // Gemma "sandwich" norms
+//     a. n  = rmsNorm(h, PreAttnNorm)
+//     b. a  = causalAttention(l, n, ...)    // GQA + RoPE + QK-norm + cache
+//     c. a  = rmsNorm(a, PostAttnNorm)
+//     d. h  = h + a                          // residual
+//     e. n2 = rmsNorm(h, PreMLPNorm)
+//     f. g  = geGLU(n2, ...)
+//     g. g  = rmsNorm(g, PostMLPNorm)
+//     h. h  = h + g                          // residual
+func (m *Model) runLayers(id int, cache *KVCache) ([]float32, error) {
 	c := &m.w.Cfg
-	h := make([]float32, c.HiddenDim)
-	scale := float32(math.Sqrt(float64(c.HiddenDim)))
-	emb := m.w.Embed
-	if len(emb) == 0 {
+	if len(m.w.Embed) == 0 {
 		return nil, fmt.Errorf("decoder.forward: weights not loaded %w [M1]", errNotImplemented)
 	}
-	copy(h, emb[id*c.HiddenDim:(id+1)*c.HiddenDim])
+	h := make([]float32, c.HiddenDim)
+	copy(h, m.w.Embed[id*c.HiddenDim:(id+1)*c.HiddenDim])
+	scale := float32(math.Sqrt(float64(c.HiddenDim)))
 	for i := range h {
 		h[i] *= scale
 	}
@@ -87,12 +82,42 @@ func (m *Model) forward(id int, cache *KVCache) ([]float32, error) {
 		lw := &m.w.Layers[l]
 		n := append([]float32(nil), h...)
 		rmsNorm(n, lw.PreAttnNorm, 1, c.HiddenDim, c.RMSNormEps)
-		if _, err := causalAttention(l, n, lw, c, cache, m.be); err != nil {
+		a, err := causalAttention(l, n, lw, c, cache, m.be)
+		if err != nil {
 			return nil, err
 		}
-		// ... residual + MLP wiring (M3) ...
+		rmsNorm(a, lw.PostAttnNorm, 1, c.HiddenDim, c.RMSNormEps)
+		for i := range h {
+			h[i] += a[i]
+		}
+		n2 := append([]float32(nil), h...)
+		rmsNorm(n2, lw.PreMLPNorm, 1, c.HiddenDim, c.RMSNormEps)
+		g, err := geGLU(n2, lw, c, m.be)
+		if err != nil {
+			return nil, err
+		}
+		rmsNorm(g, lw.PostMLPNorm, 1, c.HiddenDim, c.RMSNormEps)
+		for i := range h {
+			h[i] += g[i]
+		}
 	}
-	return nil, fmt.Errorf("decoder.forward: layer stack %w [M3]", errNotImplemented)
+	return h, nil
+}
+
+// forward runs runLayers then the final norm + tied LM head, returning the
+// logit vector ([VocabSize]) for the next token. logits = rmsNorm(h)·Embedᵀ —
+// the embedding table doubles as the output projection (tied weights), and
+// Gemma 3 has no final logit soft-capping.
+func (m *Model) forward(id int, cache *KVCache) ([]float32, error) {
+	c := &m.w.Cfg
+	h, err := m.runLayers(id, cache)
+	if err != nil {
+		return nil, err
+	}
+	rmsNorm(h, m.w.FinalNorm, 1, c.HiddenDim, c.RMSNormEps)
+	logits := make([]float32, c.VocabSize)
+	m.be.MatmulBT(h, m.w.Embed, logits, 1, c.HiddenDim, c.VocabSize)
+	return logits, nil
 }
 
 // Generate streams generated token ids over the returned channel until EOS,
@@ -100,27 +125,33 @@ func (m *Model) forward(id int, cache *KVCache) ([]float32, error) {
 // ids (the demo runs the tokenizer). The channel closes when generation
 // ends; check Err after the range loop for a terminal error.
 //
-// SCAFFOLD: prefills the cache over the prompt then decodes — both via
-// forward(), which is unimplemented, so the stream yields nothing and Err
-// returns the M-pointer. The control flow (prefill → decode loop → sample →
-// EOS/stop/max) is the real M4/M6 shape.
+// The forward pass (prefill + per-step decode) is implemented (M3). Remaining
+// for M4/M6: non-greedy sampling (Sampler.Sample still stubs temp/top-k/top-p)
+// and isStop's EOS/stop-id wiring — so today this greedy-decodes to maxTokens.
 func (m *Model) Generate(ctx context.Context, prompt []int, maxTokens int, sp SamplingParams) (<-chan int, *Generation) {
 	out := make(chan int)
 	g := &Generation{}
 	go func() {
 		defer close(out)
+		if len(prompt) == 0 {
+			g.err = fmt.Errorf("decoder.Generate: empty prompt")
+			return
+		}
 		cache := m.NewCache(len(prompt) + maxTokens)
 		sampler := NewSampler(sp)
-		// Prefill: run every prompt token through the cache. The last
-		// token's logits seed the first generated token.
-		var logits []float32
-		for _, id := range prompt {
-			l, err := m.forward(id, cache)
-			if err != nil {
+		// Prefill: run every prompt token through the cache. Only the last
+		// token needs logits (to seed the first generated token), so the rest
+		// skip the vocab-sized LM head via runLayers.
+		for _, id := range prompt[:len(prompt)-1] {
+			if _, err := m.runLayers(id, cache); err != nil {
 				g.err = err
 				return
 			}
-			logits = l
+		}
+		logits, err := m.forward(prompt[len(prompt)-1], cache)
+		if err != nil {
+			g.err = err
+			return
 		}
 		// Decode loop.
 		for n := 0; n < maxTokens; n++ {
