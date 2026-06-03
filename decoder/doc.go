@@ -46,7 +46,7 @@ package decoder
 
 import "errors"
 
-// errNotImplemented marks a scaffold seam that a milestone in
-// docs/gemma-decoder-plan.md will fill in. It is wrapped with the specific
-// milestone/section so a caller hitting it gets a pointer, not a mystery.
+// errNotImplemented is the sentinel for a path that cannot run — today only
+// the "weights not loaded" guard in runLayers. It is wrapped with a
+// milestone/section tag so a caller hitting it gets a pointer, not a mystery.
 var errNotImplemented = errors.New("decoder: not implemented (see docs/gemma-decoder-plan.md)")

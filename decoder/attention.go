@@ -12,27 +12,30 @@ func addBias(x, b []float32) {
 
 // causalAttention runs one decoder block's grouped-query causal attention
 // for a single decode step (the query is the one new position; keys/values
-// come from the KV cache plus this step's own K/V).
+// come from the KV cache plus this step's own K/V). Every per-family knob
+// (QKV bias, QK-norm, RoPE base/scaling vs. learned positions, sliding
+// window, attention scale) is read from arch, so this one body serves all
+// supported families.
 //
-// SCAFFOLD: the signature, shapes and the sequence of operations are spelled
-// out so M3/M4/M5 are a fill-in. The body returns errNotImplemented.
-//
-// Shapes / steps the implementation will follow:
+// Shapes / steps:
 //
 //	h        [HiddenDim]                  the current position's hidden state (post pre-norm)
 //	QProj    [NumHeads*HeadDim, HiddenDim]
 //	KProj/VProj [NumKVHeads*HeadDim, HiddenDim]
 //	OProj    [HiddenDim, NumHeads*HeadDim]
 //
-//	1. q = QProj·h   (NumHeads heads);  k,v = KProj·h, VProj·h  (NumKVHeads heads)
-//	2. QK-norm: rmsNorm each q head and each k head over HeadDim (Gemma 3)
-//	3. RoPE q,k at absolute position cache.Pos() using the LOCAL or GLOBAL
-//	   table per global; rotate_half (reuse encoder/rope.go, shared).
+//	1. q = QProj·h (NumHeads heads); k,v = KProj·h, VProj·h (NumKVHeads heads),
+//	   plus the optional q/k/v bias (arch.QKVBias — Qwen2).
+//	2. QK-norm: rmsNorm each q and k head over HeadDim, if arch.QKNorm
+//	   (Gemma 3, Qwen3).
+//	3. RoPE q,k at absolute position cache.Pos() with the per-layer inv-freq
+//	   table (Gemma local 10k vs. global 1e6; llama3 scaling), unless the
+//	   family uses learned absolute positions (arch.LearnedPosEmbed — GPT-2).
 //	4. cache.Append(layer, k, v)
 //	5. for each query head, attend over cache keys in
 //	   [cache.WindowStart(global), cache.Pos()) — the GQA group maps query
 //	   head h → kv head h/(NumHeads/NumKVHeads). scale by 1/sqrt(QueryPreAttnScalar).
-//	6. softmax (encoder.softmaxRow, shared) → weighted sum of values → ctx
+//	6. softmax (shared kernel) → weighted sum of values → ctx
 //	7. out = OProj·ctx ; caller applies post-attn norm + residual add.
 func causalAttention(
 	layer int,
