@@ -138,7 +138,8 @@ decoder/
   model.go       Model.Load, Model.Generate (streaming), forward    [stub: wiring + NotImplemented]
 tokenizer/
   doc.go
-  sentencepiece.go   Load / Encode / Decode (262k unigram)         [stub]
+  sentencepiece.go   Load / Encode / Decode (262k byte-fallback BPE)  [DONE: M2, HF-exact]
+  added.go           added/special-token trie (longest-match split)   [DONE: M2]
 demo/gemma/
   main.go        CLI: flags, load, prompt, stream tokens to stdout  [done: wiring + NYI guard]
 ```
@@ -185,8 +186,11 @@ chatty host↔device round-trip per layer.
   `testdata/gemma_golden.json`. This is the oracle for everything below.
 - **M1 — loader.** BF16 decode (§2) + `Gemma3Config` + shape-validated weight
   load. Test: every tensor present with the expected shape; checksums match M0.
-- **M2 — tokenizer.** SentencePiece load + `Encode`/`Decode`; golden parity on
-  a set of prompts (ids must match HF exactly, BOS/EOS included).
+- **M2 — tokenizer.** ✅ **DONE 2026-06-02.** Byte-fallback **BPE** load (Gemma 3
+  ships BPE, not unigram — see [`milestones/M2-tokenizer.md`](milestones/M2-tokenizer.md))
+  + `Encode`/`Decode`; golden parity on a prompt set and verified id-for-id over
+  215k+ adversarial inputs (every BMP codepoint) vs HF. ids match exactly, BOS
+  included.
 - **M3 — single-token forward, no cache.** Embedding (×scale) → N layers
   (RMSNorm, GQA full-attention, QK-norm, GeGLU) → final norm → LM head. Run on
   the M0 prompt; assert the logit vector matches M0 to ≥ 1−1e-4 cosine and the
@@ -241,8 +245,11 @@ per-row symmetric int8 is the starting point and its round-trip test
 
 ## 9. Tokenizer (the other big new piece)
 
-Gemma uses a 262k **SentencePiece** model (BPE/unigram with byte-fallback),
-shipped as `tokenizer.model` (the SP protobuf) and/or `tokenizer.json`. The
+Gemma uses a 262k **SentencePiece-derived BPE** model with byte-fallback —
+**confirmed BPE** at M2 (explicit ~515k merge table, not unigram), shipped as
+`tokenizer.model` (the SP protobuf) and/or `tokenizer.json`. M2 loads the
+`tokenizer.json` (the explicit merges + pipeline make HF-exact parity
+tractable). The
 existing `embed.Tokenizer` is WordPiece and won't transfer. The new
 `tokenizer` package needs: unigram/BPE merge logic, byte-fallback for OOV,
 the Gemma special tokens (`<bos>`, `<eos>`, `<start_of_turn>`,
