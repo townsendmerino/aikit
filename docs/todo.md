@@ -45,11 +45,14 @@ in small memory." All three pieces shipped:
   symmetric 4-bit (group 32, `MatmulBTQ4` dequant-per-tile), ~⅛ f32 there;
   embedding + LM head stay int8 (logit-critical, like Q4_K_M keeps them at Q6_K).
   Validated on TinyLlama: argmax preserved, cosine 0.994 vs f32. (Lossy on the
-  270M — int4 is a big-model tool.) Follow-up: a SIMD nibble-unpack kernel for
-  speed (the matmul is correctness-first scalar today).
+  270M — int4 is a big-model tool.)
+- ✅ **int4 SIMD matmul**: `MatmulBTQ4` unpacks each group to a reused scratch +
+  runs the SIMD `dotF32` kernel — **6.7×** over the scalar loop (8.3 ms → 1.2 ms
+  on M=1, K=N=2048).
 
-The remaining memory lever is mmap'ing **safetensors GGUF-style on the fs.FS
-path** and an int4×int4 SIMD kernel for speed — both incremental.
+Remaining, both incremental: the same SIMD widen-to-scratch + `dotF32` trick for
+`MatmulBTQ8` (int8 is still scalar widen-in-loop), and mmap'ing safetensors on
+the fs.FS path GGUF-style.
 
 Still open — **int4 group-quant** (≈⅛ f32, matches native Q4 footprint): the
 streaming-quant load path is now in place, so this needs only its own

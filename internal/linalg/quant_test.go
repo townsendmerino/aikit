@@ -66,10 +66,11 @@ func TestQuantizeGroupsInt4_roundTrip(t *testing.T) {
 	}
 }
 
-// TestMatmulBTQ4_matchesDequant: the int4 matmul must equal an exact f32 matmul
-// against the dequantized weights — the kernel and DequantizeRowInt4 share one
-// reconstruction formula, so this is bit-exact (any drift is a packing/indexing
-// bug), independent of the (separately bounded) quantization error.
+// TestMatmulBTQ4_matchesDequant: the int4 matmul must equal an f32 matmul against
+// the dequantized weights — the kernel and DequantizeRowInt4 share one
+// reconstruction formula, so any drift is a packing/indexing bug, independent of
+// the (separately bounded) quantization error. Both sides use the SIMD dotF32
+// kernel, so the bound is a tight relative L2 (float reassociation, not bits).
 func TestMatmulBTQ4_matchesDequant(t *testing.T) {
 	rng := rand.New(rand.NewSource(4))
 	randVec := func(n int) []float32 {
@@ -87,7 +88,7 @@ func TestMatmulBTQ4_matchesDequant(t *testing.T) {
 		b := randVec(s.N * s.K)
 		packed, scales := QuantizeGroupsInt4(b, s.N, s.K, group)
 
-		// Reference: dequantize b row-by-row, then exact f32 matmul.
+		// Reference: dequantize b row-by-row, then f32 matmul.
 		nGroups, bpr := groupsFor(s.K, group)
 		bDeq := make([]float32, s.N*s.K)
 		for j := range s.N {
@@ -98,13 +99,69 @@ func TestMatmulBTQ4_matchesDequant(t *testing.T) {
 
 		got := make([]float32, s.M*s.N)
 		MatmulBTQ4(a, packed, scales, got, s.M, s.K, s.N, group)
-		for i := range want {
-			if d := math.Abs(float64(got[i] - want[i])); d > 1e-4 {
-				t.Fatalf("shape %+v: MatmulBTQ4[%d]=%v != dequant matmul %v (Δ%.2e)", s, i, got[i], want[i], d)
-			}
+		if e := relL2(got, want); e > 1e-5 {
+			t.Fatalf("shape %+v: MatmulBTQ4 vs dequant matmul relL2 = %.2e, want ≤ 1e-5", s, e)
 		}
 	}
 }
+
+// matmulBTQ4Scalar is the pre-SIMD reference: a fused scalar unpack+MAC inner
+// loop. Kept in the test to benchmark the SIMD kernel's speedup against it.
+func matmulBTQ4Scalar(a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
+	nGroups, bpr := groupsFor(K, group)
+	for i := range M {
+		arow := a[i*K : i*K+K]
+		drow := dst[i*N : i*N+N]
+		for j := range N {
+			prow := bPacked[j*bpr : j*bpr+bpr]
+			srow := bScales[j*nGroups : j*nGroups+nGroups]
+			var total float32
+			for g := range nGroups {
+				ks := g * group
+				ke := min(ks+group, K)
+				var gsum float32
+				for k := ks; k < ke; k++ {
+					b := prow[k>>1]
+					nib := b & 0x0F
+					if k&1 == 1 {
+						nib = b >> 4
+					}
+					gsum += arow[k] * float32(int(nib)-8)
+				}
+				total += gsum * srow[g]
+			}
+			drow[j] = total
+		}
+	}
+}
+
+// BenchmarkMatmulBTQ4 / _Scalar: the SIMD kernel vs the fused-scalar reference on
+// a decode-step shape (M=1). Run: go test ./internal/linalg -bench MatmulBTQ4 -benchmem
+func benchInt4(b *testing.B, simd bool) {
+	const M, K, N, group = 1, 2048, 2048, 32
+	rng := rand.New(rand.NewSource(7))
+	a := make([]float32, M*K)
+	w := make([]float32, N*K)
+	for i := range a {
+		a[i] = float32(rng.NormFloat64())
+	}
+	for i := range w {
+		w[i] = float32(rng.NormFloat64())
+	}
+	packed, scales := QuantizeGroupsInt4(w, N, K, group)
+	dst := make([]float32, M*N)
+	b.ResetTimer()
+	for range b.N {
+		if simd {
+			MatmulBTQ4(a, packed, scales, dst, M, K, N, group)
+		} else {
+			matmulBTQ4Scalar(a, packed, scales, dst, M, K, N, group)
+		}
+	}
+}
+
+func BenchmarkMatmulBTQ4(b *testing.B)       { benchInt4(b, true) }
+func BenchmarkMatmulBTQ4Scalar(b *testing.B) { benchInt4(b, false) }
 
 func TestMatmulBTQ8_closeToF32(t *testing.T) {
 	rng := rand.New(rand.NewSource(2))

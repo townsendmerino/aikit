@@ -62,8 +62,14 @@ vs 1072 MB f32). int4 group-quant is left as a documented follow-up.
   `TestGGUF_int4_resident` (TinyLlama 1.1B: argmax preserved, cosine 0.994 vs
   f32 — on par with Q4_K_M). int4 is a big-model tool: on the 270M it is lossy
   enough to move the top token (`TestQuantInt4_accuracy` checks structure +
-  footprint + loose correlation only). Follow-up: an int4×int4 or
-  nibble-unpack-SIMD kernel for speed (the matmul is correctness-first scalar).
+  footprint + loose correlation only).
+- **int4 SIMD matmul** — DONE. `MatmulBTQ4` unpacks each group's nibbles into a
+  reused scratch (centered floats, no scale), runs the SIMD `dotF32` kernel
+  (AVX2/NEON — the primitive `MatmulBT` uses) over the group, then applies the
+  per-group scale; only the cheap nibble unpack stays scalar. **6.7×** over the
+  fused-scalar loop on a decode shape (M=1, K=N=2048: 8.3 ms → 1.2 ms;
+  `BenchmarkMatmulBTQ4` vs `…Scalar`). The same widen-to-scratch + `dotF32` trick
+  would speed `MatmulBTQ8` (int8 is still scalar widen-in-loop) — the next step.
 - **Streaming quantize-at-load** — DONE. `Load(…, Quant:"int8")` quantizes each
   matmul tensor as it is read and frees the f32 immediately, for the safetensors,
   GPT-2, and GGUF paths. No whole-model f32 spike; a quantized `.gguf` loads

@@ -167,12 +167,17 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 
 // MatmulBTQ4 computes dst[M,N] = a[M,K] · bᵀ where b is the [N,K] matrix stored
 // as group-wise int4 (bPacked nibbles + bScales per group; see
-// QuantizeGroupsInt4). Mirrors MatmulBTQ8 but dequantizes per group: accumulate
-// the a·(nibble-8) products within a group, scale by that group's f32 scale,
-// sum across groups. Parallelized over the N columns; activations stay f32.
+// QuantizeGroupsInt4). For each group it unpacks the 4-bit codes into a small
+// reused scratch buffer as centered floats (nibble-8, no scale), runs the SIMD
+// dotF32 kernel (AVX2/NEON — the same primitive MatmulBT uses) over the group,
+// then applies that group's f32 scale and accumulates. So the float-heavy
+// multiply-accumulate is vectorized; only the cheap nibble unpack stays scalar.
+// Parallelized over the N columns; activations stay f32. The scratch is one
+// group wide and allocated once per worker.
 func MatmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
 	nGroups, bpr := groupsFor(K, group)
 	parallelCols(M*N*K, N, func(j0, j1 int) {
+		deq := make([]float32, group) // per-worker scratch: one dequantized group
 		for i := range M {
 			arow := a[i*K : i*K+K]
 			drow := dst[i*N : i*N+N]
@@ -183,18 +188,17 @@ func MatmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M
 				for g := range nGroups {
 					ks := g * group
 					ke := min(ks+group, K)
-					var gsum float32
-					for k := ks; k < ke; k++ {
-						b := prow[k/2]
-						var nib byte
-						if k&1 == 0 {
-							nib = b & 0x0F
-						} else {
+					gsz := ke - ks
+					for e := range gsz {
+						k := ks + e
+						b := prow[k>>1]
+						nib := b & 0x0F
+						if k&1 == 1 {
 							nib = b >> 4
 						}
-						gsum += arow[k] * float32(int(nib)-8)
+						deq[e] = float32(int(nib) - 8)
 					}
-					total += gsum * srow[g]
+					total += dotF32(arow[ks:ke], deq[:gsz]) * srow[g]
 				}
 				drow[j] = total
 			}
