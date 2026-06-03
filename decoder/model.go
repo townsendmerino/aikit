@@ -30,22 +30,27 @@ func Load(dir string, opts Options) (*Model, error) {
 	be, beErr := NewBackend(opts.Backend)
 	// beErr is non-nil for the not-yet-implemented webgpu fallback; keep the
 	// (cpu) backend and surface the note rather than abort.
-	w, err := LoadWeights(dir)
-	if err != nil {
-		if be != nil {
-			_ = be.Close()
-		}
-		return nil, err
-	}
+
+	// Resolve the quant mode first so the weights stream straight into int8 at
+	// load — no whole-model f32 spike (see loadWeights).
+	var quant bool
 	switch opts.Quant {
 	case "", "f32":
 	case "int8":
-		w.quantizeInt8() // per-row int8, frees the f32 weights
+		quant = true
 	default:
 		if be != nil {
 			_ = be.Close()
 		}
 		return nil, fmt.Errorf("decoder.Load: unknown quant %q (have: int8)", opts.Quant)
+	}
+
+	w, err := loadWeights(dir, quant)
+	if err != nil {
+		if be != nil {
+			_ = be.Close()
+		}
+		return nil, err
 	}
 	if beErr != nil {
 		// webgpu requested but fell back — not fatal.

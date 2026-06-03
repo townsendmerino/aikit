@@ -39,12 +39,13 @@ vs 1072 MB f32). int4 group-quant is left as a documented follow-up.
 
 ## Honest limitations
 
-- **Peak RSS during load doesn't drop** (it's slightly higher): the loader
-  widens bf16→f32 for the whole checkpoint, *then* quantizes per-matrix, so f32
-  and int8 coexist transiently, and Go's GC returns the freed f32 to the OS
-  lazily. The win is the **retained weight bytes** (3.98×), realized in steady
-  state. A streaming quantize-at-load (widen one tensor → quantize → free,
-  before the next) would also cut peak RSS — the follow-up below.
+- **Peak RSS during load** — FIXED by streaming quantize-at-load (see the
+  follow-ups). The loader now widens *one* tensor to f32, quantizes it to int8,
+  and frees the f32 before the next tensor, so the transient footprint is the
+  int8 model + one tensor's f32 rather than the whole checkpoint in f32. This
+  also covers the GGUF path (a quantized `.gguf` lands resident as int8 without
+  materializing the whole model in f32 first). The retained-weight win (3.98×)
+  is unchanged.
 - **Speed:** int8 here is memory-oriented; the multiply is still f32 (int8→f32
   widen in the loop), so it isn't faster than the AVX2 f32 path on the 270M.
   An int8×int8 SIMD kernel (int32 accumulate) is where the speed win lives.
@@ -53,8 +54,14 @@ vs 1072 MB f32). int4 group-quant is left as a documented follow-up.
 
 - **int4 group-quant** (plan §8) — the real unlock for 1B/4B: group-size 32–128,
   per-group scale, packed nibbles, on the embedding + projections. `MatmulBTQ8`
-  and this `weightMat` seam are the template.
-- **Streaming quantize-at-load** to cut peak RSS (see above).
+  and this `weightMat` seam are the template. The streaming-quant load path is
+  now in place, so int4 only needs its own `weightMat` variant + dequant-per-tile
+  kernel; the loader already quantizes per-tensor.
+- **Streaming quantize-at-load** — DONE. `Load(…, Quant:"int8")` quantizes each
+  matmul tensor as it is read and frees the f32 immediately, for the safetensors,
+  GPT-2, and GGUF paths. No whole-model f32 spike; a quantized `.gguf` loads
+  resident as int8. Validated by `TestGGUF_int8_resident` (argmax + cosine vs the
+  f32 oracle) and the unchanged `TestQuantInt8_accuracy`.
 - **int8 SIMD kernel** (int8×int8→int32) for a speed win, not just memory.
 - **Dedup:** `encoder/quant.go` + `linalg_q8.go` still hold the encoder's own
   copy; unifying onto `internal/linalg` is a cleanup (the kernels legitimately

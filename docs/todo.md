@@ -23,13 +23,21 @@ parity fixture (the repo's bar is no unvalidated dequant/tokenizer code):
 - **More K-quants (Q5_K/Q3_K/IQ\*)** — each "a `dequant*` func + a size entry",
   but needs a Q5_K fixture or the Python `gguf` reference to validate.
 
-### 2. Resident int8/int4 matmul (dequant-per-tile) — highest *real* value · M–L
+### 2. Resident int8/int4 matmul (dequant-per-tile) — **int8 streaming DONE** · M–L
 
-Both planning docs flag this as "the way to actually run big quantized models in
-small memory." Today we dequant-to-f32 on load, so a Q4 model eats *f32 RAM* —
-format coverage without the RAM win that is the whole point of quantization.
-M8 (int8 weight quant) is the foundation. Touches the matmul hot path and the
-`Backend` seam, so it wants care. Do deliberately, second.
+Both planning docs flagged this as "the way to actually run big quantized models
+in small memory." ✅ **Streaming int8 shipped**: `Load(…, Quant:"int8")` now
+quantizes each matmul tensor as it loads and frees the f32 before the next, for
+the safetensors, GPT-2, and GGUF paths — no whole-model f32 spike, so a big
+quantized checkpoint loads in ~¼ the RAM, and a bare `.gguf` lands resident as
+int8 (validated by `TestGGUF_int8_resident`, argmax + 0.9998 cosine vs f32).
+Reused the existing `MatmulBTQ8` dequant-per-tile kernel.
+
+Still open — **int4 group-quant** (≈⅛ f32, matches native Q4 footprint): the
+streaming-quant load path is now in place, so this needs only its own
+group-quantized `weightMat` variant (group-size 32–128, per-group scale, packed
+nibbles) + a dequant-per-tile matmul kernel + a cosine-vs-f32 accuracy gate.
+`MatmulBTQ8` and the `weightMat` seam are the template.
 
 ### 3. GPTQ / AWQ (safetensors-resident int4) — broadens coverage · M
 

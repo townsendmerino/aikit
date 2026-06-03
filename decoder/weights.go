@@ -101,15 +101,6 @@ func (w *Weights) matmulWeights() []*weightMat {
 	return ms
 }
 
-// quantizeInt8 converts every matmul weight to per-row int8 in place, freeing
-// the f32 copy (the M8 memory win). Idempotent; embedding lookups and the LM
-// head then run off the int8 store.
-func (w *Weights) quantizeInt8() {
-	for _, m := range w.matmulWeights() {
-		m.quantizeInt8()
-	}
-}
-
 // LoadWeights reads config.json + model.safetensors from a real on-disk
 // directory (the HF snapshot layout). The .safetensors blob is mmapped
 // (not heap-copied) so the 270M's ~340 MB bf16 checkpoint stays in the OS
@@ -124,9 +115,18 @@ func (w *Weights) quantizeInt8() {
 //
 // Use LoadWeightsFromFS for fs.FS-backed (MapFS, embed.FS) paths — that
 // route stays heap-backed because fs.FS doesn't expose a file descriptor.
-func LoadWeights(dir string) (*Weights, error) {
+func LoadWeights(dir string) (*Weights, error) { return loadWeights(dir, false) }
+
+// loadWeights is the quant-aware internal load. When quant is true, each matmul
+// tensor is quantized to per-row int8 the moment it is read and its f32 backing
+// is freed before the next tensor loads — so the transient footprint is the
+// int8 model plus one tensor's f32, not the whole model in f32. That is what
+// lets a big quantized checkpoint load in roughly a quarter of the RAM the
+// load-everything-then-quantize path needed. The forward output is identical to
+// quantizing after load; only the peak memory differs.
+func loadWeights(dir string, quant bool) (*Weights, error) {
 	if strings.HasSuffix(dir, ".gguf") {
-		return loadGGUFWeights(dir) // quantized llama.cpp checkpoint (G7)
+		return loadGGUFWeights(dir, quant) // quantized llama.cpp checkpoint (G7)
 	}
 	cfg, err := loadConfig(os.DirFS(dir), "config.json")
 	if err != nil {
@@ -140,7 +140,7 @@ func LoadWeights(dir string) (*Weights, error) {
 	if err != nil {
 		return nil, err
 	}
-	return buildWeightsFromSafetensors(cfg, arch, schema, st)
+	return buildWeightsFromSafetensors(cfg, arch, schema, st, quant)
 }
 
 const shardIndexFile = "model.safetensors.index.json"
@@ -170,6 +170,12 @@ func openCheckpointMmap(dir string) (*embed.SafetensorsFile, error) {
 // Cfg, and returns the populated bundle. Heap-backed (fs.ReadFile); use
 // LoadWeights for the mmap path on a real directory.
 func LoadWeightsFromFS(fsys fs.FS, dir string) (*Weights, error) {
+	return loadWeightsFromFS(fsys, dir, false)
+}
+
+// loadWeightsFromFS is the quant-aware internal counterpart of loadWeights for
+// fs.FS-backed paths (see loadWeights for the streaming-quant rationale).
+func loadWeightsFromFS(fsys fs.FS, dir string, quant bool) (*Weights, error) {
 	cfg, err := loadConfig(fsys, path.Join(dir, "config.json"))
 	if err != nil {
 		return nil, err
@@ -182,7 +188,7 @@ func LoadWeightsFromFS(fsys fs.FS, dir string) (*Weights, error) {
 	if err != nil {
 		return nil, err
 	}
-	return buildWeightsFromSafetensors(cfg, arch, schema, st)
+	return buildWeightsFromSafetensors(cfg, arch, schema, st, quant)
 }
 
 // openCheckpointFromFS is the fs.FS counterpart of openCheckpointMmap (heap):
@@ -208,9 +214,9 @@ func openCheckpointFromFS(fsys fs.FS, dir string) (*embed.SafetensorsFile, error
 // against Cfg. Factored out so the heap (fs.FS) and mmap paths share one
 // tensor-name + shape contract — a schema change is one edit, not two.
 // Mirrors encoder.buildWeightsFromSafetensors.
-func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchema, st *embed.SafetensorsFile) (*Weights, error) {
+func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchema, st *embed.SafetensorsFile, quant bool) (*Weights, error) {
 	if arch.Name == "gpt2" {
-		return buildGPT2Weights(cfg, arch, st) // Conv1D layout + fused QKV need a dedicated path
+		return buildGPT2Weights(cfg, arch, st, quant) // Conv1D layout + fused QKV need a dedicated path
 	}
 	hd := cfg.HiddenDim
 	headDim := arch.HeadDim           // resolved (Llama configs may omit head_dim; arch derives it)
@@ -220,8 +226,20 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 	w := &Weights{Cfg: *cfg, arch: arch, st: st, Layers: make([]LayerWeights, cfg.NumLayers)}
 	var err error
 
+	// loadMatQ loads a matmul weight and, when quant is set, quantizes it to
+	// per-row int8 immediately — freeing the f32 before the next tensor loads
+	// (the streaming-quant memory win; see loadWeights). Norms still use loadF32
+	// and stay f32.
+	loadMatQ := func(name string, rows, cols int) (weightMat, error) {
+		m, merr := loadMat(st, name, rows, cols)
+		if merr == nil && quant {
+			m.quantizeInt8()
+		}
+		return m, merr
+	}
+
 	// Input embedding + final norm.
-	if w.Embed, err = loadMat(st, s.Embed, cfg.VocabSize, hd); err != nil {
+	if w.Embed, err = loadMatQ(s.Embed, cfg.VocabSize, hd); err != nil {
 		return nil, err
 	}
 	if w.FinalNorm, err = loadF32(st, s.FinalNorm, []int{hd}); err != nil {
@@ -232,7 +250,7 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 	// checkpoint that ties despite its family default still loads.
 	arch.TiedLMHead = true
 	if s.LMHead != "" {
-		if head, herr := loadMat(st, s.LMHead, cfg.VocabSize, hd); herr == nil {
+		if head, herr := loadMatQ(s.LMHead, cfg.VocabSize, hd); herr == nil {
 			w.LMHead = head
 			arch.TiedLMHead = false
 		}
@@ -250,16 +268,16 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 	for i := 0; i < cfg.NumLayers; i++ {
 		l := &w.Layers[i]
 		// Attention projections ([out, in] row-major).
-		if l.QProj, err = loadMat(st, tensorName(i, s.QProj), qDim, hd); err != nil {
+		if l.QProj, err = loadMatQ(tensorName(i, s.QProj), qDim, hd); err != nil {
 			return nil, err
 		}
-		if l.KProj, err = loadMat(st, tensorName(i, s.KProj), kvDim, hd); err != nil {
+		if l.KProj, err = loadMatQ(tensorName(i, s.KProj), kvDim, hd); err != nil {
 			return nil, err
 		}
-		if l.VProj, err = loadMat(st, tensorName(i, s.VProj), kvDim, hd); err != nil {
+		if l.VProj, err = loadMatQ(tensorName(i, s.VProj), kvDim, hd); err != nil {
 			return nil, err
 		}
-		if l.OProj, err = loadMat(st, tensorName(i, s.OProj), hd, qDim); err != nil {
+		if l.OProj, err = loadMatQ(tensorName(i, s.OProj), hd, qDim); err != nil {
 			return nil, err
 		}
 		// Projection bias (Qwen2 q/k/v; o_proj stays biasless). Absent → empty suffix.
@@ -305,26 +323,26 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 			l.Experts = make([]expertWeights, arch.MoE.NumExperts)
 			for e := 0; e < arch.MoE.NumExperts; e++ {
 				ex := &l.Experts[e]
-				if ex.Gate, err = loadMat(st, tensorName(i, fmt.Sprintf(s.ExpertGate, e)), cfg.IntermediateDim, hd); err != nil {
+				if ex.Gate, err = loadMatQ(tensorName(i, fmt.Sprintf(s.ExpertGate, e)), cfg.IntermediateDim, hd); err != nil {
 					return nil, err
 				}
-				if ex.Up, err = loadMat(st, tensorName(i, fmt.Sprintf(s.ExpertUp, e)), cfg.IntermediateDim, hd); err != nil {
+				if ex.Up, err = loadMatQ(tensorName(i, fmt.Sprintf(s.ExpertUp, e)), cfg.IntermediateDim, hd); err != nil {
 					return nil, err
 				}
-				if ex.Down, err = loadMat(st, tensorName(i, fmt.Sprintf(s.ExpertDown, e)), hd, cfg.IntermediateDim); err != nil {
+				if ex.Down, err = loadMatQ(tensorName(i, fmt.Sprintf(s.ExpertDown, e)), hd, cfg.IntermediateDim); err != nil {
 					return nil, err
 				}
 			}
 			continue
 		}
 		// Gated MLP (GeGLU / SwiGLU — same weights, activation differs).
-		if l.GateProj, err = loadMat(st, tensorName(i, s.GateProj), cfg.IntermediateDim, hd); err != nil {
+		if l.GateProj, err = loadMatQ(tensorName(i, s.GateProj), cfg.IntermediateDim, hd); err != nil {
 			return nil, err
 		}
-		if l.UpProj, err = loadMat(st, tensorName(i, s.UpProj), cfg.IntermediateDim, hd); err != nil {
+		if l.UpProj, err = loadMatQ(tensorName(i, s.UpProj), cfg.IntermediateDim, hd); err != nil {
 			return nil, err
 		}
-		if l.DownProj, err = loadMat(st, tensorName(i, s.DownProj), hd, cfg.IntermediateDim); err != nil {
+		if l.DownProj, err = loadMatQ(tensorName(i, s.DownProj), hd, cfg.IntermediateDim); err != nil {
 			return nil, err
 		}
 	}
@@ -556,15 +574,29 @@ func conv1DTransposed(st *embed.SafetensorsFile, name string, in, out int) ([]fl
 // projection weights use the Conv1D [in, out] layout (transposed on load), and
 // it carries a learned position table (wpe) plus LayerNorm biases. Tensor names
 // are the flat h.N.* / wte / wpe / ln_f scheme.
-func buildGPT2Weights(cfg *Config, arch *Architecture, st *embed.SafetensorsFile) (*Weights, error) {
+func buildGPT2Weights(cfg *Config, arch *Architecture, st *embed.SafetensorsFile, quant bool) (*Weights, error) {
 	hidden, inter, vocab := arch.HiddenDim, arch.IntermediateDim, arch.VocabSize
 	w := &Weights{Cfg: *cfg, arch: arch, st: st, Layers: make([]LayerWeights, arch.NumLayers)}
 	var err error
 
+	// maybeQuant streams a matmul weight to per-row int8 when quant is set,
+	// freeing its f32 (see loadWeights). The Conv1D projections are built with
+	// newWeightMat (post-transpose), so the quantization is applied here rather
+	// than in a loader closure.
+	maybeQuant := func(m weightMat) weightMat {
+		if quant {
+			m.quantizeInt8()
+		}
+		return m
+	}
+
 	// Token + learned position embeddings (wte doubles as the tied LM head).
+	// wte is a matmul weight (the tied head) → quantizable; wpe is a positional
+	// lookup table added to the embedding, never matmul'd → stays f32.
 	if w.Embed, err = loadMat(st, "wte.weight", vocab, hidden); err != nil {
 		return nil, err
 	}
+	w.Embed = maybeQuant(w.Embed)
 	if w.PosEmbed, err = loadMat(st, "wpe.weight", arch.MaxPositions, hidden); err != nil {
 		return nil, err
 	}
@@ -594,9 +626,9 @@ func buildGPT2Weights(cfg *Config, arch *Architecture, st *embed.SafetensorsFile
 		if cerr != nil {
 			return nil, cerr
 		}
-		l.QProj = newWeightMat(qkv[0:hidden*hidden], hidden, hidden)
-		l.KProj = newWeightMat(qkv[hidden*hidden:2*hidden*hidden], hidden, hidden)
-		l.VProj = newWeightMat(qkv[2*hidden*hidden:3*hidden*hidden], hidden, hidden)
+		l.QProj = maybeQuant(newWeightMat(qkv[0:hidden*hidden], hidden, hidden))
+		l.KProj = maybeQuant(newWeightMat(qkv[hidden*hidden:2*hidden*hidden], hidden, hidden))
+		l.VProj = maybeQuant(newWeightMat(qkv[2*hidden*hidden:3*hidden*hidden], hidden, hidden))
 		qkvB, berr := loadF32(st, p+"attn.c_attn.bias", []int{3 * hidden})
 		if berr != nil {
 			return nil, berr
@@ -608,7 +640,7 @@ func buildGPT2Weights(cfg *Config, arch *Architecture, st *embed.SafetensorsFile
 		if oerr != nil {
 			return nil, oerr
 		}
-		l.OProj = newWeightMat(oData, hidden, hidden)
+		l.OProj = maybeQuant(newWeightMat(oData, hidden, hidden))
 		if l.OBias, err = loadF32(st, p+"attn.c_proj.bias", []int{hidden}); err != nil {
 			return nil, err
 		}
@@ -627,7 +659,7 @@ func buildGPT2Weights(cfg *Config, arch *Architecture, st *embed.SafetensorsFile
 		if uerr != nil {
 			return nil, uerr
 		}
-		l.UpProj = newWeightMat(upData, inter, hidden)
+		l.UpProj = maybeQuant(newWeightMat(upData, inter, hidden))
 		if l.UpBias, err = loadF32(st, p+"mlp.c_fc.bias", []int{inter}); err != nil {
 			return nil, err
 		}
@@ -635,7 +667,7 @@ func buildGPT2Weights(cfg *Config, arch *Architecture, st *embed.SafetensorsFile
 		if derr != nil {
 			return nil, derr
 		}
-		l.DownProj = newWeightMat(downData, hidden, inter)
+		l.DownProj = maybeQuant(newWeightMat(downData, hidden, inter))
 		if l.DownBias, err = loadF32(st, p+"mlp.c_proj.bias", []int{hidden}); err != nil {
 			return nil, err
 		}

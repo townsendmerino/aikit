@@ -81,3 +81,63 @@ func TestGGUF_Q4_0_parity(t *testing.T) {
 func TestGGUF_Q4_K_M_parity(t *testing.T) {
 	testGGUFParity(t, "../testdata/tinyllama-gguf/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf", 0.99)
 }
+
+// GGUF + resident int8 (streaming-quant). Loads the Q8_0 GGUF with
+// Options{Quant:"int8"}: each tensor is dequantized then re-quantized to per-row
+// int8 as it loads — the f32 of one tensor is freed before the next, so there is
+// no whole-model f32 spike — and the forward runs off the int8 store. Asserts
+// the matmul weights are resident int8 (f32 freed), and that the doubly-lossy
+// path (Q8_0 base, near-lossless, + int8 re-quant) still keeps the argmax and a
+// high cosine vs the f32 oracle.
+func TestGGUF_int8_resident(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: loads + runs a TinyLlama GGUF")
+	}
+	raw, err := os.ReadFile(llamaForwardGolden)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no llama golden at %s — regenerate with scripts/pin_llama_forward.py", llamaForwardGolden)
+	}
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	var g forwardGolden
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatalf("parse golden: %v", err)
+	}
+	ggufPath := "../testdata/tinyllama-gguf/tinyllama-1.1b-chat-v1.0.Q8_0.gguf"
+	if _, err := os.Stat(ggufPath); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no GGUF at %s", ggufPath)
+	}
+
+	m, err := Load(ggufPath, Options{Quant: "int8"})
+	if err != nil {
+		t.Fatalf("Load int8: %v", err)
+	}
+	// Resident int8: every matmul weight kept its int8 codes and freed its f32.
+	for _, wm := range m.w.matmulWeights() {
+		if wm.q8 == nil || wm.f32 != nil {
+			t.Fatalf("matmul weight %dx%d not resident int8 (q8=%v f32=%v)",
+				wm.rows, wm.cols, wm.q8 != nil, wm.f32 != nil)
+		}
+	}
+
+	cache := m.NewCache(len(g.IDs))
+	for _, id := range g.IDs[:len(g.IDs)-1] {
+		if _, err := m.runLayers(id, cache); err != nil {
+			t.Fatalf("runLayers: %v", err)
+		}
+	}
+	logits, err := m.forward(g.IDs[len(g.IDs)-1], cache)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	if got := argmax(logits); got != g.Argmax {
+		t.Errorf("argmax = %d, want %d (logit[got]=%.4f logit[want]=%.4f)",
+			got, g.Argmax, logits[got], logits[g.Argmax])
+	}
+	cos := cosineToFull(t, logits, llamaForwardFullPath)
+	if !math.IsNaN(cos) && cos < 0.99 {
+		t.Errorf("cosine vs f32 oracle = %v, want ≥ 0.99", cos)
+	}
+	t.Logf("gguf Q8_0 + int8 resident: argmax=%d (want %d) | cosine vs f32 = %v", argmax(logits), g.Argmax, cos)
+}

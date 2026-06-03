@@ -10,6 +10,22 @@ it.
 
 ## [Unreleased]
 
+### Changed
+
+- **Streaming int8 quantization at load** — `decoder.Load(…, Quant: "int8")` now
+  quantizes each matmul tensor to per-row int8 the moment it is read and frees
+  its f32 before the next tensor loads, instead of materializing the whole model
+  in f32 and quantizing afterward. The transient footprint drops from the whole
+  model in f32 to the int8 model + one tensor's f32 — so a big quantized
+  checkpoint loads in roughly a quarter of the RAM. Covers the safetensors,
+  GPT-2, and GGUF paths; a quantized `.gguf` lands resident as int8 (the demo
+  chats from a bare `.gguf` under `--quant int8`). Forward output is unchanged
+  (it quantizes the same weights, just earlier); validated by the new
+  `TestGGUF_int8_resident` (argmax + 0.9998 cosine vs the f32 oracle) and the
+  unchanged `TestQuantInt8_accuracy`. Public `LoadWeights`/`LoadWeightsFromFS`
+  signatures are unchanged. int4 group-quant (≈⅛ f32) is the next step on this
+  seam.
+
 ### Added
 
 - **`tokenizer.LoadGGUF`** — build a `Tokenizer` from a bare `.gguf` file's

@@ -58,7 +58,7 @@ func ggufConfig(g *embed.GGUFFile) (*Config, error) {
 
 // loadGGUFWeights parses a .gguf file and builds the weight bundle, mapping
 // llama.cpp tensor names to the descriptor and un-permuting q/k.
-func loadGGUFWeights(path string) (*Weights, error) {
+func loadGGUFWeights(path string, quant bool) (*Weights, error) {
 	g, err := embed.OpenGGUF(path)
 	if err != nil {
 		return nil, err
@@ -71,15 +71,27 @@ func loadGGUFWeights(path string) (*Weights, error) {
 	if err != nil {
 		return nil, err
 	}
-	return buildWeightsFromGGUF(cfg, arch, g)
+	return buildWeightsFromGGUF(cfg, arch, g, quant)
 }
 
 // buildWeightsFromGGUF dequantizes the GGUF tensors into the weight bundle.
-func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile) (*Weights, error) {
+// When quant is set, each matmul tensor is re-quantized to per-row int8 right
+// after it is dequantized (and un-permuted) and its f32 is freed — so a Q4/Q8
+// GGUF lands resident as int8 (~¼ f32) without ever materializing the whole
+// model in f32 (see loadWeights). The GGUF's own quant is lossy and so is the
+// int8 re-quant, but int8 captures nearly all of what a Q4_K_M file carries.
+func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, quant bool) (*Weights, error) {
 	hidden, hd := arch.HiddenDim, arch.HeadDim
 	w := &Weights{Cfg: *cfg, arch: arch, Layers: make([]LayerWeights, arch.NumLayers)}
 
-	// mat loads a tensor as a [out, in] weightMat, shape-checked.
+	maybeQuant := func(m weightMat) weightMat {
+		if quant {
+			m.quantizeInt8()
+		}
+		return m
+	}
+	// mat loads a tensor as a [out, in] weightMat, shape-checked, quantized when
+	// requested.
 	mat := func(name string, out, in int) (weightMat, error) {
 		dims, data, err := g.Tensor(name)
 		if err != nil {
@@ -88,7 +100,7 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile) (*
 		if len(dims) != 2 || dims[0] != in || dims[1] != out {
 			return weightMat{}, fmt.Errorf("decoder(gguf): %q dims %v, want [in=%d, out=%d]", name, dims, in, out)
 		}
-		return newWeightMat(data, out, in), nil
+		return maybeQuant(newWeightMat(data, out, in)), nil
 	}
 	// vec loads a 1-D tensor (norm).
 	vec := func(name string, n int) ([]float32, error) {
@@ -101,14 +113,18 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile) (*
 		}
 		return data, nil
 	}
-	// permMat loads a q/k projection and inverts llama.cpp's RoPE permutation.
+	// permMat loads a q/k projection and inverts llama.cpp's RoPE permutation
+	// (on the f32 data, before any int8 quantization).
 	permMat := func(name string, out, in, nHead int) (weightMat, error) {
-		m, err := mat(name, out, in)
+		dims, data, err := g.Tensor(name)
 		if err != nil {
 			return weightMat{}, err
 		}
-		m.f32 = ggufInvPermute(m.f32, out, in, nHead)
-		return m, nil
+		if len(dims) != 2 || dims[0] != in || dims[1] != out {
+			return weightMat{}, fmt.Errorf("decoder(gguf): %q dims %v, want [in=%d, out=%d]", name, dims, in, out)
+		}
+		data = ggufInvPermute(data, out, in, nHead)
+		return maybeQuant(newWeightMat(data, out, in)), nil
 	}
 
 	var err error
