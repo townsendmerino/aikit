@@ -2,8 +2,9 @@
 
 Pure-Go, no-cgo packages extracted from [`ken`](https://github.com/townsendmerino/ken)'s
 code-search pipeline. Each package is independently importable; the dependency
-DAG is shallow (most are leaves; `encoder` requires `embed`, and `decoder`
-requires `embed` + `tokenizer`).
+DAG is shallow (most are leaves; `encoder` requires `embed`, `tokenizer`
+requires `embed` for the GGUF loader, and `decoder` requires `embed` +
+`tokenizer`).
 
 | Package | Purpose | Deps (beyond stdlib) |
 |---|---|---|
@@ -14,7 +15,7 @@ requires `embed` + `tokenizer`).
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `golang.org/x/text` |
 | `encoder` | CodeRankEmbed transformer encoder (NomicBert, 12-layer; NEON-accelerated on arm64, AVX2/FMA on amd64, with intra-op row-parallel matmul for single-forward latency) | — |
 | `decoder` | generic decoder-only LLM forward pass — Gemma 3, Qwen2.5/3, Llama-2/3, Mistral, GPT-2, Mixtral (MoE); f32/bf16/f16 + int8/int4, safetensors/sharded/GGUF; HF logit parity | `embed`, `tokenizer`, `github.com/cogentcore/webgpu` (WebGPU backend) |
-| `tokenizer` | BPE tokenizers the decoder LLMs ship — Gemma byte-fallback SentencePiece + GPT-2/Llama-3/Qwen byte-level, from `tokenizer.json`; HF-exact id parity | `golang.org/x/text` |
+| `tokenizer` | BPE tokenizers the decoder LLMs ship — Gemma byte-fallback SentencePiece + GPT-2/Llama-3/Qwen byte-level, from `tokenizer.json` or a bare `.gguf`'s embedded metadata; HF-exact id parity | `golang.org/x/text`, `embed` (GGUF) |
 | `chunk` | language-aware code chunker registry + 3 concrete chunkers (`regex`, `markdown`, `treesitter`) | `github.com/odvcencio/gotreesitter` (treesitter only) |
 
 `aikit` is "the parts of ken another project could reuse." The application

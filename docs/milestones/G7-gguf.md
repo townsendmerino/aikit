@@ -56,13 +56,37 @@ with M8's runtime quant story from the on-disk side).
 - The Go Q8_0 dequant was confirmed bit-identical to Python `gguf` before wiring
   the forward.
 
+## GGUF tokenizer — DONE (SPM/llama)
+
+`tokenizer.LoadGGUF` (in `tokenizer/gguf.go`) builds a `Tokenizer` from the
+embedded metadata alone — `tokenizer.ggml.tokens` (vocab, id == index),
+`tokenizer.ggml.merges` (space-joined pairs), `token_type` (for the
+added/special trie), and the `*_token_id` keys. The SentencePiece byte-fallback
+family (`tokenizer.ggml.model == "llama"`: Llama-2 / Mistral / TinyLlama) maps
+onto the existing `modeGemma` merge-rank core plus a `▁` dummy-prefix knob
+(prepend on encode, strip one leading space on decode — Llama-2 does both,
+Gemma neither). So a bare `.gguf` now **chats end-to-end**: the demo detects a
+`.gguf` path and tokenizes from it with no sidecar (`demo/gemma`, validated on
+TinyLlama Q4_K_M → "The capital of France is Paris.").
+
+Parity is gated by `testdata/tinyllama_tokenizer_golden.json` (pinned from HF
+`tokenizers` via `scripts/pin_tinyllama_tokenizer.py`): `LoadGGUF` reproduces
+the HF ids id-for-id over a 19-prompt battery, and `Decode` matches HF's
+rendering.
+
 ## Scope / next
 
 - **Implemented quant types**: F32, F16, Q8_0, Q4_0, Q4_K, Q6_K — covers Q8_0,
   Q4_0, and Q4_K_M files end-to-end. Q5_K / Q3_K / Q2_K / IQ* are more block
-  formats on the same seam (each a `dequant*` + a size entry).
-- **GGUF tokenizer**: the vocab/merges live in metadata; wiring them would let a
-  `.gguf` chat with no sidecar tokenizer (today the parity tests feed ids).
+  formats on the same seam (each a `dequant*` + a size entry). Deferred until a
+  Q5_K fixture or the Python `gguf` reference is on hand to parity-gate the
+  dequant — the K-quants are fiddly enough that shipping one unvalidated isn't
+  worth it.
+- **Byte-level GGUF tokenizer** (`tokenizer.ggml.model == "gpt2"`:
+  Llama-3 / Qwen / GPT-2): the same machinery as `modeByteLevel`, but its
+  pretokenizer knobs (digit-run cap, NFC) come from `tokenizer.ggml.pre` and
+  want a committed byte-level GGUF to parity-gate (testdata has only the
+  SPM/llama TinyLlama GGUF today).
 - **Other GGUF architectures** (qwen2/gemma/…): map their metadata keys + names;
   the per-family descriptors already exist.
 - **GPTQ / AWQ** (safetensors-resident int4): the other half of the plan's G7 —

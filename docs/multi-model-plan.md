@@ -301,8 +301,11 @@ new fixture per family). Parallel to M7–M9.
   TinyLlama Q8_0/Q4_0/**Q4_K_M** match the f32 oracle at cosine
   0.99996/0.9944/0.9975 (argmax ' Paris'). Q4_K_M is the dominant laptop quant,
   so real ecosystem files load. See [`milestones/G7-gguf.md`](milestones/G7-gguf.md).
-  Remaining G7: more GGUF quant types (Q5_K/Q3_K/IQ*), the GGUF tokenizer, other
-  GGUF architectures, and GPTQ/AWQ (safetensors-resident int4).
+  The **GGUF tokenizer** for the SPM/llama family is now done too
+  (`tokenizer.LoadGGUF`, HF-parity on TinyLlama), so a bare `.gguf` chats
+  end-to-end via `demo/gemma`. Remaining G7: more GGUF quant types
+  (Q5_K/Q3_K/IQ*), the byte-level GGUF tokenizer (gpt2 family), other GGUF
+  architectures, and GPTQ/AWQ (safetensors-resident int4).
 
 Order rationale: **G0→G1→G2→G3 unlocks the majority of community checkpoints**
 (the Llama/Mistral/Qwen universe). G4–G5 mop up the long tail. G6–G7 are the

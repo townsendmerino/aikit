@@ -15,7 +15,14 @@
 // separate from embed.Tokenizer (WordPiece, for the Model2Vec/CodeRankEmbed
 // encoders) — the algorithms and vocab format don't transfer.
 //
-// Golden parity against HF `tokenizers` is the gate for both families (M2 /
-// G3): a single-token drift silently degrades generation, so the bar is exact
-// id equality, not a tolerance.
+// LoadGGUF (see gguf.go) is the sidecar-free sibling of Load: it builds the
+// same Tokenizer from a bare .gguf file's embedded metadata (vocab + merges +
+// special ids), so a quantized checkpoint tokenizes with no tokenizer.json.
+// It covers the SentencePiece byte-fallback family (tokenizer.ggml.model ==
+// "llama"), which reuses modeGemma plus the ▁ dummy-prefix knob; the
+// byte-level GGUF family is a follow-up.
+//
+// Golden parity against HF `tokenizers` is the gate for every family (M2 /
+// G3 / GGUF): a single-token drift silently degrades generation, so the bar
+// is exact id equality, not a tolerance.
 package tokenizer

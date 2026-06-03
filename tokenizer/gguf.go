@@ -1,0 +1,239 @@
+package tokenizer
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/townsendmerino/aikit/embed"
+)
+
+// GGUF tokenizer (G7 follow-up). A .gguf checkpoint carries its tokenizer in
+// metadata — the vocab (tokenizer.ggml.tokens, id == array index), the BPE
+// merges (tokenizer.ggml.merges, space-joined), per-token types, and the
+// special-token ids — so LoadGGUF builds a Tokenizer with no sidecar
+// tokenizer.json, letting a bare .gguf tokenize and chat end-to-end.
+//
+// Scope: the SentencePiece-style byte-fallback family (tokenizer.ggml.model ==
+// "llama" — Llama-2/Mistral/TinyLlama and friends), which maps onto the same
+// modeGemma merge-rank core with the ▁ dummy prefix. The merges live in
+// metadata, so tokenization is merge-rank (not score-based) and reuses the
+// shared BPE loop verbatim. The byte-level family ("gpt2" — Llama-3/Qwen/GPT-2)
+// is a follow-up: same machinery as modeByteLevel, but its pretokenizer knobs
+// (digit-run cap, NFC) come from tokenizer.ggml.pre and want a committed
+// byte-level GGUF to parity-gate, which testdata doesn't have yet.
+//
+// Metadata reference: https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
+
+// GGUF tokenizer metadata keys (the llama.cpp convention).
+const (
+	ggufTokModel  = "tokenizer.ggml.model"
+	ggufTokTokens = "tokenizer.ggml.tokens"
+	ggufTokMerges = "tokenizer.ggml.merges"
+	ggufTokTypes  = "tokenizer.ggml.token_type"
+	ggufTokBOS    = "tokenizer.ggml.bos_token_id"
+	ggufTokEOS    = "tokenizer.ggml.eos_token_id"
+	ggufTokUnk    = "tokenizer.ggml.unknown_token_id"
+	ggufTokPad    = "tokenizer.ggml.padding_token_id"
+	ggufTokPrefix = "tokenizer.ggml.add_space_prefix"
+)
+
+// ggml token types (tokenizer.ggml.token_type values). NORMAL and BYTE pieces
+// go through BPE; the rest are added/special tokens matched literally in text.
+const (
+	ggufTokNormal      = 1
+	ggufTokUnknown     = 2
+	ggufTokControl     = 3
+	ggufTokUserDefined = 4
+	ggufTokUnused      = 5
+	ggufTokByte        = 6
+)
+
+// LoadGGUF builds a Tokenizer from a .gguf file's embedded tokenizer metadata.
+// It is the bare-checkpoint sibling of Load (which reads tokenizer.json): a
+// .gguf is self-describing, so no other files are needed. Only the
+// SentencePiece byte-fallback family (tokenizer.ggml.model == "llama") is
+// supported today; see the package note for the byte-level follow-up.
+func LoadGGUF(path string) (*Tokenizer, error) {
+	g, err := embed.OpenGGUF(path)
+	if err != nil {
+		return nil, fmt.Errorf("tokenizer.LoadGGUF: %w", err)
+	}
+	t, err := fromGGUF(g)
+	if err != nil {
+		return nil, fmt.Errorf("tokenizer.LoadGGUF %s: %w", path, err)
+	}
+	return t, nil
+}
+
+func fromGGUF(g *embed.GGUFFile) (*Tokenizer, error) {
+	model, ok := g.Str(ggufTokModel)
+	if !ok {
+		return nil, fmt.Errorf("missing %s (not a GGUF with an embedded tokenizer)", ggufTokModel)
+	}
+	if model != "llama" {
+		return nil, fmt.Errorf("unsupported tokenizer model %q (have: llama; gpt2/byte-level is a follow-up)", model)
+	}
+
+	tokens, err := ggufStringArray(g, ggufTokTokens)
+	if err != nil {
+		return nil, err
+	}
+	if len(tokens) == 0 {
+		return nil, fmt.Errorf("%s is empty", ggufTokTokens)
+	}
+
+	t := &Tokenizer{
+		mode:      modeGemma,
+		vocab:     make(map[string]int32, len(tokens)),
+		idToPiece: tokens, // id == array index, contiguous and complete
+		pairRank:  make(map[bigram]int32),
+		byteToVal: make(map[int32]byte, 256),
+	}
+	for i, tok := range tokens {
+		if _, exists := t.vocab[tok]; !exists { // first id wins on the rare dup
+			t.vocab[tok] = int32(i)
+		}
+	}
+
+	// Merge ranks: the merges array is the older space-joined form ("▁ t"); a
+	// piece never contains a literal space (it is ▁), so the first space splits
+	// the pair unambiguously. Position in the list is the priority.
+	merges, err := ggufStringArray(g, ggufTokMerges)
+	if err != nil {
+		return nil, err
+	}
+	for i, m := range merges {
+		l, r, ok := strings.Cut(m, " ")
+		if !ok {
+			return nil, fmt.Errorf("%s[%d] %q has no space separator", ggufTokMerges, i, m)
+		}
+		t.pairRank[bigram{l, r}] = int32(i)
+	}
+
+	// Special-token ids come straight from metadata (the surface forms vary by
+	// model: <s>/</s>/<unk> for Llama-2). Chat-turn markers, if any, are
+	// recognized by surface (ChatStyle() reads the same vocab entries).
+	t.special = SpecialTokens{
+		BOS:         ggufTokenID(g, ggufTokBOS),
+		EOS:         ggufTokenID(g, ggufTokEOS),
+		Pad:         ggufTokenID(g, ggufTokPad),
+		StartOfTurn: -1,
+		EndOfTurn:   -1,
+	}
+	for piece, dst := range map[string]*int{
+		"<start_of_turn>": &t.special.StartOfTurn, "<end_of_turn>": &t.special.EndOfTurn,
+		"<|im_start|>": &t.special.StartOfTurn, "<|im_end|>": &t.special.EndOfTurn,
+	} {
+		if id, ok := t.vocab[piece]; ok {
+			*dst = int(id)
+		}
+	}
+
+	// Byte-fallback "<0xNN>" pieces (token type BYTE) → the byte map.
+	hasByte := false
+	for b := 0; b < 256; b++ {
+		p := fmt.Sprintf("<0x%02X>", b)
+		t.bytePiece[b] = p
+		if id, ok := t.vocab[p]; ok {
+			t.byteToVal[id] = byte(b)
+			hasByte = true
+		}
+	}
+	t.byteFallback = hasByte
+
+	// Unknown token: id from metadata (its surface is whatever tokens[unk] is),
+	// falling back to the conventional "<unk>".
+	t.unkPiece, t.unkID = "<unk>", 0
+	if unk := ggufTokenID(g, ggufTokUnk); unk >= 0 && unk < len(tokens) {
+		t.unkID, t.unkPiece = int32(unk), tokens[unk]
+	} else if id, ok := t.vocab["<unk>"]; ok {
+		t.unkID = id
+	}
+
+	// SentencePiece dummy prefix: "llama" SPM prepends a ▁ (and strips one
+	// leading space on decode) unless add_space_prefix says otherwise.
+	t.prependSpace = true
+	if v, ok := g.Metadata[ggufTokPrefix].(bool); ok {
+		t.prependSpace = v
+	}
+	t.stripLeadingSpace = t.prependSpace
+
+	// Added-vocabulary trie: every non-NORMAL, non-BYTE token (UNKNOWN /
+	// CONTROL / USER_DEFINED) is split out of raw text before normalization —
+	// HF's AddedVocabulary behavior. Falls back to the resolved specials when
+	// the type array is absent.
+	t.added = newAddedTrie()
+	types := ggufIntArray(g, ggufTokTypes)
+	if len(types) == len(tokens) {
+		for i, ty := range types {
+			switch ty {
+			case ggufTokUnknown, ggufTokControl, ggufTokUserDefined:
+				t.added.add(tokens[i], int32(i))
+			}
+		}
+	} else {
+		for _, id := range []int{t.special.BOS, t.special.EOS, t.special.Pad} {
+			if id >= 0 && id < len(tokens) {
+				t.added.add(tokens[id], int32(id))
+			}
+		}
+	}
+
+	return t, nil
+}
+
+// ggufStringArray reads a GGUF metadata array of strings.
+func ggufStringArray(g *embed.GGUFFile, key string) ([]string, error) {
+	arr, ok := g.Metadata[key].([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s missing or not an array", key)
+	}
+	out := make([]string, len(arr))
+	for i, v := range arr {
+		s, ok := v.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s[%d] is %T, want string", key, i, v)
+		}
+		out[i] = s
+	}
+	return out, nil
+}
+
+// ggufIntArray reads a GGUF metadata array of integers (any width), returning
+// nil if the key is absent or not an array — callers treat that as "no data".
+func ggufIntArray(g *embed.GGUFFile, key string) []int {
+	arr, ok := g.Metadata[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]int, len(arr))
+	for i, v := range arr {
+		switch n := v.(type) {
+		case int8:
+			out[i] = int(n)
+		case int16:
+			out[i] = int(n)
+		case int32:
+			out[i] = int(n)
+		case int64:
+			out[i] = int(n)
+		case uint8:
+			out[i] = int(n)
+		case uint16:
+			out[i] = int(n)
+		case uint32:
+			out[i] = int(n)
+		case uint64:
+			out[i] = int(n)
+		}
+	}
+	return out
+}
+
+// ggufTokenID reads an integer special-token-id metadata value, or -1 ("none").
+func ggufTokenID(g *embed.GGUFFile, key string) int {
+	if v, ok := g.Uint(key); ok {
+		return int(v)
+	}
+	return -1
+}

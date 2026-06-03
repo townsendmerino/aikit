@@ -72,6 +72,12 @@ type Tokenizer struct {
 	byteToVal    map[int32]byte
 	unkPiece     string
 	unkID        int32
+	// SentencePiece dummy-prefix knobs. Llama-2/Mistral SPM prepend a ▁ to each
+	// normalized gap on encode and strip one leading space on decode; Gemma 3
+	// does neither. Detected from the normalizer (tokenizer.json) or set by the
+	// GGUF loader (tokenizer.ggml.model == "llama").
+	prependSpace      bool
+	stripLeadingSpace bool
 
 	// modeByteLevel: byte↔unicode map + the whole-piece-wins flag, plus the
 	// two pipeline knobs that vary across byte-level families (read from
@@ -283,6 +289,13 @@ func Load(path string) (*Tokenizer, error) {
 // and the (required) Gemma special tokens. These are mandatory for this
 // family, so a missing one is a load error — the M2 golden depends on them.
 func (t *Tokenizer) initGemma(tj *tokenizerJSON) error {
+	// SentencePiece dummy prefix: Llama-2/Mistral prepend a ▁ (and strip one
+	// leading space on decode); Gemma 3 has no Prepend normalizer.
+	if prependMarker(tj.Normalizer) {
+		t.prependSpace = true
+		t.stripLeadingSpace = true
+	}
+
 	// Byte-fallback tokens: "<0x00>".."<0xFF>".
 	for b := 0; b < 256; b++ {
 		p := fmt.Sprintf("<0x%02X>", b)
@@ -345,7 +358,7 @@ func (t *Tokenizer) Encode(text string, addBOS bool) ([]int, error) {
 	i := 0
 	flushGap := func(end int) {
 		if end > gapStart {
-			out = append(out, t.bpe(normalize(text[gapStart:end]))...)
+			out = append(out, t.bpe(t.normalizeGap(text[gapStart:end]))...)
 		}
 	}
 	for i < len(text) {
@@ -371,11 +384,51 @@ func (t *Tokenizer) Encode(text string, addBOS bool) ([]int, error) {
 	return res, nil
 }
 
-// normalize applies Gemma's sole normalizer: replace every ASCII space with
-// the ▁ marker. (Tabs, newlines and other whitespace are left as-is — the
-// added-vocabulary split handles the newline-run tokens.)
+// normalize applies the SentencePiece space normalizer: replace every ASCII
+// space with the ▁ marker. (Tabs, newlines and other whitespace are left as-is
+// — the added-vocabulary split handles the newline-run tokens.)
 func normalize(s string) string {
 	return strings.ReplaceAll(s, " ", spaceMarker)
+}
+
+// normalizeGap normalizes one raw text gap for the modeGemma BPE: replace
+// spaces with ▁ and, for SentencePiece models that use a dummy prefix
+// (prependSpace — Llama-2/Mistral), prepend a leading ▁. Gemma sets neither
+// flag, so this is a plain space-replace there. The prepended ▁ is a literal
+// marker, not a space, so the order relative to normalize is immaterial.
+func (t *Tokenizer) normalizeGap(s string) string {
+	s = normalize(s)
+	if t.prependSpace {
+		s = spaceMarker + s
+	}
+	return s
+}
+
+// prependMarker reports whether a normalizer prepends the ▁ SentencePiece
+// dummy prefix (Llama-2/Mistral SPM do; Gemma 3 does not). Recurses a Sequence.
+func prependMarker(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var node struct {
+		Type        string            `json:"type"`
+		Prepend     string            `json:"prepend"`
+		Normalizers []json.RawMessage `json:"normalizers"`
+	}
+	if json.Unmarshal(raw, &node) != nil {
+		return false
+	}
+	if node.Type == "Prepend" {
+		return node.Prepend == spaceMarker
+	}
+	if node.Type == "Sequence" {
+		for _, s := range node.Normalizers {
+			if prependMarker(s) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // bpe segments a normalized gap into ids: per-rune initial symbols (byte
@@ -467,7 +520,15 @@ func (t *Tokenizer) Decode(ids []int) (string, error) {
 		sb.WriteString(strings.ReplaceAll(t.idToPiece[id], spaceMarker, " "))
 	}
 	flush()
-	return sb.String(), nil
+	out := sb.String()
+	// SentencePiece decode strips the single leading space introduced by the
+	// dummy prefix (Llama-2/Mistral); Gemma leaves it. This applies to the
+	// rendered string as a whole, so callers streaming via DecodePiece should
+	// decode the cumulative id slice (as the demo does), not piece-by-piece.
+	if t.stripLeadingSpace {
+		out = strings.TrimPrefix(out, " ")
+	}
+	return out, nil
 }
 
 // DecodePiece decodes a single id to its display string — used for token

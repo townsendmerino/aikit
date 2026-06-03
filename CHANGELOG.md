@@ -10,6 +10,27 @@ it.
 
 ## [Unreleased]
 
+### Added
+
+- **`tokenizer.LoadGGUF`** — build a `Tokenizer` from a bare `.gguf` file's
+  embedded metadata (vocab + merges + special-token ids), no `tokenizer.json`
+  needed. Covers the SentencePiece byte-fallback family
+  (`tokenizer.ggml.model == "llama"`: Llama-2/Mistral/TinyLlama), reusing the
+  `modeGemma` merge-rank core plus a `▁` dummy-prefix knob (prepend on encode,
+  strip one leading space on decode). Parity-gated against HF `tokenizers` on
+  TinyLlama (`testdata/tinyllama_tokenizer_golden.json`, pinned by
+  `scripts/pin_tinyllama_tokenizer.py`). A bare `.gguf` now chats end-to-end —
+  `demo/gemma` detects a `.gguf` path and tokenizes from it.
+- `tokenizer.Load` now honors a SentencePiece `Prepend "▁"` normalizer (and the
+  paired leading-space strip on decode), so non-Gemma SPM `tokenizer.json`
+  files tokenize correctly; Gemma (no Prepend) is unchanged.
+
+### Notes
+
+- Byte-level GGUF tokenizers (`gpt2` family: Llama-3/Qwen/GPT-2) and more GGUF
+  K-quant types (Q5_K/Q3_K/IQ*) are deferred until there's a fixture to
+  parity-gate them — see [docs/milestones/G7-gguf.md](docs/milestones/G7-gguf.md).
+
 ## [0.2.0] — 2026-06-03
 
 Generative half of the toolkit lands. Two new public packages — `decoder` and
