@@ -114,6 +114,7 @@ validates every schema entry across all layers and returned no error. Shapes
 | decoder M8 int8 quant | ✅ done 2026-06-02 — `--quant int8`, argmax preserved (cosine 0.9996), weights 3.98× smaller; int4 + streaming-quant follow-ups; see `milestones/M8-quant.md` |
 | decoder M9 WebGPU backend | ✅ done 2026-06-02 — `--backend webgpu` runs on RTX 2070 (Vulkan), resident weights, argmax parity; trails CPU for M=1 decode (latency-bound); see `milestones/M9-webgpu.md` |
 | decoder G0 multi-model descriptor | ✅ done 2026-06-02 — forward pass reads `Architecture` (registry by `model_type`); Gemma goldens byte-identical. Toward running Llama/Qwen/etc. (multi-model-plan G1+); see `milestones/G0-descriptor.md` |
+| decoder G1 sharded loader | ✅ done 2026-06-02 — `embed` mmaps + merges N shards (index.json); 3-shard 270m reproduces M1 checksums. Unblocks ≥7B/MoE. See `milestones/G1-sharded.md` |
 | demo/gemma-web | ✅ done — stdlib net/http + SSE chat GUI over the decoder (`go run ./demo/gemma-web --model testdata/gemma-3-270m`) |
 
 Reference docs: [`cpu-acceleration.md`](cpu-acceleration.md),

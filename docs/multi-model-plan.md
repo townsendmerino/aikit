@@ -228,8 +228,11 @@ new fixture per family). Parallel to M7–M9.
   `runLayers`/`forward`/`attention`/`gatedMLP`; Gemma 3 is one descriptor. All
   M1–M9 Gemma goldens pass **byte-identical** (cosine unchanged). See
   [`milestones/G0-descriptor.md`](milestones/G0-descriptor.md).
-- **G1 — sharded safetensors loader** (§5.1). Acceptance: load a multi-shard
-  checkpoint (e.g. Gemma 3 4B) and reproduce M1-style tensor checksums.
+- **G1 — sharded safetensors loader** (§5.1). ✅ **DONE 2026-06-02.** `embed`
+  mmaps N shards and merges them into one `SafetensorsFile`; the decoder picks
+  the sharded path when `model.safetensors.index.json` is present. A 3-shard
+  split of the 270M reproduces the M1 checksums + matches end-to-end. See
+  [`milestones/G1-sharded.md`](milestones/G1-sharded.md).
 - **G2 — Llama / Mistral / Qwen2 family.** Knobs: RMS no-offset, Pre2 norms,
   SwiGLU, no embed scale, 1/√hd scale, untied head, optional QKV bias, optional
   all-sliding (Mistral). Acceptance: logit parity vs HF for one checkpoint each

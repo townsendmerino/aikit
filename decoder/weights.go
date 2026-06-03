@@ -93,11 +93,33 @@ func LoadWeights(dir string) (*Weights, error) {
 	if err != nil {
 		return nil, err
 	}
+	st, err := openCheckpointMmap(dir)
+	if err != nil {
+		return nil, err
+	}
+	return buildWeightsFromSafetensors(cfg, arch, st)
+}
+
+const shardIndexFile = "model.safetensors.index.json"
+
+// openCheckpointMmap mmaps the checkpoint weights: the multi-shard set named by
+// model.safetensors.index.json when present (anything above ~2B params ships
+// this way — Gemma 3 4B/12B/27B, every Llama ≥7B), else the single
+// model.safetensors. Either way the returned file resolves Tensor() uniformly.
+func openCheckpointMmap(dir string) (*embed.SafetensorsFile, error) {
+	indexPath := filepath.Join(dir, shardIndexFile)
+	if _, err := os.Stat(indexPath); err == nil {
+		st, err := embed.OpenSafetensorsShardedMmap(indexPath)
+		if err != nil {
+			return nil, fmt.Errorf("decoder: open sharded safetensors: %w", err)
+		}
+		return st, nil
+	}
 	st, err := embed.OpenSafetensorsMmap(filepath.Join(dir, "model.safetensors"))
 	if err != nil {
 		return nil, fmt.Errorf("decoder: open safetensors: %w", err)
 	}
-	return buildWeightsFromSafetensors(cfg, arch, st)
+	return st, nil
 }
 
 // LoadWeightsFromFS mirrors encoder.LoadWeightsFromFS: reads config.json +
@@ -113,11 +135,29 @@ func LoadWeightsFromFS(fsys fs.FS, dir string) (*Weights, error) {
 	if err != nil {
 		return nil, err
 	}
+	st, err := openCheckpointFromFS(fsys, dir)
+	if err != nil {
+		return nil, err
+	}
+	return buildWeightsFromSafetensors(cfg, arch, st)
+}
+
+// openCheckpointFromFS is the fs.FS counterpart of openCheckpointMmap (heap):
+// sharded when an index.json is present, else the single file.
+func openCheckpointFromFS(fsys fs.FS, dir string) (*embed.SafetensorsFile, error) {
+	indexPath := path.Join(dir, shardIndexFile)
+	if _, err := fs.Stat(fsys, indexPath); err == nil {
+		st, err := embed.OpenSafetensorsShardedFromFS(fsys, indexPath)
+		if err != nil {
+			return nil, fmt.Errorf("decoder: open sharded safetensors: %w", err)
+		}
+		return st, nil
+	}
 	st, err := embed.OpenSafetensorsFromFS(fsys, path.Join(dir, "model.safetensors"))
 	if err != nil {
 		return nil, fmt.Errorf("decoder: open safetensors: %w", err)
 	}
-	return buildWeightsFromSafetensors(cfg, arch, st)
+	return st, nil
 }
 
 // buildWeightsFromSafetensors fills a *Weights from an already-opened

@@ -25,7 +25,10 @@ import (
 	"io/fs"
 	"math"
 	"os"
+	"path"
+	"path/filepath"
 	"runtime"
+	"sort"
 	"syscall"
 	"unsafe"
 )
@@ -43,10 +46,11 @@ type SafetensorsFile struct {
 	data    []byte
 	tensors map[string]Tensor
 
-	// mmapped is non-nil iff the file was loaded via OpenSafetensorsMmap
-	// (and Close hasn't run). Identical underlying storage to data; the
-	// separate field exists so Close knows whether to syscall.Munmap.
-	mmapped []byte
+	// mmapped holds the mmap region(s) backing this file iff it was loaded
+	// via a *Mmap open (and Close hasn't run). One entry for a single file;
+	// one per shard for OpenSafetensorsShardedMmap. Close/the finalizer
+	// syscall.Munmap each; the heap opens leave it nil.
+	mmapped [][]byte
 }
 
 // Tensor is a single named tensor within a SafetensorsFile.
@@ -97,6 +101,123 @@ func OpenSafetensorsFromFS(fsys fs.FS, name string) (*SafetensorsFile, error) {
 	return parseSafetensors(data)
 }
 
+// shardIndex is the model.safetensors.index.json shape: weight_map names every
+// tensor and the shard file it lives in.
+type shardIndex struct {
+	WeightMap map[string]string `json:"weight_map"`
+}
+
+// parseShardIndex parses a model.safetensors.index.json and returns the unique
+// shard filenames (sorted, deterministic) plus the full weight_map (for a
+// post-load completeness check).
+func parseShardIndex(indexBytes []byte) (files []string, weightMap map[string]string, err error) {
+	var idx shardIndex
+	if err := json.Unmarshal(indexBytes, &idx); err != nil {
+		return nil, nil, fmt.Errorf("safetensors: parse shard index: %w", err)
+	}
+	if len(idx.WeightMap) == 0 {
+		return nil, nil, errors.New("safetensors: shard index has empty weight_map")
+	}
+	seen := make(map[string]bool)
+	for _, f := range idx.WeightMap {
+		if !seen[f] {
+			seen[f] = true
+			files = append(files, f)
+		}
+	}
+	sort.Strings(files)
+	return files, idx.WeightMap, nil
+}
+
+// mergeShards folds each shard's tensors into agg and verifies every tensor the
+// weight_map promises actually resolved. Caller supplies the per-shard parsed
+// files; this is the format-level logic shared by the mmap and fs paths.
+func mergeShards(agg *SafetensorsFile, shards []*SafetensorsFile, weightMap map[string]string) error {
+	for _, shard := range shards {
+		for name, t := range shard.tensors {
+			agg.tensors[name] = t
+		}
+	}
+	for name := range weightMap {
+		if _, ok := agg.tensors[name]; !ok {
+			return fmt.Errorf("safetensors: shard index names tensor %q but no shard contains it", name)
+		}
+	}
+	return nil
+}
+
+// OpenSafetensorsShardedMmap loads a multi-shard checkpoint named by a
+// model.safetensors.index.json at indexPath (shard files resolved relative to
+// it). Each shard is mmap'd once; the returned SafetensorsFile resolves
+// Tensor() across all shards and Close munmaps them all — so callers use it
+// exactly like a single-file SafetensorsFile.
+func OpenSafetensorsShardedMmap(indexPath string) (*SafetensorsFile, error) {
+	indexBytes, err := os.ReadFile(indexPath)
+	if err != nil {
+		return nil, fmt.Errorf("read shard index: %w", err)
+	}
+	files, weightMap, err := parseShardIndex(indexBytes)
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Dir(indexPath)
+	agg := &SafetensorsFile{tensors: make(map[string]Tensor)}
+	shards := make([]*SafetensorsFile, 0, len(files))
+	for _, fn := range files {
+		data, err := mmapReadOnly(filepath.Join(dir, fn))
+		if err != nil {
+			finalizeMmaps(agg)
+			return nil, err
+		}
+		agg.mmapped = append(agg.mmapped, data)
+		shard, err := parseSafetensors(data)
+		if err != nil {
+			finalizeMmaps(agg)
+			return nil, fmt.Errorf("safetensors: shard %s: %w", fn, err)
+		}
+		shards = append(shards, shard)
+	}
+	if err := mergeShards(agg, shards, weightMap); err != nil {
+		finalizeMmaps(agg)
+		return nil, err
+	}
+	runtime.SetFinalizer(agg, finalizeMmaps)
+	return agg, nil
+}
+
+// OpenSafetensorsShardedFromFS is the fs.FS (heap) counterpart of
+// OpenSafetensorsShardedMmap — for embed.FS / fstest.MapFS. Each shard is read
+// into the heap; the tensor slices keep their shard bytes alive via the
+// returned file, so there's nothing to Close.
+func OpenSafetensorsShardedFromFS(fsys fs.FS, indexPath string) (*SafetensorsFile, error) {
+	indexBytes, err := fs.ReadFile(fsys, indexPath)
+	if err != nil {
+		return nil, fmt.Errorf("read shard index: %w", err)
+	}
+	files, weightMap, err := parseShardIndex(indexBytes)
+	if err != nil {
+		return nil, err
+	}
+	dir := path.Dir(indexPath)
+	agg := &SafetensorsFile{tensors: make(map[string]Tensor)}
+	shards := make([]*SafetensorsFile, 0, len(files))
+	for _, fn := range files {
+		data, err := fs.ReadFile(fsys, path.Join(dir, fn))
+		if err != nil {
+			return nil, fmt.Errorf("read shard %s: %w", fn, err)
+		}
+		shard, err := parseSafetensors(data)
+		if err != nil {
+			return nil, fmt.Errorf("safetensors: shard %s: %w", fn, err)
+		}
+		shards = append(shards, shard)
+	}
+	if err := mergeShards(agg, shards, weightMap); err != nil {
+		return nil, err
+	}
+	return agg, nil
+}
+
 // OpenSafetensorsMmap mmaps path into memory (read-only, MAP_PRIVATE)
 // and parses the safetensors header from the mapped region. Tensor
 // slices alias the mapping; resident memory cost is shared via the OS
@@ -115,6 +236,24 @@ func OpenSafetensorsFromFS(fsys fs.FS, name string) (*SafetensorsFile, error) {
 // Platform: works on darwin/linux/bsd via syscall.Mmap. Not supported
 // on Windows; the embed package's primary deployments are macOS/Linux.
 func OpenSafetensorsMmap(path string) (*SafetensorsFile, error) {
+	data, err := mmapReadOnly(path)
+	if err != nil {
+		return nil, err
+	}
+	sf, err := parseSafetensors(data)
+	if err != nil {
+		_ = syscall.Munmap(data)
+		return nil, err
+	}
+	sf.mmapped = [][]byte{data}
+	// Finalizer guards the common case where callers forget Close().
+	runtime.SetFinalizer(sf, finalizeMmaps)
+	return sf, nil
+}
+
+// mmapReadOnly opens path and returns a read-only MAP_PRIVATE mapping of its
+// whole contents. The fd is closed before returning (the mapping survives it).
+func mmapReadOnly(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
@@ -136,22 +275,16 @@ func OpenSafetensorsMmap(path string) (*SafetensorsFile, error) {
 	if err != nil {
 		return nil, fmt.Errorf("mmap %s: %w", path, err)
 	}
-	sf, err := parseSafetensors(data)
-	if err != nil {
-		_ = syscall.Munmap(data)
-		return nil, err
+	return data, nil
+}
+
+// finalizeMmaps is the SetFinalizer callback for mmap-backed files: munmap
+// every region. Close does the same eagerly.
+func finalizeMmaps(s *SafetensorsFile) {
+	for _, m := range s.mmapped {
+		_ = syscall.Munmap(m)
 	}
-	sf.mmapped = data
-	// Finalizer guards the common case where callers forget Close().
-	// The model lifetime is process-lifetime in ken-mcp so this matters
-	// mostly for test/CLI flows that build and discard models repeatedly.
-	runtime.SetFinalizer(sf, func(s *SafetensorsFile) {
-		if s.mmapped != nil {
-			_ = syscall.Munmap(s.mmapped)
-			s.mmapped = nil
-		}
-	})
-	return sf, nil
+	s.mmapped = nil
 }
 
 // Close releases the underlying mmap, if any. No-op on heap-loaded
@@ -161,13 +294,19 @@ func OpenSafetensorsMmap(path string) (*SafetensorsFile, error) {
 // them is undefined behavior. Callers MUST stop using the model and any
 // downstream objects that hold tensor data before calling Close.
 func (sf *SafetensorsFile) Close() error {
-	if sf.mmapped == nil {
+	if len(sf.mmapped) == 0 {
 		return nil
 	}
-	m := sf.mmapped
+	regions := sf.mmapped
 	sf.mmapped = nil
 	runtime.SetFinalizer(sf, nil)
-	return syscall.Munmap(m)
+	var firstErr error
+	for _, m := range regions {
+		if err := syscall.Munmap(m); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // parseSafetensors is the shared safetensors-bytes parser used by both

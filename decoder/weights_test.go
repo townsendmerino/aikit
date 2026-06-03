@@ -72,13 +72,19 @@ func TestLoadWeights_goldenChecksums(t *testing.T) {
 	assertConfigInt(t, g, "hidden_size", w.Cfg.HiddenDim)
 	assertConfigInt(t, g, "vocab_size", w.Cfg.VocabSize)
 
-	// Map each sampled tensor name to the loaded slice it should populate.
+	checkSampledChecksums(t, w, g)
+}
+
+// checkSampledChecksums verifies the loaded weights reproduce the golden's
+// sampled-tensor shape/dtype/checksums. Shared by the single-file (M1) and
+// sharded (G1) loader tests so both go through the identical bar.
+func checkSampledChecksums(t *testing.T, w *Weights, g *gemmaGolden) {
+	t.Helper()
 	loaded := map[string][]float32{
 		"model.embed_tokens.weight":              w.Embed.f32,
 		"model.norm.weight":                      w.FinalNorm,
 		"model.layers.0.self_attn.q_proj.weight": w.Layers[0].QProj.f32,
 	}
-
 	const relTol = 1e-6
 	for name, want := range g.Tensors {
 		got, ok := loaded[name]
