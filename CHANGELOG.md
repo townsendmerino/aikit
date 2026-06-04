@@ -18,6 +18,20 @@ it.
   safetensors paths. The Mellum2-12B Q4_K_M GGUF load dropped from **~2 min to
   ~20 s** (`--quant int4`); race-clean. Output is unchanged (deterministic
   per-tensor work).
+- **Streaming GGUF dequant → resident quant (no full-f32 round-trip).** The GGUF
+  loader used to dequantize each tensor into a whole `[rows·cols]` f32 buffer and
+  then re-quantize it; for a 12B model the largest tensors are hundreds of MB that
+  stream to DRAM and back per tensor. Now each tensor is dequantized **row-by-row
+  into a one-row scratch** and quantized straight into the resident int8/int4
+  arrays (`embed.GGUFFile.RowDequantizer` drives `decoder.streamQuantized`), so the
+  f32 intermediate stays in cache and the full-tensor allocation is gone. The RoPE
+  q/k permutation — being a pure row reorder — is folded into the dequant order
+  (rows pulled in HF order) instead of permuting a separate f32 buffer. Bit-
+  identical to the old path by construction (the per-row primitives are the same
+  ones `QuantizeRowsInt8`/`QuantizeGroupsInt4` use): every GGUF forward-parity test
+  holds its exact prior cosine — Q8_0 0.99996, Q4_K_M 0.9975, int4-resident 0.9946,
+  Mellum-12B runs — across Q8_0/Q4_0/Q4_K/Q6_K × f32/int8/int4 × plain/permuted/MoE
+  tensors (`TestDequantRange_streamMatchesWhole` + the GGUF parity suite).
 
 ### Added
 

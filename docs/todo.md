@@ -38,6 +38,11 @@ load (no whole-model f32 spike), off mmap'd GGUFs, all SIMD, all parity-gated:
 - **Parallel load**: the per-layer dequant/re-quant fans out across cores
   (`parallelLayers`, GGUF + safetensors) — Mellum2-12B load ~2 min → **~20 s**,
   race-clean.
+- **Streaming dequant→quant**: the GGUF loader dequantizes each tensor row-by-row
+  into a one-row scratch and quantizes straight into the resident int8/int4 arrays
+  (`RowDequantizer` → `streamQuantized`) — the full-tensor f32 intermediate is
+  gone (hundreds of MB/tensor on a 12B), the RoPE q/k permute folds into the
+  dequant order. Bit-identical (every GGUF parity cosine unchanged).
 
 Ladder: `f32 (1.0) → int8 (0.9996) → int8int8 (3.4× faster, 0.9979) → int4 (⅛ f32)`.
 
@@ -83,20 +88,7 @@ Each is "a `dequant*` func + a size entry" on the existing GGUF seam, but needs 
 fixture or the Python `gguf` reference to parity-gate (Q4_K_M/Q5_0/Q6_K already
 cover the common laptop mixes, so low marginal value).
 
-### 3. Incremental perf — residual only · S
-The big wins shipped (parallel load + arm64 NEON `dotI8` + the **SDOT** DotProd
-upgrade with runtime HWCAP detection; see Shipped above). What's left is one item:
-- **Quantize direct from the source quant to int4**, skipping the f32 round-trip
-  — the remaining load-time headroom is memory-bandwidth-bound on that
-  intermediate. (Only a clean win where the source block aligns with the resident
-  group, e.g. GGUF Q4_0/Q8_0/Q4_K sub-blocks at group 32; the RoPE-permuted q/k
-  projections still need a row-reorder, doable on quantized rows.)
-- ~~SDOT DotProd `dotI8`~~ — done (see Shipped).
-- ~~mmap safetensors on the fs.FS path~~ — N/A: real directories already mmap
-  (`openCheckpointMmap`); `fs.FS` is heap by necessity (no fd) and only serves
-  small embedded test models.
-
-### 4. Mellum2 polish · S
+### 3. Mellum2 polish · S
 - **Exact `mellum2` tokenizer parity.** The GGUF byte-level tokenizer falls to
   GPT-2-style defaults for `tokenizer.ggml.pre == "mellum2"` (good enough for
   coherent output, not byte-exact). Pin a golden from the model's `tokenizer.json`
@@ -105,7 +97,7 @@ upgrade with runtime HWCAP detection; see Shipped above). What's left is one ite
   qwen2/qwen3/gemma GGUFs are the same pattern (map `<arch>.*` metadata onto the
   existing descriptors) once a fixture is on hand.
 
-### 5. Shared-expert MoE + longrope/dynamic RoPE — lowest urgency · S–M
+### 4. Shared-expert MoE + longrope/dynamic RoPE — lowest urgency · S–M
 A couple more `MoEConfig` knobs for shared-expert MoE (Qwen-MoE/DeepSeek), and the
 remaining RoPE scalings (longrope/su, dynamic). Cleanly scoped, only pays off for
 those families. (YaRN is done.)
@@ -124,6 +116,7 @@ Q4_K/Q6_K). Any of these re-quantizes to resident int8/W8A8/int4.
 ## Recommendation
 
 The decoder / quant / GGUF / structured-output arc is complete and broad (incl.
-the perf items — parallel load + arm64 NEON W8A8). The single highest-leverage
-next step is the **`rag` pipeline** (#1) — the "makes the library more than its
-packages" feature. Everything else (#2–#5) is incremental and self-contained.
+the perf items — parallel load, streaming dequant→quant, arm64 NEON/SDOT W8A8).
+The single highest-leverage next step is the **`rag` pipeline** (#1) — the "makes
+the library more than its packages" feature. Everything else (#2–#4) is
+incremental and self-contained.

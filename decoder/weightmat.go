@@ -53,6 +53,52 @@ func newWeightMat(f32 []float32, rows, cols int) weightMat {
 	return weightMat{f32: f32, rows: rows, cols: cols}
 }
 
+// streamQuantized builds a [rows, cols] weightMat in the target precision by
+// dequantizing each row through rowInto (into a reused cols-wide scratch) and
+// quantizing it straight into the resident arrays — never materializing the whole
+// [rows*cols] f32. This is the load-time memory-bandwidth win: a big GGUF tensor's
+// f32 intermediate stays one row wide (in cache) instead of streaming to DRAM and
+// back. The result is bit-identical to newWeightMat(fullF32).quantize(mode): the
+// per-row primitives here are exactly the ones QuantizeRowsInt8 / QuantizeGroupsInt4
+// call internally, just driven one row at a time.
+func streamQuantized(rows, cols int, mode quantMode, rowInto func(r int, dst []float32) error) (weightMat, error) {
+	w := weightMat{rows: rows, cols: cols}
+	scratch := make([]float32, cols)
+	switch mode {
+	case quantInt8, quantInt8I8:
+		w.q8 = make([]int8, rows*cols)
+		w.scales = make([]float32, rows)
+		w.w8a8 = mode == quantInt8I8
+		for r := range rows {
+			if err := rowInto(r, scratch); err != nil {
+				return weightMat{}, err
+			}
+			w.scales[r] = linalg.QuantizeRowInt8(scratch, w.q8[r*cols:(r+1)*cols])
+		}
+	case quantInt4:
+		const group = int4GroupSize
+		nGroups := (cols + group - 1) / group
+		bpr := (cols + 1) / 2
+		w.q4 = make([]byte, rows*bpr)
+		w.q4s = make([]float32, rows*nGroups)
+		w.group = group
+		for r := range rows {
+			if err := rowInto(r, scratch); err != nil {
+				return weightMat{}, err
+			}
+			linalg.QuantizeGroupInt4Row(scratch, cols, group, w.q4[r*bpr:(r+1)*bpr], w.q4s[r*nGroups:(r+1)*nGroups])
+		}
+	default: // quantNone — no quant target, keep the full f32
+		w.f32 = make([]float32, rows*cols)
+		for r := range rows {
+			if err := rowInto(r, w.f32[r*cols:(r+1)*cols]); err != nil {
+				return weightMat{}, err
+			}
+		}
+	}
+	return w, nil
+}
+
 // quantize streams this matrix to the requested resident precision, freeing the
 // f32 backing. No-op for quantNone or if already quantized.
 func (w *weightMat) quantize(mode quantMode) {

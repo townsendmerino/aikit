@@ -23,35 +23,43 @@ func QuantizeRowsInt8(w []float32, rows, cols int) (q []int8, scales []float32) 
 	q = make([]int8, rows*cols)
 	scales = make([]float32, rows)
 	for i := range rows {
-		row := w[i*cols : (i+1)*cols]
-		var maxAbs float32
-		for _, v := range row {
-			if v < 0 {
-				v = -v
-			}
-			if v > maxAbs {
-				maxAbs = v
-			}
-		}
-		if maxAbs == 0 {
-			scales[i] = 1
-			continue
-		}
-		s := maxAbs / 127.0
-		scales[i] = s
-		inv := 1.0 / s
-		off := i * cols
-		for j, v := range row {
-			x := math.Round(float64(v * inv))
-			if x > 127 {
-				x = 127
-			} else if x < -127 {
-				x = -127
-			}
-			q[off+j] = int8(x)
-		}
+		scales[i] = QuantizeRowInt8(w[i*cols:(i+1)*cols], q[i*cols:(i+1)*cols])
 	}
 	return q, scales
+}
+
+// QuantizeRowInt8 quantizes one f32 row into q (len cols) and returns its scale —
+// the single-row core of QuantizeRowsInt8 (bit-identical), exposed so a loader can
+// quantize each row as it is dequantized, without buffering the whole f32 matrix.
+// An all-zero row gets scale 1.
+func QuantizeRowInt8(row []float32, q []int8) (scale float32) {
+	var maxAbs float32
+	for _, v := range row {
+		if v < 0 {
+			v = -v
+		}
+		if v > maxAbs {
+			maxAbs = v
+		}
+	}
+	if maxAbs == 0 {
+		for j := range q {
+			q[j] = 0
+		}
+		return 1
+	}
+	s := maxAbs / 127.0
+	inv := 1.0 / s
+	for j, v := range row {
+		x := math.Round(float64(v * inv))
+		if x > 127 {
+			x = 127
+		} else if x < -127 {
+			x = -127
+		}
+		q[j] = int8(x)
+	}
+	return s
 }
 
 // DequantizeRowInt8 reconstructs one row into dst: dst[j] = float32(q[j])*scale.
@@ -185,42 +193,51 @@ func QuantizeGroupsInt4(w []float32, rows, cols, group int) (packed []byte, scal
 	packed = make([]byte, rows*bpr)
 	scales = make([]float32, rows*nGroups)
 	for i := range rows {
-		row := w[i*cols : (i+1)*cols]
-		for g := range nGroups {
-			ks := g * group
-			ke := min(ks+group, cols)
-			var maxAbs float32
-			for k := ks; k < ke; k++ {
-				if v := row[k]; v > maxAbs {
-					maxAbs = v
-				} else if -v > maxAbs {
-					maxAbs = -v
-				}
+		QuantizeGroupInt4Row(w[i*cols:(i+1)*cols], cols, group, packed[i*bpr:(i+1)*bpr], scales[i*nGroups:(i+1)*nGroups])
+	}
+	return packed, scales
+}
+
+// QuantizeGroupInt4Row quantizes one f32 row into packed (len (cols+1)/2) +
+// per-group scales (len ⌈cols/group⌉) — the single-row core of QuantizeGroupsInt4
+// (bit-identical), exposed so a loader can quantize each row as it is dequantized,
+// without buffering the whole f32 matrix. packed is assumed zeroed on entry (a
+// fresh per-row slice).
+func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales []float32) {
+	nGroups := (cols + group - 1) / group
+	for g := range nGroups {
+		ks := g * group
+		ke := min(ks+group, cols)
+		var maxAbs float32
+		for k := ks; k < ke; k++ {
+			if v := row[k]; v > maxAbs {
+				maxAbs = v
+			} else if -v > maxAbs {
+				maxAbs = -v
 			}
-			s := float32(1)
-			if maxAbs > 0 {
-				s = maxAbs / 7
+		}
+		s := float32(1)
+		if maxAbs > 0 {
+			s = maxAbs / 7
+		}
+		scales[g] = s
+		inv := 1.0 / s
+		for k := ks; k < ke; k++ {
+			q := int(math.Round(float64(row[k] * inv)))
+			if q > 7 {
+				q = 7
+			} else if q < -7 {
+				q = -7
 			}
-			scales[i*nGroups+g] = s
-			inv := 1.0 / s
-			for k := ks; k < ke; k++ {
-				q := int(math.Round(float64(row[k] * inv)))
-				if q > 7 {
-					q = 7
-				} else if q < -7 {
-					q = -7
-				}
-				nib := byte(q + 8) // [1,15]; 8 = zero
-				bi := i*bpr + k/2
-				if k&1 == 0 {
-					packed[bi] = (packed[bi] &^ 0x0F) | (nib & 0x0F)
-				} else {
-					packed[bi] = (packed[bi] &^ 0xF0) | (nib << 4)
-				}
+			nib := byte(q + 8) // [1,15]; 8 = zero
+			bi := k / 2
+			if k&1 == 0 {
+				packed[bi] = (packed[bi] &^ 0x0F) | (nib & 0x0F)
+			} else {
+				packed[bi] = (packed[bi] &^ 0xF0) | (nib << 4)
 			}
 		}
 	}
-	return packed, scales
 }
 
 // DequantizeRowInt4 reconstructs one row into dst[:cols] from its packed nibbles

@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	"math/rand"
 	"os"
 	"testing"
 )
@@ -30,7 +31,8 @@ func TestDequantQ8_0(t *testing.T) {
 	for i := 0; i < 32; i++ {
 		raw[2+i] = byte(int8(i - 16))
 	}
-	got := dequantQ8_0(raw, 32)
+	got := make([]float32, 32)
+	dequantQ8_0Block(raw, 0, got)
 	for i := 0; i < 32; i++ {
 		want := 2.0 * float32(i-16)
 		if got[i] != want {
@@ -50,7 +52,8 @@ func TestDequantQ5_0(t *testing.T) {
 	for j := 0; j < 16; j++ {
 		raw[6+j] = byte(j) | byte(15-j)<<4
 	}
-	got := dequantQ5_0(raw, 32)
+	got := make([]float32, 32)
+	dequantQ5_0Block(raw, 0, got)
 	for j := 0; j < 16; j++ {
 		if w := 2.0 * float32((j|0x10)-16); got[j] != w {
 			t.Errorf("Q5_0[%d] = %v, want %v", j, got[j], w)
@@ -61,7 +64,7 @@ func TestDequantQ5_0(t *testing.T) {
 	}
 	// And with all high bits 0 (qh=0): code = low nibble only.
 	binary.LittleEndian.PutUint32(raw[2:], 0)
-	got = dequantQ5_0(raw, 32)
+	dequantQ5_0Block(raw, 0, got)
 	if w := 2.0 * float32(0-16); got[0] != w {
 		t.Errorf("Q5_0 qh=0 [0] = %v, want %v", got[0], w)
 	}
@@ -77,13 +80,60 @@ func TestDequantQ4_0(t *testing.T) {
 		hi := byte(15 - j) // 15..0
 		raw[2+j] = lo | hi<<4
 	}
-	got := dequantQ4_0(raw, 32)
+	got := make([]float32, 32)
+	dequantQ4_0Block(raw, 0, got)
 	for j := 0; j < 16; j++ {
 		if w := 2.0 * float32(j-8); got[j] != w {
 			t.Errorf("Q4_0[%d] = %v, want %v", j, got[j], w)
 		}
 		if w := 2.0 * float32((15-j)-8); got[j+16] != w {
 			t.Errorf("Q4_0[%d] = %v, want %v", j+16, got[j+16], w)
+		}
+	}
+}
+
+// TestDequantRange_streamMatchesWhole: dequantizing a tensor in block-aligned
+// sub-ranges (the load-time streaming path, RowDequantizer) must be bit-identical
+// to dequantizing it all at once (Tensor) — same kernels, only the start offset
+// differs. Random raw bytes (their f16 scales may be NaN/Inf, so compare bit
+// patterns, not values) over several blocks of each supported ggml type.
+func TestDequantRange_streamMatchesWhole(t *testing.T) {
+	rng := rand.New(rand.NewSource(17))
+	types := []struct {
+		name    string
+		typ     uint32
+		blkByte int
+	}{
+		{"F32", ggmlTypeF32, 4}, {"F16", ggmlTypeF16, 2},
+		{"Q8_0", ggmlTypeQ8_0, 34}, {"Q4_0", ggmlTypeQ4_0, 18}, {"Q5_0", ggmlTypeQ5_0, 22},
+		{"Q6_K", ggmlTypeQ6_K, 210}, {"Q4_K", ggmlTypeQ4_K, 144},
+	}
+	for _, tc := range types {
+		bs, _ := ggmlBlockElems(tc.typ)
+		const nBlocks = 5
+		n := nBlocks * bs
+		raw := make([]byte, nBlocks*tc.blkByte)
+		for i := range raw {
+			raw[i] = byte(rng.Intn(256))
+		}
+		whole := make([]float32, n)
+		dequantRange(tc.typ, raw, 0, whole, bs)
+
+		// Re-dequant in chunks of 1, 2, then the rest of the blocks, at successive
+		// block-aligned starts — exercising the offset arithmetic.
+		streamed := make([]float32, n)
+		for start, step := 0, bs; start < n; start += step {
+			if start == 2*bs {
+				step = (nBlocks - 2) * bs // jump to the tail in one go
+			}
+			end := min(start+step, n)
+			dequantRange(tc.typ, raw, start, streamed[start:end], bs)
+		}
+		for i := range whole {
+			if math.Float32bits(whole[i]) != math.Float32bits(streamed[i]) {
+				t.Errorf("%s[%d]: streamed %x != whole %x", tc.name, i, math.Float32bits(streamed[i]), math.Float32bits(whole[i]))
+				break
+			}
 		}
 	}
 }
