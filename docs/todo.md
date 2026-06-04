@@ -86,9 +86,12 @@ cover the common laptop mixes, so low marginal value).
   race-clean. Further headroom is memory-bandwidth-bound (the f32 round-trip);
   a bigger win would be quantizing directly from the source quant to int4 without
   the f32 intermediate.
-- **NEON `dotI8` (SDOT)** for the W8A8 path off amd64 (scalar there today). NOTE:
-  must be authored + validated on **arm64 hardware** — `TestDotI8_matchesScalar`
-  runs there; writing it blind on amd64 risks an unvalidated runtime bug.
+- ✅ **NEON `dotI8`** — DONE: a base-ARMv8 SMULL/SADALP kernel (`dotI8NEON`) so
+  the W8A8 matmul is SIMD on arm64. Go's arm64 assembler has no signed-integer
+  widening multiply, so the three ops are raw-`WORD`-encoded — validated bit-exact
+  vs the scalar reference **under qemu-aarch64-static** (the project ships no
+  arm64 CI, so emulation is the gate). A faster SDOT variant would need ARMv8.2
+  DotProd + feature detection.
 - ~~mmap safetensors on the fs.FS path~~ — N/A: real directories already mmap
   (`openCheckpointMmap`); `fs.FS` is heap by necessity (no fd) and only serves
   small embedded test models.
