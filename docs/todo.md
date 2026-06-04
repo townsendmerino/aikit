@@ -72,15 +72,39 @@ already covers the dominant laptop quant, so this is low marginal value).
 
 ### 3. Incremental perf — incremental · S–M
 
-- A NEON `dotI8` (SDOT) so the W8A8 path is SIMD off amd64 (it's scalar there
-  today; mirror the f32 `dotNEON` path).
-- mmap safetensors on the `fs.FS` path GGUF-style.
+- **NEON `dotI8` (SDOT)** for the W8A8 path off amd64 (scalar there today; mirror
+  the f32 `dotNEON`). NOTE: must be authored + validated on arm64 hardware — the
+  `TestDotI8_matchesScalar` bit-exact test runs there; writing it blind on amd64
+  risks an unvalidated runtime bug, so this is an arm64-machine task.
+- ~~mmap safetensors on the fs.FS path~~ — N/A: the real-directory safetensors
+  path already mmaps (`openCheckpointMmap` → `OpenSafetensorsMmap`/sharded); the
+  `fs.FS` path is heap by necessity (`fs.File` exposes no fd to mmap) and only
+  serves small embedded test models.
+
+### 3b. Faster GGUF/12B load — incremental · S
+
+The Mellum2-12B GGUF takes ~2 min to load (`--quant int4`): every tensor is
+dequantized then re-quantized, scalar, one at a time. The per-tensor quantization
+(esp. the 1792 expert slices) is embarrassingly parallel — fan it out across
+cores. Validatable here (measure load time).
 
 ### 4. GPTQ / AWQ (safetensors-resident int4) — broadens coverage · M
 
-"The other half of G7." Different packing (`qweight`/`qzeros`/`scales`/`g_idx`),
-same dequant idea; the safetensors loader already handles the container. Adds the
-HF-hosted int4 ecosystem.
+"The other half of G7." Different packing (`qweight`/`qzeros`/`scales`/`g_idx`,
+asymmetric group-quant with a zero-point), same dequant-to-f32 idea; the
+safetensors loader already handles the container. Adds the HF-hosted int4
+ecosystem. Validatable here against a small GPTQ checkpoint (e.g. a TinyLlama
+GPTQ vs the committed f32 llama golden).
+
+### 4b. Mellum2 polish — incremental · S
+
+- **Exact `mellum2` tokenizer parity.** The GGUF byte-level tokenizer falls to
+  GPT-2-style defaults for `tokenizer.ggml.pre == "mellum2"` (good enough for
+  coherent output, not byte-exact). Pin a golden from the model's `tokenizer.json`
+  and map its pretokenizer regex.
+- **More GGUF architectures.** `ggufConfig` now dispatches `llama` + `mellum`;
+  qwen2/qwen3/gemma GGUFs are the same pattern (map `<arch>.*` metadata onto the
+  existing descriptors) once a fixture is on hand.
 
 ### 5. Shared-expert MoE + longrope/dynamic RoPE — lowest urgency · S–M
 
