@@ -143,14 +143,23 @@ IQ3_XXS/S, IQ1_* — which decode 8-element patterns from a 256/512-entry grid
 table (a chunk of static data + per-type bit-unpacking) rather than a flat 16-entry
 codebook. Meaningfully more work, and rare on laptops. Low marginal value.
 
-### 3. longrope/dynamic RoPE scalings — lowest urgency · S
-The remaining RoPE scalings: **longrope/su** (Phi-3 long-context) and **dynamic**
-NTK. Both are sequence-length-dependent (HF picks the short/long factor — or
-rescales the base — by the actual seq len), which is an awkward fit for this
-package's precompute-once inv_freq table; validatable cheaply against the HF
-formula like YaRN was. (Shared-expert MoE — Qwen-MoE `qwen2_moe` — is **done**, see
-Shipped. DeepSeek-MoE adds a different shared-expert variant + MLA attention, a
-bigger separate effort.)
+### 3. longrope/dynamic RoPE scalings — parked (no consumer) · S
+The remaining RoPE scalings, both blocked on the same thing — **there is no
+registered architecture that uses them**, so adding them now is dead code:
+- **longrope/su** is Phi-3-only, and Phi-3 isn't a registered `model_type` (it
+  needs its own adapter — partial rotary, etc.). longrope should land *with* a
+  Phi-3 arch, not before it.
+- **dynamic** NTK is legacy (superseded by llama3/yarn) and is sequence-length-
+  dependent; statically, within the trained window it equals base RoPE (identity),
+  and this package precomputes inv_freq once. Low payoff; a llama checkpoint that
+  sets `rope_scaling.type=dynamic` currently errors — a one-line "accept + base
+  RoPE within window" is the only cheap win, if ever wanted.
+
+Both are also fundamentally awkward for a precompute-once inv_freq table (they
+re-pick the factor / rescale the base by actual seq len). Real support = seq-aware
+RoPE rebuilding, a notable change to the immutable-Architecture design — not worth
+it for the lowest-urgency item with no current consumer. (Shared-expert MoE —
+Qwen-MoE `qwen2_moe` — is **done**, see Shipped.)
 
 ---
 
