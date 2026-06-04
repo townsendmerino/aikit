@@ -1,0 +1,66 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  core:
+    name: root module (pure-Go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "gofmt needed on:"; echo "$unformatted"; exit 1
+          fi
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      # Core-cleanliness guard (migration-plan §7/§9): the root module must
+      # stay pure-Go — no cgo WebGPU, no tree-sitter. Those live in the
+      # goinfer/gpu and aikit/chunk/treesitter modules respectively.
+      - name: no cgo deps in core graph
+        run: |
+          leak="$(go list -deps ./... | grep -Ei 'webgpu|gotreesitter' || true)"
+          if [ -n "$leak" ]; then
+            echo "core module pulled a quarantined dep:"; echo "$leak"; exit 1
+          fi
+
+      # CGO_ENABLED=0 must build — proves the core is genuinely cgo-free.
+      - name: build with cgo disabled
+        env:
+          CGO_ENABLED: "0"
+        run: go build ./...
+
+      # Model-dependent tests skip cleanly when assets are absent (as on CI).
+      - name: test (race)
+        run: go test -race ./...
+
+  treesitter:
+    name: chunk/treesitter submodule
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+      # Separate module; resolves the published aikit from the proxy. cgo is
+      # expected here (gotreesitter) — that's why it's quarantined.
+      - name: build + test
+        working-directory: chunk/treesitter
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./...
