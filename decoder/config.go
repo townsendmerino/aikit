@@ -46,6 +46,9 @@ type Config struct {
 	NumExpertsPerTok    int   `json:"num_experts_per_tok"`
 	NormTopKProb        *bool `json:"norm_topk_prob"`
 	MoeIntermediateSize int   `json:"moe_intermediate_size"`
+	// SharedExpertIntermediateSize is the always-on shared expert's FFN width
+	// (Qwen-MoE/Qwen2-MoE). 0/absent ⇒ no shared expert.
+	SharedExpertIntermediateSize int `json:"shared_expert_intermediate_size"`
 
 	// RopeScaling is HF's rope_scaling object (llama3 / linear / yarn / …).
 	// Plain Llama-3.0 and Qwen3 leave it null; Llama-3.1+/3.2 set it. Kept raw
@@ -212,6 +215,28 @@ func (c *Config) validateMixtral() error {
 		return fmt.Errorf("decoder(mixtral): num_local_experts must be >0, got %d", c.NumLocalExperts)
 	case c.NumExpertsPerTok <= 0 || c.NumExpertsPerTok > c.NumLocalExperts:
 		return fmt.Errorf("decoder(mixtral): num_experts_per_tok %d out of range (1..%d)", c.NumExpertsPerTok, c.NumLocalExperts)
+	}
+	return nil
+}
+
+// validateQwen2Moe pins the Qwen2-MoE assumptions: the qwen2 dense constraints
+// (llama + q/k/v bias) plus a valid sparse MoE on every layer (num_experts /
+// num_experts_per_tok / moe_intermediate_size) and an always-on shared expert
+// (shared_expert_intermediate_size). decoder_sparse_step must be 1 (every layer
+// sparse) — the only configuration shipped by the Qwen-MoE family.
+func (c *Config) validateQwen2Moe() error {
+	if err := c.validateLlama(); err != nil {
+		return err
+	}
+	switch {
+	case c.NumExperts <= 0:
+		return fmt.Errorf("decoder(qwen2_moe): num_experts must be >0, got %d", c.NumExperts)
+	case c.NumExpertsPerTok <= 0 || c.NumExpertsPerTok > c.NumExperts:
+		return fmt.Errorf("decoder(qwen2_moe): num_experts_per_tok %d out of range (1..%d)", c.NumExpertsPerTok, c.NumExperts)
+	case c.MoeIntermediateSize <= 0:
+		return fmt.Errorf("decoder(qwen2_moe): moe_intermediate_size must be >0, got %d", c.MoeIntermediateSize)
+	case c.SharedExpertIntermediateSize <= 0:
+		return fmt.Errorf("decoder(qwen2_moe): shared_expert_intermediate_size must be >0, got %d", c.SharedExpertIntermediateSize)
 	}
 	return nil
 }

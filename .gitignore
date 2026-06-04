@@ -50,6 +50,13 @@ testdata/gemma-3-270m-sharded
 # Qwen3 parity model — per-machine, downloaded via huggingface_hub; never committed.
 testdata/qwen3-1.7b
 
+# Tiny random Qwen1.5-MoE (qwen2_moe shared-expert MoE parity) — per-machine,
+# downloaded via huggingface_hub (katuni4ka/tiny-random-qwen1.5-moe, ~49 MB,
+# random weights). TestQwen2Moe_forwardParity validates aikit's forward against the
+# HF f32 logits; only the small golden is committed, never the model or full dump.
+testdata/tiny-qwen2-moe
+testdata/qwen2moe_forward_full.json
+
 # Qwen2.5-0.5B GGUF (qwen2 GGUF-architecture parity) — per-machine, downloaded via
 # huggingface_hub (Qwen/Qwen2.5-0.5B-Instruct-GGUF, Q8_0, ~0.6 GB). Validated by
 # TestGGUF_qwen2_parity against the committed qwen2 f32 oracle; never committed.

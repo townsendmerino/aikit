@@ -84,6 +84,14 @@ table. Pinned **bit-exact (Δ=0) vs llama.cpp's `gguf` Python reference**
 (`TestIQDequant_matchesReference`, golden from `scripts/pin_iq_dequant.py`) — no
 small-model f32 oracle needed. Only the grid-codebook IQ2*/IQ3* remain.
 
+### Shared-expert MoE (Qwen-MoE / qwen2_moe) ✅
+New architecture: qwen2 attention (q/k/v bias) + sparse MoE on every layer + an
+always-on shared expert (gated SwiGLU scaled by `sigmoid(shared_gate·h)`, added to
+the routed sum). Adds `MoEConfig.SharedIntermediateDim` + the shared expert/gate
+weights + the `qwen2_moe` descriptor/schema. Structurally validated vs HF on a tiny
+random Qwen1.5-MoE — argmax + every sampled logit match, cosine ~1.0
+(`TestQwen2Moe_forwardParity`). Unlocks Qwen1.5-MoE-A2.7B / Qwen2-57B-A14B.
+
 ### Gemma 3 GGUF architecture ✅
 The most involved arch: `ggufConfig` dispatches `gemma3`, the loader maps gemma3.*
 onto the descriptor + loads the sandwich post-norms (`post_attention_norm` /
@@ -135,16 +143,20 @@ IQ3_XXS/S, IQ1_* — which decode 8-element patterns from a 256/512-entry grid
 table (a chunk of static data + per-type bit-unpacking) rather than a flat 16-entry
 codebook. Meaningfully more work, and rare on laptops. Low marginal value.
 
-### 3. Shared-expert MoE + longrope/dynamic RoPE — lowest urgency · S–M
-A couple more `MoEConfig` knobs for shared-expert MoE (Qwen-MoE/DeepSeek), and the
-remaining RoPE scalings (longrope/su, dynamic). Cleanly scoped, only pays off for
-those families. (YaRN is done.)
+### 3. longrope/dynamic RoPE scalings — lowest urgency · S
+The remaining RoPE scalings: **longrope/su** (Phi-3 long-context) and **dynamic**
+NTK. Both are sequence-length-dependent (HF picks the short/long factor — or
+rescales the base — by the actual seq len), which is an awkward fit for this
+package's precompute-once inv_freq table; validatable cheaply against the HF
+formula like YaRN was. (Shared-expert MoE — Qwen-MoE `qwen2_moe` — is **done**, see
+Shipped. DeepSeek-MoE adds a different shared-expert variant + MLA attention, a
+bigger separate effort.)
 
 ---
 
 ## Models supported (decoder)
 
-Gemma 3 · Qwen2.5/3 · Llama-2/3 · Mistral · GPT-2 · Mixtral · **Mellum2**.
+Gemma 3 · Qwen2.5/3 · Qwen-MoE · Llama-2/3 · Mistral · GPT-2 · Mixtral · **Mellum2**.
 Checkpoint formats: f32/bf16/f16 safetensors (single + sharded), **GPTQ + AWQ**
 int4 safetensors, and **GGUF** (`llama` + `qwen2` + `qwen3` + `gemma3` + `mellum` archs; F32/F16/Q8_0/
 Q4_0/Q5_0/Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/IQ4_NL/IQ4_XS). Any of these re-quantizes to

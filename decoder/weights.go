@@ -56,6 +56,11 @@ type LayerWeights struct {
 	// UpProj/DownProj above are unused in that case.
 	Router  weightMat       // [NumExperts, HiddenDim] router/gate logits
 	Experts []expertWeights // [NumExperts] gated MLPs
+
+	// Shared expert (Qwen-MoE / Qwen2-MoE; set when arch.MoE.SharedIntermediateDim
+	// > 0). An always-on gated MLP scaled by sigmoid(SharedGate·h).
+	SharedExpert expertWeights // gated SwiGLU MLP at SharedIntermediateDim
+	SharedGate   weightMat     // [1, HiddenDim] → sigmoid scalar gate
 }
 
 // expertWeights is one MoE expert: a gated (SwiGLU) MLP with no biases.
@@ -98,6 +103,9 @@ func (w *Weights) matmulWeights() []*weightMat {
 		for e := range l.Experts {
 			ex := &l.Experts[e]
 			ms = append(ms, &ex.Gate, &ex.Up, &ex.Down)
+		}
+		if l.SharedExpert.Gate.rows > 0 {
+			ms = append(ms, &l.SharedExpert.Gate, &l.SharedExpert.Up, &l.SharedExpert.Down, &l.SharedGate)
 		}
 	}
 	return ms
@@ -429,6 +437,24 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 					return err
 				}
 			}
+			// Shared expert (Qwen2-MoE): an always-on gated MLP + a scalar sigmoid
+			// gate. s.SharedGate/Up/Down are the expert's gate/up/down_proj;
+			// s.SharedExpertGate is the [1, hidden] sigmoid gate.
+			if arch.MoE.SharedIntermediateDim > 0 {
+				sInter := arch.MoE.SharedIntermediateDim
+				if l.SharedExpert.Gate, err = loadMatQ(tensorName(i, s.SharedGate), sInter, hd); err != nil {
+					return err
+				}
+				if l.SharedExpert.Up, err = loadMatQ(tensorName(i, s.SharedUp), sInter, hd); err != nil {
+					return err
+				}
+				if l.SharedExpert.Down, err = loadMatQ(tensorName(i, s.SharedDown), hd, sInter); err != nil {
+					return err
+				}
+				if l.SharedGate, err = loadMat(st, tensorName(i, s.SharedExpertGate), 1, hd); err != nil {
+					return err
+				}
+			}
 			return nil
 		}
 		// Gated MLP (GeGLU / SwiGLU — same weights, activation differs).
@@ -532,6 +558,10 @@ type tensorSchema struct {
 	// contain a single %d for the expert index. Empty ⇒ dense FFN.
 	Router                           string
 	ExpertGate, ExpertUp, ExpertDown string
+	// Shared expert (Qwen2-MoE): an always-on gated MLP + a sigmoid gate. Empty ⇒
+	// no shared expert.
+	SharedGate, SharedUp, SharedDown string
+	SharedExpertGate                 string
 }
 
 // gemma3TensorSchema: tied head, 4-norm sandwich, QK-norm.
@@ -670,6 +700,32 @@ var qwen2TensorSchema = tensorSchema{
 	DownProj:     "mlp.down_proj.weight",
 	PreMLPNorm:   "post_attention_layernorm.weight", // HF name; positionally the pre-MLP norm
 	PostMLPNorm:  "",                                // Pre2: no post-MLP norm
+}
+
+// qwen2MoeTensorSchema: qwen2 attention (q/k/v bias) with the FFN replaced by a
+// sparse MoE (router mlp.gate + per-expert mlp.experts.%d.*) plus an always-on
+// shared expert (mlp.shared_expert.* + the mlp.shared_expert_gate sigmoid gate).
+var qwen2MoeTensorSchema = tensorSchema{
+	Embed:            "model.embed_tokens.weight",
+	LMHead:           "lm_head.weight",
+	FinalNorm:        "model.norm.weight",
+	QProj:            "self_attn.q_proj.weight",
+	KProj:            "self_attn.k_proj.weight",
+	VProj:            "self_attn.v_proj.weight",
+	OProj:            "self_attn.o_proj.weight",
+	QBias:            "self_attn.q_proj.bias",
+	KBias:            "self_attn.k_proj.bias",
+	VBias:            "self_attn.v_proj.bias",
+	PreAttnNorm:      "input_layernorm.weight",
+	PreMLPNorm:       "post_attention_layernorm.weight",
+	Router:           "mlp.gate.weight",
+	ExpertGate:       "mlp.experts.%d.gate_proj.weight",
+	ExpertUp:         "mlp.experts.%d.up_proj.weight",
+	ExpertDown:       "mlp.experts.%d.down_proj.weight",
+	SharedGate:       "mlp.shared_expert.gate_proj.weight",
+	SharedUp:         "mlp.shared_expert.up_proj.weight",
+	SharedDown:       "mlp.shared_expert.down_proj.weight",
+	SharedExpertGate: "mlp.shared_expert_gate.weight",
 }
 
 // conv1DTransposed loads a GPT-2 Conv1D weight and returns it transposed to the

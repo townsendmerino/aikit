@@ -58,6 +58,16 @@ it.
   expected (`TestGGUF_Q5_K_M_parity` / `TestGGUF_Q3_K_M_parity` /
   `TestGGUF_Q2_K_parity`). The supported K-quants are now Q2_K/Q3_K/Q4_K/Q5_K/Q6_K
   (only the codebook IQ* types remain unimplemented).
+- **Shared-expert MoE (Qwen-MoE / `qwen2_moe`).** A new architecture: qwen2's
+  attention (q/k/v bias, no QK-norm) with the FFN replaced on every layer by a
+  sparse router + top-k experts **plus an always-on shared expert** — a gated
+  SwiGLU MLP at `shared_expert_intermediate_size`, scaled by
+  `sigmoid(shared_gate·h)` and added to the routed sum (HF Qwen2MoeSparseMoeBlock).
+  Adds `MoEConfig.SharedIntermediateDim`, the `SharedExpert`/`SharedGate` weights,
+  and the `qwen2_moe` descriptor + tensor schema (`mlp.shared_expert.*` /
+  `mlp.shared_expert_gate`). Validated structurally against HF on a tiny random
+  Qwen1.5-MoE checkpoint — argmax + every sampled logit match, **cosine ~1.0**
+  (`TestQwen2Moe_forwardParity`). Unlocks Qwen1.5-MoE-A2.7B / Qwen2-57B-A14B.
 - **Gemma 3 GGUF architecture.** The most involved GGUF arch: `ggufConfig`
   dispatches `gemma3`/`gemma3_text`, and the loader maps the gemma3.* metadata onto
   the existing descriptor — sandwich norms (the new `post_attention_norm` /

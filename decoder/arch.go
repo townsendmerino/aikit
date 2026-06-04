@@ -82,6 +82,13 @@ type MoEConfig struct {
 	// (896 vs the vestigial 7168), so the expert width is tracked here rather than
 	// read from arch.IntermediateDim.
 	IntermediateDim int
+
+	// SharedIntermediateDim is the FFN width of the always-on shared expert
+	// (Qwen-MoE / Qwen2-MoE: shared_expert_intermediate_size). 0 means no shared
+	// expert (Mixtral/Mellum). When set, every token additionally runs a gated
+	// SwiGLU shared expert scaled by sigmoid(shared_gate·h), added to the routed
+	// sum.
+	SharedIntermediateDim int
 }
 
 // NormKind selects the normalization. Only RMSNorm is implemented today;

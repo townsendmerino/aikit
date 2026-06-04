@@ -65,26 +65,43 @@ func moeMLP(h []float32, lw *LayerWeights, arch *Architecture, be Backend) ([]fl
 
 	// Weighted sum of the chosen experts (each a SwiGLU MLP). Experts use the
 	// MoE expert width (Mellum's moe_intermediate_size), not the dense one.
-	inter, hidden := arch.MoE.IntermediateDim, arch.HiddenDim
+	hidden := arch.HiddenDim
 	out := make([]float32, hidden)
-	gate := make([]float32, inter)
-	up := make([]float32, inter)
 	expOut := make([]float32, hidden)
 	for j, e := range idx {
 		ex := &lw.Experts[e]
-		ex.Gate.matmul(be, h, gate, 1)
-		ex.Up.matmul(be, h, up, 1)
-		mid := gate // reuse
-		for i := range mid {
-			mid[i] = silu(gate[i]) * up[i]
-		}
-		ex.Down.matmul(be, mid, expOut, 1)
+		swiGLUExpert(ex, h, expOut, moe.IntermediateDim, be)
 		w := wts[j]
 		for i := range out {
 			out[i] += w * expOut[i]
 		}
 	}
+
+	// Shared expert (Qwen2-MoE): an always-on gated MLP whose output is scaled by
+	// a per-token sigmoid gate and added to the routed sum.
+	if moe.SharedIntermediateDim > 0 {
+		swiGLUExpert(&lw.SharedExpert, h, expOut, moe.SharedIntermediateDim, be)
+		var gl [1]float32
+		lw.SharedGate.matmul(be, h, gl[:], 1)
+		g := float32(1.0 / (1.0 + math.Exp(-float64(gl[0])))) // sigmoid
+		for i := range out {
+			out[i] += g * expOut[i]
+		}
+	}
 	return out, nil
+}
+
+// swiGLUExpert evaluates one gated (SwiGLU) expert MLP of the given intermediate
+// width into dst[:hidden]: dst = Down·(silu(Gate·h) ⊙ Up·h).
+func swiGLUExpert(ex *expertWeights, h, dst []float32, inter int, be Backend) {
+	gate := make([]float32, inter)
+	up := make([]float32, inter)
+	ex.Gate.matmul(be, h, gate, 1)
+	ex.Up.matmul(be, h, up, 1)
+	for i := range gate {
+		gate[i] = silu(gate[i]) * up[i]
+	}
+	ex.Down.matmul(be, gate, dst, 1)
 }
 
 // softmaxF32 returns the softmax of xs (float64 accumulation, max-shifted for
