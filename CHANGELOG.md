@@ -35,16 +35,18 @@ it.
 
 ### Added
 
-- **GGUF Q5_K + Q3_K dequant.** Two more K-quant block types on the existing GGUF
-  seam, so `Q5_K_M` and `Q3_K_M` files (and any mix using them) load: `embed`
-  gained `dequantQ5KBlock` (the Q4_K scale/min packing plus a 5th bit per element
-  from `qh`) and `dequantQ3KBlock` (the 6-bit-scale aux unpack + the `hmask` 3rd
-  bit lifting each 2-bit code to [−4,3]). Validated against the committed f32
-  llama oracle on real TinyLlama mixes — Q5_K_M **cosine 0.9991**, Q3_K_M **0.9925**
-  (argmax preserved), slotting between Q4_K_M (0.9975) and Q8_0 (0.99996) as
-  expected (`TestGGUF_Q5_K_M_parity` / `TestGGUF_Q3_K_M_parity`). The supported
-  K-quants are now Q3_K/Q4_K/Q5_K/Q6_K (Q2_K and the codebook IQ* types remain
-  unimplemented).
+- **GGUF Q2_K + Q3_K + Q5_K dequant.** Three more K-quant block types on the
+  existing GGUF seam, so `Q2_K` / `Q3_K_M` / `Q5_K_M` files (and any mix using
+  them) load: `embed` gained `dequantQ5KBlock` (the Q4_K scale/min packing plus a
+  5th bit per element from `qh`), `dequantQ3KBlock` (the 6-bit-scale aux unpack +
+  the `hmask` 3rd bit lifting each 2-bit code to [−4,3]), and `dequantQ2KBlock`
+  (4-bit scale+min per sub-block, 2-bit quants — the coarsest, no high-bit mask).
+  Validated against the committed f32 llama oracle on real TinyLlama mixes —
+  Q5_K_M **cosine 0.9991**, Q3_K_M **0.9925**, Q2_K **0.9832** (argmax preserved
+  throughout), slotting in order between Q4_K_M (0.9975) and Q8_0 (0.99996) as
+  expected (`TestGGUF_Q5_K_M_parity` / `TestGGUF_Q3_K_M_parity` /
+  `TestGGUF_Q2_K_parity`). The supported K-quants are now Q2_K/Q3_K/Q4_K/Q5_K/Q6_K
+  (only the codebook IQ* types remain unimplemented).
 - **Qwen2 GGUF architecture.** `ggufConfig` now dispatches `qwen2` (Qwen2/Qwen2.5)
   in addition to `llama` and `mellum`: the `qwen2.*` metadata maps onto the same
   descriptor, and the GGUF weight builder loads the q/k/v projection **biases**

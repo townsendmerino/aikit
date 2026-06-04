@@ -161,6 +161,13 @@ func TestGGUF_Q3_K_M_parity(t *testing.T) {
 	testGGUFParity(t, "../testdata/tinyllama-gguf/tinyllama-1.1b-chat-v1.0.Q3_K_M.gguf", 0.98)
 }
 
+// Q2_K mixes Q2_K (most weights) with Q3_K/Q4_K/Q6_K for a few — exercises the
+// Q2_K dequant (4-bit scale+min per sub-block, 2-bit quants). The coarsest quant,
+// so the loosest floor; argmax must still hold.
+func TestGGUF_Q2_K_parity(t *testing.T) {
+	testGGUFParity(t, "../testdata/tinyllama-gguf/tinyllama-1.1b-chat-v1.0.Q2_K.gguf", 0.97)
+}
+
 // GGUF + resident int8 (streaming-quant). Loads the Q8_0 GGUF with
 // Options{Quant:"int8"}: each tensor is dequantized then re-quantized to per-row
 // int8 as it loads — the f32 of one tensor is freed before the next, so there is

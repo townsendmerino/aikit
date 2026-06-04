@@ -106,7 +106,7 @@ func TestDequantRange_streamMatchesWhole(t *testing.T) {
 	}{
 		{"F32", ggmlTypeF32, 4}, {"F16", ggmlTypeF16, 2},
 		{"Q8_0", ggmlTypeQ8_0, 34}, {"Q4_0", ggmlTypeQ4_0, 18}, {"Q5_0", ggmlTypeQ5_0, 22},
-		{"Q3_K", ggmlTypeQ3_K, 110}, {"Q4_K", ggmlTypeQ4_K, 144},
+		{"Q2_K", ggmlTypeQ2_K, 84}, {"Q3_K", ggmlTypeQ3_K, 110}, {"Q4_K", ggmlTypeQ4_K, 144},
 		{"Q5_K", ggmlTypeQ5_K, 176}, {"Q6_K", ggmlTypeQ6_K, 210},
 	}
 	for _, tc := range types {

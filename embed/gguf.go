@@ -13,8 +13,8 @@ import (
 // quantized models laptop-runnable. This parses the header, metadata key-values
 // (which carry the architecture config), and the tensor directory, and
 // dequantizes the common block types to float32: F32, F16, Q8_0, Q4_0, Q5_0,
-// and the K-quants Q3_K/Q4_K/Q5_K/Q6_K (so Q3_K_M / Q4_K_M / Q5_K_M-style mixes
-// load). Tensor returns a clear error for an unimplemented type (Q2_K/IQ*).
+// and the K-quants Q2_K/Q3_K/Q4_K/Q5_K/Q6_K (so Q2_K / Q3_K_M / Q4_K_M / Q5_K_M
+// -style mixes load). Tensor returns a clear error for an unimplemented type (IQ*).
 //
 // Format reference: https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
 
@@ -27,6 +27,7 @@ const (
 	ggmlTypeQ4_0 uint32 = 2
 	ggmlTypeQ5_0 uint32 = 6
 	ggmlTypeQ8_0 uint32 = 8
+	ggmlTypeQ2_K uint32 = 10
 	ggmlTypeQ3_K uint32 = 11
 	ggmlTypeQ4_K uint32 = 12
 	ggmlTypeQ5_K uint32 = 13
@@ -350,7 +351,7 @@ func (g *GGUFFile) RowDequantizer(name string) (dims []int, into func(start int,
 	}
 	bs, ok := ggmlBlockElems(info.typ)
 	if !ok {
-		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0/Q5_0/Q3_K/Q4_K/Q5_K/Q6_K)", name, info.typ)
+		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0/Q5_0/Q2_K/Q3_K/Q4_K/Q5_K/Q6_K)", name, info.typ)
 	}
 	raw, err := g.tensorBytes(info, n)
 	if err != nil {
@@ -377,7 +378,7 @@ func ggmlBlockElems(typ uint32) (int, bool) {
 		return 1, true
 	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ5_0:
 		return 32, true
-	case ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K:
+	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K:
 		return qkK, true
 	default:
 		return 0, false
@@ -408,6 +409,8 @@ func dequantRange(typ uint32, raw []byte, start int, dst []float32, bs int) {
 				dequantQ4_0Block(raw, first+k, out)
 			case ggmlTypeQ5_0:
 				dequantQ5_0Block(raw, first+k, out)
+			case ggmlTypeQ2_K:
+				dequantQ2KBlock(raw, first+k, out)
 			case ggmlTypeQ3_K:
 				dequantQ3KBlock(raw, first+k, out)
 			case ggmlTypeQ4_K:
@@ -443,12 +446,14 @@ func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
 		default: // Q5_0
 			nbytes = blocks * 22 // 2-byte f16 scale + 4-byte high bits + 16 packed nibbles
 		}
-	case ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K:
+	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K:
 		if n%qkK != 0 {
 			return nil, fmt.Errorf("element count %d not a multiple of %d (super-block)", n, qkK)
 		}
 		sb := n / qkK
 		switch info.typ {
+		case ggmlTypeQ2_K:
+			nbytes = sb * 84 // scales[16] + qs[64] + d + dmin (f16 each)
 		case ggmlTypeQ3_K:
 			nbytes = sb * 110 // hmask[32] + qs[64] + scales[12] + d(f16)
 		case ggmlTypeQ4_K:
@@ -620,6 +625,42 @@ func dequantQ5KBlock(raw []byte, sb int, out []float32) {
 		}
 		u1 <<= 2
 		u2 <<= 2
+	}
+}
+
+// dequantQ2KBlock dequantizes one 256-element Q2_K super-block (sb) into out[:256].
+// Layout (84 bytes): scales[16] (each byte a 4-bit scale in the low nibble and a
+// 4-bit min in the high nibble), qs[64] (2-bit quants), d (f16 super-scale), dmin
+// (f16 super-min). Mirrors ggml's dequantize_row_q2_K: y = d·scale·q2 − dmin·min,
+// q2 the 2-bit code. No high-bit mask (unlike Q3_K) — the coarsest K-quant.
+func dequantQ2KBlock(raw []byte, sb int, out []float32) {
+	base := sb * 84
+	scales := raw[base : base+16]
+	qs := raw[base+16 : base+80]
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+80:]))
+	dmin := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+82:]))
+
+	yi, is := 0, 0
+	for n := 0; n < 2; n++ { // two 128-element halves
+		qb := n * 32 // qs advances by 32 each half
+		shift := uint(0)
+		for j := 0; j < 4; j++ {
+			sc := scales[is]
+			is++
+			dl, ml := d*float32(sc&0x0F), dmin*float32(sc>>4)
+			for l := 0; l < 16; l++ {
+				out[yi] = dl*float32((qs[qb+l]>>shift)&3) - ml
+				yi++
+			}
+			sc = scales[is]
+			is++
+			dl, ml = d*float32(sc&0x0F), dmin*float32(sc>>4)
+			for l := 0; l < 16; l++ {
+				out[yi] = dl*float32((qs[qb+l+16]>>shift)&3) - ml
+				yi++
+			}
+			shift += 2
+		}
 	}
 }
 
