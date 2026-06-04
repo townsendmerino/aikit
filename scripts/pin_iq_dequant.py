@@ -55,11 +55,24 @@ def build_iq4xs(rng: np.random.Generator, nblocks: int) -> bytes:
     return bytes(out)
 
 
+def build_grid_blocks(rng: np.random.Generator, nblocks: int, type_size: int) -> bytes:
+    # IQ2_S / IQ3_S: a fixed clean f16 scale then random payload (grid indices,
+    # sign bits, sub-scales) — the codebook lookup + sign unpack is exercised
+    # regardless of which entries get hit.
+    out = bytearray()
+    for b in range(nblocks):
+        out += f16le(CLEAN_D[b % len(CLEAN_D)])
+        out += bytes(rng.integers(0, 256, type_size - 2, dtype=np.uint8).tolist())
+    return bytes(out)
+
+
 def main() -> int:
     rng = np.random.default_rng(42)
     specs = [
         ("IQ4_NL", Q.IQ4_NL, 18, 32, build_iq4nl(rng, 4)),
         ("IQ4_XS", Q.IQ4_XS, 136, 256, build_iq4xs(rng, 3)),
+        ("IQ2_S", Q.IQ2_S, 82, 256, build_grid_blocks(rng, 3, 82)),
+        ("IQ3_S", Q.IQ3_S, 110, 256, build_grid_blocks(rng, 3, 110)),
     ]
     cases = []
     for name, qtype, blk, nper, raw in specs:

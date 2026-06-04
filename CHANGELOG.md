@@ -35,6 +35,15 @@ it.
 
 ### Added
 
+- **GGUF IQ2_S + IQ3_S dequant (grid-codebook quants).** The two grid-codebook IQ
+  types: each block packs grid indices + packed sign bits + 4-bit sub-scales, and
+  the kernel looks up an 8-wide (IQ2_S) or 4-wide (IQ3_S) int8 pattern from a large
+  codebook, applies the per-element sign, and scales (`dequantIQ2SBlock` /
+  `dequantIQ3SBlock`). The grids (IQ2_S 1024×8, IQ3_S 512×4) are generated
+  byte-exact from llama.cpp's `gguf` reference into `embed/iq_grids.go`
+  (`scripts/gen_iq_grids.py`), not hand-transcribed. Pinned **bit-exact (Δ=0) vs
+  the `gguf` reference** (`TestIQDequant_matchesReference`). Remaining unimplemented:
+  IQ1_*/IQ2_XXS/IQ2_XS/IQ3_XXS (rarer extreme-low-bit grid quants).
 - **GGUF IQ4_NL + IQ4_XS dequant (codebook quants).** The two tractable IQ types
   — both built on a shared 16-entry non-linear codebook (`kvaluesIQ4NL`) rather
   than the grid lookups of the IQ2*/IQ3* family. `dequantIQ4NLBlock` is a 32-block

@@ -14,8 +14,9 @@ import (
 // (which carry the architecture config), and the tensor directory, and
 // dequantizes the common block types to float32: F32, F16, Q8_0, Q4_0, Q5_0,
 // the K-quants Q2_K/Q3_K/Q4_K/Q5_K/Q6_K, and the codebook quants IQ4_NL/IQ4_XS
-// (so Q2_K / Q3_K_M / Q4_K_M / Q5_K_M / IQ4_XS-style mixes load). Tensor returns a
-// clear error for an unimplemented type (the grid-codebook IQ2*/IQ3* family).
+// plus the grid-codebook IQ2_S/IQ3_S (so Q2_K / Q3_K_M / Q4_K_M / Q5_K_M / IQ4_XS
+// / IQ3_S / IQ2_S-style mixes load). Tensor returns a clear error for an
+// unimplemented type (the remaining IQ1*/IQ2_XXS/IQ2_XS/IQ3_XXS grid quants).
 //
 // Format reference: https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
 
@@ -34,6 +35,8 @@ const (
 	ggmlTypeQ5_K  uint32 = 13
 	ggmlTypeQ6_K  uint32 = 14
 	ggmlTypeIQ4NL uint32 = 20
+	ggmlTypeIQ3S  uint32 = 21
+	ggmlTypeIQ2S  uint32 = 22
 	ggmlTypeIQ4XS uint32 = 23
 )
 
@@ -360,7 +363,7 @@ func (g *GGUFFile) RowDequantizer(name string) (dims []int, into func(start int,
 	}
 	bs, ok := ggmlBlockElems(info.typ)
 	if !ok {
-		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0/Q5_0/Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/IQ4_NL/IQ4_XS)", name, info.typ)
+		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0/Q5_0/Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/IQ4_NL/IQ4_XS/IQ2_S/IQ3_S)", name, info.typ)
 	}
 	raw, err := g.tensorBytes(info, n)
 	if err != nil {
@@ -387,7 +390,7 @@ func ggmlBlockElems(typ uint32) (int, bool) {
 		return 1, true
 	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ5_0, ggmlTypeIQ4NL:
 		return 32, true
-	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K, ggmlTypeIQ4XS:
+	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K, ggmlTypeIQ4XS, ggmlTypeIQ2S, ggmlTypeIQ3S:
 		return qkK, true
 	default:
 		return 0, false
@@ -432,6 +435,10 @@ func dequantRange(typ uint32, raw []byte, start int, dst []float32, bs int) {
 				dequantIQ4NLBlock(raw, first+k, out)
 			case ggmlTypeIQ4XS:
 				dequantIQ4XSBlock(raw, first+k, out)
+			case ggmlTypeIQ2S:
+				dequantIQ2SBlock(raw, first+k, out)
+			case ggmlTypeIQ3S:
+				dequantIQ3SBlock(raw, first+k, out)
 			}
 		}
 	}
@@ -459,12 +466,16 @@ func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
 		default: // Q5_0
 			nbytes = blocks * 22 // 2-byte f16 scale + 4-byte high bits + 16 packed nibbles
 		}
-	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K, ggmlTypeIQ4XS:
+	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K, ggmlTypeIQ4XS, ggmlTypeIQ2S, ggmlTypeIQ3S:
 		if n%qkK != 0 {
 			return nil, fmt.Errorf("element count %d not a multiple of %d (super-block)", n, qkK)
 		}
 		sb := n / qkK
 		switch info.typ {
+		case ggmlTypeIQ2S:
+			nbytes = sb * 82 // d(f16) + qs[32] + signs[32] + qh[8] + scales[8]
+		case ggmlTypeIQ3S:
+			nbytes = sb * 110 // d(f16) + qs[64] + qh[8] + signs[32] + scales[4]
 		case ggmlTypeIQ4XS:
 			nbytes = sb * 136 // d(f16) + scales_h(u16) + scales_l[4] + qs[128]
 		case ggmlTypeQ2_K:
@@ -595,6 +606,66 @@ func dequantIQ4XSBlock(raw []byte, sb int, out []float32) {
 			o[j] = dl * float32(kvaluesIQ4NL[q[j]&0x0F])
 			o[j+16] = dl * float32(kvaluesIQ4NL[q[j]>>4])
 		}
+	}
+}
+
+// dequantIQ2SBlock dequantizes one 256-element IQ2_S super-block (sb) into
+// out[:256]. Layout (82 bytes): d (f16), qs[32] (low 8 bits of each 8-wide grid
+// index), signs[32] (per-element sign bits), qh[8] (high 2 bits of each index),
+// scales[8] (4-bit sub-scales). The super-block is 16 sub-blocks of 16, each a
+// 4-bit scale and two 8-wide codebook lookups (iq2sGrid, 1024×8); the per-element
+// sign comes from the packed sign bits. Mirrors ggml's dequantize_row_iq2_s.
+func dequantIQ2SBlock(raw []byte, sb int, out []float32) {
+	base := sb * 82
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	qs := raw[base+2 : base+34]
+	signs := raw[base+34 : base+66]
+	qh := raw[base+66 : base+74]
+	scales := raw[base+74 : base+82]
+	for sub := 0; sub < 16; sub++ {
+		sc := int((scales[sub/2] >> (4 * (sub & 1))) & 0x0F)
+		db := d * (0.5 + float32(sc)) * 0.25
+		for pair := 0; pair < 2; pair++ {
+			k := sub*2 + pair
+			idx := int(qs[k]) | int((qh[k/4]>>(2*(k&3)))&3)<<8
+			g := iq2sGrid[idx*8 : idx*8+8]
+			sg := signs[k]
+			o := out[sub*16+pair*8:]
+			for j := 0; j < 8; j++ {
+				v := db * float32(g[j])
+				if (sg>>j)&1 != 0 {
+					v = -v
+				}
+				o[j] = v
+			}
+		}
+	}
+}
+
+// dequantIQ3SBlock dequantizes one 256-element IQ3_S super-block (sb) into
+// out[:256]. Layout (110 bytes): d (f16), qs[64] (low 8 bits of each 4-wide grid
+// index), qh[8] (1 high bit per index), signs[32] (per-element sign bits),
+// scales[4] (4-bit sub-scales). 8 sub-blocks of 32, each a 4-bit scale and eight
+// 4-wide codebook lookups (iq3sGrid, 512×4); the sign comes from the packed sign
+// bits. Mirrors ggml's dequantize_row_iq3_s.
+func dequantIQ3SBlock(raw []byte, sb int, out []float32) {
+	base := sb * 110
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	qs := raw[base+2 : base+66]
+	qh := raw[base+66 : base+74]
+	signs := raw[base+74 : base+106]
+	scales := raw[base+106 : base+110]
+	for p := 0; p < 256; p++ {
+		sub := p / 32
+		sc := int((scales[sub/2] >> (4 * (sub & 1))) & 0x0F)
+		db := d * float32(1+2*sc)
+		m := p / 4 // grid-index number (0..63)
+		idx := int(qs[m]) | int((qh[m/8]>>(m&7))&1)<<8
+		v := db * float32(iq3sGrid[idx*4+p%4])
+		if (signs[p/8]>>(p&7))&1 != 0 {
+			v = -v
+		}
+		out[p] = v
 	}
 }
 

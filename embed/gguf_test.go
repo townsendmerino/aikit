@@ -172,6 +172,7 @@ func TestDequantRange_streamMatchesWhole(t *testing.T) {
 		{"Q2_K", ggmlTypeQ2_K, 84}, {"Q3_K", ggmlTypeQ3_K, 110}, {"Q4_K", ggmlTypeQ4_K, 144},
 		{"Q5_K", ggmlTypeQ5_K, 176}, {"Q6_K", ggmlTypeQ6_K, 210},
 		{"IQ4_NL", ggmlTypeIQ4NL, 18}, {"IQ4_XS", ggmlTypeIQ4XS, 136},
+		{"IQ2_S", ggmlTypeIQ2S, 82}, {"IQ3_S", ggmlTypeIQ3S, 110},
 	}
 	for _, tc := range types {
 		bs, _ := ggmlBlockElems(tc.typ)
