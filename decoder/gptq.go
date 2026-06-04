@@ -19,18 +19,21 @@ import (
 // resident-int4 too). Only the projections are GPTQ; embeddings, norms, and the
 // LM head ship in bf16/f16 and load unchanged.
 
-// gptqParams is the resolved quantization_config for a GPTQ checkpoint.
-type gptqParams struct {
+// quantConfig is the resolved quantization_config for a pre-quantized
+// safetensors checkpoint (GPTQ or AWQ — both 4-bit group-quant int4, differing
+// only in how the codes are packed; see gptqReconstruct / awqReconstruct).
+type quantConfig struct {
+	method    string // "gptq" | "awq"
 	bits      int
 	groupSize int
-	descAct   bool
-	sym       bool
+	descAct   bool // gptq act-order
+	sym       bool // gptq symmetric
 }
 
-// parseGPTQ reads config.json's quantization_config. Returns nil for a
-// full-precision checkpoint (no quantization_config, or a non-gptq method). Only
-// 4-bit GPTQ is supported; other bit widths/methods (awq, 8-bit) error.
-func parseGPTQ(raw json.RawMessage) (*gptqParams, error) {
+// parseQuantConfig reads config.json's quantization_config. Returns nil for a
+// full-precision checkpoint (absent/null). Only 4-bit GPTQ/AWQ are supported;
+// other methods/bit-widths error.
+func parseQuantConfig(raw json.RawMessage) (*quantConfig, error) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
@@ -44,26 +47,26 @@ func parseGPTQ(raw json.RawMessage) (*gptqParams, error) {
 	if err := json.Unmarshal(raw, &obj); err != nil {
 		return nil, fmt.Errorf("quantization_config: %w", err)
 	}
-	if obj.QuantMethod != "gptq" {
-		return nil, fmt.Errorf("quantization_config: method %q unsupported (have: gptq)", obj.QuantMethod)
+	if obj.QuantMethod != "gptq" && obj.QuantMethod != "awq" {
+		return nil, fmt.Errorf("quantization_config: method %q unsupported (have: gptq, awq)", obj.QuantMethod)
 	}
 	if obj.Bits != 4 {
-		return nil, fmt.Errorf("quantization_config(gptq): %d-bit unsupported (have: 4-bit)", obj.Bits)
+		return nil, fmt.Errorf("quantization_config(%s): %d-bit unsupported (have: 4-bit)", obj.QuantMethod, obj.Bits)
 	}
 	if obj.GroupSize <= 0 {
-		return nil, fmt.Errorf("quantization_config(gptq): group_size %d unsupported (need a positive group)", obj.GroupSize)
+		return nil, fmt.Errorf("quantization_config(%s): group_size %d unsupported (need a positive group)", obj.QuantMethod, obj.GroupSize)
 	}
 	sym := true
 	if obj.Sym != nil {
 		sym = *obj.Sym
 	}
-	return &gptqParams{bits: obj.Bits, groupSize: obj.GroupSize, descAct: obj.DescAct, sym: sym}, nil
+	return &quantConfig{method: obj.QuantMethod, bits: obj.Bits, groupSize: obj.GroupSize, descAct: obj.DescAct, sym: sym}, nil
 }
 
 // gptqReconstruct dequantizes one GPTQ linear (named base, e.g.
 // "model.layers.0.self_attn.q_proj") to a [out, in] row-major f32 matrix — the
 // transpose of the [in, out] reconstruction, matching nn.Linear's [out, in].
-func gptqReconstruct(st *embed.SafetensorsFile, base string, in, out int, p *gptqParams) ([]float32, error) {
+func gptqReconstruct(st *embed.SafetensorsFile, base string, in, out int) ([]float32, error) {
 	qw, err := i32Tensor(st, base+".qweight")
 	if err != nil {
 		return nil, err

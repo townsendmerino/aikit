@@ -9,24 +9,28 @@ import (
 	"testing"
 )
 
-func TestParseGPTQ(t *testing.T) {
-	if p, err := parseGPTQ(nil); p != nil || err != nil {
+func TestParseQuantConfig(t *testing.T) {
+	if p, err := parseQuantConfig(nil); p != nil || err != nil {
 		t.Errorf("nil config → (%v,%v), want (nil,nil)", p, err)
 	}
 	good := `{"quant_method":"gptq","bits":4,"group_size":128,"desc_act":true,"sym":true}`
-	p, err := parseGPTQ(json.RawMessage(good))
+	p, err := parseQuantConfig(json.RawMessage(good))
 	if err != nil || p == nil {
 		t.Fatalf("good config: %v", err)
 	}
-	if p.bits != 4 || p.groupSize != 128 || !p.descAct || !p.sym {
+	if p.method != "gptq" || p.bits != 4 || p.groupSize != 128 || !p.descAct || !p.sym {
 		t.Errorf("parsed %+v", p)
 	}
+	aw, err := parseQuantConfig(json.RawMessage(`{"quant_method":"awq","bits":4,"group_size":128,"version":"gemm"}`))
+	if err != nil || aw == nil || aw.method != "awq" || aw.groupSize != 128 {
+		t.Errorf("awq config: %v %+v", err, aw)
+	}
 	for _, bad := range []string{
-		`{"quant_method":"awq","bits":4,"group_size":128}`,
+		`{"quant_method":"bitsandbytes","bits":4,"group_size":128}`,
 		`{"quant_method":"gptq","bits":8,"group_size":128}`,
-		`{"quant_method":"gptq","bits":4,"group_size":-1}`,
+		`{"quant_method":"awq","bits":4,"group_size":-1}`,
 	} {
-		if _, err := parseGPTQ(json.RawMessage(bad)); err == nil {
+		if _, err := parseQuantConfig(json.RawMessage(bad)); err == nil {
 			t.Errorf("expected error for %s", bad)
 		}
 	}

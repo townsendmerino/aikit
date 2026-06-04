@@ -284,9 +284,9 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 
 	w := &Weights{Cfg: *cfg, arch: arch, st: st, Layers: make([]LayerWeights, cfg.NumLayers)}
 
-	// GPTQ checkpoints ship their projections as packed int4 (qweight/…); resolve
-	// the params once. nil ⇒ a normal f32/bf16 checkpoint.
-	gptq, err := parseGPTQ(cfg.QuantizationConfig)
+	// GPTQ/AWQ checkpoints ship their projections as packed int4 (qweight/…);
+	// resolve the params once. nil ⇒ a normal f32/bf16 checkpoint.
+	qc, err := parseQuantConfig(cfg.QuantizationConfig)
 	if err != nil {
 		return nil, err
 	}
@@ -302,16 +302,22 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 		}
 		return m, merr
 	}
-	// loadProj loads a (per-layer) attention/MLP projection: a GPTQ reconstruction
-	// when the checkpoint is GPTQ, else a plain weight load. Either way the result
-	// is then streamed through the requested resident quant. (Embeddings/norms/
-	// LM head are not GPTQ — they keep loadMat/loadF32.)
+	// loadProj loads a (per-layer) attention/MLP projection: a GPTQ/AWQ
+	// reconstruction when the checkpoint is pre-quantized, else a plain weight
+	// load. Either way the result is then streamed through the requested resident
+	// quant. (Embeddings/norms/LM head are not quantized — they keep loadMat/loadF32.)
 	loadProj := func(name string, out, in int) (weightMat, error) {
-		if gptq == nil {
+		if qc == nil {
 			return loadMatQ(name, out, in)
 		}
 		base := strings.TrimSuffix(name, ".weight")
-		data, derr := gptqReconstruct(st, base, in, out, gptq)
+		var data []float32
+		var derr error
+		if qc.method == "awq" {
+			data, derr = awqReconstruct(st, base, in, out)
+		} else {
+			data, derr = gptqReconstruct(st, base, in, out)
+		}
 		if derr != nil {
 			return weightMat{}, derr
 		}

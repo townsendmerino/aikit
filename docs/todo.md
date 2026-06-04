@@ -38,12 +38,13 @@ load (no whole-model f32 spike), off mmap'd GGUFs, all SIMD, all parity-gated:
 
 Ladder: `f32 (1.0) → int8 (0.9996) → int8int8 (3.4× faster, 0.9979) → int4 (⅛ f32)`.
 
-### GPTQ — safetensors-resident int4 ✅
-HF/AutoGPTQ 4-bit checkpoints load: `config.json` `quantization_config` →
-`gptqReconstruct` un-packs each linear's `qweight`/`qzeros`/`scales`/`g_idx`
-(group + act-order via `g_idx`) to f32, then streams through the resident
-int8/int4 path. Validated vs the committed f32 oracle on TinyLlama-1.1B GPTQ
-(argmax preserved, cosine 0.991).
+### GPTQ + AWQ — safetensors-resident int4 ✅
+HF int4 checkpoints load (`quantization_config` → `gptqReconstruct` / `awqReconstruct`
+un-pack `qweight`/`qzeros`/`scales` ± `g_idx` to f32, then stream through the
+resident int8/int4 path). GPTQ = AutoGPTQ packing (`[in/8,out]`, act-order via
+`g_idx`); AWQ = AutoAWQ GEMM (`[in,out/8]`, `[0,4,1,5,2,6,3,7]` de-interleave).
+Validated vs the committed f32 oracle on TinyLlama-1.1B (cosine 0.991 GPTQ / 0.996
+AWQ, argmax preserved).
 
 ### Constrained / structured generation ✅
 New `constrain` package: a logit mask (via the new
@@ -74,17 +75,12 @@ models). (Constrained generation, the other Tier-1 item, is shipped; its
 follow-ups are a general GBNF/regex engine + a JSON-Schema → grammar compiler on
 the same `Grammar` interface.)
 
-### 2. AWQ — broadens int4 coverage · S–M
-The other HF-hosted int4 packing, on the same `gptqReconstruct` seam: `qweight`/
-`qzeros`/`scales` (no `g_idx`) plus an unpack-order permutation. Validatable here
-against a small AWQ checkpoint.
-
-### 3. More GGUF quant types (Q5_K/Q3_K/IQ*) — incremental · S
+### 2. More GGUF quant types (Q5_K/Q3_K/IQ*) — incremental · S
 Each is "a `dequant*` func + a size entry" on the existing GGUF seam, but needs a
 fixture or the Python `gguf` reference to parity-gate (Q4_K_M/Q5_0/Q6_K already
 cover the common laptop mixes, so low marginal value).
 
-### 4. Incremental perf — residual only · S
+### 3. Incremental perf — residual only · S
 The two big wins shipped (parallel load + arm64 NEON `dotI8`; see Shipped above).
 What's left is small:
 - **Quantize direct from the source quant to int4**, skipping the f32 round-trip
@@ -96,7 +92,7 @@ What's left is small:
   (`openCheckpointMmap`); `fs.FS` is heap by necessity (no fd) and only serves
   small embedded test models.
 
-### 5. Mellum2 polish · S
+### 4. Mellum2 polish · S
 - **Exact `mellum2` tokenizer parity.** The GGUF byte-level tokenizer falls to
   GPT-2-style defaults for `tokenizer.ggml.pre == "mellum2"` (good enough for
   coherent output, not byte-exact). Pin a golden from the model's `tokenizer.json`
@@ -105,7 +101,7 @@ What's left is small:
   qwen2/qwen3/gemma GGUFs are the same pattern (map `<arch>.*` metadata onto the
   existing descriptors) once a fixture is on hand.
 
-### 6. Shared-expert MoE + longrope/dynamic RoPE — lowest urgency · S–M
+### 5. Shared-expert MoE + longrope/dynamic RoPE — lowest urgency · S–M
 A couple more `MoEConfig` knobs for shared-expert MoE (Qwen-MoE/DeepSeek), and the
 remaining RoPE scalings (longrope/su, dynamic). Cleanly scoped, only pays off for
 those families. (YaRN is done.)
@@ -115,8 +111,8 @@ those families. (YaRN is done.)
 ## Models supported (decoder)
 
 Gemma 3 · Qwen2.5/3 · Llama-2/3 · Mistral · GPT-2 · Mixtral · **Mellum2**.
-Checkpoint formats: f32/bf16/f16 safetensors (single + sharded), **GPTQ** int4
-safetensors, and **GGUF** (`llama` + `mellum` archs; F32/F16/Q8_0/Q4_0/Q5_0/
+Checkpoint formats: f32/bf16/f16 safetensors (single + sharded), **GPTQ + AWQ**
+int4 safetensors, and **GGUF** (`llama` + `mellum` archs; F32/F16/Q8_0/Q4_0/Q5_0/
 Q4_K/Q6_K). Any of these re-quantizes to resident int8/W8A8/int4.
 
 ---
@@ -126,5 +122,4 @@ Q4_K/Q6_K). Any of these re-quantizes to resident int8/W8A8/int4.
 The decoder / quant / GGUF / structured-output arc is complete and broad (incl.
 the perf items — parallel load + arm64 NEON W8A8). The single highest-leverage
 next step is the **`rag` pipeline** (#1) — the "makes the library more than its
-packages" feature. Everything else (#2–#6) is incremental; **AWQ** (#2) is the
-most self-contained, validatable-here next step.
+packages" feature. Everything else (#2–#5) is incremental and self-contained.
