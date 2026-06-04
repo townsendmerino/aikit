@@ -356,7 +356,7 @@ func mellumArchitecture(cfg *Config) (*Architecture, *tensorSchema, error) {
 			NormTopKProb:    normTopK,
 			IntermediateDim: cfg.MoeIntermediateSize,
 		},
-		QKNorm:           false,
+		QKNorm:           true, // Mellum has q_norm/k_norm per head (like Qwen3)
 		AttnScale:        math.Pow(float64(hd), -0.5),
 		SlidingWindow:    cfg.SlidingWindow,
 		layerIsGlobal:    cfg.IsGlobalLayer, // from layer_types (3:1 sliding/full)

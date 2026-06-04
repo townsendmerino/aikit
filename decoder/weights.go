@@ -536,6 +536,8 @@ var mellumTensorSchema = tensorSchema{
 	KProj:       "self_attn.k_proj.weight",
 	VProj:       "self_attn.v_proj.weight",
 	OProj:       "self_attn.o_proj.weight",
+	QNorm:       "self_attn.q_norm.weight", // Mellum has QK-norm (per-head RMSNorm)
+	KNorm:       "self_attn.k_norm.weight",
 	PreAttnNorm: "input_layernorm.weight",
 	PreMLPNorm:  "post_attention_layernorm.weight", // HF name; positionally the pre-MLP norm
 	Router:      "mlp.gate.weight",

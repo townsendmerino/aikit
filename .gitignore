@@ -104,5 +104,9 @@ testdata/tinyllama-gguf
 # against the committed testdata/llama3.2-1b/tokenizer.json; never committed.
 testdata/llama32-gguf
 
+# Mellum2 GGUF (CodeFault/Mellum2-12B-A2.5B-Instruct-GGUF, Q4_K_M, ~8 GB) —
+# per-machine. The mellum GGUF smoke test loads it when present; never committed.
+testdata/mellum-gguf
+
 # Local HF token notes — per-machine secret, never commit (rotate + delete).
 docs/keepers.txt

@@ -65,8 +65,9 @@ func TestResolveMellum(t *testing.T) {
 	if arch.HiddenDim != 2304 || arch.NumHeads != 32 || arch.NumKVHeads != 4 || arch.HeadDim != 128 {
 		t.Errorf("dims: hidden=%d heads=%d kv=%d hd=%d", arch.HiddenDim, arch.NumHeads, arch.NumKVHeads, arch.HeadDim)
 	}
-	if arch.QKNorm || arch.Norm != NormRMS || arch.RMSAddOne || arch.Act != ActSiLU || arch.NormPlacement != NormPre2 {
-		t.Errorf("wrong norm/act flags")
+	if !arch.QKNorm || arch.Norm != NormRMS || arch.RMSAddOne || arch.Act != ActSiLU || arch.NormPlacement != NormPre2 {
+		t.Errorf("wrong norm/act flags (QKNorm=%v norm=%v rmsAddOne=%v act=%v placement=%v)",
+			arch.QKNorm, arch.Norm, arch.RMSAddOne, arch.Act, arch.NormPlacement)
 	}
 	if arch.SlidingWindow != 1024 {
 		t.Errorf("sliding window = %d, want 1024", arch.SlidingWindow)

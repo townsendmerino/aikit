@@ -12,9 +12,9 @@ import (
 // GGUF reader (multi-model-plan G7) — the llama.cpp container format that makes
 // quantized models laptop-runnable. This parses the header, metadata key-values
 // (which carry the architecture config), and the tensor directory, and
-// dequantizes the common block types to float32. Only the types this build
-// needs are implemented (F32, F16, Q8_0, Q4_0); the K-quants (Q4_K/Q6_K) are a
-// follow-up — Tensor returns a clear error for an unimplemented type.
+// dequantizes the common block types to float32: F32, F16, Q8_0, Q4_0, Q5_0,
+// and the K-quants Q4_K/Q6_K (so Q4_K_M / Q5_K_M-style mixes load). Tensor
+// returns a clear error for an unimplemented type (Q5_K/Q3_K/Q2_K/IQ*).
 //
 // Format reference: https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
 
@@ -25,6 +25,7 @@ const (
 	ggmlTypeF32  uint32 = 0
 	ggmlTypeF16  uint32 = 1
 	ggmlTypeQ4_0 uint32 = 2
+	ggmlTypeQ5_0 uint32 = 6
 	ggmlTypeQ8_0 uint32 = 8
 	ggmlTypeQ4_K uint32 = 12
 	ggmlTypeQ6_K uint32 = 14
@@ -291,6 +292,21 @@ func (g *GGUFFile) Names() []string {
 // Has reports whether a tensor is present.
 func (g *GGUFFile) Has(name string) bool { _, ok := g.tensors[name]; return ok }
 
+// Dims returns a tensor's dimensions (GGUF order: dims[0] innermost = input
+// features) without reading or dequantizing its data — for cheap shape probes
+// (e.g. deriving vocab size from the embedding) on big quantized tensors.
+func (g *GGUFFile) Dims(name string) ([]int, bool) {
+	info, ok := g.tensors[name]
+	if !ok {
+		return nil, false
+	}
+	dims := make([]int, len(info.dims))
+	for i, d := range info.dims {
+		dims[i] = int(d)
+	}
+	return dims, true
+}
+
 // Tensor dequantizes a tensor to float32 and returns its dimensions in GGUF
 // order (dims[0] is the fastest/innermost = input features; dims[1] the row
 // count = output features). The f32 data is row-major over the outer dims, i.e.
@@ -325,12 +341,14 @@ func (g *GGUFFile) Tensor(name string) (dims []int, data []float32, err error) {
 		data = dequantQ8_0(raw, n)
 	case ggmlTypeQ4_0:
 		data = dequantQ4_0(raw, n)
+	case ggmlTypeQ5_0:
+		data = dequantQ5_0(raw, n)
 	case ggmlTypeQ6_K:
 		data = dequantQ6K(raw, n)
 	case ggmlTypeQ4_K:
 		data = dequantQ4K(raw, n)
 	default:
-		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0)", name, info.typ)
+		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0/Q5_0/Q4_K/Q6_K)", name, info.typ)
 	}
 	return dims, data, nil
 }
@@ -344,15 +362,18 @@ func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
 		nbytes = n * 4
 	case ggmlTypeF16:
 		nbytes = n * 2
-	case ggmlTypeQ8_0, ggmlTypeQ4_0:
+	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ5_0:
 		if n%32 != 0 {
 			return nil, fmt.Errorf("element count %d not a multiple of 32 (block size)", n)
 		}
 		blocks := n / 32
-		if info.typ == ggmlTypeQ8_0 {
+		switch info.typ {
+		case ggmlTypeQ8_0:
 			nbytes = blocks * 34 // 2-byte f16 scale + 32 int8
-		} else {
+		case ggmlTypeQ4_0:
 			nbytes = blocks * 18 // 2-byte f16 scale + 16 packed nibbles
+		default: // Q5_0
+			nbytes = blocks * 22 // 2-byte f16 scale + 4-byte high bits + 16 packed nibbles
 		}
 	case ggmlTypeQ6_K, ggmlTypeQ4_K:
 		if n%qkK != 0 {
@@ -400,6 +421,29 @@ func dequantQ4_0(raw []byte, n int) []float32 {
 			v := qs[i]
 			out[b*32+i] = float32(int(v&0x0F)-8) * d
 			out[b*32+i+16] = float32(int(v>>4)-8) * d
+		}
+	}
+	return out
+}
+
+// dequantQ5_0: blocks of 32 — one f16 scale d, a 4-byte qh carrying each
+// element's 5th (high) bit, then 16 bytes of packed low nibbles. For element j
+// the code is (low nibble | high bit << 4) ∈ [0,31], recentered by -16:
+// value = d*(code-16). Mirrors ggml's dequantize_row_q5_0.
+func dequantQ5_0(raw []byte, n int) []float32 {
+	out := make([]float32, n)
+	for b := 0; b*32 < n; b++ {
+		base := b * 22
+		d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+		qh := binary.LittleEndian.Uint32(raw[base+2:])
+		qs := raw[base+6 : base+22]
+		for j := 0; j < 16; j++ {
+			xh0 := byte(((qh >> uint(j)) << 4) & 0x10) // bit j → bit 4
+			xh1 := byte((qh >> uint(j+12)) & 0x10)     // bit j+16 → bit 4
+			q0 := int32((qs[j]&0x0F)|xh0) - 16
+			q1 := int32((qs[j]>>4)|xh1) - 16
+			out[b*32+j] = float32(q0) * d
+			out[b*32+j+16] = float32(q1) * d
 		}
 	}
 	return out

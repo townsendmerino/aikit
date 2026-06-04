@@ -227,7 +227,7 @@ func byteLevelKnobs(pre string) (maxDigits int, form norm.Form, normOn, ignoreMe
 		return 3, norm.NFC, false, true
 	case "qwen2", "qwen2.5", "qwen":
 		return 1, norm.NFC, true, false
-	default: // "gpt-2", "default", "", and unrecognized
+	default: // "gpt-2", "default", "mellum2" (code BPE), "", and unrecognized
 		return 1, norm.NFC, false, false
 	}
 }

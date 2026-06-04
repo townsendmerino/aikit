@@ -91,9 +91,11 @@ for those specific families.
 
 ### Models supported (decoder)
 
-Gemma 3 · Qwen2.5/3 · Llama-2/3 · Mistral · GPT-2 · Mixtral · **Mellum2** (MoE +
-sliding/full interleave + YaRN). Full Mellum2 forward parity awaits the 12B
-checkpoint; the YaRN math and config resolution are validated offline.
+Gemma 3 · Qwen2.5/3 · Llama-2/3 · Mistral · GPT-2 · Mixtral · **Mellum2** (12B
+MoE + sliding/full interleave + QK-norm + YaRN). Mellum2 **runs end-to-end from a
+bare GGUF** (generates coherent code under `--quant int4`); YaRN is HF-exact and
+the loader handles stacked-expert MoE + Q5_0. The GGUF path now supports the
+`llama` and `mellum` architectures (others still fail loudly).
 
 ---
 

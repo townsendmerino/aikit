@@ -39,6 +39,34 @@ func TestDequantQ8_0(t *testing.T) {
 	}
 }
 
+func TestDequantQ5_0(t *testing.T) {
+	// One block: d=2.0; f16 scale, 4-byte qh (high bit per element), 16 bytes of
+	// low nibbles. code = (lowNibble | highBit<<4) ∈ [0,31]; value = d*(code-16).
+	// elem j low nibble = j&0xF, high bit = qh bit j; elem j+16 low nibble =
+	// (15-j)&0xF, high bit = qh bit (j+16). Set qh so all high bits are 1.
+	raw := make([]byte, 22)
+	binary.LittleEndian.PutUint16(raw[0:], f16bits(2.0))
+	binary.LittleEndian.PutUint32(raw[2:], 0xFFFFFFFF) // every element's 5th bit set
+	for j := 0; j < 16; j++ {
+		raw[6+j] = byte(j) | byte(15-j)<<4
+	}
+	got := dequantQ5_0(raw, 32)
+	for j := 0; j < 16; j++ {
+		if w := 2.0 * float32((j|0x10)-16); got[j] != w {
+			t.Errorf("Q5_0[%d] = %v, want %v", j, got[j], w)
+		}
+		if w := 2.0 * float32(((15-j)|0x10)-16); got[j+16] != w {
+			t.Errorf("Q5_0[%d] = %v, want %v", j+16, got[j+16], w)
+		}
+	}
+	// And with all high bits 0 (qh=0): code = low nibble only.
+	binary.LittleEndian.PutUint32(raw[2:], 0)
+	got = dequantQ5_0(raw, 32)
+	if w := 2.0 * float32(0-16); got[0] != w {
+		t.Errorf("Q5_0 qh=0 [0] = %v, want %v", got[0], w)
+	}
+}
+
 func TestDequantQ4_0(t *testing.T) {
 	// One block: d=2.0; byte j low nibble → elem j, high nibble → elem j+16;
 	// value = d*(nibble-8).

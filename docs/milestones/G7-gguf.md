@@ -92,8 +92,11 @@ rendering.
   tokenizer.json id-for-id (`TestLoadGGUF_byteLevelMatchesJSON`), and that json
   path is HF-golden-validated for the family. A bare byte-level `.gguf` now
   chats end-to-end.
-- **Other GGUF architectures** (qwen2/gemma/…): map their metadata keys + names;
-  the per-family descriptors already exist.
+- **Other GGUF architectures**: `mellum` is now supported alongside `llama`
+  (`ggufConfig` dispatches on `general.architecture`, building the descriptor from
+  `<arch>.*` metadata — incl. stacked-expert MoE, QK-norm, and synthesized
+  rope_parameters; Q5_0 dequant added for the Q4_K_M mix). qwen2/gemma/… are more
+  of the same: map their metadata keys + names onto the existing descriptors.
 - **GPTQ / AWQ** (safetensors-resident int4): the other half of the plan's G7 —
   different packing (`qweight`/`qzeros`/`scales`/`g_idx`), same dequant-to-f32
   idea, and our safetensors loader already handles the container.
