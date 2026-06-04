@@ -90,6 +90,17 @@ it.
   quantized): gemma cosine 0.9979 vs 0.9996, argmax preserved
   (`TestQuantInt8I8_accuracy`) — so it is opt-in; plain `int8` stays weight-only
   (f32 activations) for the higher accuracy.
+- **ARMv8.2 DotProd (SDOT) int8 kernel.** On arm64 cores with the DotProd
+  extension (Apple Silicon, Graviton2+, Neoverse, recent Cortex-A), `dotI8` now
+  uses an `SDOT`-based kernel (`dotI8SDOT`) — one instruction folds 16 int8 pairs
+  straight into a 4-lane int32 accumulator, replacing the base kernel's four
+  (`SMULL`+`SMULL2`+`SADALP`+`SADALP`); four accumulators hide its latency.
+  Selected at init by **runtime feature detection** with no new dependency:
+  `detectDotProd` reads `HWCAP_ASIMDDP` from `/proc/self/auxv` on linux (true on
+  Apple Silicon for darwin), falling back to the base `SMULL/SADALP` kernel where
+  absent. Both kernels are bit-exact to the scalar reference, validated under
+  qemu-aarch64 across `-cpu max` (DotProd → SDOT) and `-cpu cortex-a72` (no
+  DotProd → base) — `TestDotI8SDOT_matchesScalar` / `TestDotI8_matchesScalar`.
 - **Byte-level GGUF tokenizer** — `tokenizer.LoadGGUF` now also handles the
   byte-level family (`tokenizer.ggml.model == "gpt2"`: Llama-3 / Qwen / GPT-2),
   not just SPM/llama. It dispatches "gpt2" to the existing `modeByteLevel`

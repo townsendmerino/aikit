@@ -31,7 +31,10 @@ load (no whole-model f32 spike), off mmap'd GGUFs, all SIMD, all parity-gated:
 - **int8×int8 (W8A8)** (`Quant:"int8int8"`): activations also int8, true integer
   kernel (`dotI8` — AVX2 `VPMOVSXBW`+`VPMADDWD` / arm64 NEON `SMULL`+`SADALP`,
   bit-exact, QEMU-validated) — **3.4×** over the f32-widen int8; lossier (0.9979),
-  so opt-in.
+  so opt-in. On DotProd-capable arm64 the int8 dot upgrades to an `SDOT` kernel
+  (`dotI8SDOT`, 1 op for the base path's 4), chosen by runtime HWCAP detection
+  (`/proc/self/auxv`, no new dep); both kernels QEMU-validated across `-cpu max`
+  and `-cpu cortex-a72`.
 - **Parallel load**: the per-layer dequant/re-quant fans out across cores
   (`parallelLayers`, GGUF + safetensors) — Mellum2-12B load ~2 min → **~20 s**,
   race-clean.
@@ -81,13 +84,14 @@ fixture or the Python `gguf` reference to parity-gate (Q4_K_M/Q5_0/Q6_K already
 cover the common laptop mixes, so low marginal value).
 
 ### 3. Incremental perf — residual only · S
-The two big wins shipped (parallel load + arm64 NEON `dotI8`; see Shipped above).
-What's left is small:
+The big wins shipped (parallel load + arm64 NEON `dotI8` + the **SDOT** DotProd
+upgrade with runtime HWCAP detection; see Shipped above). What's left is one item:
 - **Quantize direct from the source quant to int4**, skipping the f32 round-trip
   — the remaining load-time headroom is memory-bandwidth-bound on that
-  intermediate.
-- A faster **SDOT** NEON `dotI8` (vs the base-ISA SMULL/SADALP path) — needs
-  ARMv8.2 DotProd + runtime feature detection.
+  intermediate. (Only a clean win where the source block aligns with the resident
+  group, e.g. GGUF Q4_0/Q8_0/Q4_K sub-blocks at group 32; the RoPE-permuted q/k
+  projections still need a row-reorder, doable on quantized rows.)
+- ~~SDOT DotProd `dotI8`~~ — done (see Shipped).
 - ~~mmap safetensors on the fs.FS path~~ — N/A: real directories already mmap
   (`openCheckpointMmap`); `fs.FS` is heap by necessity (no fd) and only serves
   small embedded test models.
