@@ -58,6 +58,17 @@ it.
   expected (`TestGGUF_Q5_K_M_parity` / `TestGGUF_Q3_K_M_parity` /
   `TestGGUF_Q2_K_parity`). The supported K-quants are now Q2_K/Q3_K/Q4_K/Q5_K/Q6_K
   (only the codebook IQ* types remain unimplemented).
+- **Gemma 3 GGUF architecture.** The most involved GGUF arch: `ggufConfig`
+  dispatches `gemma3`/`gemma3_text`, and the loader maps the gemma3.* metadata onto
+  the existing descriptor — sandwich norms (the new `post_attention_norm` /
+  `post_ffw_norm` loads), QK-norm, GeGLU, the √hidden embed scale, the 5:1
+  sliding/global pattern with dual RoPE bases, and the tied head. Two gemma-specific
+  GGUF quirks handled: it's NEOX-rope (no q/k permute), and llama.cpp **bakes
+  Gemma's (1+w) norm offset into the stored `*norm.weight`** — which the package's
+  `RMSAddOne` forward would double — so every gemma norm has the 1 subtracted back
+  out at load (`vnorm`, gated on `RMSAddOne`; no-op for the other archs). A bare
+  gemma-3-270m Q8_0 GGUF runs end-to-end vs the f32 oracle — argmax matches, cosine
+  **0.9998** (`TestGGUF_gemma3_parity`).
 - **Qwen3 GGUF architecture.** `ggufConfig` dispatches `qwen3`: versus qwen2 it
   drops the q/k/v bias and adds **QK-norm** (per-head RMSNorm over an explicit
   `head_dim`, before RoPE). The loader already had the QK-norm load, tied-LM-head,

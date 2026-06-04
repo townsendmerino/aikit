@@ -84,6 +84,14 @@ table. Pinned **bit-exact (Δ=0) vs llama.cpp's `gguf` Python reference**
 (`TestIQDequant_matchesReference`, golden from `scripts/pin_iq_dequant.py`) — no
 small-model f32 oracle needed. Only the grid-codebook IQ2*/IQ3* remain.
 
+### Gemma 3 GGUF architecture ✅
+The most involved arch: `ggufConfig` dispatches `gemma3`, the loader maps gemma3.*
+onto the descriptor + loads the sandwich post-norms (`post_attention_norm` /
+`post_ffw_norm`). Handles two gemma quirks: NEOX rope (no permute) and llama.cpp
+baking Gemma's (1+w) norm offset into the stored weights — subtracted back out at
+load (`vnorm`, gated on `RMSAddOne`). gemma-3-270m Q8_0 GGUF runs vs the f32 oracle
+— argmax match, cosine 0.9998 (`TestGGUF_gemma3_parity`).
+
 ### Qwen3 GGUF architecture ✅
 `ggufConfig` dispatches `qwen3` (drops qwen2's q/k/v bias, adds QK-norm over an
 explicit head_dim). Reuses the existing QK-norm load + NEOX no-permute + tied-head
@@ -127,16 +135,7 @@ IQ3_XXS/S, IQ1_* — which decode 8-element patterns from a 256/512-entry grid
 table (a chunk of static data + per-type bit-unpacking) rather than a flat 16-entry
 codebook. Meaningfully more work, and rare on laptops. Low marginal value.
 
-### 3. More GGUF architectures · S
-`ggufConfig` dispatches `llama` + `qwen2` + `qwen3` + `mellum`. Remaining:
-**gemma2/3** — the biggest, needing the GGUF loader to map its extra tensors onto
-the (already-supported) descriptor: pre/post attention + ffn norms, gemma3's
-query/key norm, the embedding scale (√hidden), logit/attn softcaps, the
-sliding/global layer pattern with dual rope bases, and GeGLU. Map `gemma3.*`
-metadata + load the post-norm tensors; validatable against the committed gemma-3
-f32 oracle once a matching GGUF is on hand.
-
-### 4. Shared-expert MoE + longrope/dynamic RoPE — lowest urgency · S–M
+### 3. Shared-expert MoE + longrope/dynamic RoPE — lowest urgency · S–M
 A couple more `MoEConfig` knobs for shared-expert MoE (Qwen-MoE/DeepSeek), and the
 remaining RoPE scalings (longrope/su, dynamic). Cleanly scoped, only pays off for
 those families. (YaRN is done.)
@@ -147,7 +146,7 @@ those families. (YaRN is done.)
 
 Gemma 3 · Qwen2.5/3 · Llama-2/3 · Mistral · GPT-2 · Mixtral · **Mellum2**.
 Checkpoint formats: f32/bf16/f16 safetensors (single + sharded), **GPTQ + AWQ**
-int4 safetensors, and **GGUF** (`llama` + `qwen2` + `qwen3` + `mellum` archs; F32/F16/Q8_0/
+int4 safetensors, and **GGUF** (`llama` + `qwen2` + `qwen3` + `gemma3` + `mellum` archs; F32/F16/Q8_0/
 Q4_0/Q5_0/Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/IQ4_NL/IQ4_XS). Any of these re-quantizes to
 resident int8/W8A8/int4.
 
@@ -158,5 +157,5 @@ resident int8/W8A8/int4.
 The decoder / quant / GGUF / structured-output arc is complete and broad (incl.
 the perf items — parallel load, streaming dequant→quant, arm64 NEON/SDOT W8A8).
 The single highest-leverage next step is the **`rag` pipeline** (#1) — the "makes
-the library more than its packages" feature. Everything else (#2–#4) is
+the library more than its packages" feature. Everything else (#2–#3) is
 incremental and self-contained.

@@ -11,14 +11,15 @@ import (
 // run it through the generic forward. The GGUF file carries both the
 // architecture config (metadata) and the weights (dequantized from the mmap,
 // then optionally re-quantized to resident int8/int4 per the quant mode), so no
-// separate config.json/safetensors is needed. Two layout quirks vs the HF
-// safetensors path: tensors use llama.cpp's blk.N.* names, and the q/k
-// projections are stored in llama.cpp's interleaved-RoPE permutation, which is
-// inverted here to match this package's HF-convention rotate_half RoPE.
+// separate config.json/safetensors is needed. Layout quirks vs the HF safetensors
+// path are normalized at load: tensors use llama.cpp's blk.N.* names; the q/k
+// projections of NORM-rope archs (llama/mellum) are in llama.cpp's interleaved-
+// RoPE permutation, inverted here to this package's rotate_half order (NEOX-rope
+// archs — qwen/gemma — are left as-is, see ggufQKPermuted); and Gemma's (1+w)
+// norm offset, baked into the stored weights by llama.cpp, is subtracted back out.
 //
-// Scope: the llama architecture; F32/F16/Q8_0/Q4_0 and the K-quants Q4_K/Q6_K
-// (so Q4_K_M files load end-to-end). Other architectures and the remaining quant
-// types (Q5_K/Q3_K/IQ*) are follow-ups and fail loudly.
+// Architectures: llama, qwen2, qwen3, gemma3, mellum. Quant types: F32/F16,
+// Q8_0/Q4_0/Q5_0, the K-quants Q2_K/Q3_K/Q4_K/Q5_K/Q6_K, and IQ4_NL/IQ4_XS.
 
 // ggufConfig synthesizes a Config from GGUF metadata, dispatching on
 // general.architecture. The resolved Config feeds resolveArchitecture, so a
@@ -32,10 +33,12 @@ func ggufConfig(g *embed.GGUFFile) (*Config, error) {
 		return ggufQwen2Config(g)
 	case "qwen3":
 		return ggufQwen3Config(g)
+	case "gemma3", "gemma3_text":
+		return ggufGemmaConfig(g)
 	case "mellum":
 		return ggufMellumConfig(g)
 	default:
-		return nil, fmt.Errorf("decoder(gguf): architecture %q unsupported (have: llama, qwen2, qwen3, mellum)", arch)
+		return nil, fmt.Errorf("decoder(gguf): architecture %q unsupported (have: llama, qwen2, qwen3, gemma3, mellum)", arch)
 	}
 }
 
@@ -148,6 +151,54 @@ func ggufQwen3Config(g *embed.GGUFFile) (*Config, error) {
 	} else {
 		cfg.RoPEGlobalBase = 1000000 // llama.cpp qwen3 default
 	}
+	ggufEOS(g, cfg)
+	return cfg, nil
+}
+
+// ggufGemmaConfig builds a Gemma 3 (text) Config from the gemma3.* metadata. The
+// gemma3 descriptor already supplies the architecture knobs (sandwich norms,
+// GeGLU, QK-norm, embed scale √hidden, dual RoPE bases, tied head); this maps the
+// dims + the few values the GGUF doesn't carry explicitly. NEOX rope (no q/k
+// permute). The GGUF omits the local RoPE base, the sliding/global pattern, and
+// query_pre_attn_scalar, so they default to gemma3's fixed values (10000, a 5:1
+// pattern, and head_dim). Gemma 3 has no logit/attn soft-capping (that's Gemma 2),
+// so those stay zero — ValidateAssumptions rejects a Gemma 2 GGUF here.
+func ggufGemmaConfig(g *embed.GGUFFile) (*Config, error) {
+	u := func(k string) int {
+		v, _ := g.Uint("gemma3." + k)
+		return int(v)
+	}
+	cfg := &Config{
+		ModelType:        "gemma3",
+		HiddenDim:        u("embedding_length"),
+		NumLayers:        u("block_count"),
+		NumHeads:         u("attention.head_count"),
+		NumKVHeads:       u("attention.head_count_kv"),
+		HeadDim:          u("attention.key_length"),
+		IntermediateDim:  u("feed_forward_length"),
+		SlidingWindow:    u("attention.sliding_window"),
+		HiddenActivation: "gelu_pytorch_tanh",
+		VocabSize:        ggufVocabSize(g),
+	}
+	if eps, ok := g.Float("gemma3.attention.layer_norm_rms_epsilon"); ok {
+		cfg.RMSNormEps = eps
+	}
+	if base, ok := g.Float("gemma3.rope.freq_base"); ok {
+		cfg.RoPEGlobalBase = base
+	} else {
+		cfg.RoPEGlobalBase = 1000000 // gemma3 rope_theta (global layers)
+	}
+	cfg.RoPELocalBase = 10000 // gemma3 rope_local_base_freq (sliding layers); not in GGUF metadata
+	// Sliding/global pattern: gemma3 is 5 local : 1 global. The GGUF carries no
+	// layer_types, so IsGlobalLayer falls back to this period ((i+1)%6==0 global).
+	if p := u("attention.sliding_window_pattern"); p > 0 {
+		cfg.SlidingWindowPattern = p
+	} else {
+		cfg.SlidingWindowPattern = 6
+	}
+	// query_pre_attn_scalar == head_dim for gemma3 (the attention scale is its
+	// inverse sqrt); the GGUF doesn't store it.
+	cfg.QueryPreAttnScalar = float64(cfg.HeadDim)
 	ggufEOS(g, cfg)
 	return cfg, nil
 }
@@ -279,7 +330,7 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 	embMat := func(name string, out, in int) (weightMat, error) {
 		return streamMat(name, out, in, quant.embedding(), func(r int) int { return r * in })
 	}
-	// vec loads a 1-D tensor (norm).
+	// vec loads a 1-D tensor (norm or bias).
 	vec := func(name string, n int) ([]float32, error) {
 		dims, data, err := g.Tensor(name)
 		if err != nil {
@@ -289,6 +340,24 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 			return nil, fmt.Errorf("decoder(gguf): %q dims %v, want [%d]", name, dims, n)
 		}
 		return data, nil
+	}
+	// vnorm loads a norm weight. For the Gemma family (RMSAddOne), llama.cpp's GGUF
+	// conversion bakes the (1+w) offset into every stored *norm.weight, so this
+	// package's RMSAddOne forward would apply it twice — subtract the 1 back out at
+	// load to restore the HF convention the shared descriptor expects. No-op for the
+	// other architectures (plain RMSNorm), so all norm loads route through here.
+	subOneNorm := arch.RMSAddOne
+	vnorm := func(name string, n int) ([]float32, error) {
+		v, err := vec(name, n)
+		if err != nil {
+			return nil, err
+		}
+		if subOneNorm {
+			for i := range v {
+				v[i] -= 1
+			}
+		}
+		return v, nil
 	}
 	// permMat loads a q/k projection and inverts llama.cpp's RoPE row permutation.
 	// Because the permutation is a pure reorder of whole rows (output features), it
@@ -335,7 +404,7 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 	if w.Embed, err = embMat("token_embd.weight", cfg.VocabSize, hidden); err != nil {
 		return nil, err
 	}
-	if w.FinalNorm, err = vec("output_norm.weight", hidden); err != nil {
+	if w.FinalNorm, err = vnorm("output_norm.weight", hidden); err != nil {
 		return nil, err
 	}
 	// Separate output head when present; else tied to the embedding.
@@ -366,7 +435,7 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 		l := &w.Layers[i]
 		p := fmt.Sprintf("blk.%d.", i)
 		var err error
-		if l.PreAttnNorm, err = vec(p+"attn_norm.weight", hidden); err != nil {
+		if l.PreAttnNorm, err = vnorm(p+"attn_norm.weight", hidden); err != nil {
 			return err
 		}
 		if l.QProj, err = loadQK(p+"attn_q.weight", qDim, arch.NumHeads); err != nil {
@@ -401,11 +470,11 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 		// llama.cpp permutes the q/k weights for its RoPE, so the matching
 		// per-head-dim norm weights are un-permuted the same way.
 		if arch.QKNorm {
-			qn, kerr := vec(p+"attn_q_norm.weight", hd)
+			qn, kerr := vnorm(p+"attn_q_norm.weight", hd)
 			if kerr != nil {
 				return kerr
 			}
-			kn, kerr := vec(p+"attn_k_norm.weight", hd)
+			kn, kerr := vnorm(p+"attn_k_norm.weight", hd)
 			if kerr != nil {
 				return kerr
 			}
@@ -414,8 +483,19 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 			}
 			l.QNorm, l.KNorm = qn, kn
 		}
-		if l.PreMLPNorm, err = vec(p+"ffn_norm.weight", hidden); err != nil {
+		if l.PreMLPNorm, err = vnorm(p+"ffn_norm.weight", hidden); err != nil {
 			return err
+		}
+		// Sandwich norms (Gemma 3): a post-attention and a post-FFN RMSNorm in
+		// addition to the pre-norms. GGUF names them post_attention_norm /
+		// post_ffw_norm.
+		if arch.NormPlacement == NormSandwich4 {
+			if l.PostAttnNorm, err = vnorm(p+"post_attention_norm.weight", hidden); err != nil {
+				return err
+			}
+			if l.PostMLPNorm, err = vnorm(p+"post_ffw_norm.weight", hidden); err != nil {
+				return err
+			}
 		}
 		if arch.MoE != nil {
 			// Sparse MoE (Mellum): router + stacked per-expert SwiGLU at the

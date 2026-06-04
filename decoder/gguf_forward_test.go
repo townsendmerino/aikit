@@ -72,6 +72,69 @@ func TestGGUF_Q8_0_parity(t *testing.T) {
 	testGGUFParity(t, "../testdata/tinyllama-gguf/tinyllama-1.1b-chat-v1.0.Q8_0.gguf", 0.999)
 }
 
+// TestGGUF_gemma3_parity loads a real gemma-3-270m Q8_0 GGUF against the same
+// model's f32 oracle. Gemma 3 is the most involved GGUF arch: sandwich norms
+// (post-attention + post-FFN, loaded here via post_attention_norm/post_ffw_norm),
+// QK-norm, GeGLU, the embed scale √hidden, the 5:1 sliding/global pattern with
+// dual RoPE bases, and a tied head — all on the NEOX (no-permute) path. Q8_0, so
+// argmax must match and cosine clear 0.995. ~0.3 GB (gitignored); skip if absent.
+//
+//	hf download ggml-org/gemma-3-270m-GGUF gemma-3-270m-Q8_0.gguf --local-dir testdata/gemma3-gguf
+func TestGGUF_gemma3_parity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: loads + runs a gemma-3-270m GGUF")
+	}
+	raw, err := os.ReadFile(gemmaForwardGoldenPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no gemma golden at %s", gemmaForwardGoldenPath)
+	}
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	var g forwardGolden
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatalf("parse golden: %v", err)
+	}
+	const ggufPath = "../testdata/gemma3-gguf/gemma-3-270m-Q8_0.gguf"
+	if _, err := os.Stat(ggufPath); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no gemma3 GGUF at %s", ggufPath)
+	}
+
+	m, err := Load(ggufPath, Options{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if m.w.arch.Name != "gemma3" {
+		t.Fatalf("resolved arch %q, want gemma3", m.w.arch.Name)
+	}
+	if m.w.arch.NormPlacement != NormSandwich4 {
+		t.Errorf("expected NormSandwich4 for gemma3")
+	}
+	if m.w.Layers[0].PostAttnNorm == nil || m.w.Layers[0].PostMLPNorm == nil {
+		t.Fatalf("sandwich post-norms not loaded for layer 0")
+	}
+
+	cache := m.NewCache(len(g.IDs))
+	for _, id := range g.IDs[:len(g.IDs)-1] {
+		if _, err := m.runLayers(id, cache); err != nil {
+			t.Fatalf("runLayers: %v", err)
+		}
+	}
+	logits, err := m.forward(g.IDs[len(g.IDs)-1], cache)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	if got := argmax(logits); got != g.Argmax {
+		t.Errorf("argmax = %d, want %d (logit[got]=%.4f logit[want]=%.4f)",
+			got, g.Argmax, logits[got], logits[g.Argmax])
+	}
+	cos := cosineToFull(t, logits, gemmaForwardFullPath)
+	if !math.IsNaN(cos) && cos < 0.995 {
+		t.Errorf("gemma3 GGUF cosine vs f32 oracle = %v, want ≥ 0.995", cos)
+	}
+	t.Logf("gguf gemma3 Q8_0: argmax=%d (want %d) | cosine vs f32 = %v", argmax(logits), g.Argmax, cos)
+}
+
 // TestGGUF_qwen3_parity loads a real Qwen3-1.7B Q8_0 GGUF against the same model's
 // f32 oracle. Qwen3 over qwen2: no q/k/v bias, but QK-norm (per-head RMSNorm over
 // head_dim) and an explicit head_dim — exercising the QKNorm tensor load on the
