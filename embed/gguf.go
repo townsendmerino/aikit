@@ -13,8 +13,8 @@ import (
 // quantized models laptop-runnable. This parses the header, metadata key-values
 // (which carry the architecture config), and the tensor directory, and
 // dequantizes the common block types to float32: F32, F16, Q8_0, Q4_0, Q5_0,
-// and the K-quants Q4_K/Q6_K (so Q4_K_M / Q5_K_M-style mixes load). Tensor
-// returns a clear error for an unimplemented type (Q5_K/Q3_K/Q2_K/IQ*).
+// and the K-quants Q3_K/Q4_K/Q5_K/Q6_K (so Q3_K_M / Q4_K_M / Q5_K_M-style mixes
+// load). Tensor returns a clear error for an unimplemented type (Q2_K/IQ*).
 //
 // Format reference: https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
 
@@ -27,7 +27,9 @@ const (
 	ggmlTypeQ4_0 uint32 = 2
 	ggmlTypeQ5_0 uint32 = 6
 	ggmlTypeQ8_0 uint32 = 8
+	ggmlTypeQ3_K uint32 = 11
 	ggmlTypeQ4_K uint32 = 12
+	ggmlTypeQ5_K uint32 = 13
 	ggmlTypeQ6_K uint32 = 14
 )
 
@@ -348,7 +350,7 @@ func (g *GGUFFile) RowDequantizer(name string) (dims []int, into func(start int,
 	}
 	bs, ok := ggmlBlockElems(info.typ)
 	if !ok {
-		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0/Q5_0/Q4_K/Q6_K)", name, info.typ)
+		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0/Q5_0/Q3_K/Q4_K/Q5_K/Q6_K)", name, info.typ)
 	}
 	raw, err := g.tensorBytes(info, n)
 	if err != nil {
@@ -375,7 +377,7 @@ func ggmlBlockElems(typ uint32) (int, bool) {
 		return 1, true
 	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ5_0:
 		return 32, true
-	case ggmlTypeQ6_K, ggmlTypeQ4_K:
+	case ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K:
 		return qkK, true
 	default:
 		return 0, false
@@ -406,10 +408,14 @@ func dequantRange(typ uint32, raw []byte, start int, dst []float32, bs int) {
 				dequantQ4_0Block(raw, first+k, out)
 			case ggmlTypeQ5_0:
 				dequantQ5_0Block(raw, first+k, out)
-			case ggmlTypeQ6_K:
-				dequantQ6KBlock(raw, first+k, out)
+			case ggmlTypeQ3_K:
+				dequantQ3KBlock(raw, first+k, out)
 			case ggmlTypeQ4_K:
 				dequantQ4KBlock(raw, first+k, out)
+			case ggmlTypeQ5_K:
+				dequantQ5KBlock(raw, first+k, out)
+			case ggmlTypeQ6_K:
+				dequantQ6KBlock(raw, first+k, out)
 			}
 		}
 	}
@@ -437,15 +443,20 @@ func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
 		default: // Q5_0
 			nbytes = blocks * 22 // 2-byte f16 scale + 4-byte high bits + 16 packed nibbles
 		}
-	case ggmlTypeQ6_K, ggmlTypeQ4_K:
+	case ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K:
 		if n%qkK != 0 {
 			return nil, fmt.Errorf("element count %d not a multiple of %d (super-block)", n, qkK)
 		}
 		sb := n / qkK
-		if info.typ == ggmlTypeQ6_K {
-			nbytes = sb * 210 // ql[128] + qh[64] + scales[16] + d(f16)
-		} else {
+		switch info.typ {
+		case ggmlTypeQ3_K:
+			nbytes = sb * 110 // hmask[32] + qs[64] + scales[12] + d(f16)
+		case ggmlTypeQ4_K:
 			nbytes = sb * 144 // d + dmin (f16 each) + scales[12] + qs[128]
+		case ggmlTypeQ5_K:
+			nbytes = sb * 176 // d + dmin (f16 each) + scales[12] + qh[32] + qs[128]
+		default: // Q6_K
+			nbytes = sb * 210 // ql[128] + qh[64] + scales[16] + d(f16)
 		}
 	default:
 		return nil, fmt.Errorf("unsupported ggml type %d", info.typ)
@@ -558,7 +569,7 @@ func dequantQ4KBlock(raw []byte, sb int, out []float32) {
 	}
 }
 
-// q4kScaleMin unpacks the j-th 6-bit scale and min from a Q4_K super-block's
+// q4kScaleMin unpacks the j-th 6-bit scale and min from a Q4_K/Q5_K super-block's
 // 12-byte scales array (ggml's get_scale_min_k4).
 func q4kScaleMin(j int, q []byte) (scale, min uint8) {
 	if j < 4 {
@@ -567,6 +578,118 @@ func q4kScaleMin(j int, q []byte) (scale, min uint8) {
 	scale = (q[j+4] & 0x0F) | ((q[j-4] >> 6) << 4)
 	min = (q[j+4] >> 4) | ((q[j] >> 6) << 4)
 	return scale, min
+}
+
+// dequantQ5KBlock dequantizes one 256-element Q5_K super-block (sb) into out[:256].
+// Layout (176 bytes): d (f16), dmin (f16), scales[12] (6-bit scales+mins, same
+// packing as Q4_K), qh[32] (the 5th/high bit per element), qs[128] (low 4 bits).
+// Mirrors ggml's dequantize_row_q5_K: y = d·sc·q − dmin·m with q a 5-bit code
+// (low nibble | high bit << 4). The high bit for each 32-wide half is selected by
+// a mask that walks the qh byte two bits at a time across the four 64-elem groups.
+func dequantQ5KBlock(raw []byte, sb int, out []float32) {
+	base := sb * 176
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	dmin := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))
+	scales := raw[base+4 : base+16]
+	qh := raw[base+16 : base+48]
+	qs := raw[base+48 : base+176]
+	yi := 0
+	u1, u2 := byte(1), byte(2)
+	for j := 0; j < 4; j++ { // four 64-element groups
+		is := 2 * j
+		sc1, m1 := q4kScaleMin(is+0, scales)
+		sc2, m2 := q4kScaleMin(is+1, scales)
+		d1, off1 := d*float32(sc1), dmin*float32(m1)
+		d2, off2 := d*float32(sc2), dmin*float32(m2)
+		ql := qs[j*32 : j*32+32]
+		for l := 0; l < 32; l++ {
+			var h float32
+			if qh[l]&u1 != 0 {
+				h = 16
+			}
+			out[yi] = d1*(float32(ql[l]&0x0F)+h) - off1
+			yi++
+		}
+		for l := 0; l < 32; l++ {
+			var h float32
+			if qh[l]&u2 != 0 {
+				h = 16
+			}
+			out[yi] = d2*(float32(ql[l]>>4)+h) - off2
+			yi++
+		}
+		u1 <<= 2
+		u2 <<= 2
+	}
+}
+
+// dequantQ3KBlock dequantizes one 256-element Q3_K super-block (sb) into out[:256].
+// Layout (110 bytes): hmask[32] (the 3rd/high bit per element), qs[64] (low 2
+// bits), scales[12] (16 six-bit sub-block scales, bit-packed), d (f16). Mirrors
+// ggml's dequantize_row_q3_K: the 12 scale bytes are unpacked (the aux dance) into
+// 16 int8 scales recentered by −32, and each element is a 2-bit code lifted to
+// [−4,3] by the hmask bit: y = d·scale·(q2 − (hmask_bit ? 0 : 4)).
+func dequantQ3KBlock(raw []byte, sb int, out []float32) {
+	const (
+		kmask1 = 0x03030303
+		kmask2 = 0x0f0f0f0f
+	)
+	base := sb * 110
+	hm := raw[base : base+32]
+	q := raw[base+32 : base+96]
+	scRaw := raw[base+96 : base+108]
+	dAll := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+108:]))
+
+	// Unpack the 16 six-bit sub-block scales: the 12 packed bytes are read as three
+	// little-endian uint32s, recombined (ggml's bit dance), and laid back down as a
+	// 16-byte int8 buffer. Each scale is recentered by −32 at use.
+	a0 := binary.LittleEndian.Uint32(scRaw[0:])
+	a1 := binary.LittleEndian.Uint32(scRaw[4:])
+	tmp := binary.LittleEndian.Uint32(scRaw[8:])
+	na := [4]uint32{
+		(a0 & kmask2) | (((tmp >> 0) & kmask1) << 4),
+		(a1 & kmask2) | (((tmp >> 2) & kmask1) << 4),
+		((a0 >> 4) & kmask2) | (((tmp >> 4) & kmask1) << 4),
+		((a1 >> 4) & kmask2) | (((tmp >> 6) & kmask1) << 4),
+	}
+	var sc [16]int8
+	for i, v := range na {
+		sc[4*i+0] = int8(v)
+		sc[4*i+1] = int8(v >> 8)
+		sc[4*i+2] = int8(v >> 16)
+		sc[4*i+3] = int8(v >> 24)
+	}
+
+	yi, is := 0, 0
+	m := byte(1)
+	for n := 0; n < 2; n++ { // two 128-element halves
+		qb := n * 32 // q advances by 32 each half
+		shift := uint(0)
+		for j := 0; j < 4; j++ {
+			dl := dAll * float32(int(sc[is])-32)
+			is++
+			for l := 0; l < 16; l++ {
+				var sub float32 = 4
+				if hm[l]&m != 0 {
+					sub = 0
+				}
+				out[yi] = dl * (float32((q[qb+l]>>shift)&3) - sub)
+				yi++
+			}
+			dl = dAll * float32(int(sc[is])-32)
+			is++
+			for l := 0; l < 16; l++ {
+				var sub float32 = 4
+				if hm[l+16]&m != 0 {
+					sub = 0
+				}
+				out[yi] = dl * (float32((q[qb+l+16]>>shift)&3) - sub)
+				yi++
+			}
+			shift += 2
+			m <<= 1
+		}
+	}
 }
 
 // --- typed metadata accessors ---

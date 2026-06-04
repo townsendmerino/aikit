@@ -70,6 +70,12 @@ one new piece, **YaRN** RoPE (HF-exact: NTK-by-parts + `attention_factor` mscale
 dequant; `ggufConfig` dispatches `llama` + `mellum`. (Also unlocks YaRN for any
 long-context Qwen/Llama.)
 
+### GGUF Q5_K + Q3_K dequant ✅
+Two more K-quant block types on the existing GGUF seam (`dequantQ5KBlock`,
+`dequantQ3KBlock`), so `Q5_K_M` / `Q3_K_M` mixes load. Validated vs the f32 llama
+oracle on real TinyLlama GGUFs — Q5_K_M cosine 0.9991, Q3_K_M 0.9925 (argmax
+preserved). Supported K-quants: Q3_K/Q4_K/Q5_K/Q6_K (Q2_K + IQ* still open).
+
 ### Qwen2 GGUF architecture ✅
 `ggufConfig` dispatches `qwen2` alongside `llama`/`mellum`: the `qwen2.*` metadata
 maps onto the same descriptor and the weight builder loads the q/k/v projection
@@ -100,10 +106,11 @@ models). (Constrained generation, the other Tier-1 item, is shipped; its
 follow-ups are a general GBNF/regex engine + a JSON-Schema → grammar compiler on
 the same `Grammar` interface.)
 
-### 2. More GGUF quant types (Q5_K/Q3_K/IQ*) — incremental · S
-Each is "a `dequant*` func + a size entry" on the existing GGUF seam, but needs a
-fixture or the Python `gguf` reference to parity-gate (Q4_K_M/Q5_0/Q6_K already
-cover the common laptop mixes, so low marginal value).
+### 2. Remaining GGUF quant types (IQ* / Q2_K) — incremental · S–M
+Q5_K + Q3_K are done (see Shipped), so Q3_K_M/Q4_K_M/Q5_K_M all load. What's left:
+**Q2_K** (one more `dequant*` func, same seam — easy), and the **IQ\*** importance
+quants (IQ2/IQ3/IQ4_NL), which are codebook/grid-lookup based — meaningfully more
+work than a plain block dequant, and rarer on laptops. Low marginal value.
 
 ### 3. More GGUF architectures · S
 `ggufConfig` dispatches `llama` + `qwen2` + `mellum`. Remaining: **qwen3** (adds
@@ -126,7 +133,8 @@ those families. (YaRN is done.)
 Gemma 3 · Qwen2.5/3 · Llama-2/3 · Mistral · GPT-2 · Mixtral · **Mellum2**.
 Checkpoint formats: f32/bf16/f16 safetensors (single + sharded), **GPTQ + AWQ**
 int4 safetensors, and **GGUF** (`llama` + `qwen2` + `mellum` archs; F32/F16/Q8_0/
-Q4_0/Q5_0/Q4_K/Q6_K). Any of these re-quantizes to resident int8/W8A8/int4.
+Q4_0/Q5_0/Q3_K/Q4_K/Q5_K/Q6_K). Any of these re-quantizes to resident
+int8/W8A8/int4.
 
 ---
 
