@@ -35,6 +35,18 @@ it.
 
 ### Added
 
+- **Exact Mellum2 byte-level tokenizer parity.** Mellum2's pre_tokenizer is
+  `Sequence[Digits{individual_digits}, ByteLevel]` (no normalizer) — the `Digits`
+  stage isolates each digit *before* the GPT-2 split, so a leading space never
+  attaches to a digit (`" 1"` → `Ġ` + `1`, not the single `Ġ1`). The byte-level
+  pipeline now reproduces this: a `splitDigits` knob (detected from a
+  `Digits{individual_digits}` node in `tokenizer.json`, and from
+  `tokenizer.ggml.pre == "mellum2"` on the GGUF path) pre-segments each gap so the
+  GPT-2 regex sees digits in isolation. Validated byte-exact against an HF
+  `tokenizers` oracle (`mellum2_tokenizer_golden.json`, 20 code-heavy prompts) on
+  both the `tokenizer.json` and bare-GGUF paths (`TestByteLevel_mellum2GoldenParity`,
+  `TestLoadGGUF_mellum2DigitParity`). Other byte-level families are unchanged
+  (`splitDigits` defaults off).
 - **GPTQ + AWQ (safetensors-resident int4).** The decoder loads HF int4
   checkpoints — where each linear ships as packed int4 (`qweight`/`qzeros`/
   `scales` ± `g_idx`) instead of an f32 `.weight` — detected from `config.json`'s

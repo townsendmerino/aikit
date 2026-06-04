@@ -32,6 +32,50 @@ func TestByteLevel_llama3GoldenParity(t *testing.T) {
 	runByteLevelParity(t, "../testdata/llama3-tokenizer", "../testdata/llama3_tokenizer_golden.json")
 }
 
+// TestByteLevel_mellum2GoldenParity: Mellum2's pre_tokenizer is
+// Sequence[Digits{individual_digits}, ByteLevel] with no normalizer, so each
+// digit is isolated before the GPT-2 split — a leading space never attaches to a
+// digit (" 1" → "Ġ" + "1"). HF adds no special tokens at encode (post_processor
+// is plain ByteLevel; bos_token is defined but not auto-prepended), so the golden
+// has ids_bos == ids and we assert the HF-faithful no-special `ids` column plus
+// the decode round-trip. (The with-BOS column is omitted: whether to prepend a
+// defined-but-not-auto bos_token is a caller choice orthogonal to this fix.)
+func TestByteLevel_mellum2GoldenParity(t *testing.T) {
+	g := loadGoldenAt(t, "../testdata/mellum2_tokenizer_golden.json")
+	const modelDir = "../testdata/mellum2-tokenizer"
+	if _, err := os.Stat(modelDir); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no tokenizer at %s", modelDir)
+	}
+	tk, err := Load(modelDir)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if tk.mode != modeByteLevel {
+		t.Fatalf("resolved mode %d, want modeByteLevel", tk.mode)
+	}
+	if !tk.splitDigits {
+		t.Fatalf("splitDigits not detected for Mellum2 (Digits{individual_digits} pretokenizer)")
+	}
+	for _, c := range g.Cases {
+		t.Run(caseName(c.Text), func(t *testing.T) {
+			got, err := tk.Encode(c.Text, false)
+			if err != nil {
+				t.Fatalf("Encode: %v", err)
+			}
+			if !equalInts(got, c.IDs) {
+				t.Errorf("Encode(%q)\n  got  %v\n  want %v\n  toks %v", c.Text, got, c.IDs, c.Tokens)
+			}
+			dec, err := tk.Decode(c.IDs)
+			if err != nil {
+				t.Fatalf("Decode: %v", err)
+			}
+			if dec != c.Decode {
+				t.Errorf("Decode(%v) = %q, want %q", c.IDs, dec, c.Decode)
+			}
+		})
+	}
+}
+
 // runByteLevelParity asserts every golden prompt encodes id-for-id without
 // special tokens (ids) and with (ids_bos), and decodes back to HF's rendering.
 // A single drift silently degrades generation, so the bar is exact equality.

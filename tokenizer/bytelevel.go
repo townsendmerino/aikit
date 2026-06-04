@@ -27,6 +27,7 @@ func (t *Tokenizer) initByteLevel(tj *tokenizerJSON, dir string) error {
 	t.byteEncoder, t.byteDecoder = buildByteLevelTables()
 	t.normForm, t.normOn = normalizerForm(tj.Normalizer)
 	t.maxDigits = digitRunCap(splitRegex(tj.PreTokenizer))
+	t.splitDigits = hasIndividualDigits(tj.PreTokenizer)
 
 	t.special = SpecialTokens{BOS: -1, EOS: -1, Pad: -1, StartOfTurn: -1, EndOfTurn: -1}
 	lookup := func(piece string) int {
@@ -89,12 +90,19 @@ func (t *Tokenizer) encodeByteLevel(text string, addBOS bool) ([]int, error) {
 		if t.normOn {
 			gap = t.normForm.String(gap)
 		}
-		for _, piece := range splitGPT2(gap, t.maxDigits) {
-			ids, err := t.bpeByteLevel(piece)
-			if err != nil {
-				return err
+		// A Digits{individual_digits} pretokenizer (Mellum2) runs before the
+		// byte-level regex: it isolates each digit into its own segment first, so
+		// the GPT-2 regex never sees a digit adjacent to a leading space (" 1"
+		// becomes " " + "1", not the single "Ġ1" piece). Without it the gap is one
+		// segment.
+		for _, seg := range t.digitSegments(gap) {
+			for _, piece := range splitGPT2(seg, t.maxDigits) {
+				ids, err := t.bpeByteLevel(piece)
+				if err != nil {
+					return err
+				}
+				out = append(out, ids...)
 			}
-			out = append(out, ids...)
 		}
 		return nil
 	}
@@ -387,6 +395,62 @@ func splitRegex(raw json.RawMessage) string {
 		}
 	}
 	return ""
+}
+
+// digitSegments splits s the way a Digits{individual_digits:true} pretokenizer
+// does, when one is present (t.splitDigits): each numeric rune becomes its own
+// segment and maximal non-numeric runs are their own segments, so a later
+// byte-level regex never merges a digit with an adjacent space or letter. Without
+// such a pretokenizer it returns s unchanged (one segment). Uses the same
+// unicode.IsNumber predicate as splitGPT2's \p{N} alternative.
+func (t *Tokenizer) digitSegments(s string) []string {
+	if !t.splitDigits || s == "" {
+		return []string{s}
+	}
+	var segs []string
+	runStart, inRun := 0, false // inRun: accumulating a non-digit run
+	flush := func(end int) {
+		if end > runStart {
+			segs = append(segs, s[runStart:end])
+		}
+	}
+	for i, r := range s {
+		if unicode.IsNumber(r) {
+			flush(i) // close any pending non-digit run
+			segs = append(segs, string(r))
+			runStart, inRun = i+len(string(r)), false
+		} else if !inRun {
+			runStart, inRun = i, true
+		}
+	}
+	flush(len(s))
+	return segs
+}
+
+// hasIndividualDigits reports whether tokenizer.json's pre_tokenizer contains a
+// Digits node with individual_digits set (Mellum2's pipeline), recursing into a
+// Sequence's pretokenizers.
+func hasIndividualDigits(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var node struct {
+		Type            string            `json:"type"`
+		IndividualDigit bool              `json:"individual_digits"`
+		Pretokenizers   []json.RawMessage `json:"pretokenizers"`
+	}
+	if json.Unmarshal(raw, &node) != nil {
+		return false
+	}
+	if node.Type == "Digits" && node.IndividualDigit {
+		return true
+	}
+	for _, sub := range node.Pretokenizers {
+		if hasIndividualDigits(sub) {
+			return true
+		}
+	}
+	return false
 }
 
 var digitRunRe = regexp.MustCompile(`\\p\{N\}\{1,(\d+)\}`)

@@ -70,6 +70,15 @@ one new piece, **YaRN** RoPE (HF-exact: NTK-by-parts + `attention_factor` mscale
 dequant; `ggufConfig` dispatches `llama` + `mellum`. (Also unlocks YaRN for any
 long-context Qwen/Llama.)
 
+### Exact Mellum2 tokenizer parity ✅
+The byte-level tokenizer now reproduces Mellum2's `Sequence[Digits{individual_
+digits}, ByteLevel]` pipeline: a `splitDigits` knob (from a `Digits` node in
+`tokenizer.json`, or `tokenizer.ggml.pre == "mellum2"` on the GGUF path) isolates
+each digit before the GPT-2 split, so a leading space never attaches to a digit
+(`" 1"` → `Ġ`+`1`). Byte-exact vs an HF `tokenizers` oracle on both paths
+(`TestByteLevel_mellum2GoldenParity`, `TestLoadGGUF_mellum2DigitParity`); other
+byte-level families unchanged.
+
 ---
 
 ## Still open, ranked
@@ -88,14 +97,13 @@ Each is "a `dequant*` func + a size entry" on the existing GGUF seam, but needs 
 fixture or the Python `gguf` reference to parity-gate (Q4_K_M/Q5_0/Q6_K already
 cover the common laptop mixes, so low marginal value).
 
-### 3. Mellum2 polish · S
-- **Exact `mellum2` tokenizer parity.** The GGUF byte-level tokenizer falls to
-  GPT-2-style defaults for `tokenizer.ggml.pre == "mellum2"` (good enough for
-  coherent output, not byte-exact). Pin a golden from the model's `tokenizer.json`
-  and map its pretokenizer regex.
-- **More GGUF architectures.** `ggufConfig` dispatches `llama` + `mellum`;
-  qwen2/qwen3/gemma GGUFs are the same pattern (map `<arch>.*` metadata onto the
-  existing descriptors) once a fixture is on hand.
+### 3. More GGUF architectures · S
+`ggufConfig` dispatches `llama` + `mellum`; qwen2/qwen3/gemma GGUFs are the same
+pattern (map `<arch>.*` metadata onto the existing descriptors) once a fixture is
+on hand. Qwen2 also needs the GGUF weight builder to load the q/k/v projection
+biases (RoPE-permuted like the q/k weights); Qwen3 needs q/k-norm tensors; Gemma
+needs its extra norms + softcaps. (Exact `mellum2` tokenizer parity — the other
+half of this item — is **done**, see Shipped: the byte-level `Digits` pre-split.)
 
 ### 4. Shared-expert MoE + longrope/dynamic RoPE — lowest urgency · S–M
 A couple more `MoEConfig` knobs for shared-expert MoE (Qwen-MoE/DeepSeek), and the

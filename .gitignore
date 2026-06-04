@@ -58,6 +58,12 @@ testdata/qwen3_forward_full.json
 # meta-llama tokenizer). Only the small golden is committed; never the 9 MB json.
 testdata/llama3-tokenizer
 
+# Mellum2 tokenizer (byte-level digit-isolation parity) — per-machine, downloaded
+# via huggingface_hub (JetBrains/Mellum2-12B-A2.5B-Instruct, tokenizer.json +
+# tokenizer_config.json only). Only the small golden is committed; never the 7 MB
+# tokenizer.json. Regenerate: scripts/pin_mellum2_tokenizer.py
+testdata/mellum2-tokenizer
+
 # Llama-adapter forward-parity model — per-machine, downloaded via
 # huggingface_hub (TinyLlama/TinyLlama-1.1B-Chat-v1.0, Llama-2 arch, ungated).
 # Only the small golden is committed; never the weights or the full-logit dump.

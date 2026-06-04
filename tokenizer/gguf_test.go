@@ -24,7 +24,39 @@ const (
 	// Byte-level (gpt2-family) GGUF + the same model's committed tokenizer.json.
 	llama32GGUF = "../testdata/llama32-gguf/llama-3.2-1b-instruct-Q4_K_M.gguf"
 	llama32JSON = "../testdata/llama3.2-1b"
+	mellumGGUF  = "../testdata/mellum-gguf/Mellum2-12B-A2.5B-Instruct-Q4_K_M.gguf"
 )
+
+// TestLoadGGUF_mellum2DigitParity pins the GGUF tokenizer path for Mellum2:
+// tokenizer.ggml.pre == "mellum2" must select the same byte-level knobs
+// (splitDigits on) that Load reads from the tokenizer.json, so a bare GGUF
+// reproduces HF's digit-isolating tokenization id-for-id. Validated against the
+// committed mellum2 golden (HF oracle). Loads only GGUF metadata (mmap), not the
+// ~8 GB weights; skips when the GGUF is absent.
+func TestLoadGGUF_mellum2DigitParity(t *testing.T) {
+	g := loadGoldenAt(t, "../testdata/mellum2_tokenizer_golden.json")
+	if _, err := os.Stat(mellumGGUF); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no Mellum2 GGUF at %s", mellumGGUF)
+	}
+	gg, err := LoadGGUF(mellumGGUF)
+	if err != nil {
+		t.Fatalf("LoadGGUF: %v", err)
+	}
+	if gg.mode != modeByteLevel || !gg.splitDigits {
+		t.Fatalf("GGUF knobs: mode=%d splitDigits=%v, want byteLevel + splitDigits", gg.mode, gg.splitDigits)
+	}
+	for _, c := range g.Cases {
+		t.Run(caseName(c.Text), func(t *testing.T) {
+			got, err := gg.Encode(c.Text, false)
+			if err != nil {
+				t.Fatalf("Encode: %v", err)
+			}
+			if !equalInts(got, c.IDs) {
+				t.Errorf("GGUF Encode(%q)\n  got  %v\n  want %v\n  toks %v", c.Text, got, c.IDs, c.Tokens)
+			}
+		})
+	}
+}
 
 // TestLoadGGUF_tinyllamaParity: the tokenizer built from GGUF metadata alone
 // (vocab + merges + special ids) must match the HF oracle id-for-id, with the

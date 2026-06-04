@@ -88,6 +88,7 @@ type Tokenizer struct {
 	maxDigits    int           // pretokenizer digit-run cap: Qwen \p{N}=1, Llama-3 \p{N}{1,3}=3
 	normForm     norm.Form     // Unicode normalization form (when normOn)
 	normOn       bool          // Qwen normalizes NFC; Llama-3 has no normalizer
+	splitDigits  bool          // a Digits{individual_digits} pretokenizer runs before the byte-level regex (Mellum2): isolate each digit, so a leading space never attaches to one
 
 	added *addedTrie // added/special token surface forms → id
 }

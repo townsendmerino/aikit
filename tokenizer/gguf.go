@@ -212,23 +212,27 @@ func setupGGUFByteLevel(t *Tokenizer, g *embed.GGUFFile) {
 	t.mode = modeByteLevel
 	t.byteEncoder, t.byteDecoder = buildByteLevelTables()
 	pre, _ := g.Str(ggufTokPre)
-	t.maxDigits, t.normForm, t.normOn, t.ignoreMerges = byteLevelKnobs(pre)
+	t.maxDigits, t.normForm, t.normOn, t.ignoreMerges, t.splitDigits = byteLevelKnobs(pre)
 }
 
 // byteLevelKnobs maps a tokenizer.ggml.pre identifier to the byte-level pipeline
-// knobs (digit-run cap, normalization form + on, ignore_merges). The values
-// reproduce what Load derives from each family's tokenizer.json: Llama-3 groups
-// digits in runs of ≤3 with no normalizer and ignore_merges; Qwen takes one
-// digit, NFC-normalizes, and honors merges; GPT-2 takes one digit, no NFC, and
-// honors merges. Unknown pre falls back to the GPT-2-like defaults.
-func byteLevelKnobs(pre string) (maxDigits int, form norm.Form, normOn, ignoreMerges bool) {
+// knobs (digit-run cap, normalization form + on, ignore_merges, individual-digit
+// pre-split). The values reproduce what Load derives from each family's
+// tokenizer.json: Llama-3 groups digits in runs of ≤3 with no normalizer and
+// ignore_merges; Qwen takes one digit, NFC-normalizes, and honors merges; Mellum2
+// has no normalizer and a Digits{individual_digits} pretokenizer (each digit
+// isolated, so a leading space never attaches to one); GPT-2 takes one digit, no
+// NFC, and honors merges. Unknown pre falls back to the GPT-2-like defaults.
+func byteLevelKnobs(pre string) (maxDigits int, form norm.Form, normOn, ignoreMerges, splitDigits bool) {
 	switch pre {
 	case "llama-bpe", "llama3", "llama-v3":
-		return 3, norm.NFC, false, true
+		return 3, norm.NFC, false, true, false
 	case "qwen2", "qwen2.5", "qwen":
-		return 1, norm.NFC, true, false
-	default: // "gpt-2", "default", "mellum2" (code BPE), "", and unrecognized
-		return 1, norm.NFC, false, false
+		return 1, norm.NFC, true, false, false
+	case "mellum2":
+		return 1, norm.NFC, false, false, true
+	default: // "gpt-2", "default", "", and unrecognized
+		return 1, norm.NFC, false, false, false
 	}
 }
 
