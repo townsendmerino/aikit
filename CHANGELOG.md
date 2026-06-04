@@ -35,6 +35,16 @@ it.
 
 ### Added
 
+- **Qwen2 GGUF architecture.** `ggufConfig` now dispatches `qwen2` (Qwen2/Qwen2.5)
+  in addition to `llama` and `mellum`: the `qwen2.*` metadata maps onto the same
+  descriptor, and the GGUF weight builder loads the q/k/v projection **biases**
+  (the one thing qwen2 adds over llama). A subtlety the new path gets right: the
+  q/k weight (and bias) permutation is gated on the rope type — llama.cpp permutes
+  only NORM-rope archs (llama, mellum), while qwen2 is NEOX-rope and stays in HF
+  order (`ggufQKPermuted`), so a wrong unconditional un-permute is avoided. A bare
+  Qwen2.5-0.5B Q8_0 GGUF runs end-to-end: argmax matches the f32 oracle, cosine
+  ~0.997 (`TestGGUF_qwen2_parity`, skip-when-absent). Unknown archs default to
+  NEOX (no permute), the common modern case.
 - **Exact Mellum2 byte-level tokenizer parity.** Mellum2's pre_tokenizer is
   `Sequence[Digits{individual_digits}, ByteLevel]` (no normalizer) — the `Digits`
   stage isolates each digit *before* the GPT-2 split, so a leading space never

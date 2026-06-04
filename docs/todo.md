@@ -70,6 +70,14 @@ one new piece, **YaRN** RoPE (HF-exact: NTK-by-parts + `attention_factor` mscale
 dequant; `ggufConfig` dispatches `llama` + `mellum`. (Also unlocks YaRN for any
 long-context Qwen/Llama.)
 
+### Qwen2 GGUF architecture ✅
+`ggufConfig` dispatches `qwen2` alongside `llama`/`mellum`: the `qwen2.*` metadata
+maps onto the same descriptor and the weight builder loads the q/k/v projection
+biases. The q/k permute is now gated on rope type (`ggufQKPermuted` — NORM for
+llama/mellum, NEOX for qwen2/qwen3/gemma, so no un-permute), fixing what would be
+a silent wrong-output bug. A bare Qwen2.5-0.5B Q8_0 GGUF runs end-to-end vs the
+f32 oracle (argmax match, cosine ~0.997; `TestGGUF_qwen2_parity`).
+
 ### Exact Mellum2 tokenizer parity ✅
 The byte-level tokenizer now reproduces Mellum2's `Sequence[Digits{individual_
 digits}, ByteLevel]` pipeline: a `splitDigits` knob (from a `Digits` node in
@@ -98,12 +106,13 @@ fixture or the Python `gguf` reference to parity-gate (Q4_K_M/Q5_0/Q6_K already
 cover the common laptop mixes, so low marginal value).
 
 ### 3. More GGUF architectures · S
-`ggufConfig` dispatches `llama` + `mellum`; qwen2/qwen3/gemma GGUFs are the same
-pattern (map `<arch>.*` metadata onto the existing descriptors) once a fixture is
-on hand. Qwen2 also needs the GGUF weight builder to load the q/k/v projection
-biases (RoPE-permuted like the q/k weights); Qwen3 needs q/k-norm tensors; Gemma
-needs its extra norms + softcaps. (Exact `mellum2` tokenizer parity — the other
-half of this item — is **done**, see Shipped: the byte-level `Digits` pre-split.)
+`ggufConfig` dispatches `llama` + `qwen2` + `mellum`. Remaining: **qwen3** (adds
+q/k-norm tensors, NEOX rope — reuse the `ggufQKPermuted`=false path + the QK-norm
+load without the un-permute) and **gemma2/3** (extra pre/post norms, logit/attn
+softcaps, embedding scale, sliding pattern — the biggest of the three). Each is
+"map `<arch>.*` metadata onto the existing descriptor + load its extra tensors"
+once a fixture is on hand. (Exact `mellum2` tokenizer parity — the other half of
+the old Mellum2-polish item — is **done**, see Shipped.)
 
 ### 4. Shared-expert MoE + longrope/dynamic RoPE — lowest urgency · S–M
 A couple more `MoEConfig` knobs for shared-expert MoE (Qwen-MoE/DeepSeek), and the
@@ -116,8 +125,8 @@ those families. (YaRN is done.)
 
 Gemma 3 · Qwen2.5/3 · Llama-2/3 · Mistral · GPT-2 · Mixtral · **Mellum2**.
 Checkpoint formats: f32/bf16/f16 safetensors (single + sharded), **GPTQ + AWQ**
-int4 safetensors, and **GGUF** (`llama` + `mellum` archs; F32/F16/Q8_0/Q4_0/Q5_0/
-Q4_K/Q6_K). Any of these re-quantizes to resident int8/W8A8/int4.
+int4 safetensors, and **GGUF** (`llama` + `qwen2` + `mellum` archs; F32/F16/Q8_0/
+Q4_0/Q5_0/Q4_K/Q6_K). Any of these re-quantizes to resident int8/W8A8/int4.
 
 ---
 

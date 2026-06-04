@@ -72,6 +72,73 @@ func TestGGUF_Q8_0_parity(t *testing.T) {
 	testGGUFParity(t, "../testdata/tinyllama-gguf/tinyllama-1.1b-chat-v1.0.Q8_0.gguf", 0.999)
 }
 
+// TestGGUF_qwen2_parity loads a real Qwen2.5-0.5B-Instruct Q8_0 GGUF and checks
+// its forward against the same model's f32 oracle (qwen2_forward_*.json). This
+// validates the new qwen2 GGUF architecture path end-to-end: the qwen2.* metadata
+// mapping, and — the one thing qwen2 adds over llama — loading the q/k/v
+// projection biases (with the q/k bias RoPE-permuted like the q/k weight rows).
+// Q8_0 is near-lossless, so the argmax must still land on ' Paris' and the cosine
+// clear 0.995 (looser than TinyLlama's 0.999 floor: at 0.5 B with a 152k-vocab
+// Q8_0 head the per-logit quant error spreads wider — measured ~0.997). Loads
+// ~0.6 GB (gitignored); skips when absent or under -short.
+//
+//	hf download Qwen/Qwen2.5-0.5B-Instruct-GGUF qwen2.5-0.5b-instruct-q8_0.gguf \
+//	  --local-dir testdata/qwen2-gguf
+func TestGGUF_qwen2_parity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: loads + runs a Qwen2.5-0.5B GGUF")
+	}
+	raw, err := os.ReadFile(qwen2ForwardGolden)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no Qwen2 golden at %s", qwen2ForwardGolden)
+	}
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	var g forwardGolden
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatalf("parse golden: %v", err)
+	}
+	const ggufPath = "../testdata/qwen2-gguf/qwen2.5-0.5b-instruct-q8_0.gguf"
+	if _, err := os.Stat(ggufPath); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no Qwen2 GGUF at %s", ggufPath)
+	}
+
+	m, err := Load(ggufPath, Options{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if m.w.arch.Name != "qwen2" {
+		t.Fatalf("resolved arch %q, want qwen2", m.w.arch.Name)
+	}
+	if !m.w.arch.QKVBias {
+		t.Errorf("expected QKVBias=true for Qwen2")
+	}
+	if m.w.Layers[0].QBias == nil || m.w.Layers[0].KBias == nil || m.w.Layers[0].VBias == nil {
+		t.Fatalf("q/k/v bias not loaded for layer 0")
+	}
+
+	cache := m.NewCache(len(g.IDs))
+	for _, id := range g.IDs[:len(g.IDs)-1] {
+		if _, err := m.runLayers(id, cache); err != nil {
+			t.Fatalf("runLayers: %v", err)
+		}
+	}
+	logits, err := m.forward(g.IDs[len(g.IDs)-1], cache)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	if got := argmax(logits); got != g.Argmax {
+		t.Errorf("argmax = %d, want %d (logit[got]=%.4f logit[want]=%.4f)",
+			got, g.Argmax, logits[got], logits[g.Argmax])
+	}
+	cos := cosineToFull(t, logits, qwen2ForwardFullPath)
+	if !math.IsNaN(cos) && cos < 0.995 {
+		t.Errorf("qwen2 GGUF cosine vs f32 oracle = %v, want ≥ 0.995", cos)
+	}
+	t.Logf("gguf qwen2 Q8_0: argmax=%d (want %d) | cosine vs f32 = %v", argmax(logits), g.Argmax, cos)
+}
+
 func TestGGUF_Q4_0_parity(t *testing.T) {
 	testGGUFParity(t, "../testdata/tinyllama-gguf/tinyllama-1.1b-chat-v1.0.Q4_0.gguf", 0.99)
 }

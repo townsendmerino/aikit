@@ -28,10 +28,12 @@ func ggufConfig(g *embed.GGUFFile) (*Config, error) {
 	switch arch {
 	case "llama":
 		return ggufLlamaConfig(g)
+	case "qwen2":
+		return ggufQwen2Config(g)
 	case "mellum":
 		return ggufMellumConfig(g)
 	default:
-		return nil, fmt.Errorf("decoder(gguf): architecture %q unsupported (have: llama, mellum)", arch)
+		return nil, fmt.Errorf("decoder(gguf): architecture %q unsupported (have: llama, qwen2, mellum)", arch)
 	}
 }
 
@@ -77,6 +79,38 @@ func ggufLlamaConfig(g *embed.GGUFFile) (*Config, error) {
 		cfg.RoPEGlobalBase = base
 	} else {
 		cfg.RoPEGlobalBase = 10000 // llama.cpp default
+	}
+	ggufEOS(g, cfg)
+	return cfg, nil
+}
+
+// ggufQwen2Config builds a Qwen2/Qwen2.5 Config from the qwen2.* metadata. It is
+// the llama config plus the qwen2 model type — the only architectural difference
+// is the additive q/k/v projection bias, carried by the qwen2 descriptor
+// (QKVBias) and loaded by buildWeightsFromGGUF. RoPE base defaults to llama.cpp's
+// qwen2 default (1e6) when absent.
+func ggufQwen2Config(g *embed.GGUFFile) (*Config, error) {
+	u := func(k string) int {
+		v, _ := g.Uint("qwen2." + k)
+		return int(v)
+	}
+	cfg := &Config{
+		ModelType:       "qwen2",
+		HiddenDim:       u("embedding_length"),
+		NumLayers:       u("block_count"),
+		NumHeads:        u("attention.head_count"),
+		NumKVHeads:      u("attention.head_count_kv"),
+		IntermediateDim: u("feed_forward_length"),
+		HiddenAct:       "silu",
+		VocabSize:       ggufVocabSize(g),
+	}
+	if eps, ok := g.Float("qwen2.attention.layer_norm_rms_epsilon"); ok {
+		cfg.RMSNormEps = eps
+	}
+	if base, ok := g.Float("qwen2.rope.freq_base"); ok {
+		cfg.RoPEGlobalBase = base
+	} else {
+		cfg.RoPEGlobalBase = 1000000 // llama.cpp qwen2 default
 	}
 	ggufEOS(g, cfg)
 	return cfg, nil
@@ -278,6 +312,17 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 	}
 
 	qDim, kvDim := arch.NumHeads*hd, arch.NumKVHeads*hd
+	// llama.cpp permutes the q/k weights (and their per-row biases / head-dim
+	// norms) only for the NORM rope type — llama and its derivatives (incl.
+	// mellum). The NEOX rope type (qwen2/qwen3/gemma) leaves q/k in HF order, so
+	// no un-permutation is needed there.
+	permuteQK := ggufQKPermuted(arch.Name)
+	loadQK := func(name string, out, nHead int) (weightMat, error) {
+		if permuteQK {
+			return permMat(name, out, hidden, nHead)
+		}
+		return mat(name, out, hidden)
+	}
 	// Load the layers in parallel: each is independent (its own weightMat slots
 	// over the read-only mmap), and the per-tensor dequant + re-quant is the load's
 	// cost — fanning it out across cores turns a 12B GGUF's ~2 min load into seconds.
@@ -288,10 +333,10 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 		if l.PreAttnNorm, err = vec(p+"attn_norm.weight", hidden); err != nil {
 			return err
 		}
-		if l.QProj, err = permMat(p+"attn_q.weight", qDim, hidden, arch.NumHeads); err != nil {
+		if l.QProj, err = loadQK(p+"attn_q.weight", qDim, arch.NumHeads); err != nil {
 			return err
 		}
-		if l.KProj, err = permMat(p+"attn_k.weight", kvDim, hidden, arch.NumKVHeads); err != nil {
+		if l.KProj, err = loadQK(p+"attn_k.weight", kvDim, arch.NumKVHeads); err != nil {
 			return err
 		}
 		if l.VProj, err = mat(p+"attn_v.weight", kvDim, hidden); err != nil {
@@ -299,6 +344,22 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 		}
 		if l.OProj, err = mat(p+"attn_output.weight", hidden, qDim); err != nil {
 			return err
+		}
+		// q/k/v projection bias (Qwen2): the q and k biases are per-output-row, so
+		// llama.cpp's RoPE row permutation applies to them exactly as to the q/k
+		// weight rows (ggufInvPermute with in=1); the v bias is not permuted.
+		if arch.QKVBias {
+			qb, qe := vec(p+"attn_q.bias", qDim)
+			kb, ke := vec(p+"attn_k.bias", kvDim)
+			vb, ve := vec(p+"attn_v.bias", kvDim)
+			if qe != nil || ke != nil || ve != nil {
+				return fmt.Errorf("decoder(gguf): qkv bias layer %d: %v / %v / %v", i, qe, ke, ve)
+			}
+			if permuteQK {
+				qb = ggufInvPermute(qb, qDim, 1, arch.NumHeads)
+				kb = ggufInvPermute(kb, kvDim, 1, arch.NumKVHeads)
+			}
+			l.QBias, l.KBias, l.VBias = qb, kb, vb
 		}
 		// QK-norm (Mellum, Qwen3): per-head RMSNorm over head_dim, before RoPE.
 		// llama.cpp permutes the q/k weights for its RoPE, so the matching
@@ -312,7 +373,10 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 			if kerr != nil {
 				return kerr
 			}
-			l.QNorm, l.KNorm = ggufInvPermuteVec(qn), ggufInvPermuteVec(kn)
+			if permuteQK {
+				qn, kn = ggufInvPermuteVec(qn), ggufInvPermuteVec(kn)
+			}
+			l.QNorm, l.KNorm = qn, kn
 		}
 		if l.PreMLPNorm, err = vec(p+"ffn_norm.weight", hidden); err != nil {
 			return err
@@ -351,6 +415,21 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 		return nil, err
 	}
 	return w, nil
+}
+
+// ggufQKPermuted reports whether llama.cpp's GGUF conversion permuted this
+// architecture's q/k weights (and their per-row biases and head-dim norms). It
+// permutes only for the NORM rope type — llama and its derivatives, including
+// mellum; the NEOX rope type (qwen2/qwen3/gemma and the other modern families)
+// leaves q/k in HF rotate_half order, so no un-permutation is needed. Unknown
+// archs default to NEOX (no permute), the common modern case.
+func ggufQKPermuted(archName string) bool {
+	switch archName {
+	case "llama", "mellum":
+		return true
+	default:
+		return false
+	}
 }
 
 // ggufInvPermuteVec inverts llama.cpp's q/k RoPE permutation for a single
