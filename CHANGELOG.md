@@ -58,6 +58,12 @@ it.
   expected (`TestGGUF_Q5_K_M_parity` / `TestGGUF_Q3_K_M_parity` /
   `TestGGUF_Q2_K_parity`). The supported K-quants are now Q2_K/Q3_K/Q4_K/Q5_K/Q6_K
   (only the codebook IQ* types remain unimplemented).
+- **Qwen3 GGUF architecture.** `ggufConfig` dispatches `qwen3`: versus qwen2 it
+  drops the q/k/v bias and adds **QK-norm** (per-head RMSNorm over an explicit
+  `head_dim`, before RoPE). The loader already had the QK-norm load, tied-LM-head,
+  and NEOX no-permute paths, so this is just the `qwen3.*` metadata mapping. A bare
+  Qwen3-1.7B Q8_0 GGUF runs end-to-end vs the f32 oracle — argmax matches, cosine
+  **0.9998** (`TestGGUF_qwen3_parity`).
 - **Qwen2 GGUF architecture.** `ggufConfig` now dispatches `qwen2` (Qwen2/Qwen2.5)
   in addition to `llama` and `mellum`: the `qwen2.*` metadata maps onto the same
   descriptor, and the GGUF weight builder loads the q/k/v projection **biases**

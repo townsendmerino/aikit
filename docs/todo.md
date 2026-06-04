@@ -84,6 +84,12 @@ table. Pinned **bit-exact (Δ=0) vs llama.cpp's `gguf` Python reference**
 (`TestIQDequant_matchesReference`, golden from `scripts/pin_iq_dequant.py`) — no
 small-model f32 oracle needed. Only the grid-codebook IQ2*/IQ3* remain.
 
+### Qwen3 GGUF architecture ✅
+`ggufConfig` dispatches `qwen3` (drops qwen2's q/k/v bias, adds QK-norm over an
+explicit head_dim). Reuses the existing QK-norm load + NEOX no-permute + tied-head
+paths, so just the metadata mapping. Qwen3-1.7B Q8_0 GGUF runs vs the f32 oracle —
+argmax match, cosine 0.9998 (`TestGGUF_qwen3_parity`).
+
 ### Qwen2 GGUF architecture ✅
 `ggufConfig` dispatches `qwen2` alongside `llama`/`mellum`: the `qwen2.*` metadata
 maps onto the same descriptor and the weight builder loads the q/k/v projection
@@ -122,13 +128,13 @@ table (a chunk of static data + per-type bit-unpacking) rather than a flat 16-en
 codebook. Meaningfully more work, and rare on laptops. Low marginal value.
 
 ### 3. More GGUF architectures · S
-`ggufConfig` dispatches `llama` + `qwen2` + `mellum`. Remaining: **qwen3** (adds
-q/k-norm tensors, NEOX rope — reuse the `ggufQKPermuted`=false path + the QK-norm
-load without the un-permute) and **gemma2/3** (extra pre/post norms, logit/attn
-softcaps, embedding scale, sliding pattern — the biggest of the three). Each is
-"map `<arch>.*` metadata onto the existing descriptor + load its extra tensors"
-once a fixture is on hand. (Exact `mellum2` tokenizer parity — the other half of
-the old Mellum2-polish item — is **done**, see Shipped.)
+`ggufConfig` dispatches `llama` + `qwen2` + `qwen3` + `mellum`. Remaining:
+**gemma2/3** — the biggest, needing the GGUF loader to map its extra tensors onto
+the (already-supported) descriptor: pre/post attention + ffn norms, gemma3's
+query/key norm, the embedding scale (√hidden), logit/attn softcaps, the
+sliding/global layer pattern with dual rope bases, and GeGLU. Map `gemma3.*`
+metadata + load the post-norm tensors; validatable against the committed gemma-3
+f32 oracle once a matching GGUF is on hand.
 
 ### 4. Shared-expert MoE + longrope/dynamic RoPE — lowest urgency · S–M
 A couple more `MoEConfig` knobs for shared-expert MoE (Qwen-MoE/DeepSeek), and the
@@ -141,7 +147,7 @@ those families. (YaRN is done.)
 
 Gemma 3 · Qwen2.5/3 · Llama-2/3 · Mistral · GPT-2 · Mixtral · **Mellum2**.
 Checkpoint formats: f32/bf16/f16 safetensors (single + sharded), **GPTQ + AWQ**
-int4 safetensors, and **GGUF** (`llama` + `qwen2` + `mellum` archs; F32/F16/Q8_0/
+int4 safetensors, and **GGUF** (`llama` + `qwen2` + `qwen3` + `mellum` archs; F32/F16/Q8_0/
 Q4_0/Q5_0/Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/IQ4_NL/IQ4_XS). Any of these re-quantizes to
 resident int8/W8A8/int4.
 

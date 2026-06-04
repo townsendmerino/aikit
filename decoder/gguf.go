@@ -30,10 +30,12 @@ func ggufConfig(g *embed.GGUFFile) (*Config, error) {
 		return ggufLlamaConfig(g)
 	case "qwen2":
 		return ggufQwen2Config(g)
+	case "qwen3":
+		return ggufQwen3Config(g)
 	case "mellum":
 		return ggufMellumConfig(g)
 	default:
-		return nil, fmt.Errorf("decoder(gguf): architecture %q unsupported (have: llama, qwen2, mellum)", arch)
+		return nil, fmt.Errorf("decoder(gguf): architecture %q unsupported (have: llama, qwen2, qwen3, mellum)", arch)
 	}
 }
 
@@ -111,6 +113,40 @@ func ggufQwen2Config(g *embed.GGUFFile) (*Config, error) {
 		cfg.RoPEGlobalBase = base
 	} else {
 		cfg.RoPEGlobalBase = 1000000 // llama.cpp qwen2 default
+	}
+	ggufEOS(g, cfg)
+	return cfg, nil
+}
+
+// ggufQwen3Config builds a Qwen3 dense Config from the qwen3.* metadata. Versus
+// qwen2 it drops the q/k/v bias and adds QK-norm (per-head RMSNorm over head_dim
+// before RoPE) — both carried by the qwen3 descriptor, so the GGUF loader only
+// needs the metadata mapping (head_dim is explicit via attention.key_length, not
+// derived). NEOX rope (no q/k permute, via ggufQKPermuted). RoPE base defaults to
+// llama.cpp's qwen3 default (1e6) when absent.
+func ggufQwen3Config(g *embed.GGUFFile) (*Config, error) {
+	u := func(k string) int {
+		v, _ := g.Uint("qwen3." + k)
+		return int(v)
+	}
+	cfg := &Config{
+		ModelType:       "qwen3",
+		HiddenDim:       u("embedding_length"),
+		NumLayers:       u("block_count"),
+		NumHeads:        u("attention.head_count"),
+		NumKVHeads:      u("attention.head_count_kv"),
+		HeadDim:         u("attention.key_length"),
+		IntermediateDim: u("feed_forward_length"),
+		HiddenAct:       "silu",
+		VocabSize:       ggufVocabSize(g),
+	}
+	if eps, ok := g.Float("qwen3.attention.layer_norm_rms_epsilon"); ok {
+		cfg.RMSNormEps = eps
+	}
+	if base, ok := g.Float("qwen3.rope.freq_base"); ok {
+		cfg.RoPEGlobalBase = base
+	} else {
+		cfg.RoPEGlobalBase = 1000000 // llama.cpp qwen3 default
 	}
 	ggufEOS(g, cfg)
 	return cfg, nil

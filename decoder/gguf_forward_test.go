@@ -72,6 +72,68 @@ func TestGGUF_Q8_0_parity(t *testing.T) {
 	testGGUFParity(t, "../testdata/tinyllama-gguf/tinyllama-1.1b-chat-v1.0.Q8_0.gguf", 0.999)
 }
 
+// TestGGUF_qwen3_parity loads a real Qwen3-1.7B Q8_0 GGUF against the same model's
+// f32 oracle. Qwen3 over qwen2: no q/k/v bias, but QK-norm (per-head RMSNorm over
+// head_dim) and an explicit head_dim — exercising the QKNorm tensor load on the
+// NEOX (no-permute) path, plus the tied LM head (no output.weight). Q8_0, so
+// argmax must match and cosine clear 0.995. ~1.8 GB (gitignored); skip if absent.
+//
+//	hf download Qwen/Qwen3-1.7B-GGUF Qwen3-1.7B-Q8_0.gguf --local-dir testdata/qwen3-gguf
+func TestGGUF_qwen3_parity(t *testing.T) {
+	if testing.Short() {
+		t.Skip("slow: loads + runs a Qwen3-1.7B GGUF")
+	}
+	raw, err := os.ReadFile(qwen3ForwardGolden)
+	if errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no Qwen3 golden at %s", qwen3ForwardGolden)
+	}
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	var g forwardGolden
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatalf("parse golden: %v", err)
+	}
+	const ggufPath = "../testdata/qwen3-gguf/Qwen3-1.7B-Q8_0.gguf"
+	if _, err := os.Stat(ggufPath); errors.Is(err, fs.ErrNotExist) {
+		t.Skipf("no Qwen3 GGUF at %s", ggufPath)
+	}
+
+	m, err := Load(ggufPath, Options{})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if m.w.arch.Name != "qwen3" {
+		t.Fatalf("resolved arch %q, want qwen3", m.w.arch.Name)
+	}
+	if !m.w.arch.QKNorm {
+		t.Errorf("expected QKNorm=true for Qwen3")
+	}
+	if m.w.Layers[0].QNorm == nil || m.w.Layers[0].KNorm == nil {
+		t.Fatalf("q/k norm not loaded for layer 0")
+	}
+
+	cache := m.NewCache(len(g.IDs))
+	for _, id := range g.IDs[:len(g.IDs)-1] {
+		if _, err := m.runLayers(id, cache); err != nil {
+			t.Fatalf("runLayers: %v", err)
+		}
+	}
+	logits, err := m.forward(g.IDs[len(g.IDs)-1], cache)
+	if err != nil {
+		t.Fatalf("forward: %v", err)
+	}
+	if got := argmax(logits); got != g.Argmax {
+		t.Errorf("argmax = %d, want %d (logit[got]=%.4f logit[want]=%.4f)",
+			got, g.Argmax, logits[got], logits[g.Argmax])
+	}
+	cos := cosineToFull(t, logits, qwen3ForwardFullPath)
+	if !math.IsNaN(cos) && cos < 0.995 {
+		t.Errorf("qwen3 GGUF cosine vs f32 oracle = %v, want ≥ 0.995", cos)
+	}
+	t.Logf("gguf qwen3 Q8_0: argmax=%d (want %d) | cosine vs f32 = %v", argmax(logits), g.Argmax, cos)
+}
+
 // TestGGUF_qwen2_parity loads a real Qwen2.5-0.5B-Instruct Q8_0 GGUF and checks
 // its forward against the same model's f32 oracle (qwen2_forward_*.json). This
 // validates the new qwen2 GGUF architecture path end-to-end: the qwen2.* metadata
