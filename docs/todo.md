@@ -134,7 +134,7 @@ byte-level families unchanged.
 
 ## Still open, ranked
 
-### 1. Tier-1: `rag` — the product · M–L
+### 1. Tier-1: Retrieval-Augmented Generation (the `rag` package) — the product · M–L
 [`ideas.md`](ideas.md)'s top idea, and now the biggest remaining win: compose
 chunk → embed → ann/bm25 → fuse → encoder-rerank → decoder into one
 `Answer(query) → (text, []Citation)` pipeline — making the library more than the
