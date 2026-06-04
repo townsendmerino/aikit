@@ -272,23 +272,27 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 	}
 
 	qDim, kvDim := arch.NumHeads*hd, arch.NumKVHeads*hd
-	for i := 0; i < arch.NumLayers; i++ {
+	// Load the layers in parallel: each is independent (its own weightMat slots
+	// over the read-only mmap), and the per-tensor dequant + re-quant is the load's
+	// cost — fanning it out across cores turns a 12B GGUF's ~2 min load into seconds.
+	loadLayer := func(i int) error {
 		l := &w.Layers[i]
 		p := fmt.Sprintf("blk.%d.", i)
+		var err error
 		if l.PreAttnNorm, err = vec(p+"attn_norm.weight", hidden); err != nil {
-			return nil, err
+			return err
 		}
 		if l.QProj, err = permMat(p+"attn_q.weight", qDim, hidden, arch.NumHeads); err != nil {
-			return nil, err
+			return err
 		}
 		if l.KProj, err = permMat(p+"attn_k.weight", kvDim, hidden, arch.NumKVHeads); err != nil {
-			return nil, err
+			return err
 		}
 		if l.VProj, err = mat(p+"attn_v.weight", kvDim, hidden); err != nil {
-			return nil, err
+			return err
 		}
 		if l.OProj, err = mat(p+"attn_output.weight", hidden, qDim); err != nil {
-			return nil, err
+			return err
 		}
 		// QK-norm (Mellum, Qwen3): per-head RMSNorm over head_dim, before RoPE.
 		// llama.cpp permutes the q/k weights for its RoPE, so the matching
@@ -296,45 +300,49 @@ func buildWeightsFromGGUF(cfg *Config, arch *Architecture, g *embed.GGUFFile, qu
 		if arch.QKNorm {
 			qn, kerr := vec(p+"attn_q_norm.weight", hd)
 			if kerr != nil {
-				return nil, kerr
+				return kerr
 			}
 			kn, kerr := vec(p+"attn_k_norm.weight", hd)
 			if kerr != nil {
-				return nil, kerr
+				return kerr
 			}
 			l.QNorm, l.KNorm = ggufInvPermuteVec(qn), ggufInvPermuteVec(kn)
 		}
 		if l.PreMLPNorm, err = vec(p+"ffn_norm.weight", hidden); err != nil {
-			return nil, err
+			return err
 		}
 		if arch.MoE != nil {
 			// Sparse MoE (Mellum): router + stacked per-expert SwiGLU at the
 			// narrower moe_intermediate_size.
 			expInter := arch.MoE.IntermediateDim
 			if l.Router, err = mat(p+"ffn_gate_inp.weight", arch.MoE.NumExperts, hidden); err != nil {
-				return nil, err
+				return err
 			}
 			gate, gerr := stackedExperts(p+"ffn_gate_exps.weight", expInter, hidden, arch.MoE.NumExperts)
 			up, uerr := stackedExperts(p+"ffn_up_exps.weight", expInter, hidden, arch.MoE.NumExperts)
 			down, derr := stackedExperts(p+"ffn_down_exps.weight", hidden, expInter, arch.MoE.NumExperts)
 			if gerr != nil || uerr != nil || derr != nil {
-				return nil, fmt.Errorf("decoder(gguf): mellum experts layer %d: %v / %v / %v", i, gerr, uerr, derr)
+				return fmt.Errorf("decoder(gguf): mellum experts layer %d: %v / %v / %v", i, gerr, uerr, derr)
 			}
 			l.Experts = make([]expertWeights, arch.MoE.NumExperts)
 			for e := range arch.MoE.NumExperts {
 				l.Experts[e] = expertWeights{Gate: gate[e], Up: up[e], Down: down[e]}
 			}
-			continue
+			return nil
 		}
 		if l.GateProj, err = mat(p+"ffn_gate.weight", arch.IntermediateDim, hidden); err != nil {
-			return nil, err
+			return err
 		}
 		if l.UpProj, err = mat(p+"ffn_up.weight", arch.IntermediateDim, hidden); err != nil {
-			return nil, err
+			return err
 		}
 		if l.DownProj, err = mat(p+"ffn_down.weight", hidden, arch.IntermediateDim); err != nil {
-			return nil, err
+			return err
 		}
+		return nil
+	}
+	if err := parallelLayers(arch.NumLayers, loadLayer); err != nil {
+		return nil, err
 	}
 	return w, nil
 }

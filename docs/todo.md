@@ -81,10 +81,11 @@ fixture or the Python `gguf` reference to parity-gate (Q4_K_M/Q5_0/Q6_K already
 cover the common laptop mixes, so low marginal value).
 
 ### 4. Incremental perf · S–M
-- **Faster 12B load.** The Mellum2-12B GGUF takes ~2 min to load (`--quant int4`):
-  every tensor is dequantized then re-quantized, scalar, one at a time. The
-  per-tensor quantization (esp. the 1792 expert slices) is embarrassingly
-  parallel — fan it out across cores. Validatable here (measure load time).
+- ✅ **Faster load** — DONE: the per-layer dequant/re-quant fans out across cores
+  (`parallelLayers`, both GGUF + safetensors), Mellum2-12B **~2 min → ~20 s**,
+  race-clean. Further headroom is memory-bandwidth-bound (the f32 round-trip);
+  a bigger win would be quantizing directly from the source quant to int4 without
+  the f32 intermediate.
 - **NEON `dotI8` (SDOT)** for the W8A8 path off amd64 (scalar there today). NOTE:
   must be authored + validated on **arm64 hardware** — `TestDotI8_matchesScalar`
   runs there; writing it blind on amd64 risks an unvalidated runtime bug.

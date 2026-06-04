@@ -10,6 +10,15 @@ it.
 
 ## [Unreleased]
 
+### Changed
+
+- **Parallel weight loading** — the per-layer tensor dequant + re-quant (the bulk
+  of load time, and independent per layer over the read-only mmap) now fans out
+  across cores (`parallelLayers`, GOMAXPROCS workers), for both the GGUF and
+  safetensors paths. The Mellum2-12B Q4_K_M GGUF load dropped from **~2 min to
+  ~20 s** (`--quant int4`); race-clean. Output is unchanged (deterministic
+  per-tensor work).
+
 ### Added
 
 - **GPTQ (safetensors-resident int4).** The decoder loads HF/AutoGPTQ-quantized

@@ -6,7 +6,9 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/townsendmerino/aikit/embed"
 )
@@ -116,6 +118,63 @@ func (w *Weights) matmulWeights() []*weightMat {
 // Use LoadWeightsFromFS for fs.FS-backed (MapFS, embed.FS) paths — that
 // route stays heap-backed because fs.FS doesn't expose a file descriptor.
 func LoadWeights(dir string) (*Weights, error) { return loadWeights(dir, quantNone) }
+
+// parallelLayers runs fn over the n layer indices across a worker pool, so the
+// per-tensor dequant + re-quant (independent per layer — distinct weightMat
+// slots, read-only source) fans out across cores. The first error stops further
+// work and is returned. Transient memory scales with the worker count (each
+// in-flight layer briefly holds its dequantized f32); GOMAXPROCS workers on a
+// machine that can hold the model is the right trade.
+func parallelLayers(n int, fn func(i int) error) error {
+	if n <= 1 {
+		if n == 1 {
+			return fn(0)
+		}
+		return nil
+	}
+	workers := runtime.GOMAXPROCS(0)
+	if workers > n {
+		workers = n
+	}
+	var (
+		next     int
+		mu       sync.Mutex
+		firstErr error
+		wg       sync.WaitGroup
+	)
+	grab := func() (int, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		if next >= n || firstErr != nil {
+			return 0, false
+		}
+		i := next
+		next++
+		return i, true
+	}
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				i, ok := grab()
+				if !ok {
+					return
+				}
+				if err := fn(i); err != nil {
+					mu.Lock()
+					if firstErr == nil {
+						firstErr = err
+					}
+					mu.Unlock()
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	return firstErr
+}
 
 // loadWeights is the quant-aware internal load. When quant is int8/int4, each
 // matmul tensor is quantized the moment it is read and its f32 backing is freed
@@ -292,87 +351,94 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 		return loadF32(st, tensorName(i, suffix), []int{hd})
 	}
 
-	for i := 0; i < cfg.NumLayers; i++ {
+	// Layers load in parallel — each is independent over the read-only mmap, and
+	// the per-tensor dequant/re-quant is the cost.
+	loadLayer := func(i int) error {
 		l := &w.Layers[i]
+		var err error
 		// Attention projections ([out, in] row-major).
 		if l.QProj, err = loadProj(tensorName(i, s.QProj), qDim, hd); err != nil {
-			return nil, err
+			return err
 		}
 		if l.KProj, err = loadProj(tensorName(i, s.KProj), kvDim, hd); err != nil {
-			return nil, err
+			return err
 		}
 		if l.VProj, err = loadProj(tensorName(i, s.VProj), kvDim, hd); err != nil {
-			return nil, err
+			return err
 		}
 		if l.OProj, err = loadProj(tensorName(i, s.OProj), hd, qDim); err != nil {
-			return nil, err
+			return err
 		}
 		// Projection bias (Qwen2 q/k/v; o_proj stays biasless). Absent → empty suffix.
 		if s.QBias != "" {
 			if l.QBias, err = loadF32(st, tensorName(i, s.QBias), []int{qDim}); err != nil {
-				return nil, err
+				return err
 			}
 			if l.KBias, err = loadF32(st, tensorName(i, s.KBias), []int{kvDim}); err != nil {
-				return nil, err
+				return err
 			}
 			if l.VBias, err = loadF32(st, tensorName(i, s.VBias), []int{kvDim}); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		// QK-norm (Gemma 3, Qwen3): RMSNorm over head_dim. Absent → empty suffix.
 		if s.QNorm != "" {
 			if l.QNorm, err = loadF32(st, tensorName(i, s.QNorm), []int{headDim}); err != nil {
-				return nil, err
+				return err
 			}
 			if l.KNorm, err = loadF32(st, tensorName(i, s.KNorm), []int{headDim}); err != nil {
-				return nil, err
+				return err
 			}
 		}
 		// Block norms — Pre2 has only Pre*; Sandwich4 adds Post*.
 		if l.PreAttnNorm, err = optNorm(i, s.PreAttnNorm); err != nil {
-			return nil, err
+			return err
 		}
 		if l.PostAttnNorm, err = optNorm(i, s.PostAttnNorm); err != nil {
-			return nil, err
+			return err
 		}
 		if l.PreMLPNorm, err = optNorm(i, s.PreMLPNorm); err != nil {
-			return nil, err
+			return err
 		}
 		if l.PostMLPNorm, err = optNorm(i, s.PostMLPNorm); err != nil {
-			return nil, err
+			return err
 		}
 		// FFN: sparse MoE (Mixtral) or dense gated MLP. The schema's MoE name
 		// templates carry a %d for the expert index.
 		if arch.MoE != nil {
 			if l.Router, err = loadMat(st, tensorName(i, s.Router), arch.MoE.NumExperts, hd); err != nil {
-				return nil, err
+				return err
 			}
 			expInter := arch.MoE.IntermediateDim // expert FFN width (Mellum: moe_intermediate_size)
 			l.Experts = make([]expertWeights, arch.MoE.NumExperts)
 			for e := 0; e < arch.MoE.NumExperts; e++ {
 				ex := &l.Experts[e]
 				if ex.Gate, err = loadMatQ(tensorName(i, fmt.Sprintf(s.ExpertGate, e)), expInter, hd); err != nil {
-					return nil, err
+					return err
 				}
 				if ex.Up, err = loadMatQ(tensorName(i, fmt.Sprintf(s.ExpertUp, e)), expInter, hd); err != nil {
-					return nil, err
+					return err
 				}
 				if ex.Down, err = loadMatQ(tensorName(i, fmt.Sprintf(s.ExpertDown, e)), hd, expInter); err != nil {
-					return nil, err
+					return err
 				}
 			}
-			continue
+			return nil
 		}
 		// Gated MLP (GeGLU / SwiGLU — same weights, activation differs).
 		if l.GateProj, err = loadProj(tensorName(i, s.GateProj), cfg.IntermediateDim, hd); err != nil {
-			return nil, err
+			return err
 		}
 		if l.UpProj, err = loadProj(tensorName(i, s.UpProj), cfg.IntermediateDim, hd); err != nil {
-			return nil, err
+			return err
 		}
 		if l.DownProj, err = loadProj(tensorName(i, s.DownProj), hd, cfg.IntermediateDim); err != nil {
-			return nil, err
+			return err
 		}
+		return nil
+	}
+	if err := parallelLayers(cfg.NumLayers, loadLayer); err != nil {
+		return nil, err
 	}
 	return w, nil
 }
