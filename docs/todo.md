@@ -29,8 +29,12 @@ load (no whole-model f32 spike), off mmap'd GGUFs, all SIMD, all parity-gated:
 - **SIMD quant matmuls**: int4 **6.7×** / int8 **6.9×** over the scalar loops
   (widen-to-scratch + `dotF32`).
 - **int8×int8 (W8A8)** (`Quant:"int8int8"`): activations also int8, true integer
-  kernel (`dotI8` — AVX2 `VPMOVSXBW`+`VPMADDWD`, bit-exact) — **3.4×** over the
-  f32-widen int8; lossier (0.9979), so opt-in.
+  kernel (`dotI8` — AVX2 `VPMOVSXBW`+`VPMADDWD` / arm64 NEON `SMULL`+`SADALP`,
+  bit-exact, QEMU-validated) — **3.4×** over the f32-widen int8; lossier (0.9979),
+  so opt-in.
+- **Parallel load**: the per-layer dequant/re-quant fans out across cores
+  (`parallelLayers`, GGUF + safetensors) — Mellum2-12B load ~2 min → **~20 s**,
+  race-clean.
 
 Ladder: `f32 (1.0) → int8 (0.9996) → int8int8 (3.4× faster, 0.9979) → int4 (⅛ f32)`.
 
@@ -80,18 +84,14 @@ Each is "a `dequant*` func + a size entry" on the existing GGUF seam, but needs 
 fixture or the Python `gguf` reference to parity-gate (Q4_K_M/Q5_0/Q6_K already
 cover the common laptop mixes, so low marginal value).
 
-### 4. Incremental perf · S–M
-- ✅ **Faster load** — DONE: the per-layer dequant/re-quant fans out across cores
-  (`parallelLayers`, both GGUF + safetensors), Mellum2-12B **~2 min → ~20 s**,
-  race-clean. Further headroom is memory-bandwidth-bound (the f32 round-trip);
-  a bigger win would be quantizing directly from the source quant to int4 without
-  the f32 intermediate.
-- ✅ **NEON `dotI8`** — DONE: a base-ARMv8 SMULL/SADALP kernel (`dotI8NEON`) so
-  the W8A8 matmul is SIMD on arm64. Go's arm64 assembler has no signed-integer
-  widening multiply, so the three ops are raw-`WORD`-encoded — validated bit-exact
-  vs the scalar reference **under qemu-aarch64-static** (the project ships no
-  arm64 CI, so emulation is the gate). A faster SDOT variant would need ARMv8.2
-  DotProd + feature detection.
+### 4. Incremental perf — residual only · S
+The two big wins shipped (parallel load + arm64 NEON `dotI8`; see Shipped above).
+What's left is small:
+- **Quantize direct from the source quant to int4**, skipping the f32 round-trip
+  — the remaining load-time headroom is memory-bandwidth-bound on that
+  intermediate.
+- A faster **SDOT** NEON `dotI8` (vs the base-ISA SMULL/SADALP path) — needs
+  ARMv8.2 DotProd + runtime feature detection.
 - ~~mmap safetensors on the fs.FS path~~ — N/A: real directories already mmap
   (`openCheckpointMmap`); `fs.FS` is heap by necessity (no fd) and only serves
   small embedded test models.
@@ -123,8 +123,8 @@ Q4_K/Q6_K). Any of these re-quantizes to resident int8/W8A8/int4.
 
 ## Recommendation
 
-The decoder / quant / GGUF / structured-output arc is complete and broad. The
-single highest-leverage next step is the **`rag` pipeline** (#1) — the "makes the
-library more than its packages" feature. Everything else (#2–#6) is incremental
-and can be picked up opportunistically; **AWQ** (#2) and the **faster 12B load**
-(#4) are the most self-contained, validatable-here options.
+The decoder / quant / GGUF / structured-output arc is complete and broad (incl.
+the perf items — parallel load + arm64 NEON W8A8). The single highest-leverage
+next step is the **`rag` pipeline** (#1) — the "makes the library more than its
+packages" feature. Everything else (#2–#6) is incremental; **AWQ** (#2) is the
+most self-contained, validatable-here next step.
