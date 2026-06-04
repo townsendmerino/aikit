@@ -143,30 +143,35 @@ models). (Constrained generation, the other Tier-1 item, is shipped; its
 follow-ups are a general GBNF/regex engine + a JSON-Schema → grammar compiler on
 the same `Grammar` interface.)
 
-### 2. Remaining GGUF quant types (IQ1_*/IQ2_XXS/IQ2_XS/IQ3_XXS) — incremental · M
+`rag` is the only item on the active path. Everything else is parked below —
+deliberately not "next", for the reasons noted. Pull one back up only if a
+concrete need surfaces.
+
+---
+
+## Parked — low marginal value, off the active path
+
+### Remaining GGUF quant types (IQ1_*/IQ2_XXS/IQ2_XS/IQ3_XXS) · M
 Every K-quant (Q2_K…Q6_K), the codebook IQ4_NL/IQ4_XS, and the grid-codebook
-**IQ2_S + IQ3_S** are done (see Shipped). What's left is the rarer grid quants —
-IQ2_XXS/IQ2_XS, IQ3_XXS, IQ1_S/IQ1_M — each its own grid table (port via
-`scripts/gen_iq_grids.py`) + per-type sign/index unpacking, bit-exact-validatable
-the same way. Extreme-low-bit, rare on laptops. Low marginal value.
+**IQ2_S + IQ3_S** are done (see Shipped) — so every common laptop mix loads.
+What's left is the rarer grid quants — IQ2_XXS/IQ2_XS, IQ3_XXS, IQ1_S/IQ1_M —
+each its own grid table (port via `scripts/gen_iq_grids.py`) + per-type sign/index
+unpacking, bit-exact-validatable the same way. Extreme-low-bit, rare on laptops;
+no capability gap, only completeness. **Parked.**
 
-### 3. longrope/dynamic RoPE scalings — parked (no consumer) · S
-The remaining RoPE scalings, both blocked on the same thing — **there is no
-registered architecture that uses them**, so adding them now is dead code:
-- **longrope/su** is Phi-3-only, and Phi-3 isn't a registered `model_type` (it
-  needs its own adapter — partial rotary, etc.). longrope should land *with* a
-  Phi-3 arch, not before it.
-- **dynamic** NTK is legacy (superseded by llama3/yarn) and is sequence-length-
+### longrope/dynamic RoPE scalings · S
+Both blocked on the same thing — **no registered architecture uses them**, so
+adding them now is dead code:
+- **longrope/su** is Phi-3-only, and Phi-3 isn't a registered `model_type` (needs
+  its own adapter — partial rotary, etc.). longrope should land *with* a Phi-3 arch.
+- **dynamic** NTK is legacy (superseded by llama3/yarn) and sequence-length-
   dependent; statically, within the trained window it equals base RoPE (identity),
-  and this package precomputes inv_freq once. Low payoff; a llama checkpoint that
-  sets `rope_scaling.type=dynamic` currently errors — a one-line "accept + base
-  RoPE within window" is the only cheap win, if ever wanted.
+  and this package precomputes inv_freq once.
 
-Both are also fundamentally awkward for a precompute-once inv_freq table (they
-re-pick the factor / rescale the base by actual seq len). Real support = seq-aware
-RoPE rebuilding, a notable change to the immutable-Architecture design — not worth
-it for the lowest-urgency item with no current consumer. (Shared-expert MoE —
-Qwen-MoE `qwen2_moe` — is **done**, see Shipped.)
+Both are also awkward for a precompute-once inv_freq table (they re-pick the factor
+/ rescale the base by actual seq len) — real support = seq-aware RoPE rebuilding, a
+notable change to the immutable-Architecture design. **Parked** (revisit longrope
+if/when a Phi-3 adapter is added).
 
 ---
 
@@ -183,7 +188,8 @@ resident int8/W8A8/int4.
 ## Recommendation
 
 The decoder / quant / GGUF / structured-output arc is complete and broad (incl.
-the perf items — parallel load, streaming dequant→quant, arm64 NEON/SDOT W8A8).
-The single highest-leverage next step is the **`rag` pipeline** (#1) — the "makes
-the library more than its packages" feature. Everything else (#2–#3) is
-incremental and self-contained.
+the perf items — parallel load, streaming dequant→quant, arm64 NEON/SDOT W8A8;
+every supported architecture loads from both safetensors and GGUF; every common
+quant type). The single remaining item on the active path is the **`rag` pipeline**
+(#1) — the "makes the library more than its packages" feature. Everything under
+**Parked** is incremental completeness with no current capability gap.
