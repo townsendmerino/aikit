@@ -3,7 +3,7 @@ package encoder
 import (
 	"math"
 
-	"github.com/townsendmerino/aikit/internal/linalg"
+	"github.com/townsendmerino/aikit/linalg"
 )
 
 // matmulBT computes dst = a · bᵀ where:

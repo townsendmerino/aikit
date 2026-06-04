@@ -85,7 +85,6 @@ func TestEncodeConcurrent(t *testing.T) {
 		var wg sync.WaitGroup
 		wg.Add(numInputs)
 		for i := range numInputs {
-			i := i // capture per-iteration
 			go func() {
 				defer wg.Done()
 				results[i] = m.Encode(inputs[i])

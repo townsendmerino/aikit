@@ -144,3 +144,7 @@ testdata/tinyllama-awq
 
 # Local HF token notes — per-machine secret, never commit (rotate + delete).
 docs/keepers.txt
+
+# local multi-module dev workspace (never commit)
+go.work
+go.work.sum

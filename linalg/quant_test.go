@@ -136,7 +136,7 @@ func matmulBTQ4Scalar(a []float32, bPacked []byte, bScales []float32, dst []floa
 }
 
 // BenchmarkMatmulBTQ4 / _Scalar: the SIMD kernel vs the fused-scalar reference on
-// a decode-step shape (M=1). Run: go test ./internal/linalg -bench MatmulBTQ4 -benchmem
+// a decode-step shape (M=1). Run: go test ./linalg -bench MatmulBTQ4 -benchmem
 func benchInt4(b *testing.B, simd bool) {
 	const M, K, N, group = 1, 2048, 2048, 32
 	rng := rand.New(rand.NewSource(7))

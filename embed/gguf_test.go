@@ -91,12 +91,12 @@ func TestDequantQ8_0(t *testing.T) {
 	// One block of 32: scale d=2.0, qs = -16..15 → value = 2*q.
 	raw := make([]byte, 34)
 	binary.LittleEndian.PutUint16(raw[0:], f16bits(2.0))
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		raw[2+i] = byte(int8(i - 16))
 	}
 	got := make([]float32, 32)
 	dequantQ8_0Block(raw, 0, got)
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		want := 2.0 * float32(i-16)
 		if got[i] != want {
 			t.Errorf("Q8_0[%d] = %v, want %v", i, got[i], want)
@@ -112,12 +112,12 @@ func TestDequantQ5_0(t *testing.T) {
 	raw := make([]byte, 22)
 	binary.LittleEndian.PutUint16(raw[0:], f16bits(2.0))
 	binary.LittleEndian.PutUint32(raw[2:], 0xFFFFFFFF) // every element's 5th bit set
-	for j := 0; j < 16; j++ {
+	for j := range 16 {
 		raw[6+j] = byte(j) | byte(15-j)<<4
 	}
 	got := make([]float32, 32)
 	dequantQ5_0Block(raw, 0, got)
-	for j := 0; j < 16; j++ {
+	for j := range 16 {
 		if w := 2.0 * float32((j|0x10)-16); got[j] != w {
 			t.Errorf("Q5_0[%d] = %v, want %v", j, got[j], w)
 		}
@@ -138,14 +138,14 @@ func TestDequantQ4_0(t *testing.T) {
 	// value = d*(nibble-8).
 	raw := make([]byte, 18)
 	binary.LittleEndian.PutUint16(raw[0:], f16bits(2.0))
-	for j := 0; j < 16; j++ {
+	for j := range 16 {
 		lo := byte(j)      // 0..15
 		hi := byte(15 - j) // 15..0
 		raw[2+j] = lo | hi<<4
 	}
 	got := make([]float32, 32)
 	dequantQ4_0Block(raw, 0, got)
-	for j := 0; j < 16; j++ {
+	for j := range 16 {
 		if w := 2.0 * float32(j-8); got[j] != w {
 			t.Errorf("Q4_0[%d] = %v, want %v", j, got[j], w)
 		}

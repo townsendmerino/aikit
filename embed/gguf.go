@@ -266,7 +266,7 @@ func parseGGUF(raw []byte) (*GGUFFile, error) {
 		name := c.str()
 		nd := int(c.u32())
 		dims := make([]uint64, nd)
-		for d := 0; d < nd; d++ {
+		for d := range nd {
 			dims[d] = c.u64()
 		}
 		typ := c.u32()
@@ -504,7 +504,7 @@ func dequantQ8_0Block(raw []byte, b int, out []float32) {
 	base := b * 34
 	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+34]
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		out[i] = float32(int8(qs[i])) * d
 	}
 }
@@ -516,7 +516,7 @@ func dequantQ4_0Block(raw []byte, b int, out []float32) {
 	base := b * 18
 	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+18]
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		v := qs[i]
 		out[i] = float32(int(v&0x0F)-8) * d
 		out[i+16] = float32(int(v>>4)-8) * d
@@ -532,7 +532,7 @@ func dequantQ5_0Block(raw []byte, b int, out []float32) {
 	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qh := binary.LittleEndian.Uint32(raw[base+2:])
 	qs := raw[base+6 : base+22]
-	for j := 0; j < 16; j++ {
+	for j := range 16 {
 		xh0 := byte(((qh >> uint(j)) << 4) & 0x10) // bit j → bit 4
 		xh1 := byte((qh >> uint(j+12)) & 0x10)     // bit j+16 → bit 4
 		q0 := int32((qs[j]&0x0F)|xh0) - 16
@@ -552,12 +552,12 @@ func dequantQ6KBlock(raw []byte, sb int, out []float32) {
 	qh := raw[base+128 : base+192]
 	sc := raw[base+192 : base+208] // int8 scales
 	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+208:]))
-	for chunk := 0; chunk < 2; chunk++ {
+	for chunk := range 2 {
 		n0 := chunk * 128
 		qlo := ql[chunk*64:]
 		qho := qh[chunk*32:]
 		sco := sc[chunk*8:]
-		for l := 0; l < 32; l++ {
+		for l := range 32 {
 			is := l / 16
 			q1 := int8((qlo[l]&0x0F)|(((qho[l]>>0)&3)<<4)) - 32
 			q2 := int8((qlo[l+32]&0x0F)|(((qho[l]>>2)&3)<<4)) - 32
@@ -579,7 +579,7 @@ func dequantIQ4NLBlock(raw []byte, b int, out []float32) {
 	base := b * 18
 	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+18]
-	for j := 0; j < 16; j++ {
+	for j := range 16 {
 		out[j] = d * float32(kvaluesIQ4NL[qs[j]&0x0F])
 		out[j+16] = d * float32(kvaluesIQ4NL[qs[j]>>4])
 	}
@@ -597,12 +597,12 @@ func dequantIQ4XSBlock(raw []byte, sb int, out []float32) {
 	scalesH := binary.LittleEndian.Uint16(raw[base+2:])
 	scalesL := raw[base+4 : base+8]
 	qs := raw[base+8 : base+136]
-	for ib := 0; ib < 8; ib++ { // eight 32-element sub-blocks
+	for ib := range 8 { // eight 32-element sub-blocks
 		ls := int((scalesL[ib/2]>>(4*(ib%2)))&0x0F) | int((scalesH>>(2*ib))&3)<<4
 		dl := d * float32(ls-32)
 		q := qs[ib*16 : ib*16+16]
 		o := out[ib*32 : ib*32+32]
-		for j := 0; j < 16; j++ {
+		for j := range 16 {
 			o[j] = dl * float32(kvaluesIQ4NL[q[j]&0x0F])
 			o[j+16] = dl * float32(kvaluesIQ4NL[q[j]>>4])
 		}
@@ -622,16 +622,16 @@ func dequantIQ2SBlock(raw []byte, sb int, out []float32) {
 	signs := raw[base+34 : base+66]
 	qh := raw[base+66 : base+74]
 	scales := raw[base+74 : base+82]
-	for sub := 0; sub < 16; sub++ {
+	for sub := range 16 {
 		sc := int((scales[sub/2] >> (4 * (sub & 1))) & 0x0F)
 		db := d * (0.5 + float32(sc)) * 0.25
-		for pair := 0; pair < 2; pair++ {
+		for pair := range 2 {
 			k := sub*2 + pair
 			idx := int(qs[k]) | int((qh[k/4]>>(2*(k&3)))&3)<<8
 			g := iq2sGrid[idx*8 : idx*8+8]
 			sg := signs[k]
 			o := out[sub*16+pair*8:]
-			for j := 0; j < 8; j++ {
+			for j := range 8 {
 				v := db * float32(g[j])
 				if (sg>>j)&1 != 0 {
 					v = -v
@@ -655,7 +655,7 @@ func dequantIQ3SBlock(raw []byte, sb int, out []float32) {
 	qh := raw[base+66 : base+74]
 	signs := raw[base+74 : base+106]
 	scales := raw[base+106 : base+110]
-	for p := 0; p < 256; p++ {
+	for p := range 256 {
 		sub := p / 32
 		sc := int((scales[sub/2] >> (4 * (sub & 1))) & 0x0F)
 		db := d * float32(1+2*sc)
@@ -680,18 +680,18 @@ func dequantQ4KBlock(raw []byte, sb int, out []float32) {
 	scales := raw[base+4 : base+16]
 	qs := raw[base+16 : base+144]
 	yi := 0
-	for j := 0; j < 4; j++ { // four 64-element groups
+	for j := range 4 { // four 64-element groups
 		is := 2 * j
 		sc1, m1 := q4kScaleMin(is+0, scales)
 		sc2, m2 := q4kScaleMin(is+1, scales)
 		d1, off1 := d*float32(sc1), dmin*float32(m1)
 		d2, off2 := d*float32(sc2), dmin*float32(m2)
 		q := qs[j*32 : j*32+32]
-		for l := 0; l < 32; l++ {
+		for l := range 32 {
 			out[yi] = d1*float32(q[l]&0x0F) - off1
 			yi++
 		}
-		for l := 0; l < 32; l++ {
+		for l := range 32 {
 			out[yi] = d2*float32(q[l]>>4) - off2
 			yi++
 		}
@@ -724,14 +724,14 @@ func dequantQ5KBlock(raw []byte, sb int, out []float32) {
 	qs := raw[base+48 : base+176]
 	yi := 0
 	u1, u2 := byte(1), byte(2)
-	for j := 0; j < 4; j++ { // four 64-element groups
+	for j := range 4 { // four 64-element groups
 		is := 2 * j
 		sc1, m1 := q4kScaleMin(is+0, scales)
 		sc2, m2 := q4kScaleMin(is+1, scales)
 		d1, off1 := d*float32(sc1), dmin*float32(m1)
 		d2, off2 := d*float32(sc2), dmin*float32(m2)
 		ql := qs[j*32 : j*32+32]
-		for l := 0; l < 32; l++ {
+		for l := range 32 {
 			var h float32
 			if qh[l]&u1 != 0 {
 				h = 16
@@ -739,7 +739,7 @@ func dequantQ5KBlock(raw []byte, sb int, out []float32) {
 			out[yi] = d1*(float32(ql[l]&0x0F)+h) - off1
 			yi++
 		}
-		for l := 0; l < 32; l++ {
+		for l := range 32 {
 			var h float32
 			if qh[l]&u2 != 0 {
 				h = 16
@@ -765,21 +765,21 @@ func dequantQ2KBlock(raw []byte, sb int, out []float32) {
 	dmin := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+82:]))
 
 	yi, is := 0, 0
-	for n := 0; n < 2; n++ { // two 128-element halves
+	for n := range 2 { // two 128-element halves
 		qb := n * 32 // qs advances by 32 each half
 		shift := uint(0)
-		for j := 0; j < 4; j++ {
+		for range 4 {
 			sc := scales[is]
 			is++
 			dl, ml := d*float32(sc&0x0F), dmin*float32(sc>>4)
-			for l := 0; l < 16; l++ {
+			for l := range 16 {
 				out[yi] = dl*float32((qs[qb+l]>>shift)&3) - ml
 				yi++
 			}
 			sc = scales[is]
 			is++
 			dl, ml = d*float32(sc&0x0F), dmin*float32(sc>>4)
-			for l := 0; l < 16; l++ {
+			for l := range 16 {
 				out[yi] = dl*float32((qs[qb+l+16]>>shift)&3) - ml
 				yi++
 			}
@@ -827,13 +827,13 @@ func dequantQ3KBlock(raw []byte, sb int, out []float32) {
 
 	yi, is := 0, 0
 	m := byte(1)
-	for n := 0; n < 2; n++ { // two 128-element halves
+	for n := range 2 { // two 128-element halves
 		qb := n * 32 // q advances by 32 each half
 		shift := uint(0)
-		for j := 0; j < 4; j++ {
+		for range 4 {
 			dl := dAll * float32(int(sc[is])-32)
 			is++
-			for l := 0; l < 16; l++ {
+			for l := range 16 {
 				var sub float32 = 4
 				if hm[l]&m != 0 {
 					sub = 0
@@ -843,7 +843,7 @@ func dequantQ3KBlock(raw []byte, sb int, out []float32) {
 			}
 			dl = dAll * float32(int(sc[is])-32)
 			is++
-			for l := 0; l < 16; l++ {
+			for l := range 16 {
 				var sub float32 = 4
 				if hm[l+16]&m != 0 {
 					sub = 0
