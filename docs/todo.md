@@ -88,13 +88,14 @@ dequantized then re-quantized, scalar, one at a time. The per-tensor quantizatio
 (esp. the 1792 expert slices) is embarrassingly parallel — fan it out across
 cores. Validatable here (measure load time).
 
-### 4. GPTQ / AWQ (safetensors-resident int4) — broadens coverage · M
+### 4. GPTQ / AWQ (safetensors-resident int4) — **GPTQ done** ✅ · M
 
-"The other half of G7." Different packing (`qweight`/`qzeros`/`scales`/`g_idx`,
-asymmetric group-quant with a zero-point), same dequant-to-f32 idea; the
-safetensors loader already handles the container. Adds the HF-hosted int4
-ecosystem. Validatable here against a small GPTQ checkpoint (e.g. a TinyLlama
-GPTQ vs the committed f32 llama golden).
+✅ **GPTQ shipped**: `config.json` `quantization_config` → `gptqReconstruct`
+un-packs each linear's `qweight`/`qzeros`/`scales`/`g_idx` (4-bit, group, act-order
+via `g_idx`) to f32, then streams through the resident int8/int4 path. Validated
+vs the committed f32 oracle on TinyLlama-1.1B GPTQ (argmax preserved, cosine
+0.991). Still open: **AWQ** (different packing — `qweight`/`qzeros`/`scales`, no
+`g_idx`, and an order permutation on unpack) on the same `gptqReconstruct` seam.
 
 ### 4b. Mellum2 polish — incremental · S
 

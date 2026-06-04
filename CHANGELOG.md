@@ -12,6 +12,18 @@ it.
 
 ### Added
 
+- **GPTQ (safetensors-resident int4).** The decoder loads HF/AutoGPTQ-quantized
+  checkpoints — where each linear ships as packed int4 (`qweight`/`qzeros`/
+  `scales`/`g_idx`) instead of an f32 `.weight`. Detected from
+  `config.json`'s `quantization_config` (`quant_method: gptq`, 4-bit);
+  `gptqReconstruct` un-packs each projection to f32 (`w = (code-(zero+1))·scale`,
+  group via `g_idx` so **act-order** `desc_act` works), transposes to `[out,in]`,
+  and then streams through the same int8/int4 re-quant path as any checkpoint —
+  so a GPTQ model can also run resident-int4. Embeddings/norms/LM head stay
+  bf16/f16. Validated against the committed f32 oracle for the *same* model
+  (TheBloke/TinyLlama-1.1B-Chat-v1.0-GPTQ, 4-bit g128 act-order): argmax
+  preserved, **cosine 0.991** vs f32 (`TestGPTQ_parity`, skip-when-absent). Adds
+  `embed.Tensor.Int32s`.
 - **Mellum2 — runs end-to-end from a bare GGUF.** The decoder runs JetBrains
   Mellum2 (`model_type: "mellum"`, a 12B-A2.5B MoE code model): the `mellum`
   adapter combines axes we already had — a sparse MoE on every layer (64 experts,

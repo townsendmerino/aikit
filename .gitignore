@@ -108,5 +108,10 @@ testdata/llama32-gguf
 # per-machine. The mellum GGUF smoke test loads it when present; never committed.
 testdata/mellum-gguf
 
+# GPTQ checkpoint (TheBloke/TinyLlama-1.1B-Chat-v1.0-GPTQ, 4-bit, ~0.8 GB) —
+# per-machine. TestGPTQ_parity validates it against the committed f32 llama
+# golden (same model); the safetensors weights are never committed.
+testdata/tinyllama-gptq
+
 # Local HF token notes — per-machine secret, never commit (rotate + delete).
 docs/keepers.txt

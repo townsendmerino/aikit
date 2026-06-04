@@ -1,0 +1,134 @@
+package decoder
+
+import (
+	"encoding/json"
+	"fmt"
+
+	"github.com/townsendmerino/aikit/embed"
+)
+
+// GPTQ (safetensors-resident int4) — the HF/AutoGPTQ packing that ships a
+// quantized linear as four tensors instead of one f32 .weight: qweight (packed
+// 4-bit, [in/8, out] int32, 8 values per word along the input dim), qzeros
+// (packed 4-bit zero-points, [groups, out/8]), scales ([groups, out] f16), and
+// g_idx ([in] int32, the per-input group index — a permutation under act-order).
+// We reconstruct each linear to f32 once at load: w[i,j] = (code - (zero+1)) *
+// scale, picking the group via g_idx[i], then transpose to the [out, in] layout
+// the rest of the decoder uses. The reconstructed weight then streams through
+// the same int8/int4 re-quant path as any other (so a GPTQ checkpoint can run
+// resident-int4 too). Only the projections are GPTQ; embeddings, norms, and the
+// LM head ship in bf16/f16 and load unchanged.
+
+// gptqParams is the resolved quantization_config for a GPTQ checkpoint.
+type gptqParams struct {
+	bits      int
+	groupSize int
+	descAct   bool
+	sym       bool
+}
+
+// parseGPTQ reads config.json's quantization_config. Returns nil for a
+// full-precision checkpoint (no quantization_config, or a non-gptq method). Only
+// 4-bit GPTQ is supported; other bit widths/methods (awq, 8-bit) error.
+func parseGPTQ(raw json.RawMessage) (*gptqParams, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var obj struct {
+		QuantMethod string `json:"quant_method"`
+		Bits        int    `json:"bits"`
+		GroupSize   int    `json:"group_size"`
+		DescAct     bool   `json:"desc_act"`
+		Sym         *bool  `json:"sym"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, fmt.Errorf("quantization_config: %w", err)
+	}
+	if obj.QuantMethod != "gptq" {
+		return nil, fmt.Errorf("quantization_config: method %q unsupported (have: gptq)", obj.QuantMethod)
+	}
+	if obj.Bits != 4 {
+		return nil, fmt.Errorf("quantization_config(gptq): %d-bit unsupported (have: 4-bit)", obj.Bits)
+	}
+	if obj.GroupSize <= 0 {
+		return nil, fmt.Errorf("quantization_config(gptq): group_size %d unsupported (need a positive group)", obj.GroupSize)
+	}
+	sym := true
+	if obj.Sym != nil {
+		sym = *obj.Sym
+	}
+	return &gptqParams{bits: obj.Bits, groupSize: obj.GroupSize, descAct: obj.DescAct, sym: sym}, nil
+}
+
+// gptqReconstruct dequantizes one GPTQ linear (named base, e.g.
+// "model.layers.0.self_attn.q_proj") to a [out, in] row-major f32 matrix — the
+// transpose of the [in, out] reconstruction, matching nn.Linear's [out, in].
+func gptqReconstruct(st *embed.SafetensorsFile, base string, in, out int, p *gptqParams) ([]float32, error) {
+	qw, err := i32Tensor(st, base+".qweight")
+	if err != nil {
+		return nil, err
+	}
+	qz, err := i32Tensor(st, base+".qzeros")
+	if err != nil {
+		return nil, err
+	}
+	gidx, err := i32Tensor(st, base+".g_idx")
+	if err != nil {
+		return nil, err
+	}
+	sc, err := f16Tensor(st, base+".scales")
+	if err != nil {
+		return nil, err
+	}
+	// Shape checks (8 4-bit codes per int32 word; one group per group_size rows).
+	if len(qw) != (in/8)*out || len(gidx) != in || len(sc)%out != 0 {
+		return nil, fmt.Errorf("gptq %q: bad shapes qweight=%d gidx=%d scales=%d (in=%d out=%d)", base, len(qw), len(gidx), len(sc), in, out)
+	}
+	nGroups := len(sc) / out
+	outP := out / 8 // packed-output width of qzeros
+	if len(qz) != nGroups*outP {
+		return nil, fmt.Errorf("gptq %q: qzeros len %d != groups*out/8 %d", base, len(qz), nGroups*outP)
+	}
+
+	res := make([]float32, out*in)
+	for i := 0; i < in; i++ {
+		g := int(gidx[i])
+		if g < 0 || g >= nGroups {
+			return nil, fmt.Errorf("gptq %q: g_idx[%d]=%d out of range [0,%d)", base, i, g, nGroups)
+		}
+		qwRow := (i / 8) * out
+		shift := uint(4 * (i % 8))
+		scRow := g * out
+		qzRow := g * outP
+		for j := 0; j < out; j++ {
+			code := (qw[qwRow+j] >> shift) & 0xF
+			zero := ((qz[qzRow+j/8] >> uint(4*(j%8))) & 0xF) + 1
+			res[j*in+i] = float32(code-zero) * sc[scRow+j]
+		}
+	}
+	return res, nil
+}
+
+func i32Tensor(st *embed.SafetensorsFile, name string) ([]int32, error) {
+	t, err := st.Tensor(name)
+	if err != nil {
+		return nil, fmt.Errorf("decoder(gptq): tensor %q: %w", name, err)
+	}
+	return t.Int32s()
+}
+
+func f16Tensor(st *embed.SafetensorsFile, name string) ([]float32, error) {
+	t, err := st.Tensor(name)
+	if err != nil {
+		return nil, fmt.Errorf("decoder(gptq): tensor %q: %w", name, err)
+	}
+	switch t.DType {
+	case "F16":
+		return t.Float16sToF32()
+	case "BF16":
+		return t.BFloat16sToF32()
+	case "F32":
+		return t.Float32s()
+	}
+	return nil, fmt.Errorf("decoder(gptq): scales %q dtype %q (want F16/BF16/F32)", name, t.DType)
+}

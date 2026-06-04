@@ -426,6 +426,21 @@ func (t Tensor) Int64s() ([]int64, error) {
 	return unsafe.Slice((*int64)(unsafe.Pointer(&t.raw[0])), len(t.raw)/8), nil
 }
 
+// Int32s returns the tensor data as []int32 (a zero-copy view into the file's
+// bytes). Requires DType "I32" — used for GPTQ's packed qweight/qzeros/g_idx.
+func (t Tensor) Int32s() ([]int32, error) {
+	if t.DType != "I32" {
+		return nil, fmt.Errorf("tensor %q: expected I32, got %s", t.Name, t.DType)
+	}
+	if len(t.raw)%4 != 0 {
+		return nil, fmt.Errorf("tensor %q: I32 raw size %d not a multiple of 4", t.Name, len(t.raw))
+	}
+	if len(t.raw) == 0 {
+		return nil, nil
+	}
+	return unsafe.Slice((*int32)(unsafe.Pointer(&t.raw[0])), len(t.raw)/4), nil
+}
+
 // BFloat16sToF32 decodes a BF16 tensor to a freshly-allocated []float32.
 // bfloat16 IS the top 16 bits of an IEEE-754 float32 (same sign, same
 // 8-bit exponent, mantissa truncated to 7 bits), so widening is exact and

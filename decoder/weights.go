@@ -224,7 +224,13 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 	kvDim := cfg.NumKVHeads * headDim // key/value projection rows (narrower under GQA)
 
 	w := &Weights{Cfg: *cfg, arch: arch, st: st, Layers: make([]LayerWeights, cfg.NumLayers)}
-	var err error
+
+	// GPTQ checkpoints ship their projections as packed int4 (qweight/…); resolve
+	// the params once. nil ⇒ a normal f32/bf16 checkpoint.
+	gptq, err := parseGPTQ(cfg.QuantizationConfig)
+	if err != nil {
+		return nil, err
+	}
 
 	// loadMatQ loads a matmul weight and, when quant is set, quantizes it to
 	// per-row int8 immediately — freeing the f32 before the next tensor loads
@@ -236,6 +242,23 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 			m.quantize(quant)
 		}
 		return m, merr
+	}
+	// loadProj loads a (per-layer) attention/MLP projection: a GPTQ reconstruction
+	// when the checkpoint is GPTQ, else a plain weight load. Either way the result
+	// is then streamed through the requested resident quant. (Embeddings/norms/
+	// LM head are not GPTQ — they keep loadMat/loadF32.)
+	loadProj := func(name string, out, in int) (weightMat, error) {
+		if gptq == nil {
+			return loadMatQ(name, out, in)
+		}
+		base := strings.TrimSuffix(name, ".weight")
+		data, derr := gptqReconstruct(st, base, in, out, gptq)
+		if derr != nil {
+			return weightMat{}, derr
+		}
+		m := newWeightMat(data, out, in)
+		m.quantize(quant)
+		return m, nil
 	}
 
 	// Input embedding + final norm. The embedding is the (tied or untied) LM
@@ -272,16 +295,16 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 	for i := 0; i < cfg.NumLayers; i++ {
 		l := &w.Layers[i]
 		// Attention projections ([out, in] row-major).
-		if l.QProj, err = loadMatQ(tensorName(i, s.QProj), qDim, hd); err != nil {
+		if l.QProj, err = loadProj(tensorName(i, s.QProj), qDim, hd); err != nil {
 			return nil, err
 		}
-		if l.KProj, err = loadMatQ(tensorName(i, s.KProj), kvDim, hd); err != nil {
+		if l.KProj, err = loadProj(tensorName(i, s.KProj), kvDim, hd); err != nil {
 			return nil, err
 		}
-		if l.VProj, err = loadMatQ(tensorName(i, s.VProj), kvDim, hd); err != nil {
+		if l.VProj, err = loadProj(tensorName(i, s.VProj), kvDim, hd); err != nil {
 			return nil, err
 		}
-		if l.OProj, err = loadMatQ(tensorName(i, s.OProj), hd, qDim); err != nil {
+		if l.OProj, err = loadProj(tensorName(i, s.OProj), hd, qDim); err != nil {
 			return nil, err
 		}
 		// Projection bias (Qwen2 q/k/v; o_proj stays biasless). Absent → empty suffix.
@@ -341,13 +364,13 @@ func buildWeightsFromSafetensors(cfg *Config, arch *Architecture, s *tensorSchem
 			continue
 		}
 		// Gated MLP (GeGLU / SwiGLU — same weights, activation differs).
-		if l.GateProj, err = loadMatQ(tensorName(i, s.GateProj), cfg.IntermediateDim, hd); err != nil {
+		if l.GateProj, err = loadProj(tensorName(i, s.GateProj), cfg.IntermediateDim, hd); err != nil {
 			return nil, err
 		}
-		if l.UpProj, err = loadMatQ(tensorName(i, s.UpProj), cfg.IntermediateDim, hd); err != nil {
+		if l.UpProj, err = loadProj(tensorName(i, s.UpProj), cfg.IntermediateDim, hd); err != nil {
 			return nil, err
 		}
-		if l.DownProj, err = loadMatQ(tensorName(i, s.DownProj), hd, cfg.IntermediateDim); err != nil {
+		if l.DownProj, err = loadProj(tensorName(i, s.DownProj), hd, cfg.IntermediateDim); err != nil {
 			return nil, err
 		}
 	}

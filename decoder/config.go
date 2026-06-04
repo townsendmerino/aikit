@@ -52,6 +52,11 @@ type Config struct {
 	// and decoded by parseRopeScaling (G4: linear + llama3 + yarn supported).
 	RopeScaling json.RawMessage `json:"rope_scaling"`
 
+	// QuantizationConfig is HF's quantization_config object — for safetensors
+	// shipped pre-quantized (GPTQ: packed int4 qweight/qzeros/scales/g_idx).
+	// Decoded by parseGPTQ; absent for full-precision checkpoints.
+	QuantizationConfig json.RawMessage `json:"quantization_config"`
+
 	// RopeParameters is the newer per-attention-type RoPE config (Mellum):
 	// {"full_attention": {...}, "sliding_attention": {...}}, each a rope_theta +
 	// a rope_scaling-style object. Decoded by parseRopeParameters.
