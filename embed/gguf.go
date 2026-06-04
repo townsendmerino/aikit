@@ -13,8 +13,9 @@ import (
 // quantized models laptop-runnable. This parses the header, metadata key-values
 // (which carry the architecture config), and the tensor directory, and
 // dequantizes the common block types to float32: F32, F16, Q8_0, Q4_0, Q5_0,
-// and the K-quants Q2_K/Q3_K/Q4_K/Q5_K/Q6_K (so Q2_K / Q3_K_M / Q4_K_M / Q5_K_M
-// -style mixes load). Tensor returns a clear error for an unimplemented type (IQ*).
+// the K-quants Q2_K/Q3_K/Q4_K/Q5_K/Q6_K, and the codebook quants IQ4_NL/IQ4_XS
+// (so Q2_K / Q3_K_M / Q4_K_M / Q5_K_M / IQ4_XS-style mixes load). Tensor returns a
+// clear error for an unimplemented type (the grid-codebook IQ2*/IQ3* family).
 //
 // Format reference: https://github.com/ggml-org/ggml/blob/master/docs/gguf.md
 
@@ -22,17 +23,25 @@ const ggufMagic = 0x46554747 // "GGUF" little-endian
 
 // ggml tensor (quantization) types.
 const (
-	ggmlTypeF32  uint32 = 0
-	ggmlTypeF16  uint32 = 1
-	ggmlTypeQ4_0 uint32 = 2
-	ggmlTypeQ5_0 uint32 = 6
-	ggmlTypeQ8_0 uint32 = 8
-	ggmlTypeQ2_K uint32 = 10
-	ggmlTypeQ3_K uint32 = 11
-	ggmlTypeQ4_K uint32 = 12
-	ggmlTypeQ5_K uint32 = 13
-	ggmlTypeQ6_K uint32 = 14
+	ggmlTypeF32   uint32 = 0
+	ggmlTypeF16   uint32 = 1
+	ggmlTypeQ4_0  uint32 = 2
+	ggmlTypeQ5_0  uint32 = 6
+	ggmlTypeQ8_0  uint32 = 8
+	ggmlTypeQ2_K  uint32 = 10
+	ggmlTypeQ3_K  uint32 = 11
+	ggmlTypeQ4_K  uint32 = 12
+	ggmlTypeQ5_K  uint32 = 13
+	ggmlTypeQ6_K  uint32 = 14
+	ggmlTypeIQ4NL uint32 = 20
+	ggmlTypeIQ4XS uint32 = 23
 )
+
+// kvaluesIQ4NL is the 16-entry non-linear codebook shared by IQ4_NL and IQ4_XS:
+// a 4-bit code indexes one of these int8 levels (ggml's kvalues_iq4nl), scaled by
+// the block's f16 (and, for IQ4_XS, per-sub-block) scale. Unlike the linear
+// Q4_* quants there is no `code-8` recentering — the codebook is the mapping.
+var kvaluesIQ4NL = [16]int8{-127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113}
 
 // qkK is the K-quant super-block size (elements per super-block).
 const qkK = 256
@@ -351,7 +360,7 @@ func (g *GGUFFile) RowDequantizer(name string) (dims []int, into func(start int,
 	}
 	bs, ok := ggmlBlockElems(info.typ)
 	if !ok {
-		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0/Q5_0/Q2_K/Q3_K/Q4_K/Q5_K/Q6_K)", name, info.typ)
+		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0/Q5_0/Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/IQ4_NL/IQ4_XS)", name, info.typ)
 	}
 	raw, err := g.tensorBytes(info, n)
 	if err != nil {
@@ -376,9 +385,9 @@ func ggmlBlockElems(typ uint32) (int, bool) {
 	switch typ {
 	case ggmlTypeF32, ggmlTypeF16:
 		return 1, true
-	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ5_0:
+	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ5_0, ggmlTypeIQ4NL:
 		return 32, true
-	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K:
+	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K, ggmlTypeIQ4XS:
 		return qkK, true
 	default:
 		return 0, false
@@ -419,6 +428,10 @@ func dequantRange(typ uint32, raw []byte, start int, dst []float32, bs int) {
 				dequantQ5KBlock(raw, first+k, out)
 			case ggmlTypeQ6_K:
 				dequantQ6KBlock(raw, first+k, out)
+			case ggmlTypeIQ4NL:
+				dequantIQ4NLBlock(raw, first+k, out)
+			case ggmlTypeIQ4XS:
+				dequantIQ4XSBlock(raw, first+k, out)
 			}
 		}
 	}
@@ -433,7 +446,7 @@ func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
 		nbytes = n * 4
 	case ggmlTypeF16:
 		nbytes = n * 2
-	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ5_0:
+	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ5_0, ggmlTypeIQ4NL:
 		if n%32 != 0 {
 			return nil, fmt.Errorf("element count %d not a multiple of 32 (block size)", n)
 		}
@@ -441,17 +454,19 @@ func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
 		switch info.typ {
 		case ggmlTypeQ8_0:
 			nbytes = blocks * 34 // 2-byte f16 scale + 32 int8
-		case ggmlTypeQ4_0:
+		case ggmlTypeQ4_0, ggmlTypeIQ4NL:
 			nbytes = blocks * 18 // 2-byte f16 scale + 16 packed nibbles
 		default: // Q5_0
 			nbytes = blocks * 22 // 2-byte f16 scale + 4-byte high bits + 16 packed nibbles
 		}
-	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K:
+	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K, ggmlTypeIQ4XS:
 		if n%qkK != 0 {
 			return nil, fmt.Errorf("element count %d not a multiple of %d (super-block)", n, qkK)
 		}
 		sb := n / qkK
 		switch info.typ {
+		case ggmlTypeIQ4XS:
+			nbytes = sb * 136 // d(f16) + scales_h(u16) + scales_l[4] + qs[128]
 		case ggmlTypeQ2_K:
 			nbytes = sb * 84 // scales[16] + qs[64] + d + dmin (f16 each)
 		case ggmlTypeQ3_K:
@@ -541,6 +556,44 @@ func dequantQ6KBlock(raw []byte, sb int, out []float32) {
 			out[n0+l+32] = d * float32(int8(sco[is+2])) * float32(q2)
 			out[n0+l+64] = d * float32(int8(sco[is+4])) * float32(q3)
 			out[n0+l+96] = d * float32(int8(sco[is+6])) * float32(q4)
+		}
+	}
+}
+
+// dequantIQ4NLBlock dequantizes one 32-element IQ4_NL block (b) into out[:32].
+// Layout (18 bytes, same size as Q4_0): a f16 scale d then 16 packed bytes; the
+// low nibble of byte j indexes element j and the high nibble element j+16 — each
+// nibble looked up in the kvaluesIQ4NL codebook: value = d·kvaluesIQ4NL[code].
+func dequantIQ4NLBlock(raw []byte, b int, out []float32) {
+	base := b * 18
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	qs := raw[base+2 : base+18]
+	for j := 0; j < 16; j++ {
+		out[j] = d * float32(kvaluesIQ4NL[qs[j]&0x0F])
+		out[j+16] = d * float32(kvaluesIQ4NL[qs[j]>>4])
+	}
+}
+
+// dequantIQ4XSBlock dequantizes one 256-element IQ4_XS super-block (sb) into
+// out[:256]. Layout (136 bytes): d (f16 super-scale), scales_h (u16), scales_l[4],
+// qs[128]. The super-block splits into eight 32-element sub-blocks; sub-block ib
+// has a 6-bit scale ls assembled from scales_l (low 4 bits) and scales_h (high 2
+// bits), recentered by −32: dl = d·(ls−32). Each nibble of qs indexes the shared
+// kvaluesIQ4NL codebook (low → element j, high → j+16 within the sub-block).
+func dequantIQ4XSBlock(raw []byte, sb int, out []float32) {
+	base := sb * 136
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	scalesH := binary.LittleEndian.Uint16(raw[base+2:])
+	scalesL := raw[base+4 : base+8]
+	qs := raw[base+8 : base+136]
+	for ib := 0; ib < 8; ib++ { // eight 32-element sub-blocks
+		ls := int((scalesL[ib/2]>>(4*(ib%2)))&0x0F) | int((scalesH>>(2*ib))&3)<<4
+		dl := d * float32(ls-32)
+		q := qs[ib*16 : ib*16+16]
+		o := out[ib*32 : ib*32+32]
+		for j := 0; j < 16; j++ {
+			o[j] = dl * float32(kvaluesIQ4NL[q[j]&0x0F])
+			o[j+16] = dl * float32(kvaluesIQ4NL[q[j]>>4])
 		}
 	}
 }

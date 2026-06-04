@@ -35,6 +35,17 @@ it.
 
 ### Added
 
+- **GGUF IQ4_NL + IQ4_XS dequant (codebook quants).** The two tractable IQ types
+  — both built on a shared 16-entry non-linear codebook (`kvaluesIQ4NL`) rather
+  than the grid lookups of the IQ2*/IQ3* family. `dequantIQ4NLBlock` is a 32-block
+  (a nibble per element indexing the codebook, scaled by the f16 block scale);
+  `dequantIQ4XSBlock` is a 256-superblock of eight 32-sub-blocks, each with a
+  6-bit scale assembled from `scales_l`/`scales_h` (recentered by −32) times the
+  super f16 scale. Parity-gated **bit-exact (Δ=0) against llama.cpp's `gguf`
+  Python reference** over deterministic blocks — codebook quants have no
+  convenient small-model f32 oracle, so the kernel is pinned directly, every value
+  (`TestIQDequant_matchesReference`; golden via `scripts/pin_iq_dequant.py`). The
+  grid-codebook IQ2*/IQ3* types remain unimplemented.
 - **GGUF Q2_K + Q3_K + Q5_K dequant.** Three more K-quant block types on the
   existing GGUF seam, so `Q2_K` / `Q3_K_M` / `Q5_K_M` files (and any mix using
   them) load: `embed` gained `dequantQ5KBlock` (the Q4_K scale/min packing plus a
