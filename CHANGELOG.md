@@ -10,6 +10,20 @@ it.
 
 ## [Unreleased]
 
+## [0.5.2] — 2026-06-05
+
+### Changed
+
+- **W8A8 matmul re-blocked column-outer** (`w8a8Span`, `w8a8BatchSpan`): each
+  weight row is now loaded once and reused across the M activation rows, instead
+  of re-streamed per row. At M>1 — speculative-decode verify (M=K), prefill, the
+  encoder — this streams the (bandwidth-dominant) weight matrix once rather than
+  M times. **M=1 single-token decode is unchanged** (one row either way), and the
+  output of every element is the same `float32(dotI8(aq[i],bQ[j]))·scales`
+  expression regardless of loop order, so it's **bit-identical for any M**
+  (verified: M>1 output matches stacked per-row M=1 calls; `-race` green).
+  Register-tiling the M loop (an int8 multi-row kernel) is a possible follow-up.
+
 ## [0.5.1] — 2026-06-05
 
 ### Added

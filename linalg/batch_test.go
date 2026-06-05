@@ -95,6 +95,45 @@ func TestW8A8Into_bitIdenticalToWrapper(t *testing.T) {
 	}
 }
 
+// TestW8A8Reblock_matchesPerRow: the column-outer re-block must be bit-identical
+// to computing each row independently with an M=1 call (M=1 is the unchanged
+// single-row order). Covers the M>1 path the re-block actually changes
+// (speculative verify, prefill, encoder).
+func TestW8A8Reblock_matchesPerRow(t *testing.T) {
+	rng := rand.New(rand.NewSource(41))
+	rf := func(n int) []float32 {
+		v := make([]float32, n)
+		for i := range v {
+			v[i] = float32(rng.NormFloat64())
+		}
+		return v
+	}
+	rq := func(n int) []int8 {
+		v := make([]int8, n)
+		for i := range v {
+			v[i] = int8(rng.Intn(255) - 127)
+		}
+		return v
+	}
+	for _, s := range []struct{ M, K, N int }{
+		{4, 896, 1024}, {8, 640, 300}, {2, 256, 4864},
+	} {
+		a, bq, bs := rf(s.M*s.K), rq(s.N*s.K), rf(s.N)
+		gotM := make([]float32, s.M*s.N)
+		MatmulBTW8A8(a, bq, bs, gotM, s.M, s.K, s.N)
+		for i := 0; i < s.M; i++ {
+			row := make([]float32, s.N)
+			MatmulBTW8A8(a[i*s.K:(i+1)*s.K], bq, bs, row, 1, s.K, s.N)
+			for j := 0; j < s.N; j++ {
+				if gotM[i*s.N+j] != row[j] {
+					t.Fatalf("shape %+v row %d col %d: M>1 %v != per-row M=1 %v",
+						s, i, j, gotM[i*s.N+j], row[j])
+				}
+			}
+		}
+	}
+}
+
 // TestW8A8Into_zeroAllocWhenReused: a reused Workspace must make steady-state
 // Into calls allocation-free (the decode-alloc fix).
 func TestW8A8Into_zeroAllocWhenReused(t *testing.T) {

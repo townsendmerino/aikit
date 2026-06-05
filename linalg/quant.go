@@ -177,19 +177,25 @@ func MatmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, 
 // w8a8Span computes output columns [j0,j1) for every row: dst[i,j] =
 // dotI8(aq[i], bQ[j]) · aScales[i] · bScales[j]. A named function (not a
 // closure) so the serial caller invokes it without a heap allocation.
+//
+// Column-outer: each weight row bj is loaded once and reused across all M
+// activation rows (served from L1/L2 for rows 2..M instead of re-streamed from
+// RAM). Decode is bandwidth-bound and weights dominate, so at M>1 (speculative
+// verify's M=K, prefill, the encoder) this streams the weight matrix once
+// rather than M times. M=1 is bit-identical to the old row-outer order (one i
+// iteration), so the single-token decode hot path is unchanged. The output of
+// each dst[i,j] is the same float32 expression regardless of loop order —
+// bit-identical for any M.
 func w8a8Span(aq []int8, aScales []float32, bQ []int8, bScales, dst []float32, M, K, N, j0, j1 int) {
-	for i := range M {
-		drow := dst[i*N : i*N+N]
-		if aScales[i] == 0 {
-			for j := j0; j < j1; j++ {
-				drow[j] = 0
+	for j := j0; j < j1; j++ {
+		bj := bQ[j*K : j*K+K]
+		bs := bScales[j]
+		for i := 0; i < M; i++ {
+			if aScales[i] == 0 {
+				dst[i*N+j] = 0
+				continue
 			}
-			continue
-		}
-		aqi := aq[i*K : i*K+K]
-		as := aScales[i]
-		for j := j0; j < j1; j++ {
-			drow[j] = float32(dotI8(aqi, bQ[j*K:j*K+K])) * as * bScales[j]
+			dst[i*N+j] = float32(dotI8(aq[i*K:i*K+K], bj)) * aScales[i] * bs
 		}
 	}
 }
@@ -243,19 +249,17 @@ func w8a8BatchSpan(aq []int8, aScales []float32, ops []W8A8Op, M, K, g0, g1 int)
 	for _, op := range ops {
 		lo, hi := max(g0, base), min(g1, base+op.N) // this op's slice of [g0,g1)
 		if lo < hi {
-			for i := range M {
-				drow := op.Dst[i*op.N : i*op.N+op.N]
-				if aScales[i] == 0 {
-					for j := lo; j < hi; j++ {
-						drow[j-base] = 0
+			// Column-outer (see w8a8Span): weight row reused across M rows.
+			for j := lo; j < hi; j++ {
+				jj := j - base
+				bj := op.BQ[jj*K : jj*K+K]
+				bs := op.Scales[jj]
+				for i := 0; i < M; i++ {
+					if aScales[i] == 0 {
+						op.Dst[i*op.N+jj] = 0
+						continue
 					}
-					continue
-				}
-				aqi := aq[i*K : i*K+K]
-				as := aScales[i]
-				for j := lo; j < hi; j++ {
-					jj := j - base
-					drow[jj] = float32(dotI8(aqi, op.BQ[jj*K:jj*K+K])) * as * op.Scales[jj]
+					op.Dst[i*op.N+jj] = float32(dotI8(aq[i*K:i*K+K], bj)) * aScales[i] * bs
 				}
 			}
 		}
