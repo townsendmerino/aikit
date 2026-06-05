@@ -7,9 +7,9 @@ with a transformer reranking model — each package is small, independently
 importable, and parity-tested against a Python reference.
 
 The dependency DAG is shallow: most packages are leaves; `encoder` requires
-`embed` + `linalg`. The one cgo/heavier dependency (`gotreesitter`) is
-quarantined in the separate `chunk/treesitter` submodule, so importing the core
-never pulls it in.
+`embed` + `linalg`. The one heavier dependency — `gotreesitter` (pure-Go, but a
+large embedded-grammar payload) — is quarantined in the separate
+`chunk/treesitter` submodule, so importing the core never pulls it in.
 
 > **Generation lives in [`goinfer`](https://github.com/townsendmerino/goinfer).**
 > The decoder-only LLM runtime (Gemma 3 / Qwen / Llama …), its SentencePiece/
@@ -70,9 +70,10 @@ API and results, just without OS-page-cache sharing (so a large checkpoint costs
 heap RAM there). The non-mmap loaders (`OpenSafetensors*`) are heap-backed on
 every platform.
 
-The only cgo in the ecosystem is opt-in and quarantined: `chunk/treesitter`
-(`gotreesitter`) and `goinfer/gpu` (`webgpu`) need a C toolchain on whatever OS
-you build them for; the core never pulls them in.
+The only cgo in the ecosystem is the optional WebGPU backend (`goinfer/gpu`,
+`webgpu`), which needs a C toolchain. `chunk/treesitter` (`gotreesitter`) is
+pure-Go too — it's a separate opt-in module only because of its large embedded
+grammars, not cgo. The core pulls in neither.
 
 ---
 
