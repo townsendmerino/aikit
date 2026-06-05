@@ -6,7 +6,6 @@ import (
 	"math"
 	"os"
 	"runtime"
-	"syscall"
 )
 
 // GGUF reader (multi-model-plan G7) — the llama.cpp container format that makes
@@ -204,8 +203,8 @@ func OpenGGUF(path string) (*GGUFFile, error) {
 // so the raw quantized bytes are file-backed page cache, not heap. Metadata
 // strings are copied during parse and Tensor dequantizes into fresh slices, so
 // nothing aliases the mapping — call Close (or let the finalizer run) once the
-// tensors have been read to munmap. Platform: unix only (syscall.Mmap), same as
-// OpenSafetensorsMmap; use OpenGGUF on unsupported platforms.
+// tensors have been read to munmap. Platform: true mmap on unix; on non-unix
+// targets (Windows) it falls back to a heap read, same as OpenSafetensorsMmap.
 func OpenGGUFMmap(path string) (*GGUFFile, error) {
 	data, err := mmapReadOnly(path)
 	if err != nil {
@@ -213,7 +212,7 @@ func OpenGGUFMmap(path string) (*GGUFFile, error) {
 	}
 	g, err := parseGGUF(data)
 	if err != nil {
-		_ = syscall.Munmap(data)
+		_ = munmap(data)
 		return nil, err
 	}
 	g.mmap = data
@@ -228,7 +227,7 @@ func (g *GGUFFile) Close() error {
 	if g.mmap == nil {
 		return nil
 	}
-	err := syscall.Munmap(g.mmap)
+	err := munmap(g.mmap)
 	g.mmap = nil
 	g.data = nil
 	return err

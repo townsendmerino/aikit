@@ -10,6 +10,39 @@ it.
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-06-04
+
+### Fixed
+
+- **Windows build.** `embed` referenced `syscall.Mmap`/`Munmap`/`PROT_READ`/
+  `MAP_PRIVATE` unconditionally, so the whole module failed to compile on
+  `GOOS=windows` (and any non-unix target). The mmap implementation is now
+  build-tagged: real memory-mapping on unix (`embed/mmap_unix.go`), and a
+  heap-read fallback elsewhere (`embed/mmap_other.go`) with identical API and
+  results. `OpenSafetensorsMmap` / `OpenGGUFMmap` behave the same; on Windows the
+  bytes live in the Go heap instead of the OS page cache. No new dependencies.
+- CI now builds + tests on `windows-latest` alongside Linux.
+
+## [0.4.0] — 2026-06-04
+
+### Changed (breaking, pre-1.0)
+
+- **Split the LLM runtime out to [`goinfer`](https://github.com/townsendmerino/goinfer).**
+  `decoder`, `tokenizer`, `constrain`, and the `demo/` generation CLI moved to the
+  new `goinfer` module (which depends inward on aikit). aikit is now a focused,
+  cgo-free retrieval toolkit; goinfer carries the generation stack and the cgo
+  WebGPU backend.
+- **`internal/linalg` → public `linalg`.** The SIMD dot/matmul + int8/int4 quant
+  kernels are now an importable package (shared across the repo boundary).
+- **`encoder` gained a pluggable `Backend`** (`RegisterBackend`/`NewBackend`) so
+  GPU acceleration is provided by the opt-in `goinfer/gpu` module under `-tags gpu`
+  — `encoder` itself carries no `webgpu` (cgo) dependency.
+- **`chunk/treesitter` is now its own module** (`…/aikit/chunk/treesitter`,
+  versioned `chunk/treesitter/vX.Y.Z`), quarantining the `gotreesitter` dependency
+  so the core graph has no cgo.
+- The root module's only dependency beyond stdlib is `golang.org/x/text`; a CI
+  guard fails the build if `webgpu`/`gotreesitter` ever leak into the core graph.
+
 ## [0.3.0] — 2026-06-03
 
 ### Changed

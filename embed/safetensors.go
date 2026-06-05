@@ -30,7 +30,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"syscall"
 	"unsafe"
 )
 
@@ -232,8 +231,10 @@ func OpenSafetensorsShardedFromFS(fsys fs.FS, indexPath string) (*SafetensorsFil
 // any such tensor is in use. After Close(), tensor accesses dereference
 // unmapped memory — undefined behavior.
 //
-// Platform: works on darwin/linux/bsd via syscall.Mmap. Not supported
-// on Windows; the embed package's primary deployments are macOS/Linux.
+// Platform: true memory-mapping on unix (darwin/linux/bsd) via
+// syscall.Mmap; on non-unix targets (Windows) it transparently falls back
+// to a heap read (embed/mmap_other.go) — same API and semantics, just
+// without the OS-page-cache sharing.
 func OpenSafetensorsMmap(path string) (*SafetensorsFile, error) {
 	data, err := mmapReadOnly(path)
 	if err != nil {
@@ -241,7 +242,7 @@ func OpenSafetensorsMmap(path string) (*SafetensorsFile, error) {
 	}
 	sf, err := parseSafetensors(data)
 	if err != nil {
-		_ = syscall.Munmap(data)
+		_ = munmap(data)
 		return nil, err
 	}
 	sf.mmapped = [][]byte{data}
@@ -250,38 +251,11 @@ func OpenSafetensorsMmap(path string) (*SafetensorsFile, error) {
 	return sf, nil
 }
 
-// mmapReadOnly opens path and returns a read-only MAP_PRIVATE mapping of its
-// whole contents. The fd is closed before returning (the mapping survives it).
-func mmapReadOnly(path string) ([]byte, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
-	}
-	defer f.Close() // fd no longer needed after mmap
-
-	st, err := f.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("stat %s: %w", path, err)
-	}
-	sz := st.Size()
-	if sz < 8 {
-		return nil, fmt.Errorf("safetensors %s: file too small (%d bytes)", path, sz)
-	}
-	if sz > int64(int(^uint(0)>>1)) {
-		return nil, fmt.Errorf("safetensors %s: file too large for this platform (%d bytes)", path, sz)
-	}
-	data, err := syscall.Mmap(int(f.Fd()), 0, int(sz), syscall.PROT_READ, syscall.MAP_PRIVATE)
-	if err != nil {
-		return nil, fmt.Errorf("mmap %s: %w", path, err)
-	}
-	return data, nil
-}
-
 // finalizeMmaps is the SetFinalizer callback for mmap-backed files: munmap
 // every region. Close does the same eagerly.
 func finalizeMmaps(s *SafetensorsFile) {
 	for _, m := range s.mmapped {
-		_ = syscall.Munmap(m)
+		_ = munmap(m)
 	}
 	s.mmapped = nil
 }
@@ -301,7 +275,7 @@ func (sf *SafetensorsFile) Close() error {
 	runtime.SetFinalizer(sf, nil)
 	var firstErr error
 	for _, m := range regions {
-		if err := syscall.Munmap(m); err != nil && firstErr == nil {
+		if err := munmap(m); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

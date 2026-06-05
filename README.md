@@ -57,6 +57,25 @@ A WebGPU backend can be slotted in by importing `goinfer/gpu` under `-tags gpu`
 
 ---
 
+## Platforms
+
+The core is pure Go (no cgo) and builds + tests on **Linux, macOS, and Windows**
+(amd64 and arm64) — CI covers all three. SIMD acceleration in `linalg` uses NEON
+on arm64 and AVX2/FMA on amd64 (runtime-detected, scalar fallback otherwise), on
+every OS.
+
+The mmap-backed loaders (`embed.OpenSafetensorsMmap`, `OpenGGUFMmap`) use real
+memory-mapping on unix and **fall back to a heap read on Windows** — identical
+API and results, just without OS-page-cache sharing (so a large checkpoint costs
+heap RAM there). The non-mmap loaders (`OpenSafetensors*`) are heap-backed on
+every platform.
+
+The only cgo in the ecosystem is opt-in and quarantined: `chunk/treesitter`
+(`gotreesitter`) and `goinfer/gpu` (`webgpu`) need a C toolchain on whatever OS
+you build them for; the core never pulls them in.
+
+---
+
 ## Stability tiers
 
 ### Hard, 1.0-committed
