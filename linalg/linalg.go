@@ -52,6 +52,38 @@ func SetParallelThreshold(macs int) { parThreshold = macs }
 // ParallelThreshold reports the current threshold (see SetParallelThreshold).
 func ParallelThreshold() int { return parThreshold }
 
+// parWidth caps the number of worker shards a parallelized matmul fans out to;
+// 0 means GOMAXPROCS (the default). See SetParallelWidth.
+var parWidth = 0
+
+// SetParallelWidth caps how many worker shards a parallel matmul fans out to
+// (0 = use GOMAXPROCS, the default). Orthogonal to SetParallelThreshold: the
+// threshold decides *whether* to parallelize, the width decides into *how many*
+// shards. Lower it to avoid slow-core stragglers at the fork/join barrier on
+// heterogeneous CPUs (Apple big.LITTLE, Intel P/E): a barrier waits on its
+// slowest shard, and an E-core handed an equal 1/N slice finishes well after a
+// P-core. Fewer shards tighten the join — but pure Go can't pin goroutines to
+// P vs E cores, so this only *lowers the odds* of an E-core straggler; it's a
+// statistical win, not a guarantee.
+//
+// Numerically inert: parallel matmuls partition output COLUMNS, so each output
+// is computed by one worker doing the full K-reduction — any width is
+// bit-identical. Process-wide; set once at startup. The effective worker count
+// is min(width-or-GOMAXPROCS, GOMAXPROCS, columns).
+func SetParallelWidth(n int) { parWidth = n }
+
+// ParallelWidth reports the current fan-out width cap (0 = GOMAXPROCS).
+func ParallelWidth() int { return parWidth }
+
+// effectiveWidth resolves the configured width against GOMAXPROCS.
+func effectiveWidth() int {
+	g := runtime.GOMAXPROCS(0)
+	if parWidth <= 0 || parWidth > g {
+		return g
+	}
+	return parWidth
+}
+
 // MatmulBT computes dst[M,N] = a[M,K] · b[N,K]ᵀ — the PyTorch [out,in] weight
 // layout the safetensors checkpoints store, so no transpose copy is needed.
 // Each output is a Dot of an a-row against a b-row; work is parallelized over
@@ -86,7 +118,7 @@ func parallelCols(work, N int, fn func(j0, j1 int)) {
 // callers that want a zero-alloc serial path call their span function directly
 // when below threshold, rather than routing a closure through parallelCols).
 func parallelSpawnCols(N int, fn func(j0, j1 int)) {
-	workers := min(runtime.GOMAXPROCS(0), N)
+	workers := min(effectiveWidth(), N)
 	chunk := (N + workers - 1) / workers
 	var wg sync.WaitGroup
 	for j0 := 0; j0 < N; j0 += chunk {

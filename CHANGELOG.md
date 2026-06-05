@@ -10,6 +10,19 @@ it.
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-06-05
+
+### Added
+
+- **`linalg.SetParallelWidth(n)` / `ParallelWidth()`** — cap the number of worker
+  shards a parallel matmul fans out to (0 = GOMAXPROCS, the default). Orthogonal
+  to `SetParallelThreshold` (whether to parallelize vs how many shards). Lets a
+  consumer narrow the fan-out to ~the P-core count to avoid E-core stragglers at
+  the fork/join barrier on heterogeneous CPUs. Numerically inert — parallel
+  matmuls partition output columns, so any width is bit-identical (verified at
+  widths 1–8). aikit's default stays GOMAXPROCS; the consumer that knows its
+  workload + machine sets it.
+
 ## [0.5.0] — 2026-06-05
 
 ### Added
