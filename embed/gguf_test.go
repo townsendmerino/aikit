@@ -10,6 +10,7 @@ import (
 	"math"
 	"math/rand"
 	"os"
+	"sort"
 	"testing"
 )
 
@@ -288,5 +289,73 @@ func TestGGUFMmap_matchesHeap(t *testing.T) {
 	}
 	if err := mm.Close(); err != nil { // idempotent
 		t.Errorf("second Close: %v", err)
+	}
+}
+
+// TestOpenGGUFBytes_matchesMmap: OpenGGUFBytes parses an in-memory slice
+// identically to OpenGGUFMmap — same tensor name set and bit-identical
+// dequantized tensors — so the bytes entry point is a pure no-filesystem
+// convenience, not a behavior change. Close is a no-op on the bytes file
+// (nothing is mapped).
+func TestOpenGGUFBytes_matchesMmap(t *testing.T) {
+	path := "../testdata/tinyllama-gguf/tinyllama-1.1b-chat-v1.0.Q8_0.gguf"
+	if _, err := os.Stat(path); err != nil {
+		t.Skip("no TinyLlama GGUF")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	bytesF, err := OpenGGUFBytes(raw)
+	if err != nil {
+		t.Fatalf("OpenGGUFBytes: %v", err)
+	}
+	mm, err := OpenGGUFMmap(path)
+	if err != nil {
+		t.Fatalf("OpenGGUFMmap: %v", err)
+	}
+	defer mm.Close()
+
+	// Same tensor name set (Names is map-order, so sort before comparing).
+	bn, mn := bytesF.Names(), mm.Names()
+	if len(bn) != len(mn) {
+		t.Fatalf("Names count: bytes %d, mmap %d", len(bn), len(mn))
+	}
+	sort.Strings(bn)
+	sort.Strings(mn)
+	for i := range bn {
+		if bn[i] != mn[i] {
+			t.Fatalf("Names[%d]: bytes %q, mmap %q", i, bn[i], mn[i])
+		}
+	}
+
+	// Bit-identical dims + dequant on a representative few of each layout.
+	for _, name := range []string{"token_embd.weight", "blk.0.attn_q.weight", "blk.0.ffn_down.weight", "output_norm.weight"} {
+		bd, bdata, berr := bytesF.Tensor(name)
+		md, mdata, merr := mm.Tensor(name)
+		if berr != nil || merr != nil {
+			t.Fatalf("Tensor(%q): bytes err=%v mmap err=%v", name, berr, merr)
+		}
+		if len(bd) != len(md) {
+			t.Fatalf("Tensor(%q) dims: bytes %v, mmap %v", name, bd, md)
+		}
+		for i := range bd {
+			if bd[i] != md[i] {
+				t.Fatalf("Tensor(%q) dim[%d]: bytes %d != mmap %d", name, i, bd[i], md[i])
+			}
+		}
+		if len(bdata) != len(mdata) {
+			t.Fatalf("Tensor(%q) len: bytes %d, mmap %d", name, len(bdata), len(mdata))
+		}
+		for i := range bdata {
+			if bdata[i] != mdata[i] {
+				t.Fatalf("Tensor(%q)[%d]: bytes %v != mmap %v", name, i, bdata[i], mdata[i])
+			}
+		}
+	}
+
+	// Close on the bytes-backed file is a safe no-op (nothing mapped).
+	if err := bytesF.Close(); err != nil {
+		t.Errorf("OpenGGUFBytes Close should be nil, got %v", err)
 	}
 }

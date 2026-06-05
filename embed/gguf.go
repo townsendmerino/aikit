@@ -199,6 +199,20 @@ func OpenGGUF(path string) (*GGUFFile, error) {
 	return parseGGUF(raw)
 }
 
+// OpenGGUFBytes parses a GGUF model from an in-memory byte slice — the same
+// path OpenGGUF uses after reading the file, minus the filesystem. The slice
+// is RETAINED by the returned *GGUFFile (tensor data aliases it, not copied),
+// so the caller must keep raw alive until done; Tensor still dequantizes into
+// fresh slices, so values read out survive independently. Nothing is mapped,
+// so Close is a no-op here (no munmap).
+//
+// Use this for //go:embed-ed or downloaded-in-memory models, and in read-only
+// environments with no writable temp dir — it avoids spilling the bytes to a
+// temp .gguf just to call OpenGGUFMmap(path).
+func OpenGGUFBytes(raw []byte) (*GGUFFile, error) {
+	return parseGGUF(raw)
+}
+
 // OpenGGUFMmap memory-maps a .gguf file (read-only, MAP_PRIVATE) and parses it,
 // so the raw quantized bytes are file-backed page cache, not heap. Metadata
 // strings are copied during parse and Tensor dequantizes into fresh slices, so
