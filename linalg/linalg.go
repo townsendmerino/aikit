@@ -26,9 +26,31 @@ func Dot8x4(a, b0, b1, b2, b3, b4, b5, b6, b7 *float32, n4 int, sums *[32]float3
 	dotNEON8x4(a, b0, b1, b2, b3, b4, b5, b6, b7, n4, sums)
 }
 
-// parThreshold is the MAC count below which MatmulBT runs serially — under it
-// the goroutine fan-out costs more than it saves.
-const parThreshold = 1 << 15
+// parThreshold is the MAC count (M*N*K) below which a matmul runs serially —
+// under it the goroutine fork/join costs more than the parallelism saves. It is
+// set high enough that the M=1 single-token decode projections (≤ ~9M MACs for
+// even a fused gate+up on a 0.5B–1.5B model) stay serial: goinfer's profile
+// showed those tiny per-call fan-outs spending ~70% of decode CPU in
+// pthread_cond park/wake for no speedup. Prompt/prefill (large M) and the
+// encoder (large M) clear it comfortably and still parallelize.
+//
+// SetParallelThreshold tunes it (see SetParallelThreshold).
+var parThreshold = 1 << 24 // 16.78M MACs
+
+// SetParallelThreshold sets the MAC count (M*N*K) at/above which matmuls
+// parallelize across goroutines; below it they run serially. The default
+// (16.78M) keeps M=1 single-token decode serial — the regime where per-call
+// fork/join dominates — while prompt/prefill and the encoder still parallelize.
+//
+// It's a process-wide knob for callers tuning a specific workload + machine
+// against an end-to-end benchmark (a microbenchmark of back-to-back matmuls
+// can't reproduce the cold goroutine park/wake that makes serial win in a real
+// decode loop). Set it once at startup, before concurrent matmuls run; it is
+// not safe to change while matmuls are in flight. n ≤ 0 forces always-parallel.
+func SetParallelThreshold(macs int) { parThreshold = macs }
+
+// ParallelThreshold reports the current threshold (see SetParallelThreshold).
+func ParallelThreshold() int { return parThreshold }
 
 // MatmulBT computes dst[M,N] = a[M,K] · b[N,K]ᵀ — the PyTorch [out,in] weight
 // layout the safetensors checkpoints store, so no transpose copy is needed.
@@ -55,6 +77,15 @@ func parallelCols(work, N int, fn func(j0, j1 int)) {
 		fn(0, N)
 		return
 	}
+	parallelSpawnCols(N, fn)
+}
+
+// parallelSpawnCols splits [0,N) into one chunk per worker and runs fn on each
+// in its own goroutine. The caller has already decided parallelism is worth it
+// (so the fn closure's heap escape here is paid only on the parallel path —
+// callers that want a zero-alloc serial path call their span function directly
+// when below threshold, rather than routing a closure through parallelCols).
+func parallelSpawnCols(N int, fn func(j0, j1 int)) {
 	workers := min(runtime.GOMAXPROCS(0), N)
 	chunk := (N + workers - 1) / workers
 	var wg sync.WaitGroup

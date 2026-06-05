@@ -10,6 +10,51 @@ it.
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-05
+
+### Added
+
+- **`linalg.MatmulBTW8A8Into(ws, …)`** — W8A8 matmul with a caller-supplied
+  `*Workspace` for the quantized-activation scratch, so a steady-state decode
+  loop allocates **zero** per matmul (the allocating `MatmulBTW8A8` stays, now a
+  thin wrapper). It also quantizes each activation row **once** instead of once
+  per parallel worker. Output is bit-identical to `MatmulBTW8A8`.
+- **`linalg.MatmulBTW8A8Batch(ws, a, M, K, ops)`** + **`W8A8Op`** — run several
+  W8A8 matmuls that share one activation (fused q/k/v or gate/up) in a single
+  parallel region: one quantize + one goroutine fork/join instead of per-matmul.
+  Weights are read in place, so a consumer that aliases int8 weights zero-copy
+  gets the dispatch reduction with **no concat copy**. Bit-identical to calling
+  `MatmulBTW8A8Into` per op.
+- **`linalg.Workspace`** — reusable scratch buffers for the above (one per
+  goroutine / decode stream; not safe for concurrent use).
+- **`linalg.SetParallelThreshold` / `ParallelThreshold`** — process-wide knob
+  for the MAC count at/above which matmuls parallelize, for end-to-end tuning.
+- **`Workspace.SetWorkers(n)` / `Close()`** *(opt-in, experimental)* — give a
+  Workspace a persistent pool of `n` worker goroutines that spin briefly before
+  parking, so a decode stream's back-to-back matmuls reuse hot workers instead
+  of spawning + parking per call (and the parallel path drops from ~per-dispatch
+  allocs to ~zero). Single-dispatcher only (one per stream); `Close` stops the
+  workers. The zero-value Workspace has no pool — the default and the encoder's
+  concurrent-forward path are unchanged. The win is workload-dependent (a warm
+  microbenchmark can't show it); enable it and measure end-to-end.
+
+### Changed
+
+- **Matmul parallel threshold raised** to 16.78M MACs (was 32768) so M=1
+  single-token decode projections run **serially** — that regime spent most of
+  its CPU in goroutine park/wake for no speedup. Prompt/prefill and the encoder
+  (large M) still parallelize (a ~3× win there is unchanged). No numeric change;
+  purely *when* the fork/join happens.
+
+## [0.4.2] — 2026-06-04
+
+### Added
+
+- **`embed.OpenGGUFBytes(raw)`** — parse a GGUF model from an in-memory byte
+  slice (aliased, not copied), no filesystem touch. For `//go:embed`-ed or
+  downloaded-in-memory models and read-only environments with no writable temp
+  dir. `Close` is a no-op for the bytes-backed file.
+
 ## [0.4.1] — 2026-06-04
 
 ### Fixed

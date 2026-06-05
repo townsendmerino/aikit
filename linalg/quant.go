@@ -146,23 +146,121 @@ func quantizeRowInt8(a []float32, dst []int8) (scale float32) {
 // int8, f32 activations) this also quantizes the activations, so it is lossier —
 // the tradeoff for an integer kernel. Parallelized over the N columns.
 func MatmulBTW8A8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
-	parallelCols(M*N*K, N, func(j0, j1 int) {
-		aq := make([]int8, K) // per-worker scratch: the quantized activation row
-		for i := range M {
-			aScale := quantizeRowInt8(a[i*K:i*K+K], aq)
-			drow := dst[i*N : i*N+N]
-			if aScale == 0 {
-				for j := j0; j < j1; j++ {
-					drow[j] = 0
-				}
-				continue
-			}
+	var ws Workspace
+	MatmulBTW8A8Into(&ws, a, bQ, bScales, dst, M, K, N)
+}
+
+// MatmulBTW8A8Into is MatmulBTW8A8 with caller-supplied scratch, so a steady-
+// state decode loop allocates nothing. It also quantizes each activation row
+// ONCE (into ws) rather than once per worker — the old code re-quantized the
+// same row in every parallel chunk and allocated a scratch buffer per worker,
+// which was the bulk of decode alloc_space. Output is bit-identical to
+// MatmulBTW8A8 (same quantizeRowInt8 / dotI8 / rescale, just hoisted).
+func MatmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
+	aq := ws.int8Buf(M * K)
+	aScales := ws.f32Buf(M)
+	for i := range M {
+		aScales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
+	}
+	// Serial fast-path calls the named span directly (no closure → no heap
+	// escape → zero alloc, the steady-state decode case). Only the parallel
+	// branch pays a closure allocation, where it's noise next to the goroutines.
+	if M*N*K < parThreshold || N < 2 {
+		w8a8Span(aq, aScales, bQ, bScales, dst, M, K, N, 0, N)
+		return
+	}
+	ws.parallel(N, func(j0, j1 int) {
+		w8a8Span(aq, aScales, bQ, bScales, dst, M, K, N, j0, j1)
+	})
+}
+
+// w8a8Span computes output columns [j0,j1) for every row: dst[i,j] =
+// dotI8(aq[i], bQ[j]) · aScales[i] · bScales[j]. A named function (not a
+// closure) so the serial caller invokes it without a heap allocation.
+func w8a8Span(aq []int8, aScales []float32, bQ []int8, bScales, dst []float32, M, K, N, j0, j1 int) {
+	for i := range M {
+		drow := dst[i*N : i*N+N]
+		if aScales[i] == 0 {
 			for j := j0; j < j1; j++ {
-				acc := dotI8(aq, bQ[j*K:j*K+K])
-				drow[j] = float32(acc) * aScale * bScales[j]
+				drow[j] = 0
+			}
+			continue
+		}
+		aqi := aq[i*K : i*K+K]
+		as := aScales[i]
+		for j := j0; j < j1; j++ {
+			drow[j] = float32(dotI8(aqi, bQ[j*K:j*K+K])) * as * bScales[j]
+		}
+	}
+}
+
+// W8A8Op is one weight matrix in a batched W8A8 matmul: BQ is the [N,K] int8
+// weights (row-major, used in place — NOT copied), Scales the [N] per-row
+// weight scales, Dst the [M,N] output. N is the column count.
+type W8A8Op struct {
+	BQ     []int8
+	Scales []float32
+	Dst    []float32
+	N      int
+}
+
+// MatmulBTW8A8Batch runs several W8A8 matmuls that share the SAME activation
+// a[M,K] — fused q/k/v or gate/up — in ONE parallel region: the activation is
+// quantized once and the goroutine fork/join is amortized across every op's
+// columns (the concatenated [0, ΣN) column space is split across workers),
+// instead of one quantize + one fork/join per matmul. The weights stay in
+// place, so a consumer that aliases int8 weights zero-copy (goinfer's prequant
+// path) gets the dispatch reduction with NO concat copy.
+//
+// Numerically identical to calling MatmulBTW8A8Into once per op.
+func MatmulBTW8A8Batch(ws *Workspace, a []float32, M, K int, ops []W8A8Op) {
+	if len(ops) == 0 {
+		return
+	}
+	aq := ws.int8Buf(M * K)
+	aScales := ws.f32Buf(M)
+	for i := range M {
+		aScales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
+	}
+	totalN := 0
+	for _, op := range ops {
+		totalN += op.N
+	}
+	if M*totalN*K < parThreshold || totalN < 2 {
+		w8a8BatchSpan(aq, aScales, ops, M, K, 0, totalN)
+		return
+	}
+	ws.parallel(totalN, func(g0, g1 int) {
+		w8a8BatchSpan(aq, aScales, ops, M, K, g0, g1)
+	})
+}
+
+// w8a8BatchSpan computes the [g0,g1) slice of the ops' concatenated column
+// space, mapping each global column back to its op and local column. Named
+// (not a closure) so the serial caller pays no allocation.
+func w8a8BatchSpan(aq []int8, aScales []float32, ops []W8A8Op, M, K, g0, g1 int) {
+	base := 0
+	for _, op := range ops {
+		lo, hi := max(g0, base), min(g1, base+op.N) // this op's slice of [g0,g1)
+		if lo < hi {
+			for i := range M {
+				drow := op.Dst[i*op.N : i*op.N+op.N]
+				if aScales[i] == 0 {
+					for j := lo; j < hi; j++ {
+						drow[j-base] = 0
+					}
+					continue
+				}
+				aqi := aq[i*K : i*K+K]
+				as := aScales[i]
+				for j := lo; j < hi; j++ {
+					jj := j - base
+					drow[jj] = float32(dotI8(aqi, op.BQ[jj*K:jj*K+K])) * as * op.Scales[jj]
+				}
 			}
 		}
-	})
+		base += op.N
+	}
 }
 
 // Group-wise symmetric int4 weight quantization (gemma-decoder-plan §8 / M8
