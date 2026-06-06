@@ -1,282 +1,144 @@
-# CPU & GPU acceleration: testing & follow-ups
+# CPU & SIMD acceleration (internal notes)
 
-How to verify and extend the encoder's compute kernels — the amd64 AVX2 path, the
-single-forward row-parallel matmul, and the optional WebGPU (Metal/Vulkan/DX12) backend.
-Written for the case where you're developing on an Apple-Silicon (arm64) Mac but need to
-validate the **amd64** work on a Linux box, since AVX2 can't run on arm64 (not even under
-Rosetta 2, which tops out at SSE4.2).
+How aikit's pure-Go compute is accelerated, where it lives, how to test it, and
+the open micro-kernel follow-ups. Internal/maintainer notes — the user-facing
+story is the README + godoc.
 
-> **Status note.** This doc is kept current as the follow-ups below land. Last updated for:
-> Phase A (amd64 AVX2/FMA, first-cut) + Phase B (intra-op row-parallel matmul) +
-> Phase 3 foundation (WebGPU matmul offload, `-tags gpu`) on the `main` branch.
->
-> **2026-06-02 — amd64 AVX2 path validated on Linux for the first time.** Every
-> `AVX2|Dot` test PASSes with `hasAVX2=true`, no SIGILL, and `-race` is clean.
-> The single-row and both register-blocked kernels (`dotFMA`/`dotFMA4`/`dotFMA8`)
-> bit-match the scalar reference on real AVX2 hardware. Numbers + one tuning
-> finding in follow-up §A below. Box: AMD Ryzen 7 3700X (8C/16T, Zen 2), Go 1.26.3.
+> **GPU is goinfer's now.** The WebGPU backend (`encoder/gpu`) was removed from
+> aikit in the v0.4.0 split — it carries the cgo `webgpu` dependency, which the
+> core deliberately excludes. GPU matmul lives in `goinfer/gpu` behind the
+> `encoder.Backend` seam; aikit ships only the pure-Go CPU backend. This doc is
+> CPU/SIMD only.
 
 ---
 
-## What's in the encoder now
+## Two layers
 
-The transformer's hot inner loop is three arch-neutral kernel functions — `dotNEON`,
-`dotNEON4x4`, `dotNEON8x4` — dispatched by build tag:
+**1. `linalg/` — the shared SIMD kernels (public package).** The single home for
+the hand-written assembly, used by both `encoder` and goinfer's decoder. Dispatch
+by build tag + runtime CPU detection:
 
-| Arch | File | Path |
-|---|---|---|
-| arm64 | `internal/linalg/dot_arm64.{go,s}` | hand-written NEON (M-series, pre-existing) |
-| amd64 | `internal/linalg/dot_amd64.{go,s}` | AVX2+FMA `dotFMA`, runtime-detected, scalar fallback |
-| other | `internal/linalg/dot_other.go` → `dot_generic.go` | scalar |
+| Arch  | Files | Kernel |
+|-------|-------|--------|
+| arm64 | `linalg/dot_arm64.{go,s}`, `dot_i8*_arm64.s`, `dotprod_arm64_*.go` | NEON; int8 `dotI8` upgrades to `SDOT` on DotProd-capable CPUs (runtime HWCAP) |
+| amd64 | `linalg/dot_amd64.{go,s}` | AVX2+FMA (`dotFMA`/`dotFMA4`/`dotFMA8`), runtime CPUID/XGETBV detect, scalar fallback |
+| other | `linalg/dot_generic.go`, `dot_other.go` | portable scalar |
 
-> **Moved (v0.4.0):** the dot kernels were lifted out of `encoder/` into the
-> public `linalg` package so the encoder and goinfer's LLM decoder share one
-> copy of the assembly. The encoder imports `linalg.Dot4x4`/`Dot8x4`; a decoder
-> matmul backend calls `linalg.MatmulBT`.
+On top of the dot kernels, `linalg` provides:
+- `Dot`, `Dot4x4`, `Dot8x4`, `MatmulBT` (f32 row-parallel).
+- The quant matmuls: `MatmulBTQ8` (int8 weights), `MatmulBTQ4` (int4 group), and
+  the **W8A8** path (`MatmulBTW8A8` + the zero-alloc `…Into(ws *Workspace)` and
+  the fused `MatmulBTW8A8Batch`) — see `quant.go`, `workspace.go`.
+- Dispatch knobs: `SetParallelThreshold` (MAC count to parallelize above) and
+  `SetParallelWidth` (cap fan-out shards, for P/E straggler control) — both
+  numerically inert (output columns are partitioned). `pool.go` is the optional
+  per-`Workspace` spin-then-park worker pool.
 
-On top of that, `encoder/parallel.go` row-splits the big linear-layer matmuls across cores
-**only** when a single forward pass is running alone (a lone `Encode` call) — never under
-`EncodeBatch`, which already saturates every core at the document level. The gate is an
-atomic in-flight-forward counter; see the package comment for the rationale.
+**2. `encoder/` — the encoder's own matmul orchestration.** `encoder/linalg.go`
+is the cache-blocked `matmulBTInto` (calls `linalg.Dot8x4`/`Dot4x4`);
+`encoder/linalg_q8.go` is its int8 variant; `encoder/parallel.go` row-splits a
+**single** `Encode` across cores (gated by an atomic in-flight-forward counter +
+its own `parallelThreshold`, so `EncodeBatch` — already core-saturated at the
+document level — stays serial per forward). This is separate from `linalg`'s
+knobs above.
 
-Two things to know before testing:
-
-- **AVX2 detection is runtime.** `hasAVX2` is computed once at init via hand-rolled
-  CPUID/XGETBV (no `golang.org/x/sys` dependency). If the CPU/OS lacks AVX2+FMA, the kernels
-  silently use the scalar fallback — correct, just unaccelerated.
-- **The parallel matmul is numerically exact** vs. the serial path (row-splitting doesn't
-  change f32 reduction order), so it must match bit-for-bit, not just within tolerance.
-
----
-
-## The GPU backend (`encoder/gpu`, `-tags gpu`)
-
-Optional WebGPU compute backend (`encoder/gpu`), built **only** under `-tags gpu`. It links
-`github.com/cogentcore/webgpu`, a cgo binding that bundles the wgpu-native Rust library, and
-runs on Metal (macOS), Vulkan (Linux), or D3D12 (Windows). Every file except `doc.go` carries
-`//go:build gpu`, so without the tag the package is empty and the module stays pure-Go /
-no-cgo — `CGO_ENABLED=0 go build ./...` succeeds. `go mod tidy` keeps the dep (verified).
-
-The foundation cut offloads a single `dst = a·bᵀ` matmul (upload → dispatch → readback) with a
-naive one-invocation-per-output WGSL kernel. It's correct but **slower than the CPU** at every
-forward shape — the expected outcome, and the reason the foundation exists is to quantify the
-gap before investing in the resident-buffer follow-up.
-
-**Measured on an M1 Pro (8-core), GFLOP/s, higher is better:**
-
-| Shape           | GPU (naive, full transfer) | CPU serial (NEON) | CPU parallel |
-|-----------------|---------------------------:|------------------:|-------------:|
-| L80 fc11        | 32.8                       | 43.5              | 129.4        |
-| L256 fc11       | 39.6                       | 44.7              | 194.9        |
-| L512 fc11       | 42.2                       | 45.0              | 197.0        |
-| L512 fc2        | 36.3                       | 39.8              | 174.3        |
-
-Two compounding bottlenecks, both expected: (1) per-call host↔device transfer (each call
-re-uploads a+b, reads back dst — ~95 allocs/op); (2) the naive kernel is memory-bound, so its
-GFLOP/s *rises* with size as transfer amortizes but plateaus ~42 — the no-tiling ceiling. Even
-with zero transfer this kernel would only *match* serial CPU. Beating CPU needs **both**
-follow-ups below.
-
-### Testing the GPU backend (needs a GPU; works on your Mac's Metal)
-
-```bash
-go test -tags gpu ./encoder/gpu/ -run MatmulBT -v
-#   expect "GPU backend: metal" (or vulkan/d3d12) and all PASS, including the
-#   ragged shapes (17×65×33 etc.) that exercise the kernel's bounds check.
-go test -tags gpu ./encoder/gpu/ -run XXX -bench MatmulBT_GPU -benchmem
-#   compare GFLOP/s (MB/s ÷ 1000) against encoder's BenchmarkMatmul{Serial,Parallel}_*.
-```
-On a headless box with no GPU, `New()` errors and the tests **skip** cleanly. Confirm the
-default build is unaffected: `CGO_ENABLED=0 go build ./...`.
+**Parity invariant (both layers):** parallelization and re-blocking partition
+*output columns/rows* — each output is computed by one worker doing the full
+K-reduction — so they're **bit-identical** to the serial path, not just within
+tolerance. Tests assert exact equality.
 
 ---
 
-## Testing on the Linux box (amd64)
+## Status
+
+- **amd64 AVX2 validated on Linux (2026-06-02, Ryzen 7 3700X, Zen 2, Go 1.26.3).**
+  Every `AVX2|Dot` test PASSes with `hasAVX2=true`, no SIGILL, `-race` clean; the
+  single-row and register-blocked kernels bit-match the scalar reference. Numbers
+  + the one tuning finding below.
+- **Perf campaign landed (v0.5.0–0.5.2)** in `linalg`: zero-alloc W8A8 decode
+  (`Workspace`/`…Into`), batched W8A8 (`MatmulBTW8A8Batch`), serial-decode
+  threshold + `SetParallelThreshold`/`SetParallelWidth`, the spin-park pool, and
+  the column-outer W8A8 re-block (weight reused across M rows). See CHANGELOG.
+  goinfer's end-to-end decode is the arbiter for those (warm microbenches mislead).
+
+### AVX2 kernel numbers (Ryzen 7 3700X, `-bench 'Dot'`, MB/s)
+
+| K     | scalar `DotGo` | single-row `dotFMA` | Dot4x4   | Dot8x4        |
+|-------|---------------:|--------------------:|---------:|--------------:|
+| 64    | 7.4 GB/s       | 14.3 (1.9×)         | 30.8     | 35.3          |
+| 768   | 8.1 GB/s       | 44.2 (5.5×)         | 51.9     | **86.5**      |
+| 3072  | 8.4 GB/s       | 49.9 (5.9×)         | 51.4     | 40.5 ⚠        |
+
+Single-row AVX2 is ~6× scalar at the linear-layer widths; register-blocking adds
+a-reuse on top (`Dot8x4` peaks 86.5 GB/s at K=768). **⚠ `Dot8x4` regresses at
+K=3072** — below `Dot4x4` and even single-row — the 8 live YMM accumulators plus
+streamed b-rows exceed what stays hot at large K. See follow-up §1.
+
+---
+
+## Testing
+
+The SIMD kernels and their differential tests live in `linalg/`:
 
 ```bash
-git pull          # or: git clone <repo> && cd aikit
-go version        # confirm Go 1.26+
+# Kernel correctness — AVX2 asm bit-matches the scalar reference (all tail sizes).
+# TestAVX2_detection logs hasAVX2; on a non-AVX2 box the asm tests SKIP.
+go test ./linalg/ -run 'AVX2|Dot|W8A8|Batch|ParallelWidth' -v
+
+# Race-clean parallelism (parallel matmul, W8A8 pool, width).
+go test -race ./linalg/
+
+# Kernel throughput.
+go test ./linalg/ -run XXX -bench 'Dot|MatmulBTW8A8|DecodePool' -benchmem
+
+# asmdecl validates every asm stack offset vs the Go signatures (CI runs this).
+go vet ./linalg/
 ```
 
-### 1. The AVX2 differential test — the main thing to verify
+Encoder-level (forward-pass parity + single-forward parallelism):
 
 ```bash
-go test ./encoder/ -run 'AVX2|Dot' -v
-```
-
-What to look for:
-
-- `TestAVX2_dotFMA_matchesGeneric` — **PASS**. This directly compares the AVX2 asm kernel
-  against the scalar kernel across all tail sizes (the 32-wide body, the 8-wide tail, and the
-  scalar remainder). This is the real proof the assembly is correct.
-- `TestAVX2_detection` logs `hasAVX2=true (maxLeaf=…)`. If it prints `hasAVX2=false`, that
-  box's CPU/OS doesn't expose AVX2 — the asm test will have **SKIPPED**, and you're only
-  testing the scalar path. Use a box with AVX2 (anything Haswell-era 2013+ / most cloud VMs).
-- `TestDotF32_matchesScalar`, `TestDot4x4_matchesScalar`, `TestDot8x4_matchesScalar` — PASS.
-  On an AVX2 box these now exercise the asm path against an independent scalar reference.
-
-**Failure mode that matters:** if any test **SIGILLs** (illegal instruction) rather than
-fails an assertion, that's an assembler/detection bug — the dispatch picked the asm path on a
-CPU that can't run it, or an instruction is encoded wrong. Capture the exact test name and the
-output of `go test -run TestAVX2_detection -v` and `cat /proc/cpuinfo | grep flags | head -1`.
-
-### 2. Full suite, with the race detector
-
-```bash
-go test -race ./encoder/...
-```
-
-`-race` is the important flag for the parallel matmul (`parallel.go`) — it confirms the
-row-splitting goroutines have no data races. Model-dependent tests skip cleanly when the
-CodeRankEmbed weights aren't present (see the repo README for `ken download-model --rerank`);
-a green run with those skipped is the expected state.
-
-### 3. The payoff — benchmarks
-
-**AVX2 vs scalar** (the per-core SIMD win):
-
-```bash
-go test ./encoder/ -run XXX -bench 'Dot' -benchmem
-```
-
-Compare `BenchmarkDot8x4_K768` / `BenchmarkDotF32_K768` (dispatched kernel, = AVX2 on this box)
-against `BenchmarkDotGo_K768` (the scalar baseline). Expect a multiple-× throughput gain in the
-MB/s column (which here reports as GFLOP/s — each element is 2 FLOPs). K64 / K768 / K3072 cover
-the attention and linear-layer reduction widths.
-
-**Row-parallel vs serial matmul** (the single-forward latency win):
-
-```bash
+go test -race ./encoder/...            # incl. parallel.go exactness + threshold benches
 go test ./encoder/ -run XXX -bench 'MatmulParallel|MatmulSerial' -benchmem
 ```
 
-For reference, on an 8-core M1 Pro: L256 fc11 was 4.3×, L512 fc11 4.5×, L80 outproj 2.6×.
-Your amd64 numbers will differ with core count and AVX2 throughput — record them; they're the
-data for tuning `parallelThreshold` (see follow-ups).
-
-### 4. Cross-check the build the way CI would
-
-```bash
-go vet ./encoder/          # asmdecl validates every asm stack offset vs. the Go signatures
-go build ./...
-```
+Model-dependent encoder tests (golden cosine vs CodeRankEmbed) skip cleanly when
+the checkpoint is absent (CI), and run when `testdata/encoder-model` is present.
 
 ---
 
-## Follow-ups you can do from the Linux box
+## Open follow-ups (aikit, CPU-only)
 
-These are the deliberately-deferred pieces — each needs real amd64 hardware (or model weights)
-to measure, which is exactly what the Linux box gives you. Roughly in priority order.
+1. **`Dot8x4` large-K crossover heuristic.** `Dot8x4` wins at mid-K (~768) but
+   loses to `Dot4x4`/single-row past it (the K=3072 regression above). The
+   encoder's blocked matmul should pick the kernel by K (prefer `Dot4x4` / fall
+   to single-row at large K). Kernels are correct; only the selection heuristic
+   is unwired.
+2. **AVX-512 path** (optional, Zen 4 / recent Intel). 16-wide, more registers;
+   AVX2 already covers ~all amd64 since 2015 and AVX-512 brings downclocking
+   caveats, so low priority. Same shape: CPUID leaf 7 detect, `dot_amd64.s`
+   entry points, `hasAVX512` gate.
+3. **Per-head attention QK^T parallelization** (encoder). ~17M FLOPs/head wins
+   ~3.4× in isolation but recurs 12 heads × 12 layers/forward; needs an
+   end-to-end `Model.Encode` benchmark on real weights (not a microbench) to
+   decide whether the spawn overhead pays off. Tune the encoder's
+   `parallelThreshold` accordingly.
 
-### A. amd64 register-blocked micro-kernel — DONE & VALIDATED on Linux (2026-06-02)
-
-**Implemented and now executed.** `dotFMA4` / `dotFMA8` in `internal/linalg/dot_amd64.s` load each 8-float
-chunk of the shared `a` row ONCE and run 4/8 FMA chains against the b-rows into separate YMM
-accumulators — the a-reuse register-blocking arm64's NEON kernel uses. `dotNEON4x4`/`dotNEON8x4` in
-`dot_amd64.go` dispatch to them (scalar fallback when `!hasAVX2`). Cross-compiled + `go vet`/
-`asmdecl`-clean on the arm64 host; **first real execution was on the Ryzen 7 3700X box below.**
-
-**Correctness — all PASS, no SIGILL, `-race` clean.** `TestAVX2_dotFMA_matchesGeneric`,
-`TestDotF32/Dot4x4/Dot8x4_matchesScalar` all bit-match the independent scalar reference;
-`TestAVX2_detection` logs `hasAVX2=true (maxLeaf=16)`. The register-blocked asm is correct on real
-AVX2 hardware.
-
-**Speedup** (`-bench 'Dot' -benchmem`, Ryzen 7 3700X, Zen 2, Go 1.26.3; MB/s column):
-
-| K     | scalar `DotGo` | single-row `dotFMA` |       Dot4x4 |       Dot8x4 |
-|-------|---------------:|--------------------:|-------------:|-------------:|
-| 64    |   7.4 GB/s     | 14.3 GB/s (1.9×)    |  30.8 GB/s   |  35.3 GB/s   |
-| 768   |   8.1 GB/s     | 44.2 GB/s (5.5×)    |  51.9 GB/s   | **86.5 GB/s**|
-| 3072  |   8.4 GB/s     | 49.9 GB/s (5.9×)    |  51.4 GB/s   |  40.5 GB/s   |
-
-Single-row AVX2 lands the expected ~6× over scalar at the linear-layer widths. Register-blocking
-adds a-reuse on top: `Dot8x4` peaks at **86.5 GB/s** (K=768).
-
-**Tuning finding → feeds §B/§D.** `Dot8x4` *regresses at K=3072* (40.5 GB/s) — below both `Dot4x4`
-(51.4) and even single-row `dotFMA` (49.9) at that width. The 8 live YMM accumulators plus the
-streamed b-rows appear to exceed what stays hot at large K (register/L1 pressure), so the 8-row
-block is a win only for mid-K (≈768) and loses its lead as K grows. The dispatch should prefer
-`dotFMA4` (or fall to single-row) past some K; finding that crossover is the open micro-kernel
-tuning task. Not yet wired — the kernels are correct, the selection heuristic is the follow-up.
-
-### B. Tune `parallelThreshold` on actual amd64 silicon
-
-`parallelThreshold` (32M FLOPs) and the win curve in `parallel.go`'s comment were measured on
-an M1 Pro. amd64 boxes differ in core count, memory bandwidth, and AVX2 throughput, so the
-break-even point will move.
-
-- Run `-bench 'MatmulParallel|MatmulSerial'` (and the `_L80_*` / `_attn512` probes already in
-  `parallel_test.go`) on the target box.
-- Find the smallest shape where parallel still beats serial net of goroutine spawn; set the
-  constant there. Update the comment table with the new numbers.
-
-### C. Decide whether to parallelize per-head attention QK^T
-
-The per-head attention matmul (L512: ~17M FLOPs) wins ~3.4× in isolation but recurs
-12 heads × 12 layers = 144×/forward, i.e. 1000+ goroutine spawns. Whether that's a net win
-needs an **end-to-end single-forward benchmark on real weights** — not a microbenchmark.
-
-- Get the CodeRankEmbed weights onto the box (`ken download-model --rerank --to testdata/encoder-model`).
-- Write a benchmark that calls `Model.Encode` on one long document (L≈512) and compare wall-clock
-  with `parallelThreshold` at 32M (attention serial) vs. lowered to ~8M (attention parallel).
-- If it wins, lower the threshold; if the spawn overhead dominates, leave it and note it.
-
-### D. (Optional) AVX-512 path
-
-For Zen 4 / recent Intel server parts, an AVX-512 kernel (16-wide, more registers) is a further
-step. Lower priority — AVX2 covers virtually all amd64 from ~2015, and AVX-512 brings
-downclocking caveats. Same structure: detect via CPUID leaf 7, add `dot_amd64.s` entry points,
-gate behind a `hasAVX512` flag.
-
-### E. GPU: resident buffers (the transfer fix — do this before anything else GPU)
-
-> **Note (v0.4.0 split):** the WebGPU backend moved to `goinfer/gpu` (it carries
-> the cgo `webgpu` dependency, kept out of aikit's core). The resident-buffer
-> primitives + a GPU matmul backend live there now, behind `encoder.Backend` /
-> goinfer's decoder backend. aikit's `encoder` ships the pure-Go CPU backend;
-> wiring it to keep layer weights resident across an `EncodeBatch` (when a GPU
-> backend is registered) is the remaining piece of this item.
-
-The foundation re-uploads a+b and reads back dst on every `MatmulBT` call; the table above shows
-transfer dominates. The fix that unlocks the GPU is to keep data resident:
-
-- Upload the 12 layers' weights to GPU storage buffers **once at model load**, not per call.
-- Keep activations resident on-GPU **across all 12 layers** — only upload token embeddings at
-  the start and read back the final CLS vector. No per-layer round-trip.
-- This is also where the full-forward decision (Phase 3 "scope B") gets made: porting layernorm,
-  softmax, silu, rope, and attention to WGSL compute passes so the activation never leaves the
-  GPU. Measure end-to-end `EncodeBatch` wall-clock at a large batch (the only regime where GPU
-  can win) against the CPU parallel path before committing.
-
-### F. GPU: tiled matmul kernel (raise the compute ceiling)
-
-The naive kernel plateaus ~42 GFLOP/s because every invocation streams full a/b rows from global
-memory. A tiled kernel stages K-strips of a and b into `var<workgroup>` shared memory and reuses
-them across the workgroup's output tile — the standard GEMM optimization, typically several × on
-GPU. Needed in addition to (E): resident buffers remove transfer, tiling removes the memory-bound
-ceiling. `TestMatmulBT_matchesNaive` already covers correctness for whatever kernel you drop in.
-
-### G. GPU: large-batch storage-buffer tiling
-
-The Metal device reports `maxStorageBufferBindingSize` = 128 MB. Big-batch activations
-(e.g. B=32 × L=512 × 3072 f32 ≈ 200 MB) exceed one binding, so the resident-activation design in
-(E) must tile the batch dimension across multiple dispatches. Note the cap when sizing batches.
+GPU follow-ups (resident buffers, tiled kernel, batch-tiling) are **goinfer's** —
+see `goinfer/gpu` and goinfer's perf docs.
 
 ---
 
-## Quick reference: files
+## File reference
 
 ```
-internal/linalg/dot_generic.go  scalar kernels (build !arm64)
-internal/linalg/dot_other.go    aliases for !arm64 && !amd64
-internal/linalg/dot_amd64.go    AVX2 dispatch + CPUID/XGETBV detection
-internal/linalg/dot_amd64.s     dotFMA asm + cpuid/xgetbv asm
-internal/linalg/linalg.go       exported Dot/Dot4x4/Dot8x4 + row-parallel MatmulBT
-internal/linalg/dot_amd64_test.go  asm-vs-generic differential test
-encoder/parallel.go        in-flight counter + row-parallel blocked matmul
-encoder/parallel_test.go   exactness test + threshold benchmarks
-encoder/linalg.go          matmulBTInto dispatch (naive / blocked / parallel)
-encoder/gpu/doc.go         package doc (untagged — keeps default build non-empty)
-encoder/gpu/gpu.go         WebGPU Context + WGSL matmul + MatmulBT  (//go:build gpu)
-encoder/gpu/gpu_test.go    GPU-vs-naive correctness + GFLOP/s benchmark (//go:build gpu)
+linalg/dot_{arm64,amd64,generic,other}.{go,s}  dot kernels + build-tag dispatch
+linalg/dot_i8*_arm64.s, dotprod_arm64_*.go      int8 NEON / SDOT (HWCAP-selected)
+linalg/dot_amd64.go                             AVX2 dispatch + CPUID/XGETBV detect
+linalg/linalg.go                                Dot*/MatmulBT + SetParallelThreshold/Width
+linalg/quant.go                                 Q8/Q4/W8A8 matmuls (+ Into/Batch)
+linalg/workspace.go, pool.go                    reusable scratch + spin-park worker pool
+linalg/{dot,dot_amd64,width,quant,batch,pool}_test.go   kernel/parity/bench tests
+encoder/linalg.go, linalg_q8.go                 encoder's cache-blocked matmul (uses linalg.Dot*)
+encoder/parallel.go                             single-forward row-parallel (in-flight gate)
 ```
