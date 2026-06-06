@@ -22,10 +22,10 @@ func TestStats_UnsupportedLanguageIncrementsFallback(t *testing.T) {
 	c := New()
 
 	// Pick a language name guaranteed to miss KenToTreeSitter so we
-	// hit poolFor()==nil. "csharp" is deliberately omitted from
-	// KenToTreeSitter per chunker.go's documented language list (the
-	// grammar OOMs on real C# content); "qbasic" would also work as
-	// a never-was-supported sentinel.
+	// hit poolFor()==nil. "shell" is the documented fallback-only
+	// language (bash grammar too slow); this sentinel is a
+	// never-was-supported name so the test can't ever be invalidated
+	// by a future grammar add.
 	const bogus = "qbasic-never-supported"
 	chunks, err := c.Chunk([]byte("PRINT \"HELLO\"\n"), bogus, 1024)
 	if err != nil {

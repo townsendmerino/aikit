@@ -140,10 +140,9 @@ int main() {
 // reported, and the set is non-empty (we'd notice a typo or missing
 // init() pretty quick because ChunkFile routes via this list).
 //
-// csharp is intentionally NOT in the list — the gotreesitter v0.18.0
-// C# grammar's parse tables grow unboundedly on real-world C# files
-// (1.7+ GB RSS during dapper indexing → SIGKILL). It falls back to
-// the line chunker; see languages.go for the rationale.
+// csharp was re-enabled once gotreesitter v0.20.2 bounded the C#
+// namespace-recovery sub-parses that previously OOM'd (1.7+ GB RSS →
+// SIGKILL on real C#). shell stays fallback-only (bash grammar too slow).
 func TestSupportedLanguages(t *testing.T) {
 	c := New()
 	got := c.SupportedLanguages()
@@ -152,7 +151,7 @@ func TestSupportedLanguages(t *testing.T) {
 	}
 	want := []string{"python", "go", "typescript", "javascript", "java", "rust",
 		"c", "cpp", "ruby", "php", "swift", "kotlin", "scala",
-		"haskell", "elixir", "lua", "zig", "dart"}
+		"haskell", "elixir", "lua", "zig", "dart", "csharp"}
 	have := make(map[string]bool, len(got))
 	for _, l := range got {
 		have[l] = true
@@ -161,9 +160,6 @@ func TestSupportedLanguages(t *testing.T) {
 		if !have[w] {
 			t.Errorf("SupportedLanguages missing %q", w)
 		}
-	}
-	if have["csharp"] {
-		t.Error("SupportedLanguages should NOT include csharp (intentionally fallback-only)")
 	}
 	if have["shell"] {
 		t.Error("SupportedLanguages should NOT include shell (bash grammar is too slow; intentionally fallback-only)")

@@ -44,13 +44,9 @@ var KenToTreeSitter = map[string]string{
 	"lua":        "lua",
 	"zig":        "zig",
 	"dart":       "dart",
+	"csharp":     "c_sharp", // OOM fixed upstream in gotreesitter v0.20.2 (bounded namespace recovery sub-parses); re-enabled.
 
 	// Deliberately omitted:
-	//   csharp ("c_sharp") — the gotreesitter v0.18.0 C# grammar's parse
-	//     tables grow unboundedly on real-world C# (1.7+ GB RSS during
-	//     dapper indexing → SIGKILL on all 3 csharp bench repos). Falls
-	//     back to the line chunker until either the grammar improves or
-	//     we add per-parse memory bounds. Tracked in DESIGN.md §10.
 	//   shell ("bash") — the gotreesitter v0.18.0 bash grammar parses
 	//     real bash-it content extremely slowly: at chunkSize=1500 with
 	//     a 1s per-parse timeout, ~39% of bash files time out and
