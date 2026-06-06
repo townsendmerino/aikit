@@ -2,7 +2,7 @@ package linalg
 
 import "math"
 
-// Per-row symmetric int8 weight quantization (gemma-decoder-plan §8 / M8).
+// Per-row symmetric int8 weight quantization.
 // Each output row (channel) of a [rows, cols] weight matrix gets its own f32
 // scale; the symmetric [-127,127] range keeps zero at zero with no zero-point
 // bookkeeping. This is the standard per-channel scheme bitsandbytes/GPTQ use.
@@ -267,8 +267,8 @@ func w8a8BatchSpan(aq []int8, aScales []float32, ops []W8A8Op, M, K, g0, g1 int)
 	}
 }
 
-// Group-wise symmetric int4 weight quantization (gemma-decoder-plan §8 / M8
-// int4). Per-ROW int8 is too coarse at 4 bits, so each row is split into groups
+// Group-wise symmetric int4 weight quantization. Per-ROW int8 is too coarse at
+// 4 bits, so each row is split into groups
 // of `group` consecutive input features (along K), and each group gets its own
 // f32 scale: W[i, g*group+e] ≈ (nibble-8) * scale[i,g], with the nibble a 4-bit
 // code in [1,15] (8 = zero, symmetric range [-7,7]). Two nibbles pack per byte

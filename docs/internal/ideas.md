@@ -5,13 +5,11 @@ parity-tested, independently importable, composes with what's already here.**
 This is deliberately a menu, not a commitment — each entry says what it is, why
 it fits aikit specifically, how hard it is, and what it composes with.
 
-Context: aikit now has both halves of a modern AI stack —
-**retrieval** (`topk`, `ann` flat+HNSW, `bm25`, `fuse` RRF, `embed`, `encoder`,
-`chunk`) and **generation** (`decoder`, `tokenizer`). The most valuable
-additions exploit *having both in one pure-Go library*, plus the inference-time
-algorithms that a working forward pass unlocks. Companion to
-[`gemma-decoder-plan.md`](gemma-decoder-plan.md) and
-[`multi-model-plan.md`](multi-model-plan.md).
+Context: aikit is the pure-Go **retrieval** toolkit (`topk`, `ann` flat+HNSW,
+`bm25`, `fuse` RRF, `embed`, `encoder`, `chunk`, `linalg`); the **generation**
+half (decoder / tokenizer) now lives in goinfer. This backlog is the aikit-side
+retrieval + primitive ideas. (Written when both halves were one repo, so some
+entries reference generation — those have moved to goinfer's backlog.)
 
 Rough effort key: **S** = a few days, **M** = a week or two, **L** = a month+.
 

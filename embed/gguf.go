@@ -8,7 +8,7 @@ import (
 	"runtime"
 )
 
-// GGUF reader (multi-model-plan G7) — the llama.cpp container format that makes
+// GGUF reader — the llama.cpp container format that makes
 // quantized models laptop-runnable. This parses the header, metadata key-values
 // (which carry the architecture config), and the tensor directory, and
 // dequantizes the common block types to float32: F32, F16, Q8_0, Q4_0, Q5_0,

@@ -2,7 +2,7 @@
 // kernels (AVX2+FMA on amd64, NEON on arm64, scalar elsewhere — selected by
 // build tag and runtime CPU detection) and a row-parallel float32 matmul built
 // on them. It is the single home for the hand-written assembly so the encoder
-// and the Gemma decoder share one copy (gemma-decoder-plan.md §1).
+// and goinfer's LLM decoder share one copy.
 package linalg
 
 import (

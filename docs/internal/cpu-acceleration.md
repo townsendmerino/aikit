@@ -29,10 +29,10 @@ The transformer's hot inner loop is three arch-neutral kernel functions — `dot
 | amd64 | `internal/linalg/dot_amd64.{go,s}` | AVX2+FMA `dotFMA`, runtime-detected, scalar fallback |
 | other | `internal/linalg/dot_other.go` → `dot_generic.go` | scalar |
 
-> **Moved (M7, 2026-06-02):** the dot kernels were lifted out of `encoder/` into
-> `internal/linalg` so the encoder and the Gemma decoder share one copy of the
-> assembly (gemma-decoder-plan §1). The encoder imports `linalg.Dot4x4`/`Dot8x4`;
-> the decoder's matmul backend calls `linalg.MatmulBT`. See `milestones/M7-perf.md`.
+> **Moved (v0.4.0):** the dot kernels were lifted out of `encoder/` into the
+> public `linalg` package so the encoder and goinfer's LLM decoder share one
+> copy of the assembly. The encoder imports `linalg.Dot4x4`/`Dot8x4`; a decoder
+> matmul backend calls `linalg.MatmulBT`.
 
 On top of that, `encoder/parallel.go` row-splits the big linear-layer matmuls across cores
 **only** when a single forward pass is running alone (a lone `Encode` call) — never under
@@ -230,12 +230,12 @@ gate behind a `hasAVX512` flag.
 
 ### E. GPU: resident buffers (the transfer fix — do this before anything else GPU)
 
-> **Partly landed (decoder M9, 2026-06-02).** `encoder/gpu` now has the
-> resident-buffer primitives — `UploadMatrix` + `ResidentMatrix` +
-> `MatmulBTResident` — and the **decoder** uses them (weights uploaded once, not
-> per call; see `milestones/M9-webgpu.md`). The **encoder** still calls the
-> re-upload-everything `MatmulBT`; wiring it to keep its layer weights resident
-> across an `EncodeBatch` is the remaining piece of this item.
+> **Note (v0.4.0 split):** the WebGPU backend moved to `goinfer/gpu` (it carries
+> the cgo `webgpu` dependency, kept out of aikit's core). The resident-buffer
+> primitives + a GPU matmul backend live there now, behind `encoder.Backend` /
+> goinfer's decoder backend. aikit's `encoder` ships the pure-Go CPU backend;
+> wiring it to keep layer weights resident across an `EncodeBatch` (when a GPU
+> backend is registered) is the remaining piece of this item.
 
 The foundation re-uploads a+b and reads back dst on every `MatmulBT` call; the table above shows
 transfer dominates. The fix that unlocks the GPU is to keep data resident:
