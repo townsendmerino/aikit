@@ -94,14 +94,21 @@ inference with no Python/cgo. But it isn't packaged or marketed for that person.
       (brew/scoop), ideally a Windows build.
 - [ ] One external adopter / case study; ship 1.0 with it.
 
-### aikit (work is focus + packaging)
-- [ ] **Make everything independently consumable** (multi-module split) — *this
-      doc's first deep-dive; see `aikit-module-split-plan.md`.*
-- [ ] Isolate optional deps (webgpu, gotreesitter) behind module boundaries so
-      the core graph is `x/text`-only.
-- [ ] Give the LLM runtime (decoder/tokenizer/constrain) its own cadence.
-- [ ] Ship one end-to-end RAG example + per-package `doc.go`/quickstart.
-- [ ] Freeze the hard tier, then call it 1.0.
+### aikit (work is focus + packaging) — DONE, ready to cut 1.0
+- [x] **Independently consumable / optional deps isolated** — v0.4.0 split: LLM
+      runtime → goinfer, `chunk/treesitter` its own module; core graph is
+      `x/text`-only (CI cleanliness guard enforces it).
+- [x] LLM runtime (decoder/tokenizer/constrain) on its own cadence — goinfer repo.
+- [x] End-to-end RAG example (`examples/rag`) + per-package godoc `Example`s for
+      the hard tier (chose `Example` tests over `doc.go` — compile-checked, render
+      on pkg.go.dev).
+- [x] **Hard tier frozen.** Tier membership decided: the retrieval core is the
+      v1.0 compatibility guarantee; `linalg`, `encoder.Backend`, `ann.HNSW`,
+      `encoder.Q8`, the mmap loader variant, and the concrete chunker structs are
+      the **Experimental** tier (excluded from the 1.0 promise, may evolve).
+      Verified backward-compatible across 0.4.x↔0.5.x with `apidiff` (zero
+      incompatible changes) — the two-consecutive-minors bar is met.
+- [ ] Cut `v1.0.0` (maintainer's go).
 
 ### One-sentence version
 ken's gap to 1.0 is **distribution and recall, not code**; aikit's gap is

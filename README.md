@@ -79,7 +79,14 @@ grammars, not cgo. The core pulls in neither.
 
 ## Stability tiers
 
-### Hard, 1.0-committed
+These two tiers define what 1.0 promises. The split is **frozen for v1.0**, and
+the Hard tier is verified backward-compatible across the 0.4.x and 0.5.x minors
+(`apidiff`, zero incompatible changes).
+
+### Hard — the 1.0 compatibility guarantee
+
+From v1.0 these follow semver: no breaking change before a v2.0. This is the API
+to build on.
 
 - `topk.Selector[T]`, `topk.New`
 - `ann.New`, `ann.Flat.Query`, `ann.Hit`
@@ -92,7 +99,13 @@ grammars, not cgo. The core pulls in neither.
 - `chunk.Chunker` interface; `chunk.{Chunk, Register, Get, Names, ChunkFile, Language}`
 - Concrete chunker names registered under `regex`, `markdown`, `treesitter`
 
-### Best-effort (may shift between minor versions)
+### Experimental — outside the 1.0 guarantee
+
+Young, tuning-driven surfaces that ship in 1.0 but are **explicitly excluded
+from the compatibility promise**: they may change in any release (minor or
+patch). Supported and useful — but pin a version, or prefer the Hard-tier
+equivalent, if you need stability. Each graduates to the Hard tier once it
+settles.
 
 - `linalg` — promoted to public in v0.4.0 (was `internal/linalg`). `Dot`,
   `MatmulBT` and the int8/int4 quant kernels are stable in shape but the surface
@@ -149,12 +162,16 @@ Regenerate the committed golden fixtures:
 
 ## Versioning
 
-`v0.x` is pre-1.0 — surfaces tagged "Hard, 1.0-committed" are expected stable on
-the path to 1.0, but breaking changes can still land between `0.x` minors when
-the design requires it (the CHANGELOG records each). **v0.4.0** is the breaking
-release that split the LLM runtime out to `goinfer`, promoted `linalg` to public,
-and added the `encoder.Backend` seam. `v1.0.0` cuts when the hard tier has held
-for two consecutive minors.
+`v0.x` is pre-1.0; breaking changes can still land between `0.x` minors when the
+design requires it (the CHANGELOG records each). **v0.4.0** split the LLM runtime
+out to `goinfer`, promoted `linalg` to public, and added the `encoder.Backend`
+seam — the last hard-tier-affecting break.
+
+The **Hard tier has held backward-compatible across 0.4.x and 0.5.x** (verified
+with `apidiff` — zero incompatible changes), meeting the two-consecutive-minors
+bar, so it is **frozen for v1.0**. From v1.0 the Hard tier follows semver
+(breaking changes only at a v2.0); the Experimental tier is excluded from that
+promise and may change in any release until it graduates.
 
 ## License
 
