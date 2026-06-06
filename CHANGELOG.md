@@ -10,6 +10,21 @@ it.
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-06-06
+
+First stable release. No functional change since 0.5.2 — 1.0 is the commitment
+that the **Hard tier** (the retrieval core: `topk`, `ann.New`/`Flat.Query`/`Hit`,
+`bm25`, `fuse`, `embed` core + `OpenSafetensors*`, `encoder.Load`/`Model`/
+`Encode`/`Encoder`, `chunk`) now follows semver — no breaking changes before a
+v2.0. The Hard tier was verified backward-compatible across the 0.4.x and 0.5.x
+minors (`apidiff`, zero incompatible changes).
+
+The **Experimental** tier (`linalg`, `encoder.Backend`, `ann.HNSW`,
+`encoder.LoadQ8`/`ModelQ8`, the mmap loader variant, the concrete chunker
+structs, `chunk/treesitter`) ships but is explicitly **excluded** from the 1.0
+compatibility guarantee and may change in any release — see
+[README.md](README.md#stability-tiers).
+
 ## [0.5.2] — 2026-06-05
 
 ### Changed
@@ -439,7 +454,15 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/townsendmerino/aikit/compare/v0.5.2...v1.0.0
+[0.5.2]: https://github.com/townsendmerino/aikit/compare/v0.5.1...v0.5.2
+[0.5.1]: https://github.com/townsendmerino/aikit/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/townsendmerino/aikit/compare/v0.4.2...v0.5.0
+[0.4.2]: https://github.com/townsendmerino/aikit/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/townsendmerino/aikit/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/townsendmerino/aikit/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/townsendmerino/aikit/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/townsendmerino/aikit/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/townsendmerino/aikit/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/townsendmerino/aikit/releases/tag/v0.1.0

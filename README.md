@@ -118,9 +118,12 @@ settles.
 - The mmap variant of `embed.OpenSafetensors`.
 - The concrete chunker structs (`regex.Chunker`, `markdown.Chunker`,
   `treesitter.Chunker`) and their `New()` — prefer `chunk.Get("regex")`.
-- `chunk/treesitter` — depends on the pre-1.0, single-maintainer
-  [`gotreesitter`](https://github.com/odvcencio/gotreesitter); versioned as its
-  own submodule (`chunk/treesitter/vX.Y.Z`).
+- `chunk/treesitter` — its own opt-in module, **versioned in lockstep with the
+  core** (`chunk/treesitter/v1.0.0` requires `aikit v1.0.0`). Its
+  `treesitter.Chunker` API is stable, but it stays Experimental because it
+  depends on the pre-1.0, single-maintainer
+  [`gotreesitter`](https://github.com/odvcencio/gotreesitter) — a break there
+  could force a change here.
 
 ---
 
