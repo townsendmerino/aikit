@@ -10,8 +10,8 @@ jobs:
     name: root module (pure-Go)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26.x"
 
@@ -52,8 +52,8 @@ jobs:
     name: chunk/treesitter submodule
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26.x"
       # Separate module; resolves the published aikit from the proxy. cgo is
@@ -69,8 +69,8 @@ jobs:
     name: windows (pure-Go core)
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: "1.26.x"
       # The core has no cgo, so it builds + tests on Windows with no toolchain.
