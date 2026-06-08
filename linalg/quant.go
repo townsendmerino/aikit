@@ -360,40 +360,29 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 
 // MatmulBTQ4 computes dst[M,N] = a[M,K] · bᵀ where b is the [N,K] matrix stored
 // as group-wise int4 (bPacked nibbles + bScales per group; see
-// QuantizeGroupsInt4). For each group it unpacks the 4-bit codes into a small
-// reused scratch buffer as centered floats (nibble-8, no scale), runs the SIMD
-// dotF32 kernel (AVX2/NEON — the same primitive MatmulBT uses) over the group,
-// then applies that group's f32 scale and accumulates. So the float-heavy
-// multiply-accumulate is vectorized; only the cheap nibble unpack stays scalar.
-// Parallelized over the N columns; activations stay f32. The scratch is one
-// group wide and allocated once per worker.
+// QuantizeGroupsInt4). Each weight row is dequantized ONCE into a full K-wide
+// f32 scratch (4-bit code − 8, times its group scale — the same per-element
+// reconstruction as DequantizeRowInt4), then the SIMD dotF32 kernel (AVX2/NEON,
+// the primitive MatmulBT uses) runs over the WHOLE row. So the dequant is the
+// only scalar work (O(K), like the int8-widen in MatmulBTQ8) and the
+// multiply-accumulate is one vectorized pass — not K/group tiny 32-wide dots,
+// which were so per-call-overhead-bound they ran slower than scalar.
+//
+// Column-outer: each weight row's dequant is reused across the M activation
+// rows (prefill / speculative verify), streaming the weight once. Activations
+// stay f32. The scratch is K wide, allocated once per worker.
+//
+// Output matches DequantizeRowInt4-then-MatmulBT bit-for-bit (the same order the
+// Q4 parity test references); the prior per-group-dot kernel only matched within
+// tolerance, so this is also slightly MORE faithful, not less.
 func MatmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
 	nGroups, bpr := groupsFor(K, group)
 	parallelCols(M*N*K, N, func(j0, j1 int) {
-		deq := make([]float32, group) // per-worker scratch: one dequantized group
-		for i := range M {
-			arow := a[i*K : i*K+K]
-			drow := dst[i*N : i*N+N]
-			for j := j0; j < j1; j++ {
-				prow := bPacked[j*bpr : j*bpr+bpr]
-				srow := bScales[j*nGroups : j*nGroups+nGroups]
-				var total float32
-				for g := range nGroups {
-					ks := g * group
-					ke := min(ks+group, K)
-					gsz := ke - ks
-					for e := range gsz {
-						k := ks + e
-						b := prow[k>>1]
-						nib := b & 0x0F
-						if k&1 == 1 {
-							nib = b >> 4
-						}
-						deq[e] = float32(int(nib) - 8)
-					}
-					total += dotF32(arow[ks:ke], deq[:gsz]) * srow[g]
-				}
-				drow[j] = total
+		deq := make([]float32, K) // per-worker scratch: one full dequantized weight row
+		for j := j0; j < j1; j++ {
+			DequantizeRowInt4(bPacked[j*bpr:j*bpr+bpr], bScales[j*nGroups:j*nGroups+nGroups], group, K, deq)
+			for i := 0; i < M; i++ {
+				dst[i*N+j] = dotF32(a[i*K:i*K+K], deq)
 			}
 		}
 	})

@@ -10,6 +10,22 @@ it.
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-06-06
+
+### Fixed
+
+- **`linalg.MatmulBTQ4` int4 matmul performance** — was ~28× slower than the
+  int8 path in goinfer's 1.5B decode; the "SIMD" kernel was even slower than its
+  own scalar fallback. It did `K/group` tiny 32-wide `dotF32` calls per output,
+  so per-call SIMD setup + horizontal-reduction overhead swamped the work. Now it
+  dequantizes each weight row ONCE into a full K-wide f32 scratch (via
+  `DequantizeRowInt4`) and runs a single vectorized `dotF32` over the whole row —
+  mirroring `MatmulBTQ8` — and reuses that dequant across the M activation rows
+  (column-outer). Q4 is now within ~1.8× of Q8 at M=1 and *faster* than Q8 at
+  M=64 (it streams each weight once; Q8 re-widens per row). Output is
+  bit-identical to the `DequantizeRowInt4`-then-`MatmulBT` reference (the parity
+  test's oracle) — perf only, numerics unchanged. No API/signature change.
+
 ## [1.0.0] — 2026-06-06
 
 First stable release. No functional change since 0.5.2 — 1.0 is the commitment
@@ -454,7 +470,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.0.1...HEAD
+[1.0.1]: https://github.com/townsendmerino/aikit/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/townsendmerino/aikit/compare/v0.5.2...v1.0.0
 [0.5.2]: https://github.com/townsendmerino/aikit/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/townsendmerino/aikit/compare/v0.5.0...v0.5.1
