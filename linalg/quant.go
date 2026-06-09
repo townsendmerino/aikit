@@ -358,6 +358,61 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 	}
 }
 
+// MatmulBTW4A8 computes dst[M,N] = a[M,K] · bᵀ as int4 WEIGHTS × int8
+// ACTIVATIONS — the int4 analogue of MatmulBTW8A8, and the fast M=1 (decode)
+// path that MatmulBTQ4 can't be. b is group-wise int4 (w4 nibbles + wScales per
+// group, QuantizeGroupsInt4 layout); the f32 activations are dynamically
+// quantized to int8 per row (per-row scale, like MatmulBTW8A8).
+//
+// Each output is one fused dotW4A8 call that streams the whole weight row in the
+// integer domain — unpack each int4 group to int8 (nibble−8), int8×int8 SDOT
+// into int32, fold in the group's weight scale — with NO per-weight f32 dequant
+// and NO per-group Go↔asm transition (the arm64 kernel loops groups internally).
+// That is what keeps it fast at M=1: MatmulBTQ4 spends ~72% of decode in the f32
+// dequant, which the column-outer M-reuse can only amortize at M>1; W4A8 removes
+// the dequant outright. Lossier than MatmulBTQ4 (activations are int8, not f32)
+// — the W8A8 tradeoff — so it's the explicit-opt-in kernel for RAM-constrained
+// int4 CPU decode, not a drop-in for the f32-activation path.
+func MatmulBTW4A8(a []float32, w4 []byte, wScales []float32, dst []float32, M, K, N, group int) {
+	nGroups, bpr := groupsFor(K, group)
+	aq := make([]int8, M*K)
+	aScales := make([]float32, M)
+	for i := range M {
+		aScales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
+	}
+	parallelCols(M*N*K, N, func(j0, j1 int) {
+		sums := make([]int32, nGroups) // per-worker scratch: asm group dots
+		for j := j0; j < j1; j++ {
+			prow := w4[j*bpr : j*bpr+bpr]
+			srow := wScales[j*nGroups : j*nGroups+nGroups]
+			for i := range M {
+				if aScales[i] == 0 {
+					dst[i*N+j] = 0
+					continue
+				}
+				dst[i*N+j] = dotW4A8(aq[i*K:i*K+K], prow, srow, group, K, sums) * aScales[i]
+			}
+		}
+	})
+}
+
+// unpackInt4Row unpacks n group-int4 nibbles into dst[:n] as centered int8
+// (nibble−8), two nibbles per byte (even k = low, odd k = high — the
+// QuantizeGroupInt4Row layout), branchless in the hot pair loop.
+func unpackInt4Row(packed []byte, n int, dst []int8) {
+	full := n &^ 1
+	di := 0
+	for bi := 0; di < full; bi++ {
+		b := packed[bi]
+		dst[di] = int8(int(b&0x0F) - 8)
+		dst[di+1] = int8(int(b>>4) - 8)
+		di += 2
+	}
+	if di < n { // trailing odd nibble (low)
+		dst[di] = int8(int(packed[di>>1]&0x0F) - 8)
+	}
+}
+
 // MatmulBTQ4 computes dst[M,N] = a[M,K] · bᵀ where b is the [N,K] matrix stored
 // as group-wise int4 (bPacked nibbles + bScales per group; see
 // QuantizeGroupsInt4). Each weight row is dequantized ONCE into a full K-wide

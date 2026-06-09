@@ -20,15 +20,17 @@ by build tag + runtime CPU detection:
 
 | Arch  | Files | Kernel |
 |-------|-------|--------|
-| arm64 | `linalg/dot_arm64.{go,s}`, `dot_i8*_arm64.s`, `dotprod_arm64_*.go` | NEON; int8 `dotI8` upgrades to `SDOT` on DotProd-capable CPUs (runtime HWCAP) |
+| arm64 | `linalg/dot_arm64.{go,s}`, `dot_i8*_arm64.s`, `dot_w4a8_arm64.s`, `dotprod_arm64_*.go` | NEON; int8 `dotI8` upgrades to `SDOT` on DotProd-capable CPUs (runtime HWCAP); `dotW4A8GroupsSDOT` is the fused int4×int8 decode kernel (nibble-unpack prologue + the `dot_i8dp` SDOT body) |
 | amd64 | `linalg/dot_amd64.{go,s}` | AVX2+FMA (`dotFMA`/`dotFMA4`/`dotFMA8`), runtime CPUID/XGETBV detect, scalar fallback |
 | other | `linalg/dot_generic.go`, `dot_other.go` | portable scalar |
 
 On top of the dot kernels, `linalg` provides:
 - `Dot`, `Dot4x4`, `Dot8x4`, `MatmulBT` (f32 row-parallel).
-- The quant matmuls: `MatmulBTQ8` (int8 weights), `MatmulBTQ4` (int4 group), and
-  the **W8A8** path (`MatmulBTW8A8` + the zero-alloc `…Into(ws *Workspace)` and
-  the fused `MatmulBTW8A8Batch`) — see `quant.go`, `workspace.go`.
+- The quant matmuls: `MatmulBTQ8` (int8 weights), `MatmulBTQ4` (int4 group, f32
+  activations — prefill path), **W8A8** (`MatmulBTW8A8` + the zero-alloc
+  `…Into(ws *Workspace)` and the fused `MatmulBTW8A8Batch`), and **W4A8**
+  (`MatmulBTW4A8`, int4 weights × int8 activations — the int4 *decode* path).
+  See `quant.go`, `workspace.go`, `quant_w4a8*.go`.
 - Dispatch knobs: `SetParallelThreshold` (MAC count to parallelize above) and
   `SetParallelWidth` (cap fan-out shards, for P/E straggler control) — both
   numerically inert (output columns are partitioned). `pool.go` is the optional
@@ -123,6 +125,13 @@ the checkpoint is absent (CI), and run when `testdata/encoder-model` is present.
    end-to-end `Model.Encode` benchmark on real weights (not a microbench) to
    decide whether the spawn overhead pays off. Tune the encoder's
    `parallelThreshold` accordingly.
+4. **amd64 AVX2/VNNI `MatmulBTW4A8` kernel** (v1.1.0 shipped arm64-only). The
+   fused int4×int8 decode kernel exists for arm64 (NEON+SDOT); amd64 and
+   non-DotProd arm64 currently fall back to the pure-Go scalar reference
+   (`dotW4A8Scalar` — correct, not SIMD-fast). Port the unpack-prologue +
+   `VPDPBUSD` (VNNI) / `VPMADDUBSW` (AVX2) int8 dot, validate on the Linux box
+   like the original AVX2 work. arm64 W4A8 at M=1 is ~2.0–2.3× of W8A8 and ~23×
+   faster than `MatmulBTQ4`; the amd64 target is the same shape.
 
 GPU follow-ups (resident buffers, tiled kernel, batch-tiling) are **goinfer's** —
 see `goinfer/gpu` and goinfer's perf docs.
@@ -134,6 +143,7 @@ see `goinfer/gpu` and goinfer's perf docs.
 ```
 linalg/dot_{arm64,amd64,generic,other}.{go,s}  dot kernels + build-tag dispatch
 linalg/dot_i8*_arm64.s, dotprod_arm64_*.go      int8 NEON / SDOT (HWCAP-selected)
+linalg/dot_w4a8_arm64.s, quant_w4a8*.go         fused int4×int8 decode kernel + scalar fallback
 linalg/dot_amd64.go                             AVX2 dispatch + CPUID/XGETBV detect
 linalg/linalg.go                                Dot*/MatmulBT + SetParallelThreshold/Width
 linalg/quant.go                                 Q8/Q4/W8A8 matmuls (+ Into/Batch)

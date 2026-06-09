@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-// BenchmarkQ4vsQ8 compares the int4 and int8 weight matmuls at decode (M=1) and
-// prefill (M=64) on the same shapes, to track the int4 perf fix (it was ~28×
-// slower than int8 in goinfer's 1.5B decode; the gate is within ~1.5–2×). Q4
-// dequants each weight row once and reuses it across M (column-outer); Q8
-// re-widens per row, so Q4's advantage grows with M.
+// BenchmarkQ4vsQ8 compares the int4/int8 weight matmuls at decode (M=1) and
+// prefill (M=64) on the same shapes. Q4 (f32 activations) is the prefill path —
+// the v1.0.1 column-outer fix made it a win at M>1 but it stays f32-dequant-
+// bound at M=1. W4A8 (int8 activations, fused SDOT kernel) is the M=1 decode
+// path: ~2× of W8A8 and ~20× faster than Q4 at decode. W8A8 is the int8 ceiling.
 func BenchmarkQ4vsQ8(b *testing.B) {
 	const group = 32
 	rng := rand.New(rand.NewSource(7))
@@ -41,6 +41,18 @@ func BenchmarkQ4vsQ8(b *testing.B) {
 				b.ResetTimer()
 				for range b.N {
 					MatmulBTQ8(a, q8q, q8s, dst, M, s.K, s.N)
+				}
+			})
+			b.Run(fmt.Sprintf("W8A8/K%d_N%d/M%d", s.K, s.N, M), func(b *testing.B) {
+				b.ResetTimer()
+				for range b.N {
+					MatmulBTW8A8(a, q8q, q8s, dst, M, s.K, s.N)
+				}
+			})
+			b.Run(fmt.Sprintf("W4A8/K%d_N%d/M%d", s.K, s.N, M), func(b *testing.B) {
+				b.ResetTimer()
+				for range b.N {
+					MatmulBTW4A8(a, q4p, q4s, dst, M, s.K, s.N, group)
 				}
 			})
 		}

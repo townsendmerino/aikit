@@ -10,6 +10,34 @@ it.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-06-08
+
+### Added
+
+- **`linalg.MatmulBTW4A8` — int4-weight × int8-activation matmul**, the integer
+  analogue of `MatmulBTW8A8` and the fast int4 *decode* (M=1) path that
+  `MatmulBTQ4` structurally can't be. `MatmulBTQ4` (f32 activations) is
+  dequant-bound at M=1 — profiling put ~72% of decode in the per-weight f32
+  dequant, which the v1.0.1 column-outer reuse only amortizes at M>1. W4A8 stays
+  in the integer domain: a fused arm64 NEON+SDOT kernel streams each weight row,
+  unpacking int4 nibbles to int8 in-register (the only new asm — it reuses the
+  proven `dot_i8dp` SDOT body) and emitting per-group int32 dots that Go folds
+  with the f32 group scales. No per-weight f32 dequant, no per-group Go↔asm
+  transition.
+
+  Result on Apple M-series (group 32): W4A8 at M=1 is **~2.0–2.3× of
+  `MatmulBTW8A8`** and **~23× faster than `MatmulBTQ4`** (e.g. the 1.5B MLP shape
+  K=1536,N=8960: 19.2 ms → 0.80 ms) — int4 CPU decode goes from ~28× slower than
+  int8 to ~2×, i.e. usable. Output matches the dequant-f32 reference within the
+  W8A8 tolerance (relL2 ≈ 0.008 ≤ 5e-2); the fused kernel is bit-exact vs the
+  scalar reference on the integer accumulation.
+
+  arm64 (DotProd) ships the fused kernel; **amd64 and non-DotProd arm64 use the
+  pure-Go scalar reference** for now (correct, not yet SIMD-fast) — the amd64
+  AVX2/VNNI fused kernel is a follow-up to be validated on the Linux box.
+  `MatmulBTQ4` is unchanged and remains the f32-activation / prefill path. No
+  existing signatures changed.
+
 ## [1.0.1] — 2026-06-06
 
 ### Fixed
@@ -470,7 +498,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/townsendmerino/aikit/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/townsendmerino/aikit/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/townsendmerino/aikit/compare/v0.5.2...v1.0.0
 [0.5.2]: https://github.com/townsendmerino/aikit/compare/v0.5.1...v0.5.2
