@@ -91,11 +91,29 @@ func (c *gcur) need(n int) bool {
 	if c.err != nil {
 		return false
 	}
-	if c.pos+n > len(c.b) {
+	// n<0 guards a length field that overflowed int when converted from uint64
+	// (a hostile string/array length ≥ 2^63); compare against the remaining
+	// span without adding, so c.pos+n can't itself overflow.
+	if n < 0 || n > len(c.b)-c.pos {
 		c.err = fmt.Errorf("gguf: unexpected EOF (need %d at %d of %d)", n, c.pos, len(c.b))
 		return false
 	}
 	return true
+}
+
+// remaining is the number of unread bytes — the ceiling on any element count
+// or length, since every element/byte consumes at least one byte of input.
+func (c *gcur) remaining() int { return len(c.b) - c.pos }
+
+// hintLen clamps an untrusted element count to a safe make() preallocation size:
+// never more than the bytes left. The parse loop stays bounded by the true count
+// and stops at EOF, so this only prevents a hostile count from driving a giant
+// allocation before that EOF is ever reached.
+func (c *gcur) hintLen(n uint64) int {
+	if r := c.remaining(); n > uint64(r) {
+		return r
+	}
+	return int(n)
 }
 
 func (c *gcur) u8() uint8 {
@@ -173,9 +191,15 @@ func (c *gcur) value(vtype uint32) any {
 		return c.f64()
 	case ggufArray:
 		et := c.u32()
-		n := int(c.u64())
+		n := c.u64()
+		// Each array element is ≥1 byte, so a count beyond the remaining input is
+		// impossible — reject it rather than pre-allocate (or wrap int and panic).
+		if n > uint64(c.remaining()) {
+			c.err = fmt.Errorf("gguf: array length %d exceeds %d remaining bytes", n, c.remaining())
+			return nil
+		}
 		arr := make([]any, 0, n)
-		for i := 0; i < n && c.err == nil; i++ {
+		for i := uint64(0); i < n && c.err == nil; i++ {
 			arr = append(arr, c.value(et))
 		}
 		return arr
@@ -264,7 +288,10 @@ func parseGGUF(raw []byte) (*GGUFFile, error) {
 	tensorCount := c.u64()
 	kvCount := c.u64()
 
-	g := &GGUFFile{Metadata: make(map[string]any, kvCount), tensors: make(map[string]ggufTensorInfo, tensorCount)}
+	// kvCount/tensorCount are untrusted: a hostile header can claim billions of
+	// entries. Clamp the make() hints to what the input could hold; the loops
+	// below still run to the true count and stop at EOF.
+	g := &GGUFFile{Metadata: make(map[string]any, c.hintLen(kvCount)), tensors: make(map[string]ggufTensorInfo, c.hintLen(tensorCount))}
 	for i := uint64(0); i < kvCount && c.err == nil; i++ {
 		key := c.str()
 		vtype := c.u32()
@@ -274,10 +301,16 @@ func parseGGUF(raw []byte) (*GGUFFile, error) {
 		return nil, c.err
 	}
 
-	names := make([]string, 0, tensorCount)
+	names := make([]string, 0, c.hintLen(tensorCount))
 	for i := uint64(0); i < tensorCount && c.err == nil; i++ {
 		name := c.str()
 		nd := int(c.u32())
+		// Each dim is a u64; a count beyond remaining/8 can't be satisfied, so
+		// reject it rather than make([]uint64, huge) and OOM.
+		if nd < 0 || nd > c.remaining()/8 {
+			c.err = fmt.Errorf("gguf: tensor %q dim count %d exceeds remaining input", name, nd)
+			break
+		}
 		dims := make([]uint64, nd)
 		for d := range nd {
 			dims[d] = c.u64()

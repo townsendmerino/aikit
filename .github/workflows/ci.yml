@@ -48,6 +48,16 @@ jobs:
       - name: test (race)
         run: go test -race ./...
 
+      # Short fuzz smoke on the untrusted binary parsers (GGUF / safetensors).
+      # The committed seed + regression corpus runs under the race step above on
+      # every push; this adds a brief active-fuzz pass to catch new inputs. A
+      # longer nightly run is a follow-up (roadmap §3.1).
+      - name: fuzz (smoke)
+        run: |
+          for fn in FuzzParseGGUF FuzzParseSafetensors FuzzParseShardIndex; do
+            go test ./embed/ -run xxx -fuzz="^$fn\$" -fuzztime=20s
+          done
+
   treesitter:
     name: chunk/treesitter submodule
     runs-on: ubuntu-latest

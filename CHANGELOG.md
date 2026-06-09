@@ -10,6 +10,31 @@ it.
 
 ## [Unreleased]
 
+### Security / Fixed
+
+- **Hardened the GGUF and safetensors parsers against hostile inputs.** Both
+  parse untrusted files, and several untrusted size fields drove allocations or
+  slice bounds directly. Fixed (found by new fuzzers, `embed/*_fuzz_test.go`):
+  - GGUF `tensorCount`/`kvCount`/`nGroups` and array/string lengths could be
+    enormous or overflow `int` when narrowed, causing OOM (`make(map, ~5e10)`)
+    or a slice-bounds panic. Untrusted counts are now bounded by the remaining
+    input and `make()` hints are clamped; over-large lengths return an error.
+  - safetensors header-length check `len(data) < 8+headerLen` overflowed for a
+    `headerLen` near 2⁶⁴, passing the guard and panicking on the slice. Compared
+    without the add now.
+
+  All three parse entrypoints (`OpenGGUFBytes`/`parseGGUF`, `parseSafetensors`,
+  `parseShardIndex`) now return an error rather than panic/OOM on any input. The
+  OOM repro is committed as a regression seed; CI runs a short fuzz smoke.
+  Dequant-path fuzzing (`Tensor`/`RowDequantizer`) is a tracked follow-up.
+
+### Documentation
+
+- `linalg` now has a package `doc.go` with the kernel-dispatch map (which kernel
+  fires on which CPU, and why), and `Dot8x4` documents its large-K throughput
+  cliff with the "tile K to ≤~768" guidance. README's model-fetch quick start no
+  longer requires `ken` — it uses the Hugging Face CLI directly.
+
 ## [1.1.0] — 2026-06-08
 
 ### Added

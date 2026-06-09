@@ -301,7 +301,10 @@ func parseSafetensors(data []byte) (*SafetensorsFile, error) {
 		uint64(data[6])<<48 |
 		uint64(data[7])<<56
 
-	if uint64(len(data)) < 8+headerLen {
+	// Compare without adding 8: 8+headerLen overflows uint64 for a hostile
+	// headerLen near 2^64, which would wrap the bound small and let the slice
+	// below panic. len(data) ≥ 8 is guaranteed above, so the subtraction is safe.
+	if headerLen > uint64(len(data))-8 {
 		return nil, fmt.Errorf("safetensors: file truncated (header claims %d bytes, only %d available)",
 			headerLen, len(data)-8)
 	}
