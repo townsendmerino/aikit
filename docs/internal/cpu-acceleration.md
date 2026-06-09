@@ -21,7 +21,7 @@ by build tag + runtime CPU detection:
 | Arch  | Files | Kernel |
 |-------|-------|--------|
 | arm64 | `linalg/dot_arm64.{go,s}`, `dot_i8*_arm64.s`, `dot_w4a8_arm64.s`, `dotprod_arm64_*.go` | NEON; int8 `dotI8` upgrades to `SDOT` on DotProd-capable CPUs (runtime HWCAP); `dotW4A8GroupsSDOT` is the fused int4×int8 decode kernel (nibble-unpack prologue + the `dot_i8dp` SDOT body) |
-| amd64 | `linalg/dot_amd64.{go,s}` | AVX2+FMA (`dotFMA`/`dotFMA4`/`dotFMA8`), runtime CPUID/XGETBV detect, scalar fallback |
+| amd64 | `linalg/dot_amd64.{go,s}`, `dot_w4a8_amd64.s`, `quant_w4a8_amd64.go` | AVX2+FMA (`dotFMA`/`dotFMA4`/`dotFMA8`), int8 `dotI8AVX2` (VPMOVSXBW+VPMADDWD), and `dotW4A8GroupsAVX2` — the fused int4×int8 decode kernel (nibble-unpack prologue + the `dotI8AVX2` sign-extend body); runtime CPUID/XGETBV detect, scalar fallback |
 | other | `linalg/dot_generic.go`, `dot_other.go` | portable scalar |
 
 On top of the dot kernels, `linalg` provides:
@@ -125,13 +125,20 @@ the checkpoint is absent (CI), and run when `testdata/encoder-model` is present.
    end-to-end `Model.Encode` benchmark on real weights (not a microbench) to
    decide whether the spawn overhead pays off. Tune the encoder's
    `parallelThreshold` accordingly.
-4. **amd64 AVX2/VNNI `MatmulBTW4A8` kernel** (v1.1.0 shipped arm64-only). The
-   fused int4×int8 decode kernel exists for arm64 (NEON+SDOT); amd64 and
-   non-DotProd arm64 currently fall back to the pure-Go scalar reference
-   (`dotW4A8Scalar` — correct, not SIMD-fast). Port the unpack-prologue +
-   `VPDPBUSD` (VNNI) / `VPMADDUBSW` (AVX2) int8 dot, validate on the Linux box
-   like the original AVX2 work. arm64 W4A8 at M=1 is ~2.0–2.3× of W8A8 and ~23×
-   faster than `MatmulBTQ4`; the amd64 target is the same shape.
+4. **amd64 AVX2 `MatmulBTW4A8` kernel** — ✅ **DONE** (`dot_w4a8_amd64.s`,
+   `quant_w4a8_amd64.go`). The fused int4×int8 decode kernel now exists for amd64
+   too: the same nibble-unpack prologue feeding the proven `dotI8AVX2`
+   sign-extend body (VPMOVSXBW+VPMADDWD+VPADDD) — fully signed, no
+   unsigned-offset trick, since the nibbles are centered to int8 in-register
+   first. Gated by `hasAVX2`; non-AVX2 amd64 and non-DotProd arm64 keep the
+   scalar `dotW4A8Scalar`. **Validated on a Zen 2 box (Ryzen 7 3700X, AVX2, no
+   VNNI):** matches the scalar oracle bit-for-bit, race-clean; at M=1 decode it
+   lands ~1.7–1.9× of W8A8 and ~32× faster than `MatmulBTQ4` — on par with the
+   arm64 SDOT kernel (~2.0–2.3×).
+   - **Remaining: a VNNI variant** (`VPDPBUSD`, one instruction replacing the
+     VPMOVSXBW+VPMADDWD pair) behind the same CPUID gate, for Zen 4+ / Intel
+     Cascade Lake+. Can't be validated on the Zen 2 box (no VNNI), so it's a
+     drop-in for a VNNI-capable machine; the AVX2 path is the proven fallback.
 
 GPU follow-ups (resident buffers, tiled kernel, batch-tiling) are **goinfer's** —
 see `goinfer/gpu` and goinfer's perf docs.
