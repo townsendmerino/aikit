@@ -10,6 +10,17 @@ it.
 
 ## [Unreleased]
 
+### Added
+
+- **amd64 AVX2 fused `MatmulBTW4A8` kernel** (`dot_w4a8_amd64.s`,
+  `quant_w4a8_amd64.go`) — completes the v1.1.0 follow-up: the int4×int8 decode
+  kernel now has an amd64 path, not just arm64. Same shape as the arm64 kernel —
+  a nibble-unpack prologue feeding the proven `dotI8AVX2` sign-extend body
+  (VPMOVSXBW+VPMADDWD+VPADDD), gated by `hasAVX2`; non-AVX2 amd64 keeps the scalar
+  reference. Validated on Zen 2 (Ryzen 7 3700X): bit-exact vs the scalar oracle,
+  race-clean, ~1.7–1.9× of W8A8 and ~32× faster than `MatmulBTQ4` at M=1 decode.
+  A VNNI (`VPDPBUSD`) variant behind the same CPUID gate remains a follow-up.
+
 ### Security / Fixed
 
 - **Hardened the GGUF and safetensors parsers against hostile inputs.** Both

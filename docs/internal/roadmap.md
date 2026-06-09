@@ -7,6 +7,9 @@
 
 ## Progress (2026-06-09)
 
+- **§1.1 amd64 fused W4A8 kernel — AVX2 DONE** (`e6f30dd`, landed from the Zen 2
+  box; predates this batch). The marquee perf cliff is closed; only the VNNI
+  variant remains. See §1.1 below.
 - **§3.1 Fuzz binary parsers — DONE.** Added `FuzzParseGGUF` /
   `FuzzParseSafetensors` / `FuzzParseShardIndex` + seed corpus; found & fixed an
   OOM (`make(map, ~5e10)` from an untrusted `tensorCount`), a negative-length
@@ -33,12 +36,15 @@ The arm64 story is strong (fused W4A8 SDOT, NEON, cache-blocked matmul). The
 amd64 story is not, and x86 Linux servers are where most non-Apple deploys
 land. goinfer inherits every one of these.
 
-1. **amd64 fused W4A8 kernel (AVX2 `VPMADDUBSW`; VNNI `VPDPBUSD` where
-   available)** — [high / high]. arm64 W4A8 decode is ~23× faster than the Q4
-   f32 path; amd64 currently falls back to the scalar reference
-   (`linalg/quant_w4a8.go`). This is the single largest perf cliff in the
-   ecosystem. Already noted as follow-up #4 in `cpu-acceleration.md`; validate
-   on the Linux Ryzen box as with the original AVX2 work.
+1. **amd64 fused W4A8 kernel** — ✅ **AVX2 DONE** (`e6f30dd`,
+   `dot_w4a8_amd64.s`). The single largest perf cliff is closed: the int4×int8
+   decode kernel now has an amd64 AVX2 path (nibble-unpack prologue +
+   `dotI8AVX2` sign-extend body), validated on Zen 2 — ~1.7–1.9× of W8A8, ~32×
+   faster than the Q4 f32 path, on par with arm64 SDOT. Non-AVX2 amd64 keeps the
+   scalar fallback. **Remaining: the VNNI `VPDPBUSD` variant** (one instruction
+   for the VPMOVSXBW+VPMADDWD pair) behind the same CPUID gate, for Zen 4+ /
+   Cascade Lake+ — drop-in for a VNNI-capable box; the AVX2 path is the proven
+   fallback. [low-med / medium] — see also §1.6 (AVX-512/VNNI tier).
 2. **Wire the K-dependent kernel crossover** — [medium / low]. `Dot8x4`
    regresses below `Dot4x4` at large K on amd64 (40.5 vs 51.4 GB/s at K=3072,
    `cpu-acceleration.md` §1) but `encoder/linalg.go:206` calls `Dot8x4`

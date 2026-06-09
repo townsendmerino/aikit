@@ -19,11 +19,12 @@
 //	other   portable scalar              portable scalar                 build tag
 //
 // On arm64 the int8 path upgrades from the base SMULL/SADALP kernel to the
-// ARMv8.2 SDOT kernel when detectDotProd reports HWCAP_ASIMDDP; the fused int4×
-// int8 decode kernel (MatmulBTW4A8) is arm64+SDOT only. On amd64 the f32 kernels
-// use AVX2+FMA when CPUID/XGETBV confirm OS+CPU support, else scalar; the fused
-// W4A8 kernel falls back to the scalar reference (an AVX2/VNNI port is a planned
-// follow-up). Detection runs once at init; the hot path is a branch on a bool.
+// ARMv8.2 SDOT kernel when detectDotProd reports HWCAP_ASIMDDP. On amd64 the f32
+// and int8 kernels use AVX2+FMA when CPUID/XGETBV confirm OS+CPU support, else
+// scalar. The fused int4×int8 decode kernel (MatmulBTW4A8) has both an arm64+SDOT
+// and an amd64+AVX2 implementation; non-DotProd arm64 and non-AVX2 amd64 fall
+// back to the scalar reference (a VNNI amd64 variant is a planned follow-up).
+// Detection runs once at init; the hot path is a branch on a bool.
 //
 // # Choosing a kernel
 //
