@@ -10,6 +10,18 @@ it.
 
 ## [Unreleased]
 
+### Changed
+
+- **`encoder` attention: vectorized the scores·V context step.** An end-to-end
+  CPU profile of `Model.Encode` on real weights showed the per-head `ctx =
+  scores · V` accumulation — a scalar triple-loop — was the single hottest line,
+  ~⅓ of `Encode`, while the QKᵀ matmul (already SIMD) was ~2.6%. The context step
+  now routes through the SIMD `matmulBTInto` (folding a per-head V transpose into
+  the extract), in both `selfAttention` and `selfAttentionBatched`. Output is
+  bit-exact (golden cosine 1.0, batch==single, `-race` clean). The gain is the L²
+  term, so it scales with sequence length: **~2.85× single `Encode`** at ~500
+  tokens, neutral (no regression) at short rerank passages.
+
 ### Added
 
 - **amd64 AVX2 fused `MatmulBTW4A8` kernel** (`dot_w4a8_amd64.s`,

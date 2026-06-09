@@ -49,10 +49,15 @@ type scratch struct {
 	val  []float32 // [L*intermediate]
 	gate []float32 // [L*intermediate]
 	mid  []float32 // [L*D] — MLP fc2 output
-	// Per-head extracts (sized L*headDim each).
+	// Per-head extracts (sized perHeadLen*headDim each). vH holds V
+	// TRANSPOSED to [headDim, perHeadLen] so the scores·V context step can run
+	// through the SIMD A·Bᵀ matmul instead of a scalar triple-loop.
 	qH []float32
 	kH []float32
 	vH []float32
+	// ctxHead is the per-head scores·V output [perHeadLen, headDim], scattered
+	// into the interleaved ctx[L, D] afterward.
+	ctxHead []float32
 	// Attention scores [L, L].
 	scores []float32
 }
@@ -92,5 +97,6 @@ func (s *scratch) ensureLayer(L, D, intermediate, heads, headDim, perHeadLen int
 	s.qH = ensureF32(s.qH, perHeadLen*headDim)
 	s.kH = ensureF32(s.kH, perHeadLen*headDim)
 	s.vH = ensureF32(s.vH, perHeadLen*headDim)
+	s.ctxHead = ensureF32(s.ctxHead, perHeadLen*headDim)
 	s.scores = ensureF32(s.scores, perHeadLen*perHeadLen)
 }

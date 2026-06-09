@@ -61,7 +61,8 @@ func selfAttentionBatched(h []float32, Wqkv, OutProj []float32, heads, headDim, 
 	// Profile-confirmed as the dominant alloc hotspot (~50% of total).
 	qH := s.qH[:Lmax*headDim]
 	kH := s.kH[:Lmax*headDim]
-	vH := s.vH[:Lmax*headDim]
+	vHT := s.vH[:Lmax*headDim]          // V transposed to [headDim, L] per (b,head)
+	ctxHead := s.ctxHead[:Lmax*headDim] // scores·V output [L, headDim] per (b,head)
 	scores := s.scores[:Lmax*Lmax]
 	for b := range B {
 		L := realLen[b]
@@ -72,12 +73,15 @@ func selfAttentionBatched(h []float32, Wqkv, OutProj []float32, heads, headDim, 
 		for headIdx := range heads {
 			qH = qH[:L*headDim]
 			kH = kH[:L*headDim]
-			vH = vH[:L*headDim]
+			vHTl := vHT[:headDim*L]
 			for i := range L {
 				src := seqOff + i*D + headIdx*headDim
 				copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
 				copy(kH[i*headDim:(i+1)*headDim], K[src:src+headDim])
-				copy(vH[i*headDim:(i+1)*headDim], V[src:src+headDim])
+				// V transposed so scores·V can use the A·Bᵀ matmul (needs Vᵀ).
+				for d := range headDim {
+					vHTl[d*L+i] = V[src+d]
+				}
 			}
 
 			scores = scores[:L*L]
@@ -88,15 +92,13 @@ func selfAttentionBatched(h []float32, Wqkv, OutProj []float32, heads, headDim, 
 			for i := range L {
 				softmaxRow(scores[i*L : (i+1)*L])
 			}
+			// ctxHead[L, headDim] = scores[L, L] · V[L, headDim] — was the scalar
+			// triple-loop hotspot; now the SIMD A·Bᵀ matmul.
+			ctxHeadL := ctxHead[:L*headDim]
+			matmulBTInto(scores, vHTl, ctxHeadL, L, L, headDim)
 			for i := range L {
-				scoresRow := scores[i*L : (i+1)*L]
-				for d := range headDim {
-					var sV float32
-					for j := range L {
-						sV += scoresRow[j] * vH[j*headDim+d]
-					}
-					ctx[seqOff+i*D+headIdx*headDim+d] = sV
-				}
+				dst := seqOff + i*D + headIdx*headDim
+				copy(ctx[dst:dst+headDim], ctxHeadL[i*headDim:(i+1)*headDim])
 			}
 		}
 	}

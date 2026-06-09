@@ -42,14 +42,17 @@ func selfAttention(h []float32, Wqkv, OutProj []float32, heads, headDim, D, L in
 	rope.apply(Q, heads)
 	rope.apply(K, heads)
 
-	// 4) Scaled dot-product attention per head. Scratch holds qH/kH/vH
-	// (per-head extracts) and scores ([L, L]).
+	// 4) Scaled dot-product attention per head. Scratch holds qH/kH (per-head Q/K
+	// extracts), vHT (V transposed to [headDim, L]) and scores ([L, L]). Both
+	// matmuls go through the SIMD A·Bᵀ kernel: QKᵀ = qH·kHᵀ, then the context
+	// scores·V = scores·(vHT)ᵀ — the latter was a scalar triple-loop and the
+	// single hottest line in Encode before this (≈⅓ of total).
 	scale := float32(1.0 / math.Sqrt(float64(headDim)))
-	ctx := s.ctx[:L*D]
-	zeroF32Slice(ctx) // ctx accumulates per-head writes
+	ctx := s.ctx[:L*D] // every (i, head) column is written exactly once below
 	qH := s.qH[:L*headDim]
 	kH := s.kH[:L*headDim]
-	vH := s.vH[:L*headDim]
+	vHT := s.vH[:headDim*L]
+	ctxHead := s.ctxHead[:L*headDim]
 	scores := s.scores[:L*L]
 
 	for headIdx := range heads {
@@ -57,7 +60,11 @@ func selfAttention(h []float32, Wqkv, OutProj []float32, heads, headDim, D, L in
 			src := i*D + headIdx*headDim
 			copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
 			copy(kH[i*headDim:(i+1)*headDim], K[src:src+headDim])
-			copy(vH[i*headDim:(i+1)*headDim], V[src:src+headDim])
+			// V transposed: vHT[d, i] = V[i, head, d], folded into the extract so
+			// scores·V can use the A·Bᵀ matmul (which needs Vᵀ as its b operand).
+			for d := range headDim {
+				vHT[d*L+i] = V[src+d]
+			}
 		}
 		matmulBTInto(qH, kH, scores, L, headDim, L)
 		for i := range scores {
@@ -66,15 +73,12 @@ func selfAttention(h []float32, Wqkv, OutProj []float32, heads, headDim, D, L in
 		for i := range L {
 			softmaxRow(scores[i*L : (i+1)*L])
 		}
+		// ctxHead[L, headDim] = scores[L, L] · V[L, headDim], as scores · (vHT)ᵀ.
+		matmulBTInto(scores, vHT, ctxHead, L, L, headDim)
+		// Scatter this head's context into the interleaved ctx[L, D].
 		for i := range L {
-			scoresRow := scores[i*L : (i+1)*L]
-			for d := range headDim {
-				var s float32
-				for j := range L {
-					s += scoresRow[j] * vH[j*headDim+d]
-				}
-				ctx[i*D+headIdx*headDim+d] = s
-			}
+			dst := i*D + headIdx*headDim
+			copy(ctx[dst:dst+headDim], ctxHead[i*headDim:(i+1)*headDim])
 		}
 	}
 

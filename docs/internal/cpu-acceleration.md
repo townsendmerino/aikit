@@ -125,11 +125,20 @@ the checkpoint is absent (CI), and run when `testdata/encoder-model` is present.
    AVX2 already covers ~all amd64 since 2015 and AVX-512 brings downclocking
    caveats, so low priority. Same shape: CPUID leaf 7 detect, `dot_amd64.s`
    entry points, `hasAVX512` gate.
-3. **Per-head attention QK^T parallelization** (encoder). ~17M FLOPs/head wins
-   ~3.4× in isolation but recurs 12 heads × 12 layers/forward; needs an
-   end-to-end `Model.Encode` benchmark on real weights (not a microbench) to
-   decide whether the spawn overhead pays off. Tune the encoder's
-   `parallelThreshold` accordingly.
+3. **Per-head attention — QK^T parallelization CLOSED; scores·V vectorized
+   instead.** End-to-end CPU profile of `Model.Encode` on real weights (~500-tok
+   input, `BenchmarkEncode_singleLong`) overturned the microbench-driven premise:
+   QK^T is already SIMD and only ~2.6% of `Encode`, so parallelizing it across
+   heads (144 spawns/forward) chases nothing. The actual hotspot was the **scores·V
+   context accumulation** — a scalar triple-loop (`ctx = scores · V` per head) that
+   was the single hottest line at ~⅓ of `Encode`. Fixed by folding a per-head V
+   transpose into the extract and routing scores·V through the SIMD `matmulBTInto`
+   (A·Bᵀ), in both `selfAttention` and `selfAttentionBatched`. Bit-exact (golden
+   cosine 1.0, batch==single, `-race` clean). The win is the L² term, so it scales
+   with sequence length: **~2.85× single `Encode`** at ~500 tokens, neutral (no
+   regression) at ~80-token rerank passages where scores·V is a small share.
+   *Follow-up:* the dormant int8 sibling `forward_q8.go` has the same scalar loop
+   (left untouched — off the default path, not model-test-covered).
 4. **amd64 AVX2 `MatmulBTW4A8` kernel** — ✅ **DONE** (`dot_w4a8_amd64.s`,
    `quant_w4a8_amd64.go`). The fused int4×int8 decode kernel now exists for amd64
    too: the same nibble-unpack prologue feeding the proven `dotI8AVX2`

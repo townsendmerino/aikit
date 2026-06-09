@@ -10,6 +10,10 @@
 - **§1.1 amd64 fused W4A8 kernel — AVX2 DONE** (`e6f30dd`, landed from the Zen 2
   box; predates this batch). The marquee perf cliff is closed; only the VNNI
   variant remains. See §1.1 below.
+- **§1.3 Per-head attention — DONE (pivoted).** Profiled `Model.Encode` on real
+  weights: QKᵀ is already SIMD (~2.6%) → closed; the real hotspot was the scalar
+  scores·V context loop (~⅓ of `Encode`), now vectorized via the SIMD matmul.
+  ~2.85× single `Encode` at long sequences (L²-scaled), bit-exact. See §1.3.
 - **§3.1 Fuzz binary parsers — DONE.** Added `FuzzParseGGUF` /
   `FuzzParseSafetensors` / `FuzzParseShardIndex` + seed corpus; found & fixed an
   OOM (`make(map, ~5e10)` from an untrusted `tensorCount`), a negative-length
@@ -56,11 +60,16 @@ land. goinfer inherits every one of these.
    `cpu-acceleration.md` §1) but `encoder/linalg.go:206` calls `Dot8x4`
    unconditionally. Add the conditional, benchmark the crossover point per
    arch. Cheapest real win on the list.
-3. **Per-head attention QKᵀ parallelism — measure end-to-end, then decide** —
-   [medium / medium]. ~3.4× in isolation but recurs 144×/forward; the
-   `inflightForwards` gate keeps it serial under `EncodeBatch`. Profile
-   `Model.Encode` on real weights; ship or close the question. Don't trust the
-   microbench either way.
+3. **Per-head attention QKᵀ parallelism — DONE: QKᵀ CLOSED, scores·V vectorized
+   instead.** Profiling `Model.Encode` on real weights (the item's own mandate)
+   inverted the premise: QKᵀ is already SIMD and ~2.6% of `Encode`, so the
+   microbench's 3.4× is irrelevant — closed. The real hotspot was the **scores·V
+   context loop** (scalar, ~⅓ of `Encode`), now routed through the SIMD matmul in
+   both `selfAttention`/`selfAttentionBatched`. ~2.85× single `Encode` at ~500
+   tokens (L²-scaled; neutral at short rerank passages), bit-exact. *Follow-ups:*
+   `forward_q8.go` has the same scalar loop (dormant, off the default path); and
+   the goinfer **prefill** decoder likely has the analogous scores·V — a
+   cross-repo transfer (decode M=1 won't benefit; it's a gemv there).
 4. **Int8 multi-row register tiling (M-loop) for W8A8** — [medium / medium].
    Noted as possible follow-up in the 0.5.2 CHANGELOG entry. Benefits prefill
    / speculative-verify / encoder (M>1), on top of the column-outer reblock.
