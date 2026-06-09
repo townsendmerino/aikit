@@ -145,14 +145,21 @@ settles.
 
 Model-dependent tests skip cleanly when their per-machine assets aren't present,
 so a fresh `go test ./...` is green with embed/encoder parity tests skipped.
-Populate the assets via:
+Populate the assets with the Hugging Face CLI (`pip install -U huggingface_hub`)
+— no aikit-specific tooling required:
 
 ```bash
-# Model2Vec (for embed parity tests)
-ken download-model --to testdata/model
-# CodeRankEmbed (for encoder parity tests)
-ken download-model --rerank --to testdata/encoder-model
+# Model2Vec (embed parity tests) → testdata/model
+huggingface-cli download minishlab/potion-code-16M \
+    tokenizer.json config.json model.safetensors --local-dir testdata/model
+
+# CodeRankEmbed (encoder parity tests) → testdata/encoder-model
+huggingface-cli download nomic-ai/CodeRankEmbed \
+    tokenizer.json config.json model.safetensors --local-dir testdata/encoder-model
 ```
+
+(If you also use [`ken`](https://github.com/townsendmerino/ken), `ken
+download-model [--rerank] --to <dir>` fetches the same snapshots.)
 
 Regenerate the committed golden fixtures:
 

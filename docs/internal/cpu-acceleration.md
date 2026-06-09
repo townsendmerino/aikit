@@ -111,11 +111,16 @@ the checkpoint is absent (CI), and run when `testdata/encoder-model` is present.
 
 ## Open follow-ups (aikit, CPU-only)
 
-1. **`Dot8x4` large-K crossover heuristic.** `Dot8x4` wins at mid-K (~768) but
-   loses to `Dot4x4`/single-row past it (the K=3072 regression above). The
-   encoder's blocked matmul should pick the kernel by K (prefer `Dot4x4` / fall
-   to single-row at large K). Kernels are correct; only the selection heuristic
-   is unwired.
+1. **`Dot8x4` large-K cliff — already mitigated at the call site; now documented
+   on the public kernel.** `Dot8x4` wins at mid-K (~768) but loses to `Dot4x4`
+   past it (the K=3072 regression above). The encoder does NOT hit this: its
+   blocked matmul tiles K at `kBlockDefault=768` (encoder/linalg.go), which is
+   exactly `Dot8x4`'s peak — `fc2` (K=3072) runs as 4×768 strips, not one 3072
+   strip. So there's no call-site heuristic to add; the M10 tile tuning already
+   handles it. The real exposure was the *public* `linalg.Dot8x4` godoc not
+   warning external callers — now fixed (it documents the cliff and the
+   "tile K to ≤~768" guidance). Revisit only if a profile shows a real caller
+   feeding it large-K rows.
 2. **AVX-512 path** (optional, Zen 4 / recent Intel). 16-wide, more registers;
    AVX2 already covers ~all amd64 since 2015 and AVX-512 brings downclocking
    caveats, so low priority. Same shape: CPUID leaf 7 detect, `dot_amd64.s`

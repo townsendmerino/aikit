@@ -1,8 +1,3 @@
-// Package linalg holds aikit's shared SIMD compute kernels: the dot-product
-// kernels (AVX2+FMA on amd64, NEON on arm64, scalar elsewhere — selected by
-// build tag and runtime CPU detection) and a row-parallel float32 matmul built
-// on them. It is the single home for the hand-written assembly so the encoder
-// and goinfer's LLM decoder share one copy.
 package linalg
 
 import (
@@ -17,11 +12,19 @@ func Dot(a, b []float32) float32 { return dotF32(a, b) }
 // dot products of the shared row `a` against consecutive b-rows, writing every
 // row's full sum into the first lane of its 4-lane block in sums (the rest
 // zero). n4 is len/4 (K is a multiple of 4 in the matmul hot path). Exposed
-// for the encoder's cache-blocked matmul; the decoder uses MatmulBT/Dot.
+// for a cache-blocked matmul; the decoder uses MatmulBT/Dot.
 func Dot4x4(a, b0, b1, b2, b3 *float32, n4 int, sums *[16]float32) {
 	dotNEON4x4(a, b0, b1, b2, b3, n4, sums)
 }
 
+// Dot8x4 reuses the shared row `a` across 8 b-rows, so it beats Dot4x4 at
+// small-to-mid K (≈1.7× at K=768). But its 8 live accumulators plus the streamed
+// b-rows outgrow the register/cache budget at large K, where it regresses BELOW
+// Dot4x4 — measured on amd64 AVX2 at 40.5 vs 51.4 GB/s at K=3072. A cache-blocked
+// caller should tile K into ≤~768-element strips and feed Dot8x4 the strips: that
+// keeps it in its fast range and is the right cache-blocking move regardless.
+// aikit's encoder does exactly this (kBlock=768), so it never hits the cliff; a
+// caller that hands Dot8x4 a single large-K row instead should prefer Dot4x4.
 func Dot8x4(a, b0, b1, b2, b3, b4, b5, b6, b7 *float32, n4 int, sums *[32]float32) {
 	dotNEON8x4(a, b0, b1, b2, b3, b4, b5, b6, b7, n4, sums)
 }
