@@ -21,6 +21,12 @@
   so it never feeds a large-K strip — `fc2` (K=3072) runs as 4×768. A call-site
   conditional would be dead code. The real gap was the *public* `Dot8x4` godoc;
   it now documents the cliff + "tile K to ≤~768".
+  - **DEFERRED (2026-06-09):** also considered adding a note at the
+    `kBlockDefault` const documenting that 768 doubles as Dot8x4's throughput
+    peak (so a future tuner doesn't raise kBlock past the cliff). Decided not to
+    — the constraint already lives in `linalg.Dot8x4`'s godoc, and the encoder
+    comment didn't need the extra coupling. Revisit only if someone retunes the
+    tile sizes per arch (which would touch this comment anyway).
 - **§6.5 linalg `doc.go` — DONE.** Package doc with the kernel-dispatch map.
 - **§6.1 ken-free quick start — DONE.** README model-fetch now uses
   `huggingface-cli` directly; `ken` noted as an optional shortcut.
