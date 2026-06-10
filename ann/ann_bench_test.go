@@ -7,10 +7,11 @@ import (
 	"testing"
 )
 
-// dimForBench matches Model2Vec's potion-code-16M output dimension.
+// dimForBench matches the Model2Vec checkpoint's output dimension — its
+// embeddings tensor is [vocab, 256].
 // Synthetic vectors at this width keep the benchmark realistic relative
 // to what ken's embed pipeline actually feeds Flat in production.
-const dimForBench = 128
+const dimForBench = 256
 
 // makeUnitVectors generates n L2-normalized random vectors of dim d
 // using a seeded PRNG. Determinism: same (n, d, seed) → identical
@@ -75,11 +76,11 @@ func BenchmarkFlatQuery(b *testing.B) {
 	}
 }
 
-// BenchmarkFlatQuery_scale covers the SIMD-dot task's grid (N=10k/100k at d=768,
-// the CodeRankEmbed encoder dimension) on top of the d=128 Model2Vec curve above —
-// the larger d and N that show the linalg.Dot/Dot8x4 win at production scale.
+// BenchmarkFlatQuery_scale covers the SIMD-dot task's grid at the two real model
+// dimensions — 256 (Model2Vec) and 768 (the CodeRankEmbed encoder) — across
+// N=10k/100k: the larger d and N that show the linalg.Dot/Dot8x4 win at scale.
 func BenchmarkFlatQuery_scale(b *testing.B) {
-	for _, d := range []int{128, 768} {
+	for _, d := range []int{256, 768} {
 		for _, n := range []int{10_000, 100_000} {
 			b.Run(fmt.Sprintf("d%d/N%d", d, n), func(b *testing.B) {
 				corpus := makeUnitVectors(n, d, 0xfeed)
