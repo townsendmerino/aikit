@@ -255,10 +255,14 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    selection-mode byte). Textbook measure-fix-measure: the harness found it, drove
    the fix, and verified it. *Follow-up:* HNSW build is still slow at scale (~17s
    for 50k with the heuristic) — a separate perf item, not a correctness one.
-2. **Recall regression tests on a real slice** — [medium / low-medium]. The
-   golden tests pin numerics; nothing pins end-to-end retrieval quality.
-   A small fixed corpus + frozen relevance set, recall@10 asserted with
-   tolerance. Prereq for safely landing #1, §2.4, §2.7.
+2. **Recall regression tests on a real slice** — ✅ **DONE.** A 50-doc / 5-topic
+   real-embedding slice (Model2Vec) is frozen into `testdata/retrieval_eval.json`
+   with a hand-curated same-topic relevance set; `TestRetrievalRecall` runs
+   model-free in CI and asserts recall@10 vs that relevance: Flat pins the
+   embedding+exact-scan quality baseline (0.86), and HNSW / FlatI8 must stay within
+   tolerance (both also 0.86 here — Alg-4 + int8 track exact Flat perfectly). So an
+   index or scoring change that degrades retrieval quality now fails a test, not
+   just a benchmark. `TestGenRetrievalFixture` (model-gated) rebuilds the fixture.
 3. **`fuse` extensions: weighted-RRF presets / score-aware fusion (RSF)** —
    [low / low]. Antfly exposes weighted strategy mixing; `fuse.RRFWeighted`
    exists, but a documented recipe (and optionally relative-score fusion)
