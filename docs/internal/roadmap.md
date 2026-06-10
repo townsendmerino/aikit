@@ -120,11 +120,16 @@ The `//go:embed` story is the moat; these make it uniform. All unblocked.
    `FuzzLoadHNSW`) now run in the CI fuzz smoke + nightly. The benchmark's headline
    index can now be `//go:embed`-ed — directly enabling §1.2's smallest-blob
    example.
-2. **Zero-copy mmap `ann.Load`** — [medium / medium]. The v2 format already
-   lays vectors out as one contiguous little-endian block; `Load` currently
-   copies. An mmap-aliasing variant gives instant startup on big indexes —
-   with the same lifetime contract (and guardrail pattern) as `embed`'s mmap
-   loaders.
+2. **Zero-copy mmap `ann.Load`** — ✅ **DONE for FlatI8** (the embed-me index).
+   `LoadFlatI8Mmap` memory-maps the blob and aliases the int8 codes straight from
+   the read-only mapping (1-byte codes ⇒ no alignment constraint), copying only the
+   tiny scales — instant startup, page-cache-shared bytes. `FlatI8.Close` releases
+   it (finalizer backstop; Query-after-Close panics); non-unix heap-fallback mirrors
+   `embed`'s mmap pair, kept ann-local to avoid an ann→embed edge. **HNSW zero-copy
+   is the follow-up:** its float32 vectors need a format-level alignment bump (the
+   v2 header ends at a non-4-aligned offset) and its graph is a nested structure
+   that's parsed regardless — so only the vector block could be aliased, behind a
+   format v3. Lower value than FlatI8's, deferred.
 3. **Int8 HNSW** — [medium / medium]. `FlatI8` proved int8 recall holds
    (1.00 real / 0.986 adversarial); HNSW's `sim()` doing int8 dots during
    build+search extends the ¼-memory win to the log-scale index. Gate on the

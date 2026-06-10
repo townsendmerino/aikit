@@ -166,9 +166,11 @@ settles.
 - `ann.FlatI8` / `ann.NewFlatI8` — int8-quantized dense index (¼ the memory,
   scored via the W8A8 kernel). Same `Hit`/`Query` shape as `Flat`; new surface, so
   Experimental.
-- `ann.FlatI8.MarshalBinary` / `ann.LoadFlatI8` — int8-index persistence (the
-  `//go:embed`-an-index pattern, for the index you'd most want to embed). Versioned
-  format, settling alongside `FlatI8`.
+- `ann.FlatI8.MarshalBinary` / `ann.LoadFlatI8` / `ann.LoadFlatI8Mmap` — int8-index
+  persistence (the `//go:embed`-an-index pattern). `LoadFlatI8Mmap` is zero-copy
+  (aliases the int8 codes from a read-only mapping for instant startup + page-cache
+  sharing); `FlatI8.Close` releases it. Versioned format, settling alongside
+  `FlatI8`.
 - `Flat`/`HNSW`/`FlatI8` `.QueryFilter(q, k, keep)` — query-time logical-delete /
   live-set filter (the index stays immutable). New surface, settling.
 - `bm25.TokenizePlain` — new general-text (Unicode word) analyzer alongside the

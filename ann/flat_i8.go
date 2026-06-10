@@ -29,6 +29,11 @@ type FlatI8 struct {
 	bq     []int8    // [n*dim] row-major int8 vectors
 	scales []float32 // [n] per-vector reconstruction scales
 	n, dim int
+
+	// mmap is the backing mapping when built by LoadFlatI8Mmap (bq aliases it);
+	// nil for an in-memory index (NewFlatI8 / LoadFlatI8). closed is set by Close.
+	mmap   []byte
+	closed bool
 }
 
 // NewFlatI8 builds an int8 index by quantizing vecs (each assumed L2-normalized,
@@ -69,6 +74,11 @@ func (f *FlatI8) QueryFilter(q []float32, k int, keep func(id int) bool) []Hit {
 }
 
 func (f *FlatI8) query(q []float32, k int, keep func(int) bool) []Hit {
+	if f.closed {
+		// A mmap-backed index whose mapping has been released: querying would read
+		// unmapped memory. Fail loudly (programmer error) rather than segfault.
+		panic("ann: Query on a closed FlatI8 (mmap released by Close)")
+	}
 	if f.n == 0 || len(q) != f.dim {
 		return nil
 	}

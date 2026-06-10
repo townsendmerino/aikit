@@ -99,6 +99,15 @@ corrects what it renders.
   before allocation, and a `FuzzLoadFlatI8` target (plus the previously-unwired
   `FuzzLoadHNSW`) now in the CI fuzz smoke + nightly. Quantize the corpus once
   offline, embed the bytes, skip re-quantization per process.
+- **`ann.LoadFlatI8Mmap` — zero-copy mmap load + `FlatI8.Close`** (Experimental
+  surface). Memory-maps a FlatI8 blob and *aliases* the int8 codes straight from
+  the read-only mapping (the codes are 1-byte, so no alignment constraint), copying
+  only the tiny scales — so a large embedded index is query-ready instantly (no
+  parse-and-copy) and its bytes live in the OS page cache, not the Go heap.
+  `Close` releases the mapping (a finalizer is the backstop); querying after Close
+  panics. Non-unix falls back to a heap read (same result). HNSW zero-copy is a
+  follow-up — its float32 vectors need format-level alignment and its graph is
+  parsed regardless.
 - **`QueryFilter` on `ann.Flat`/`HNSW`/`FlatI8` — query-time logical delete**
   (Experimental surface). `QueryFilter(q, k, keep func(id int) bool)` returns only
   documents for which `keep` is true, so a live-set / tombstone applies WITHOUT
