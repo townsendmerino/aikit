@@ -27,6 +27,12 @@
   tie. W8A8 at M>1 is SDOT-throughput-bound (~3 SDOT/cycle, near M1 peak) and the
   column-outer reblock already took the reuse — nothing for register tiling to
   exploit. Reverted. See §1.4.
+- **§1.5 `GOEXPERIMENT=simd` portable kernels — SPIKED → DEFER.** A portable
+  `dotF32` over `simd/archsimd` compiles for amd64, but the package is **amd64-only
+  (no arm64/NEON)** and **gated behind `GOEXPERIMENT=simd`** (breaks plain
+  `go build` for all consumers). Doesn't deliver the cross-arch "write once" win
+  and can't gate a 1.0 lib on an experiment. Revisit when arm64 lands + it
+  graduates. See §1.5.
 - **§3.1 Fuzz binary parsers — DONE (parse + dequant).** Parse: `FuzzParseGGUF` /
   `FuzzParseSafetensors` / `FuzzParseShardIndex` + seed corpus; found & fixed an
   OOM (`make(map, ~5e10)` from an untrusted `tensorCount`), a negative-length
@@ -101,13 +107,28 @@ land. goinfer inherits every one of these.
    (VPMOVSXBW+VPMADDWD, no SDOT), so even less likely load-bound there. Reverted
    the kernel — no complexity for a no-op. Revisit only if a real amd64 prefill
    profile shows W8A8 load-bound (the arm64 evidence says it won't).
-5. **Evaluate Go 1.26 `GOEXPERIMENT=simd` (go-highway-style portable
-   kernels)** — [medium / medium, strategic]. Antfly's engine got
-   AVX2/AVX-512/NEON from one portable kernel source. A spike: port `dotF32`
-   and `dotI8` and bench against the hand asm. If within ~10%, new kernels
-   (e.g. the amd64 W4A8 above) could be written once instead of per-arch —
-   directly attacks the bus-factor cost of `.s` files. Keep the asm where it
-   wins.
+5. **Evaluate Go 1.26 `GOEXPERIMENT=simd` (go-highway-style portable kernels)** —
+   ⏸️ **SPIKED → DEFER (two hard blockers).** The package exists (`simd/archsimd`,
+   Go 1.26.3); a portable `dotF32` over it is clean (`Float32x8`,
+   `LoadFloat32x8Slice`, `.Mul`/`.Add`/`.MulAdd`-FMA) and cross-compiles for
+   amd64. But:
+   1. **amd64-only — no arm64/NEON.** Every impl file is `*_amd64.go`; the spike
+      fails to build for `GOARCH=arm64` (`undefined: archsimd.Float32x8`). So it
+      does NOT deliver the "write once for all arches" premise — arm64 hand-asm
+      stays, and you'd maintain portable-amd64 *plus* hand-NEON (a wash, or worse,
+      vs today's two asm sets).
+   2. **`GOEXPERIMENT=simd`-gated.** Plain `go build` fails ("build constraints
+      exclude all Go files"). Adopting it would force every downstream consumer
+      (ken, goinfer, end users) to set the flag — breaking aikit's frictionless
+      pure-Go-no-special-flags build, a core selling point. Unacceptable for a 1.0
+      lib while it's still an experiment.
+
+   The "within ~10%?" perf question is therefore moot for now — even at parity,
+   the blockers prevent adoption. **Revisit when BOTH clear:** archsimd gains
+   arm64/NEON AND graduates from GOEXPERIMENT (default-on). Then re-run the spike:
+   port `dotF32`/`dotI8`, bench portable-vs-asm on both arches, and if within ~10%
+   migrate the kernels and delete the `.s` files (the real bus-factor win). Track
+   the upstream Go proposal for arm64 + graduation.
 6. **AVX-512/VNNI dispatch tier** — [low-medium / medium]. Currently absent;
    reasonable to keep deprioritized (downclocking caveats, AVX2 ubiquity), but
    revisit if #5 makes it nearly free. AMX: out of scope.
