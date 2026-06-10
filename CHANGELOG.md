@@ -49,6 +49,14 @@ it.
 
 ### Added
 
+- **`embed.Truncate` — Matryoshka embedding truncation** (Experimental surface).
+  Returns the first `dim` components of an embedding, L2-renormalized — a
+  lower-dimensional embedding for MRL-trained models, composing with `ann.FlatI8`
+  for a compounded memory cut (256→128 dims at int8 is 8× smaller than 256-d
+  float32). Measured on the bundled Model2Vec slice (`TestMatryoshkaRecall`):
+  recall@10 holds at **0.86 down to half the dimension (256→128)** and degrades
+  only below, so half-dim truncation is free here. Input is not mutated; for
+  non-MRL models truncation degrades the embedding (don't use it blindly).
 - **`fuse.RSF` — Relative Score Fusion** (Experimental surface). A score-based
   alternative to the rank-based `RRF`: each ranking's raw scores are min-max
   normalized to [0,1] independently, then summed (`RSFWeighted` for a per-ranking

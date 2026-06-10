@@ -128,6 +128,8 @@ settles.
   code-tuned `Tokenize` (which stays the default); pick whichever fits the corpus.
 - `fuse.RSF` / `fuse.RSFWeighted` / `fuse.Scored` / `fuse.Scores` — new
   relative-score fusion alongside the rank-based `RRF`; new surface, settling.
+- `embed.Truncate` — new Matryoshka (MRL) embedding truncate + L2-renormalize
+  helper; pairs with `ann.FlatI8` for compounded memory reduction.
 - `sparse` — the whole package is new (learned-sparse / SPLADE retrieval). The
   `SparseVec` / `Index` / `Query` shape is settled, but it ships only the index +
   scorer half (an in-process masked-LM expansion head is a planned follow-up that

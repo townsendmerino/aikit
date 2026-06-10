@@ -116,6 +116,34 @@ func recallVsRelevance(query func([]float32, int) []ann.Hit, fx evalFixture, k i
 	return sum / float64(len(fx.Queries))
 }
 
+// TestMatryoshkaRecall characterizes how the frozen embeddings survive
+// embed.Truncate — recall@10 vs the same relevance at full vs half dimension. On
+// the Model2Vec slice recall holds to half the dims and degrades only below, so
+// Truncate-to-128 is a free 2× memory cut (8× combined with FlatI8). Pins that
+// the half-dim truncation stays high-recall (model-free, committed embeddings).
+func TestMatryoshkaRecall(t *testing.T) {
+	fx := loadEvalFixture(t)
+	const k = 10
+	recallAtDim := func(dim int) float64 {
+		docs := make([][]float32, len(fx.Docs))
+		for i, d := range fx.Docs {
+			docs[i] = embed.Truncate(d.Emb, dim)
+		}
+		q := make([]evalQuery, len(fx.Queries))
+		copy(q, fx.Queries)
+		for i := range q {
+			q[i].Emb = embed.Truncate(q[i].Emb, dim)
+		}
+		return recallVsRelevance(ann.New(docs).Query, evalFixture{Queries: q}, k)
+	}
+	full := recallAtDim(fx.Dim)
+	half := recallAtDim(fx.Dim / 2)
+	t.Logf("Matryoshka recall@%d — full(d=%d) %.4f, half(d=%d) %.4f", k, fx.Dim, full, fx.Dim/2, half)
+	if half < full-0.05 {
+		t.Errorf("half-dim recall %.4f dropped >0.05 below full %.4f — bundled model not Matryoshka-friendly at d=%d?", half, full, fx.Dim/2)
+	}
+}
+
 // TestRetrievalRecall is the model-free regression gate: against the frozen
 // relevance set, Flat (exact) pins the embedding+retrieval quality baseline, and
 // HNSW / FlatI8 must stay within tolerance of it.

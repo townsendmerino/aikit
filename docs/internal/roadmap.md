@@ -219,9 +219,13 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    incremental BM25 segment story would cover the "long-running process,
    corpus changes" case Termite/Bleve handle natively. Scope carefully —
    immutability-by-design is part of the current safety story.
-8. **Matryoshka dimension truncation support in `embed`/`ann`** — [low /
-   low]. Cheap to add (truncate + renormalize helpers, dim-aware index);
-   pairs well with #4 for memory.
+8. **Matryoshka dimension truncation support in `embed`/`ann`** — ✅ **DONE.**
+   `embed.Truncate(v, dim)` returns the L2-renormalized prefix (fresh slice); the
+   indexes are already dim-agnostic. Composes with §2.4's FlatI8 for a compounded
+   cut (256→128 int8 = 8× vs 256-d f32). Measured on the bundled Model2Vec slice
+   (`TestMatryoshkaRecall`): recall@10 holds at 0.86 down to half the dim (256→128),
+   degrading only below — so half-dim truncation is free here. Documented as
+   MRL-only (truncating a non-MRL embedding degrades it).
 
 ## 3. Robustness & correctness
 
