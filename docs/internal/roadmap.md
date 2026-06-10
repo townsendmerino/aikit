@@ -207,10 +207,13 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    learned positions, pooling) to cover the popular MiniLM / bge /
    mxbai-class rerankers and embedders from safetensors. Each new
    architecture stays parity-pinned like CodeRankEmbed.
-6. **General-NLP tokenizer option for `bm25`** — [medium / low]. The
-   code-tuned identifier splitting is a hidden assumption for general-text
-   consumers (README carry-over invariant). Ship a plain-text analyzer
-   alongside; keeps the code-RAG default, widens the audience.
+6. **General-NLP tokenizer option for `bm25`** — ✅ **DONE.** `bm25.TokenizePlain`
+   is a Unicode word tokenizer (lowercase, split on any non-letter/non-digit, no
+   snake/camel identifier splitting) alongside the code-tuned `Tokenize`. `Build`/
+   `Query` take pre-tokenized docs, so callers pick per corpus; `Tokenize` stays
+   the code-RAG default. Tests pin the contract (e.g. `getUserName` → one token
+   under plain, split under code) + a runnable Example. Widens the audience to
+   natural-language corpora.
 7. **Streaming / incremental index updates** — [medium / medium]. `ann.Flat`
    and `bm25.Build` are build-once. Add/delete on HNSW (tombstones) and an
    incremental BM25 segment story would cover the "long-running process,

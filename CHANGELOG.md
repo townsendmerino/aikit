@@ -49,6 +49,13 @@ it.
 
 ### Added
 
+- **`bm25.TokenizePlain` — general-text analyzer** (Experimental surface). A
+  Unicode word tokenizer (lowercase, split on any non-letter/non-digit, no
+  identifier splitting) alongside the code-tuned `Tokenize` — which over-fragments
+  prose (`getUserName` → get/user/name/getusername) and breaks hyphenated/
+  apostrophed words. `Build`/`Query` take pre-tokenized docs, so callers pick the
+  analyzer per corpus; `Tokenize` stays the code-RAG default. Widens the audience
+  to natural-language corpora.
 - **`bench` package — reproducible recall + latency harness** (Experimental
   tooling). `bench.Run(corpus, queries, k, cfg)` measures, for Flat / HNSW /
   FlatI8: recall@k vs the exact Flat top-k, per-query latency percentiles
