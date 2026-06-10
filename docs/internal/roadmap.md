@@ -129,9 +129,21 @@ land. goinfer inherits every one of these.
    port `dotF32`/`dotI8`, bench portable-vs-asm on both arches, and if within ~10%
    migrate the kernels and delete the `.s` files (the real bus-factor win). Track
    the upstream Go proposal for arm64 + graduation.
-6. **AVX-512/VNNI dispatch tier** — [low-medium / medium]. Currently absent;
-   reasonable to keep deprioritized (downclocking caveats, AVX2 ubiquity), but
-   revisit if #5 makes it nearly free. AMX: out of scope.
+6. **AVX-512/VNNI dispatch tier** — ⏸️ **DEFER (no test hardware + precondition
+   failed).** Assessed 2026-06-09. Blocked on the same hardware gap that defers
+   the VNNI W4A8 remainder: AVX-512 and VNNI need Zen 4+ / Intel Cascade Lake+,
+   and NEITHER available box has it — this host is arm64 (no x86 SIMD), and the
+   amd64 validation box is a Zen 2 Ryzen 7 3700X (AVX2 only). Writing the kernels
+   + CPUID detection blind = three unvalidatable things in a 1.0 lib (the asm only
+   runs on hardware we can't test; the detection can't be confirmed to return
+   *true* correctly). And the item's own precondition — "revisit if #5 makes it
+   nearly free" — failed: §1.5 deferred. Plus the standing caveats (downclocking,
+   AVX2 ubiquity). Revisit when a Zen 4+/Cascade-Lake+ box is available. AMX: out
+   of scope.
+
+   **Hardware-gated tail (all unblock on one Zen 4+/Cascade-Lake+ box):** this
+   item; the §1.1 VNNI `VPDPBUSD` W4A8 variant; and (separately) §1.5 once archsimd
+   also ships arm64 + graduates. The AVX2 paths are the proven fallback for all.
 7. **Windows real mmap** (`CreateFileMapping`) instead of heap-read fallback —
    [low / low-medium]. Matters once any sizable consumer runs on Windows.
 
