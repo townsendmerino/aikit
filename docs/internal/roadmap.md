@@ -257,8 +257,8 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    `FuzzGGUFDequant`); found & fixed 5 crashes (untrusted-count OOM, two int
    overflows wrapping bounds checks, a negative-length and the ∏dims overflow).
    Four committed regression seeds; CI runs a 20s/target smoke. **Remaining:**
-   the "longer nightly" run (the PR smoke is the short pass); and `chunk`
-   tokenizer/scanner fuzzing (§3.4) is still open.
+   only the "longer nightly" run (the PR smoke is the short pass) — `chunk`
+   tokenizer/scanner fuzzing is now done (§3.4).
 2. **Debug-build alignment asserts in quant kernels** — [medium / low].
    `DequantizeRow`/W4A8 group paths trust K alignment (caller contract).
    A build-tagged (`//go:build aikit_checks`) assert layer catches misuse
@@ -269,8 +269,14 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    At minimum, promote the contract into the package doc with a WRONG/RIGHT
    example pair.
 4. **Fuzz `chunk` tokenizer/scanner paths** (`bm25.Tokenize`, markdown
-   scanner, regex chunkers) — [low-medium / low]. Same mechanism as #1;
-   panics in a chunker take down an indexing pipeline.
+   scanner, regex chunkers) — ✅ **DONE.** Four native fuzz targets:
+   `FuzzTokenize` (bm25 code + plain tokenizers), `FuzzLineChunker` (the
+   universal fallback via `ChunkFile`), `FuzzMarkdownChunk` (header scanner /
+   fences), `FuzzRegexChunk` (per-language regexes on untrusted bytes + langs).
+   No crashes across ~14M execs total in the 20s/target smoke; each asserts
+   no-panic plus structural invariants (1-based lines, `Text` ≤ source). Seeds
+   committed in `f.Add`; the CI fuzz-smoke step now covers them alongside §3.1.
+   (chunk/treesitter is a separate cgo submodule — out of this module's fuzzing.)
 
 ## 4. Retrieval quality
 
