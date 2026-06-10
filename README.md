@@ -79,6 +79,48 @@ grammars, not cgo. The core pulls in neither.
 
 ---
 
+## How aikit compares
+
+Measured against pure-Go ANN libraries on **real Model2Vec embeddings** (N=8000,
+dim 256, M=16, EfSearch=64, k=10; recall@10 vs exact cosine). Reproduce with
+[`benchmarks/`](benchmarks/) — `cd benchmarks && GOWORK=off go run .` — which also
+documents the methodology and why synthetic vectors can't measure recall@k.
+
+| index | recall@10 | p50 latency | index memory |
+|---|---|---|---|
+| **aikit HNSW** | **0.995** | 0.085 ms | ~2 MB |
+| **aikit FlatI8** (int8) | **0.995** | 0.13 ms | ~2 MB |
+| aikit Flat (exact) | 1.000 | 0.28 ms | ~0 MB (zero-copy) |
+| [coder/hnsw](https://github.com/coder/hnsw) | 0.22 † | 0.058 ms | ~8 MB |
+| [chromem-go](https://github.com/philippgille/chromem-go) (exact) | 1.000 | 3.77 ms | ~4 MB |
+
+**FlatI8 is the standout** — 0.995 recall at near-exact latency and ¼ the float32
+memory. † coder/hnsw's recall is *structurally* construction-limited on clustered
+real embeddings (flat across search-ef 64→800; only ~0.4 even at M=64); it uses
+plain greedy neighbor selection, whereas aikit defaults to the **Algorithm-4
+diversity heuristic** built for exactly this case. Verified fair (canonical API,
+correct distance, full k, finds the right region) — see the
+[benchmark notes](benchmarks/README.md#reading-the-table).
+
+### Capability matrix
+
+| | cgo-free | model inference | exact | ANN graph | int8 | persistence | lexical + hybrid | learned-sparse | static binary |
+|---|---|---|---|---|---|---|---|---|---|
+| **aikit** | ✅ | ✅ Model2Vec + CodeRankEmbed | ✅ Flat | ✅ HNSW (Alg-4) | ✅ FlatI8 | ✅ HNSW | ✅ BM25 + RRF/RSF | ✅ sparse | ✅ **1.8 MB** |
+| coder/hnsw | ✅ | — | — | ✅ | — | ✅ | — | — | ✅ |
+| chromem-go | ✅ | via external API | ✅ | — | — | ✅ | — | — | ✅ |
+| Bleve v2 | dense needs cgo (faiss) | — | — | ✅ vector | — | ✅ | ✅ full-text | — | dense: ✗ |
+| hugot | ✗ (ONNX Runtime) | ✅ HF pipelines | — | — | — | — | — | — | ✗ |
+
+aikit is the only one of these that ships the **whole pipeline** — local model
+inference *and* dense + lexical + sparse retrieval *and* fusion — in a single
+**1.8 MB pure-Go static binary** (`CGO_ENABLED=0`, the full `ann`+`bm25`+`fuse`+
+`embed` surface). hugot covers inference but needs the ONNX Runtime native library;
+the vector DBs cover indexing but not inference. The `//go:embed`-a-corpus,
+zero-deploy story is the lane no Python or ONNX stack reaches.
+
+---
+
 ## Stability tiers
 
 These two tiers define what 1.0 promises. The split is **frozen for v1.0**, and

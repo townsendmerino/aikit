@@ -36,16 +36,21 @@
 The code is ahead of its audience (the road-to-1.0 critique's point, still
 true two releases later). Everything here is unblocked today.
 
-1. **Comparative benchmark table, published in the README** — [high /
-   low-medium]. Now fully unblocked: `bench` exists and earned credibility by
-   finding the Alg-4 recall problem. Run aikit vs **hugot's pure-Go backend**
-   (now directly comparable: it runs MiniLM-class models and ships a
-   CrossEncoders pipeline — it is no longer adjacent, it overlaps),
-   coder/hnsw, Bleve vector, chromem-go: recall@k, p50/p95, build time,
-   memory, binary size, cgo-or-not. Add a BEIR/VectorDBBench slice for
-   absolute numbers people can cross-reference. hugot is publicly betting on
-   Go SIMD for a future 3–10× pure-Go win — publish while the perf lead from
-   the hand-tuned kernels is large and measurable.
+1. **Comparative benchmark table, published in the README** — ✅ **DONE (first
+   cut).** New isolated `benchmarks/` module (own `go.mod`, `replace => ../`, so
+   competitor deps never reach the core graph — verified) drives aikit vs
+   coder/hnsw vs chromem-go through one measurement path on **real Model2Vec
+   embeddings** (the methodology pivot that matters: synthetic high-dim vectors
+   can't measure recall@k — distance concentration / near-dup ties — so both HNSWs
+   scored ~0.55 until the switch). Published in the README: a perf table (aikit
+   HNSW/FlatI8 ~0.995 recall, FlatI8 at ¼ memory; coder/hnsw structurally
+   construction-limited at ~0.22 — its plain selection vs aikit's Alg-4, verified
+   fair via ef/M sweeps; chromem-go exact but ~45× p50) + a capability matrix
+   (cgo/inference/ANN/int8/persistence/hybrid/sparse/static-binary) covering Bleve
+   and hugot too + the 1.8 MB pure-Go static-binary point. **Remaining (follow-up):**
+   a BEIR/VectorDBBench slice for cross-referenceable absolute numbers, and an
+   inference-side `embed`/`encoder` vs hugot throughput row (different category, so
+   matrix-only for now).
 2. **`examples/embedded-corpus` showcase** — [high / low]. Also fully
    unblocked (HNSW `MarshalBinary`+`Load` shipped): one `main.go` that
    `//go:embed`s corpus + Model2Vec model + prebuilt HNSW index and serves
