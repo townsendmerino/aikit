@@ -96,3 +96,11 @@ func BenchmarkFlatQuery_scale(b *testing.B) {
 		}
 	}
 }
+
+func BenchmarkHNSWBuild(b *testing.B) {
+	corpus := makeUnitVectors(10_000, 256, 0xbeef)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = BuildHNSW(corpus, Config{M: 16, EfConstruction: 200, EfSearch: 64, Seed: 1})
+	}
+}

@@ -28,14 +28,58 @@ package ann
 // reproducible tests.
 
 import (
-	"container/heap"
 	"math"
 	"math/rand/v2"
 	"sort"
+	"sync"
 
 	"github.com/townsendmerino/aikit/linalg"
 	"github.com/townsendmerino/aikit/topk"
 )
+
+// visitTracker is searchLayer's visited set as a generation-stamped slice instead
+// of a map: reset() bumps a generation counter (O(1), no clearing), seen/mark are
+// plain array reads/writes (no hashing, no per-search allocation). A map here cost
+// ~16% of build CPU. NOT safe for concurrent use — build reuses one (single-writer
+// Add); each Query borrows one from a pool.
+type visitTracker struct {
+	stamp []uint32
+	gen   uint32
+}
+
+func (v *visitTracker) reset(n int) {
+	if cap(v.stamp) < n {
+		// Grow with headroom — during a build n rises by 1 each insert, so an
+		// exact-size make would reallocate every call.
+		c := 2 * cap(v.stamp)
+		if c < n {
+			c = n
+		}
+		v.stamp = make([]uint32, n, c)
+	} else {
+		v.stamp = v.stamp[:n]
+	}
+	v.gen++
+	if v.gen == 0 { // counter wrapped — clear once and restart
+		for i := range v.stamp {
+			v.stamp[i] = 0
+		}
+		v.gen = 1
+	}
+}
+
+func (v *visitTracker) seen(id int) bool { return v.stamp[id] == v.gen }
+func (v *visitTracker) mark(id int)      { v.stamp[id] = v.gen }
+
+// getVis / putVis lend a visitTracker to a Query from the per-index pool, so
+// concurrent queries don't share state and don't each allocate an N-sized buffer.
+func (h *HNSW) getVis() *visitTracker {
+	if v, ok := h.queryVis.Get().(*visitTracker); ok {
+		return v
+	}
+	return &visitTracker{}
+}
+func (h *HNSW) putVis(v *visitTracker) { h.queryVis.Put(v) }
 
 // Config tunes the graph. Zero values fall back to the documented
 // defaults, so Config{} is a sensible build.
@@ -83,6 +127,8 @@ type HNSW struct {
 	seed           uint64 // Config.Seed, retained so a loaded index re-seeds rng
 	heuristic      bool   // Config.Heuristic — Alg-4 diversity neighbor selection
 	rng            *rand.Rand
+	buildVis       visitTracker // reused across searchLayer calls during Add (single-writer)
+	queryVis       sync.Pool    // *visitTracker per concurrent Query
 }
 
 // NewHNSW creates an empty index. Add vectors with Add, or use BuildHNSW
@@ -181,7 +227,7 @@ func (h *HNSW) Add(vec []float32) int {
 	// Insert layers min(l, maxLayer) … 0.
 	start := min(h.maxLayer, l)
 	for layer := start; layer >= 0; layer-- {
-		w := h.searchLayer(vec, []int{ep}, h.efConstruction, layer)
+		w := h.searchLayer(vec, []int{ep}, h.efConstruction, layer, &h.buildVis)
 		neighbors := h.selectNeighbors(w, h.mmax(layer))
 		// Link id → neighbors.
 		ids := make([]int32, len(neighbors))
@@ -246,8 +292,8 @@ func (h *HNSW) greedyClosest(q []float32, ep, layer int) int {
 // searchLayer returns the ef vectors in `layer` most similar to q,
 // reachable from entryPoints, as a slice sorted by descending
 // similarity. This is the HNSW inner loop (paper Algorithm 2).
-func (h *HNSW) searchLayer(q []float32, entryPoints []int, ef, layer int) []cand {
-	visited := make(map[int]struct{}, ef*2)
+func (h *HNSW) searchLayer(q []float32, entryPoints []int, ef, layer int, vis *visitTracker) []cand {
+	vis.reset(len(h.vecs))
 	// candidates: max-heap on sim (expand the closest-to-q first).
 	candidates := &candHeap{min: false}
 	// results: min-heap on sim (the worst of the ef-best sits on top for
@@ -256,37 +302,37 @@ func (h *HNSW) searchLayer(q []float32, entryPoints []int, ef, layer int) []cand
 
 	for _, ep := range entryPoints {
 		s := h.sim(q, ep)
-		visited[ep] = struct{}{}
-		heap.Push(candidates, cand{id: ep, sim: s})
-		heap.Push(results, cand{id: ep, sim: s})
+		vis.mark(ep)
+		candidates.push(cand{id: ep, sim: s})
+		results.push(cand{id: ep, sim: s})
 	}
 
-	for candidates.Len() > 0 {
-		c := heap.Pop(candidates).(cand)
+	for candidates.len() > 0 {
+		c := candidates.pop()
 		// If the closest remaining candidate is worse than the worst
 		// result and we already have ef, no unexplored node can improve
 		// the result set — stop.
-		if results.Len() >= ef && c.sim < results.items[0].sim {
+		if results.len() >= ef && c.sim < results.items[0].sim {
 			break
 		}
 		for _, nb := range h.nodes[c.id].nbrs[layer] {
 			n := int(nb)
-			if _, seen := visited[n]; seen {
+			if vis.seen(n) {
 				continue
 			}
-			visited[n] = struct{}{}
+			vis.mark(n)
 			s := h.sim(q, n)
-			if results.Len() < ef || s > results.items[0].sim {
-				heap.Push(candidates, cand{id: n, sim: s})
-				heap.Push(results, cand{id: n, sim: s})
-				if results.Len() > ef {
-					heap.Pop(results) // drop the current worst
+			if results.len() < ef || s > results.items[0].sim {
+				candidates.push(cand{id: n, sim: s})
+				results.push(cand{id: n, sim: s})
+				if results.len() > ef {
+					results.pop() // drop the current worst
 				}
 			}
 		}
 	}
 
-	out := make([]cand, results.Len())
+	out := make([]cand, results.len())
 	copy(out, results.items)
 	sort.Slice(out, func(a, b int) bool {
 		if out[a].sim != out[b].sim {
@@ -321,7 +367,9 @@ func (h *HNSW) QueryEf(q []float32, k, ef int) []Hit {
 		ep = h.greedyClosest(q, ep, layer)
 	}
 	// Full ef search at layer 0.
-	found := h.searchLayer(q, []int{ep}, ef, 0)
+	vis := h.getVis()
+	found := h.searchLayer(q, []int{ep}, ef, 0, vis)
+	h.putVis(vis)
 	if len(found) > k {
 		found = found[:k]
 	}
@@ -442,18 +490,49 @@ type candHeap struct {
 	min   bool
 }
 
-func (h *candHeap) Len() int { return len(h.items) }
-func (h *candHeap) Less(i, j int) bool {
+// Concrete typed heap — push/pop take/return cand directly. container/heap's
+// Push(any)/Pop()any box every element into an interface, which during a build
+// was ~23M heap allocations (1.8 GB); this version allocates only when the items
+// slice grows.
+func (h *candHeap) len() int { return len(h.items) }
+
+func (h *candHeap) less(i, j int) bool {
 	if h.min {
 		return h.items[i].sim < h.items[j].sim
 	}
 	return h.items[i].sim > h.items[j].sim
 }
-func (h *candHeap) Swap(i, j int) { h.items[i], h.items[j] = h.items[j], h.items[i] }
-func (h *candHeap) Push(x any)    { h.items = append(h.items, x.(cand)) }
-func (h *candHeap) Pop() any {
-	n := len(h.items)
-	x := h.items[n-1]
-	h.items = h.items[:n-1]
-	return x
+
+func (h *candHeap) push(c cand) {
+	h.items = append(h.items, c)
+	for i := len(h.items) - 1; i > 0; {
+		p := (i - 1) / 2
+		if !h.less(i, p) {
+			break
+		}
+		h.items[i], h.items[p] = h.items[p], h.items[i]
+		i = p
+	}
+}
+
+func (h *candHeap) pop() cand {
+	top := h.items[0]
+	n := len(h.items) - 1
+	h.items[0] = h.items[n]
+	h.items = h.items[:n]
+	for i := 0; ; {
+		l, r, best := 2*i+1, 2*i+2, i
+		if l < n && h.less(l, best) {
+			best = l
+		}
+		if r < n && h.less(r, best) {
+			best = r
+		}
+		if best == i {
+			break
+		}
+		h.items[i], h.items[best] = h.items[best], h.items[i]
+		i = best
+	}
+	return top
 }

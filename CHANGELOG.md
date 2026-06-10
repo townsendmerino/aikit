@@ -12,6 +12,15 @@ it.
 
 ### Changed
 
+- **`ann.HNSW` build is ~20% faster with 7× fewer allocations** (no graph/recall
+  change). Profiling the build (which the Alg-4 default below made heavier) found
+  two pure-overhead hotspots: a fresh `map` allocated per search step, and
+  `container/heap`'s `interface{}` API boxing every candidate — ~23M allocations /
+  3.6 GB for a 10k×256-d build. Replaced with a generation-stamped visited buffer
+  (reused across searches; pooled per concurrent `Query`) and a concrete typed
+  heap (no boxing). The build now does 3.3M allocs / 1.3 GB and runs ~17.2 → 13.5s
+  (10k); recall is byte-for-byte identical. The remaining build cost is the Alg-4
+  diversity dot products — inherent to the recall win, not overhead.
 - **`ann.HNSW` now defaults to the Algorithm-4 diversity heuristic for neighbor
   selection** (Experimental tier; was plain M-nearest, Algorithm 3). The `bench`
   harness exposed that the old selection capped HNSW recall@10 at ~0.68 on

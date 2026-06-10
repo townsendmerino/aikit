@@ -260,8 +260,12 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    test), at ~2× build cost and unchanged query latency; neutral on random data.
    `Config.SimpleNeighbors` opts back to Alg-3. Persisted format bumped to v2 (one
    selection-mode byte). Textbook measure-fix-measure: the harness found it, drove
-   the fix, and verified it. *Follow-up:* HNSW build is still slow at scale (~17s
-   for 50k with the heuristic) — a separate perf item, not a correctness one.
+   the fix, and verified it. *Build-speed follow-up (done):* profiling the build
+   found two pure-overhead hotspots — a per-search `map` and `container/heap`'s
+   `interface{}` boxing (~23M allocs/build) — replaced with a gen-stamped visited
+   buffer + a concrete typed heap: ~20% faster, 7× fewer allocs, recall identical.
+   The residual cost is the Alg-4 diversity dots (inherent). A `BenchmarkHNSWBuild`
+   now guards it.
 2. **Recall regression tests on a real slice** — ✅ **DONE.** A 50-doc / 5-topic
    real-embedding slice (Model2Vec) is frozen into `testdata/retrieval_eval.json`
    with a hand-curated same-topic relevance set; `TestRetrievalRecall` runs
