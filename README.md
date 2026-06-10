@@ -118,6 +118,9 @@ settles.
 - `ann.HNSW.MarshalBinary` / `ann.Load` — index persistence (the
   `//go:embed`-an-index pattern). The serialized format is versioned from day one
   but stays Experimental until the graph internals settle.
+- `ann.FlatI8` / `ann.NewFlatI8` — int8-quantized dense index (¼ the memory,
+  scored via the W8A8 kernel). Same `Hit`/`Query` shape as `Flat`; new surface, so
+  Experimental.
 - `sparse` — the whole package is new (learned-sparse / SPLADE retrieval). The
   `SparseVec` / `Index` / `Query` shape is settled, but it ships only the index +
   scorer half (an in-process masked-LM expansion head is a planned follow-up that

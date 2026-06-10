@@ -187,11 +187,16 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    coder/hnsw. A `bench/` harness (VectorDBBench subset or BEIR slice +
    p50/p95/p99 + recall@k) turns "parity-tested" into a marketable number.
    Doubles as the regression gate §3.1 needs.
-4. **Quantized ANN storage (int8 vectors; optional binary pre-filter)** —
-   [medium / medium]. 4× memory reduction on the dense index; `linalg`
-   already has the int8 dot kernels. Matters exactly in aikit's niche
-   (embedded, single-binary, RAM-constrained). Binary/Hamming pre-filter +
-   f32 rescore as a follow-up.
+4. **Quantized ANN storage (int8 vectors)** — ✅ **DONE (Flat).** `ann.FlatI8`
+   stores each unit vector as int8 + a per-vector scale (¼ the float32 footprint)
+   and scores via `linalg.MatmulBTW8A8` at M=1 (dynamic query quant, SIMD +
+   parallel) — reusing the existing int8 kernels exactly as the roadmap noted.
+   Same `Hit`/`Query` shape as `Flat`, fuses identically. Measured: recall@10 vs
+   exact float32 Flat = **1.00 on real Model2Vec embeddings**, 0.986 on
+   adversarial random; **3.94× smaller**. *Follow-ups:* `FlatI8` persistence
+   (MarshalBinary, pairs with §2.2 for an even smaller embedded blob); an int8
+   HNSW (its `sim()` would int8-dot during search/build); and the **binary/Hamming
+   pre-filter + f32 rescore** the item flagged.
 5. **Generalize `encoder` beyond NomicBert (config-driven BERT-family
    loader)** — [medium / high]. Today: CodeRankEmbed only. Termite/hugot run
    arbitrary HF models. Full generality is ONNX-shaped (don't go there);

@@ -11,14 +11,12 @@ import (
 	"github.com/townsendmerino/aikit/embed"
 )
 
-// TestFlat_recallReal_Model2Vec is the spec's "recall@k on a REAL embedding set"
-// check: it embeds a corpus of varied code-like texts with the actual Model2Vec
-// model, then confirms Flat.Query (float32 SIMD dot) returns the same top-k as an
-// exact float64 brute-force scan. Real embeddings cluster — far more near-ties
-// than random unit vectors — so this is the harder test that the f32 swap leaves
-// recall unchanged (only sub-ULP boundary ties may reorder). Skips without the
-// per-machine model checkpoint (so CI stays green); run with testdata/model.
-func TestFlat_recallReal_Model2Vec(t *testing.T) {
+// realCorpus loads the Model2Vec checkpoint and embeds a clustered corpus of
+// code-ish strings over shared token pools (so many embeddings land close
+// together — the near-tie stress case), plus a few held-out queries. Skips
+// without the per-machine model so CI stays green; run with testdata/model.
+func realCorpus(t *testing.T) (m *embed.StaticModel, vecs [][]float32, queries []string) {
+	t.Helper()
 	const modelDir = "../testdata/model"
 	if _, err := os.Stat(filepath.Join(modelDir, "model.safetensors")); err != nil {
 		t.Skipf("no model at %s — see testdata/README.md", modelDir)
@@ -27,9 +25,6 @@ func TestFlat_recallReal_Model2Vec(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// A real, clustered corpus: varied code-ish strings over shared token pools,
-	// so many embeddings land close together (the near-tie stress case).
 	verbs := []string{"get", "set", "make", "parse", "read", "write", "open", "close", "find", "build"}
 	nouns := []string{"User", "Index", "Buffer", "Token", "Vector", "Config", "Result", "Node", "Query", "Cache"}
 	types := []string{"int", "string", "[]byte", "error", "bool", "float64"}
@@ -41,21 +36,29 @@ func TestFlat_recallReal_Model2Vec(t *testing.T) {
 			}
 		}
 	}
-	vecs := make([][]float32, len(texts))
+	vecs = make([][]float32, len(texts))
 	for i, txt := range texts {
 		vecs[i] = m.Encode(txt)
 	}
-	f := ann.New(vecs)
-	t.Logf("real corpus: %d Model2Vec embeddings, dim %d", len(vecs), m.Dim())
-
-	const k, tieEps = 10, 1e-5
-	queries := []string{
+	queries = []string{
 		"function that parses a user token",
 		"open and read a config buffer",
 		"build an index over result vectors",
 		"close the query cache node",
 		"write bytes to an output buffer",
 	}
+	return m, vecs, queries
+}
+
+// TestFlat_recallReal_Model2Vec is the spec's "recall@k on a REAL embedding set"
+// check for the float32 SIMD-dot swap: Flat.Query (float32 SIMD) must return the
+// same top-k as an exact float64 scan, with only sub-ULP boundary ties reordering.
+func TestFlat_recallReal_Model2Vec(t *testing.T) {
+	m, vecs, queries := realCorpus(t)
+	f := ann.New(vecs)
+	t.Logf("real corpus: %d Model2Vec embeddings, dim %d", len(vecs), m.Dim())
+
+	const k, tieEps = 10, 1e-5
 	flips := 0
 	for qi, qtext := range queries {
 		q := m.Encode(qtext)
@@ -97,4 +100,39 @@ func TestFlat_recallReal_Model2Vec(t *testing.T) {
 		}
 	}
 	t.Logf("%d queries × top-%d on real embeddings: %d boundary tie-flips (recall unchanged)", len(queries), k, flips)
+}
+
+// TestFlatI8_recallReal_Model2Vec is the §2.4 quantized-storage recall check on
+// REAL embeddings: the int8 FlatI8 index should keep nearly all of the exact
+// float32 Flat top-k. Real embeddings cluster, so this is the realistic recall
+// (the embedded/RAM-constrained niche), not just random unit vectors.
+func TestFlatI8_recallReal_Model2Vec(t *testing.T) {
+	m, vecs, queries := realCorpus(t)
+	f32 := ann.New(vecs)
+	i8 := ann.NewFlatI8(vecs)
+
+	const k = 10
+	var sum float64
+	for _, qtext := range queries {
+		q := m.Encode(qtext)
+		truth := f32.Query(q, k)
+		got := i8.Query(q, k)
+
+		set := make(map[int]bool, k)
+		for _, h := range truth {
+			set[h.Index] = true
+		}
+		hit := 0
+		for _, h := range got {
+			if set[h.Index] {
+				hit++
+			}
+		}
+		sum += float64(hit) / float64(k)
+	}
+	mean := sum / float64(len(queries))
+	t.Logf("FlatI8 recall@%d vs float32 Flat on %d real embeddings: mean %.4f", k, len(vecs), mean)
+	if mean < 0.90 {
+		t.Errorf("real-embedding recall@%d = %.4f, want ≥ 0.90", k, mean)
+	}
 }

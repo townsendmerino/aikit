@@ -39,6 +39,16 @@ it.
 
 ### Added
 
+- **`ann.FlatI8` — int8-quantized dense index** (Experimental tier). The int8
+  sibling of `Flat`: stores each L2-normalized vector as int8 codes + a per-vector
+  scale (¼ the memory) and scores a query by int8×int8 dot through `linalg`'s W8A8
+  kernel (dynamic query quantization, SIMD + parallel — W8A8 at M=1). Same
+  `Hit`/`Query(q, k)` shape as `Flat`, so it's a swap-in and feeds `fuse.RRF`
+  identically — the lever for embedded / RAM-constrained / `//go:embed`-the-index
+  retrieval. Measured recall@10 vs exact float32 `Flat`: **1.00 on real Model2Vec
+  embeddings, 0.986 on adversarial random unit vectors**, at **3.94× smaller**
+  storage. Follow-ups: `FlatI8` persistence, int8 HNSW, and a binary/Hamming
+  pre-filter.
 - **`ann.HNSW` persistence — `MarshalBinary` + `Load`** (Experimental tier). The
   graph was rebuilt per process; now a built index serializes to a versioned byte
   blob (`MarshalBinary`, also `encoding.BinaryMarshaler`) and reloads query-ready
