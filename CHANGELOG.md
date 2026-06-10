@@ -49,6 +49,13 @@ it.
 
 ### Added
 
+- **`fuse.RSF` — Relative Score Fusion** (Experimental surface). A score-based
+  alternative to the rank-based `RRF`: each ranking's raw scores are min-max
+  normalized to [0,1] independently, then summed (`RSFWeighted` for a per-ranking
+  tilt). Unlike RRF it preserves how *much* better one hit is than the next within
+  a list — better when the per-list scores are calibrated (cosine sims, BM25 in
+  one corpus); RRF stays the choice for incomparable/noisy scales. Adds `Scored`
+  and the `Scores` projection helper (the score-aware counterpart of `Keys`).
 - **`bm25.TokenizePlain` — general-text analyzer** (Experimental surface). A
   Unicode word tokenizer (lowercase, split on any non-letter/non-digit, no
   identifier splitting) alongside the code-tuned `Tokenize` — which over-fragments

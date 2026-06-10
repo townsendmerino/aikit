@@ -266,10 +266,12 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    tolerance (both also 0.86 here — Alg-4 + int8 track exact Flat perfectly). So an
    index or scoring change that degrades retrieval quality now fails a test, not
    just a benchmark. `TestGenRetrievalFixture` (model-gated) rebuilds the fixture.
-3. **`fuse` extensions: weighted-RRF presets / score-aware fusion (RSF)** —
-   [low / low]. Antfly exposes weighted strategy mixing; `fuse.RRFWeighted`
-   exists, but a documented recipe (and optionally relative-score fusion)
-   closes the gap cheaply.
+3. **`fuse` extensions: weighted presets / score-aware fusion (RSF)** —
+   ✅ **DONE.** `fuse.RSF` / `RSFWeighted` add relative-score fusion (per-ranking
+   min-max normalize → sum) alongside the rank-based `RRF`/`RRFWeighted`, with
+   `Scored` + the `Scores` projection helper. Package doc now frames the choice
+   (RRF for incomparable/noisy scales, RSF when magnitude is calibrated). Tests
+   pin the normalization/weighting/negatives/edge cases + a runnable Example.
 
 ## 5. API & code health
 

@@ -6,12 +6,18 @@
 // policy for how to weight them is the consumer's job (glue lives in
 // ken); fuse just does the math.
 //
-// The algorithm is Reciprocal Rank Fusion (Cormack, Clarke & Büttcher,
-// SIGIR 2009): each list contributes 1/(k+rank) to every item it ranks,
-// summed across lists. RRF is rank-based, not score-based, which is its
-// whole point — it fuses a BM25 score (unbounded, log-ish) and a cosine
+// The default algorithm is Reciprocal Rank Fusion (Cormack, Clarke &
+// Büttcher, SIGIR 2009): each list contributes 1/(k+rank) to every item it
+// ranks, summed across lists. RRF is rank-based, not score-based, which is
+// its whole point — it fuses a BM25 score (unbounded, log-ish) and a cosine
 // similarity (bounded [-1,1]) without needing to normalize the two
 // incomparable score scales. Only the *order* of each list matters.
+//
+// When the per-list scores ARE calibrated (cosine sims, BM25 within one
+// corpus), RSF (Relative Score Fusion, rsf.go) is the alternative: it min-max
+// normalizes each list's scores to [0,1] and sums them, so it keeps how much
+// better one hit is than the next — information RRF discards. Pick RRF for
+// robustness to incomparable/noisy scores, RSF when magnitude is meaningful.
 //
 // Keys are generic and comparable, so callers fuse on whatever id they
 // index by — an int chunk index (ann.Hit.Index, bm25.Result.Doc) or a

@@ -24,7 +24,7 @@ large embedded-grammar payload) — is quarantined in the separate
 | `topk` | bounded min-heap top-K selector (generic) | — |
 | `ann` | cosine ANN over a dense matrix — exact flat scan + approximate HNSW graph | — |
 | `bm25` | identifier-aware BM25 lexical index (Lucene-variant); `Tokenize` (code) + `TokenizePlain` (general text) | — |
-| `fuse` | reciprocal-rank fusion (RRF) — blend lexical + dense rankings for hybrid search | — |
+| `fuse` | rank fusion (RRF) + relative-score fusion (RSF) — blend lexical + dense rankings for hybrid search | — |
 | `sparse` | learned-sparse (SPLADE-style) retrieval — inverted index + sparse-dot scoring over pre-computed vectors | — |
 | `bench` | reproducible recall + latency harness for the dense indexes (Flat / HNSW / FlatI8) — Experimental tooling | — |
 | `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | — |
@@ -126,6 +126,8 @@ settles.
   Experimental.
 - `bm25.TokenizePlain` — new general-text (Unicode word) analyzer alongside the
   code-tuned `Tokenize` (which stays the default); pick whichever fits the corpus.
+- `fuse.RSF` / `fuse.RSFWeighted` / `fuse.Scored` / `fuse.Scores` — new
+  relative-score fusion alongside the rank-based `RRF`; new surface, settling.
 - `sparse` — the whole package is new (learned-sparse / SPLADE retrieval). The
   `SparseVec` / `Index` / `Query` shape is settled, but it ships only the index +
   scorer half (an in-process masked-LM expansion head is a planned follow-up that
