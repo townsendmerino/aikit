@@ -148,3 +148,5 @@ docs/keepers.txt
 # local multi-module dev workspace (never commit)
 go.work
 go.work.sum
+
+# Python parity toolchain (§2.1) — recreate from scripts/requirements.txt

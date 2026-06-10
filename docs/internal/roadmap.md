@@ -87,11 +87,11 @@ Every remaining model-side feature is parity-blocked the same way: it needs
 torch + sentence-transformers + a checkpoint to generate golden fixtures.
 Items 2–5 are sequenced behind item 1.
 
-1. **Stand up the Python parity toolchain** — [enabler / low-medium]. A
-   pinned `.venv` (torch-cpu is fine) + the existing `scripts/pin_*.py`
-   pattern, runnable on the Mac. Nothing new intellectually — it's the same
-   oracle discipline the repo already lives by; it just needs an environment
-   that has it.
+1. **Stand up the Python parity toolchain** — ✅ **DONE.** A gitignored `.venv`
+   (torch 2.12 / sentence-transformers 5.5.1 / transformers 5.11.0, CPU) pinned in
+   `scripts/requirements.txt` with a `scripts/README.md` setup + regeneration doc.
+   Validated by loading all-MiniLM-L6-v2 and embedding (dim 384). Unblocks the rest
+   of the model-blocked track (§2.2–2.4).
 2. **MiniLM-class encoder support (§2.5 remainder)** — [high / high]. The
    pooling axis is done (internal seam); remaining axes are learned absolute
    positions + GELU FFN + the sentence-transformers config loader, each
