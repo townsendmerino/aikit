@@ -1,6 +1,7 @@
 package ann
 
 import (
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"testing"
@@ -71,5 +72,26 @@ func BenchmarkFlatQuery(b *testing.B) {
 				_ = f.Query(query, 10)
 			}
 		})
+	}
+}
+
+// BenchmarkFlatQuery_scale covers the SIMD-dot task's grid (N=10k/100k at d=768,
+// the CodeRankEmbed encoder dimension) on top of the d=128 Model2Vec curve above —
+// the larger d and N that show the linalg.Dot/Dot8x4 win at production scale.
+func BenchmarkFlatQuery_scale(b *testing.B) {
+	for _, d := range []int{128, 768} {
+		for _, n := range []int{10_000, 100_000} {
+			b.Run(fmt.Sprintf("d%d/N%d", d, n), func(b *testing.B) {
+				corpus := makeUnitVectors(n, d, 0xfeed)
+				query := makeUnitVectors(1, d, 0xdade)[0]
+				f := New(corpus)
+				b.SetBytes(int64(n) * int64(d) * 4)
+				b.ReportAllocs()
+				b.ResetTimer()
+				for i := 0; i < b.N; i++ {
+					_ = f.Query(query, 10)
+				}
+			})
+		}
 	}
 }

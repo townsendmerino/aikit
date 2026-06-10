@@ -21,7 +21,10 @@
   the per-vector swap, near memory bandwidth), ~1.4× HNSW search. Decision:
   `float32`-precision scores accepted (HNSW approximate → silent; Flat documented,
   recall verified unchanged — 0 tie-flips vs float64; the recall test also caught
-  an arm64 Dot8x4 4-lane-partial-sum bug before it shipped).
+  an arm64 Dot8x4 4-lane-partial-sum bug before it shipped). Validation later
+  closed to the original spec (`task-ann-simd-dots.md`): a real-embedding recall
+  check (Model2Vec, 600 clustered vectors → 0 tie-flips) and the d=768 / N=10k,100k
+  benchmark grid (bandwidth-bound, 21–37 GB/s).
 - **§1.4 Int8 M-loop register tiling for W8A8 — CLOSED (measured no win).** Built
   + benchmarked the 4-row arm64 SDOT tile (bit-identical); M=64 was a statistical
   tie. W8A8 at M>1 is SDOT-throughput-bound (~3 SDOT/cycle, near M1 peak) and the
