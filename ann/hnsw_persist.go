@@ -12,8 +12,9 @@ import (
 //
 //	magic uint32 | version uint32
 //	dim, ndocs, m, m0, efConstruction, efSearch, entry, maxLayer  (int32 each)
-//	mL float64 | seed uint64 | heuristic uint8 (0/1)
-//	vectors:  ndocs × dim float32 (little-endian, row-major)
+//	mL float64 | seed uint64 | heuristic uint8 (0/1) | int8 uint8 (0/1)
+//	vectors:  int8 mode → ndocs×dim int8 codes + ndocs float32 scales;
+//	          else      → ndocs × dim float32 (little-endian, row-major)
 //	graph:    per node — layer int32, then for l in 0..layer:
 //	          nbrCount int32, then nbrCount × neighbor id int32
 //
@@ -23,7 +24,7 @@ import (
 // over-allocating.
 const (
 	hnswMagic   uint32 = 0x484E5357 // "HNSW"
-	hnswVersion uint32 = 2          // v2 added the neighbor-selection (heuristic) byte
+	hnswVersion uint32 = 3          // v3 added the int8 storage-mode byte (+ int8 codes/scales)
 	// rngSplit matches NewHNSW's PCG seeding so a loaded index re-creates an
 	// equivalently-seeded rng (for Add-after-load).
 	rngSplit uint64 = 0x9e3779b97f4a7c15
@@ -43,7 +44,12 @@ func (h *HNSW) MarshalBinary() ([]byte, error) {
 			nNbr += len(l)
 		}
 	}
-	b := make([]byte, 0, 64+len(h.vecs)*h.dim*4+len(h.nodes)*8+nNbr*4)
+	ndocs := h.count()
+	vecBytes := ndocs * h.dim * 4
+	if h.int8 {
+		vecBytes = len(h.bq) + len(h.scales)*4
+	}
+	b := make([]byte, 0, 64+vecBytes+len(h.nodes)*8+nNbr*4)
 
 	put32 := func(v uint32) { b = binary.LittleEndian.AppendUint32(b, v) }
 	puti := func(v int) { put32(uint32(int32(v))) } // counts + the (-1-capable) entry
@@ -51,7 +57,7 @@ func (h *HNSW) MarshalBinary() ([]byte, error) {
 	put32(hnswMagic)
 	put32(hnswVersion)
 	puti(h.dim)
-	puti(len(h.vecs))
+	puti(ndocs)
 	puti(h.m)
 	puti(h.m0)
 	puti(h.efConstruction)
@@ -60,15 +66,29 @@ func (h *HNSW) MarshalBinary() ([]byte, error) {
 	puti(h.maxLayer)
 	b = binary.LittleEndian.AppendUint64(b, math.Float64bits(h.mL))
 	b = binary.LittleEndian.AppendUint64(b, h.seed)
-	if h.heuristic {
-		b = append(b, 1)
-	} else {
-		b = append(b, 0)
+	boolByte := func(v bool) {
+		if v {
+			b = append(b, 1)
+		} else {
+			b = append(b, 0)
+		}
 	}
+	boolByte(h.heuristic)
+	boolByte(h.int8) // v3: storage mode
 
-	for _, v := range h.vecs {
-		for _, f := range v {
-			put32(math.Float32bits(f))
+	// Vectors: int8 codes + per-vector scales (int8 mode) or row-major f32.
+	if h.int8 {
+		for _, c := range h.bq {
+			b = append(b, byte(c))
+		}
+		for _, s := range h.scales {
+			put32(math.Float32bits(s))
+		}
+	} else {
+		for _, v := range h.vecs {
+			for _, f := range v {
+				put32(math.Float32bits(f))
+			}
 		}
 	}
 	for _, nd := range h.nodes {
@@ -123,6 +143,19 @@ func (c *hcur) u64() uint64 {
 }
 
 func (c *hcur) f32() float32 { return math.Float32frombits(c.u32()) }
+
+// int8s reads n raw int8 code bytes (the int8 vector block).
+func (c *hcur) int8s(n int) []int8 {
+	if !c.need(n) {
+		return nil
+	}
+	out := make([]int8, n)
+	for i := 0; i < n; i++ {
+		out[i] = int8(c.b[c.pos+i])
+	}
+	c.pos += n
+	return out
+}
 
 func (c *hcur) u8() uint8 {
 	if !c.need(1) {
@@ -194,17 +227,35 @@ func Load(data []byte) (*HNSW, error) {
 	mL := math.Float64frombits(c.u64())
 	seed := c.u64()
 	heuristic := c.u8() != 0
+	int8mode := c.u8() != 0 // v3
 	if c.err != nil {
 		return nil, c.err
 	}
 
-	vecs := make([][]float32, ndocs)
-	for d := range vecs {
-		row := make([]float32, dim)
-		for j := range row {
-			row[j] = c.f32()
+	var vecs [][]float32
+	var bq []int8
+	var scales []float32
+	if int8mode {
+		// Overflow-safe: the int8 codes + scales must fit the bytes before the
+		// graph (computed in int64 so a hostile ndocs/dim can't wrap to a small
+		// allocation).
+		if int64(ndocs)*int64(dim)+int64(ndocs)*4 > int64(len(c.b)-c.pos) {
+			return nil, fmt.Errorf("ann: HNSW int8 vector block (ndocs=%d dim=%d) exceeds remaining bytes", ndocs, dim)
 		}
-		vecs[d] = row
+		bq = c.int8s(ndocs * dim)
+		scales = make([]float32, ndocs)
+		for i := range scales {
+			scales[i] = c.f32()
+		}
+	} else {
+		vecs = make([][]float32, ndocs)
+		for d := range vecs {
+			row := make([]float32, dim)
+			for j := range row {
+				row[j] = c.f32()
+			}
+			vecs[d] = row
+		}
 	}
 	nodes := make([]hnswNode, ndocs)
 	for d := range nodes {
@@ -257,6 +308,9 @@ func Load(data []byte) (*HNSW, error) {
 
 	return &HNSW{
 		vecs:           vecs,
+		int8:           int8mode,
+		bq:             bq,
+		scales:         scales,
 		nodes:          nodes,
 		dim:            dim,
 		m:              m,

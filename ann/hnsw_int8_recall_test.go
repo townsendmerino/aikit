@@ -79,3 +79,39 @@ func TestHNSW_int8RecallGate(t *testing.T) {
 		t.Errorf("int8 HNSW recall %.4f below 0.90 floor", i8r)
 	}
 }
+
+// TestHNSW_int8_real exercises the actual Config.Int8 index (built + queried in
+// the integer domain, ¼ vector memory) — vs the f32 HNSW, both against exact Flat.
+func TestHNSW_int8_real(t *testing.T) {
+	m, vecs, queries := realCorpus(t)
+	cfg := ann.Config{M: 16, EfConstruction: 200, EfSearch: 64, Seed: 1}
+	f32h := ann.BuildHNSW(vecs, cfg)
+	cfg8 := cfg
+	cfg8.Int8 = true
+	i8h := ann.BuildHNSW(vecs, cfg8)
+	if i8h.Len() != len(vecs) {
+		t.Fatalf("int8 HNSW Len = %d, want %d", i8h.Len(), len(vecs))
+	}
+	truth := ann.New(vecs)
+
+	const k = 10
+	var f32sum, i8sum float64
+	for _, qt := range queries {
+		q := m.Encode(qt)
+		set := make(map[int]bool, k)
+		for _, h := range truth.Query(q, k) {
+			set[h.Index] = true
+		}
+		f32sum += recallAtK(f32h.Query(q, k), set, k)
+		i8sum += recallAtK(i8h.Query(q, k), set, k)
+	}
+	f32r := f32sum / float64(len(queries))
+	i8r := i8sum / float64(len(queries))
+	t.Logf("real Config.Int8 HNSW recall@%d on %d embeddings: f32 %.4f, int8 %.4f (Δ %.4f)", k, len(vecs), f32r, i8r, f32r-i8r)
+	if f32r-i8r > 0.03 {
+		t.Errorf("int8 HNSW recall %.4f is >0.03 below f32 %.4f", i8r, f32r)
+	}
+	if i8r < 0.90 {
+		t.Errorf("int8 HNSW recall %.4f below 0.90 floor", i8r)
+	}
+}

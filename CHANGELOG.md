@@ -91,6 +91,17 @@ corrects what it renders.
 
 ### Added
 
+- **`ann.Config.Int8` — int8-quantized HNSW** (Experimental surface). The HNSW
+  graph's vectors are stored as int8 (per-vector symmetric quantization) instead of
+  float32 — ¼ the vector memory, and the persisted/`//go:embed`-ed blob shrinks to
+  match. Build, search, and persistence all run in the integer domain (a new
+  exported `linalg.DotI8` is the node-node primitive; the query is quantized once
+  per search via a prepared `queryVec` threaded through the search — the float32
+  path is behaviorally unchanged). Recall is essentially unaffected:
+  `TestHNSW_int8RecallGate` and `TestHNSW_int8_real` measure recall@10 Δ0.0000 vs
+  the f32 HNSW on real Model2Vec embeddings (the gate the roadmap required before
+  building this). The persisted format is bumped to **v3** (an int8-mode byte +
+  int8 codes/scales); `Load` rejects the brief-lived v2, like the v1→v2 bump.
 - **`ann.FlatI8` persistence — `MarshalBinary` + `LoadFlatI8`** (Experimental
   surface). The int8 index — the one you'd most want to `//go:embed` (¼ the float32
   memory at ~equal recall, per the benchmarks) — now serializes to a versioned blob

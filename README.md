@@ -166,6 +166,9 @@ settles.
 - `ann.FlatI8` / `ann.NewFlatI8` — int8-quantized dense index (¼ the memory,
   scored via the W8A8 kernel). Same `Hit`/`Query` shape as `Flat`; new surface, so
   Experimental.
+- `ann.Config.Int8` — int8-quantized HNSW: ¼ the vector memory, built + searched +
+  persisted in the integer domain (uses `linalg.DotI8`). Recall is unchanged on
+  real embeddings (measured Δ0 vs f32). New surface, settling.
 - `ann.FlatI8.MarshalBinary` / `ann.LoadFlatI8` / `ann.LoadFlatI8Mmap` — int8-index
   persistence (the `//go:embed`-an-index pattern). `LoadFlatI8Mmap` is zero-copy
   (aliases the int8 codes from a read-only mapping for instant startup + page-cache

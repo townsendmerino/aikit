@@ -105,6 +105,13 @@ type Config struct {
 	// roughly 2× build cost (query cost unchanged). Set this only to trade that
 	// recall for a faster build. See selectHeuristic.
 	SimpleNeighbors bool
+
+	// Int8 stores the vectors as int8 (per-vector symmetric quantization) instead
+	// of float32 — ¼ the vector memory, and the persisted/embedded blob shrinks to
+	// match. Build, search, and persistence all run in the integer domain. Recall
+	// is essentially unchanged on real embeddings (the int8 quantization is the
+	// same that FlatI8 uses; see TestHNSW_int8RecallGate). Experimental.
+	Int8 bool
 }
 
 type hnswNode struct {
@@ -115,7 +122,12 @@ type hnswNode struct {
 // HNSW is an approximate cosine index. Build with NewHNSW + Add (or
 // BuildHNSW); query with Query. See the type doc for thread-safety.
 type HNSW struct {
+	// Vectors are stored as float32 (vecs) OR, when int8 is set, as row-major int8
+	// codes (bq, [count*dim]) + per-vector scales. Exactly one is populated.
 	vecs           [][]float32
+	int8           bool
+	bq             []int8
+	scales         []float32
 	nodes          []hnswNode
 	dim            int
 	m, m0          int
@@ -155,8 +167,17 @@ func NewHNSW(cfg Config) *HNSW {
 		entry:          -1,
 		seed:           cfg.Seed,
 		heuristic:      !cfg.SimpleNeighbors,
+		int8:           cfg.Int8,
 		rng:            rand.New(rand.NewPCG(cfg.Seed, cfg.Seed^0x9e3779b97f4a7c15)),
 	}
+}
+
+// count is the number of indexed vectors, from whichever storage is active.
+func (h *HNSW) count() int {
+	if h.int8 {
+		return len(h.scales)
+	}
+	return len(h.vecs)
 }
 
 // BuildHNSW builds an index over vecs (used by reference, not copied),
@@ -170,7 +191,7 @@ func BuildHNSW(vecs [][]float32, cfg Config) *HNSW {
 }
 
 // Len is the number of indexed vectors.
-func (h *HNSW) Len() int { return len(h.vecs) }
+func (h *HNSW) Len() int { return h.count() }
 
 // mmax is the per-layer neighbor cap: 2*M at layer 0, M above.
 func (h *HNSW) mmax(layer int) int {
@@ -180,12 +201,37 @@ func (h *HNSW) mmax(layer int) int {
 	return h.m
 }
 
-// sim is the cosine similarity (dot product on unit vectors) between q
-// and indexed vector id. Scored with the SIMD dot kernel (linalg.Dot,
-// float32 accumulation); HNSW is approximate by contract, so the sub-ULP
-// difference from a float64 scalar sum is immaterial to recall.
-func (h *HNSW) sim(q []float32, id int) float64 {
-	return float64(linalg.Dot(q, h.vecs[id]))
+// queryVec is a search query prepared once for the index's storage mode: f32
+// holds the raw vector (float32 mode), or q8 + scale its int8 quantization (int8
+// mode). It threads through greedyClosest/searchLayer into sim, so the query is
+// quantized once per search rather than per similarity.
+type queryVec struct {
+	f32   []float32
+	q8    []int8
+	scale float64
+}
+
+func (h *HNSW) prepare(q []float32) queryVec {
+	if !h.int8 {
+		return queryVec{f32: q}
+	}
+	q8 := make([]int8, len(q))
+	scale := linalg.QuantizeRowInt8(q, q8)
+	return queryVec{q8: q8, scale: float64(scale)}
+}
+
+// code returns node id's int8 row (int8 mode only).
+func (h *HNSW) code(id int) []int8 { return h.bq[id*h.dim : id*h.dim+h.dim] }
+
+// sim is the cosine similarity (dot on unit vectors) between the prepared query
+// and indexed vector id — the SIMD f32 dot (float32 mode) or the int8 dot rescaled
+// by the query and per-vector scales (int8 mode). HNSW is approximate by contract,
+// so the sub-ULP difference from a float64 scalar sum is immaterial to recall.
+func (h *HNSW) sim(qv queryVec, id int) float64 {
+	if h.int8 {
+		return float64(linalg.DotI8(qv.q8, h.code(id))) * qv.scale * float64(h.scales[id])
+	}
+	return float64(linalg.Dot(qv.f32, h.vecs[id]))
 }
 
 func (h *HNSW) randomLevel() int {
@@ -201,13 +247,20 @@ func (h *HNSW) randomLevel() int {
 // safe for concurrent use. Panics on a dimension mismatch with vectors
 // already added (a programmer error, like topk's negative-k panic).
 func (h *HNSW) Add(vec []float32) int {
-	id := len(h.vecs)
+	id := h.count()
 	if id == 0 {
 		h.dim = len(vec)
 	} else if len(vec) != h.dim {
 		panic("ann: HNSW.Add dimension mismatch")
 	}
-	h.vecs = append(h.vecs, vec)
+	if h.int8 {
+		q8 := make([]int8, h.dim)
+		h.bq = append(h.bq, q8...) // grow, then quantize into the tail
+		s := linalg.QuantizeRowInt8(vec, h.bq[id*h.dim:id*h.dim+h.dim])
+		h.scales = append(h.scales, s)
+	} else {
+		h.vecs = append(h.vecs, vec)
+	}
 
 	l := h.randomLevel()
 	h.nodes = append(h.nodes, hnswNode{layer: l, nbrs: make([][]int32, l+1)})
@@ -218,16 +271,17 @@ func (h *HNSW) Add(vec []float32) int {
 		return id
 	}
 
+	qv := h.prepare(vec) // quantize the query once (int8 mode); raw f32 otherwise
 	ep := h.entry
 	// Greedy descent through the layers above l: refine the single best
 	// entry point, no link changes.
 	for layer := h.maxLayer; layer > l; layer-- {
-		ep = h.greedyClosest(vec, ep, layer)
+		ep = h.greedyClosest(qv, ep, layer)
 	}
 	// Insert layers min(l, maxLayer) … 0.
 	start := min(h.maxLayer, l)
 	for layer := start; layer >= 0; layer-- {
-		w := h.searchLayer(vec, []int{ep}, h.efConstruction, layer, &h.buildVis, nil)
+		w := h.searchLayer(qv, []int{ep}, h.efConstruction, layer, &h.buildVis, nil)
 		neighbors := h.selectNeighbors(w, h.mmax(layer))
 		// Link id → neighbors.
 		ids := make([]int32, len(neighbors))
@@ -256,10 +310,9 @@ func (h *HNSW) Add(vec []float32) int {
 // prune trims node id's neighbor list at layer to the mmax most similar.
 func (h *HNSW) prune(id, layer int) {
 	nbrs := h.nodes[id].nbrs[layer]
-	self := h.vecs[id]
 	cands := make([]cand, len(nbrs))
 	for i, n := range nbrs {
-		cands[i] = cand{id: int(n), sim: h.sim(self, int(n))}
+		cands[i] = cand{id: int(n), sim: h.simIDs(id, int(n))} // node-node, both modes
 	}
 	kept := h.selectNeighbors(cands, h.mmax(layer))
 	out := make([]int32, len(kept))
@@ -272,13 +325,13 @@ func (h *HNSW) prune(id, layer int) {
 // greedyClosest walks from ep along layer-`layer` links, always moving
 // to the neighbor most similar to q, until no neighbor improves. Used
 // for the ef=1 descent above the insertion/query layer.
-func (h *HNSW) greedyClosest(q []float32, ep, layer int) int {
+func (h *HNSW) greedyClosest(qv queryVec, ep, layer int) int {
 	best := ep
-	bestSim := h.sim(q, ep)
+	bestSim := h.sim(qv, ep)
 	for {
 		improved := false
 		for _, n := range h.nodes[best].nbrs[layer] {
-			s := h.sim(q, int(n))
+			s := h.sim(qv, int(n))
 			if s > bestSim {
 				bestSim, best, improved = s, int(n), true
 			}
@@ -295,8 +348,8 @@ func (h *HNSW) greedyClosest(q []float32, ep, layer int) int {
 // keep, if non-nil, restricts the COLLECTED results to ids where keep(id) is
 // true. Filtered-out nodes still route the search (pushed to the frontier) — graph
 // connectivity is preserved — they're just not added to the result set.
-func (h *HNSW) searchLayer(q []float32, entryPoints []int, ef, layer int, vis *visitTracker, keep func(int) bool) []cand {
-	vis.reset(len(h.vecs))
+func (h *HNSW) searchLayer(qv queryVec, entryPoints []int, ef, layer int, vis *visitTracker, keep func(int) bool) []cand {
+	vis.reset(h.count())
 	// candidates: max-heap on sim (expand the closest-to-q first).
 	candidates := &candHeap{min: false}
 	// results: min-heap on sim (the worst of the ef-best sits on top for
@@ -304,7 +357,7 @@ func (h *HNSW) searchLayer(q []float32, entryPoints []int, ef, layer int, vis *v
 	results := &candHeap{min: true}
 
 	for _, ep := range entryPoints {
-		s := h.sim(q, ep)
+		s := h.sim(qv, ep)
 		vis.mark(ep)
 		candidates.push(cand{id: ep, sim: s})
 		if keep == nil || keep(ep) {
@@ -326,7 +379,7 @@ func (h *HNSW) searchLayer(q []float32, entryPoints []int, ef, layer int, vis *v
 				continue
 			}
 			vis.mark(n)
-			s := h.sim(q, n)
+			s := h.sim(qv, n)
 			if results.len() < ef || s > results.items[0].sim {
 				candidates.push(cand{id: n, sim: s}) // route through it
 				if keep == nil || keep(n) {
@@ -385,12 +438,13 @@ func (h *HNSW) queryEf(q []float32, k, ef int, keep func(int) bool) []Hit {
 	}
 	// Descend greedily from the top entry point to layer 1 (routing is never
 	// filtered — only the final collected set is).
+	qv := h.prepare(q) // quantize the query once (int8 mode); raw f32 otherwise
 	ep := h.entry
 	for layer := h.maxLayer; layer >= 1; layer-- {
-		ep = h.greedyClosest(q, ep, layer)
+		ep = h.greedyClosest(qv, ep, layer)
 	}
 	vis := h.getVis()
-	found := h.searchLayer(q, []int{ep}, ef, 0, vis, keep)
+	found := h.searchLayer(qv, []int{ep}, ef, 0, vis, keep)
 	h.putVis(vis)
 	if len(found) > k {
 		found = found[:k]
@@ -418,7 +472,12 @@ func (h *HNSW) selectNeighbors(w []cand, m int) []cand {
 
 // simIDs is the cosine similarity (dot product on unit vectors) between two
 // indexed vectors — the heuristic's candidate-vs-candidate comparison.
-func (h *HNSW) simIDs(a, b int) float64 { return float64(linalg.Dot(h.vecs[a], h.vecs[b])) }
+func (h *HNSW) simIDs(a, b int) float64 {
+	if h.int8 {
+		return float64(linalg.DotI8(h.code(a), h.code(b))) * float64(h.scales[a]) * float64(h.scales[b])
+	}
+	return float64(linalg.Dot(h.vecs[a], h.vecs[b]))
+}
 
 // selectHeuristic is the HNSW neighbor-diversity heuristic (paper Algorithm 4):
 // processing candidates nearest-first, it keeps one only if it is closer to the

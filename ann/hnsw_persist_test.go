@@ -111,6 +111,44 @@ func mustMarshal(t *testing.T, h *HNSW) []byte {
 // FuzzLoadHNSW asserts Load never panics on arbitrary bytes — and that a blob it
 // accepts is safe to Query (the integrity pass must catch out-of-range ids and
 // layer-inconsistent edges that would otherwise panic mid-query).
+// TestHNSW_int8_roundTrip: an int8 HNSW (Config.Int8) round-trips through the v3
+// format, stays query-identical, and its blob is smaller than the f32 equivalent.
+func TestHNSW_int8_roundTrip(t *testing.T) {
+	rng := rand.New(rand.NewPCG(11, 12))
+	vecs := randUnitSet(rng, 400, 64)
+	cfg := Config{M: 16, EfConstruction: 200, EfSearch: 64, Seed: 1}
+	cfg8 := cfg
+	cfg8.Int8 = true
+
+	h := BuildHNSW(vecs, cfg8)
+	blob, err := h.MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, err := Load(blob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !g.int8 {
+		t.Error("loaded index lost its int8 mode")
+	}
+	if g.Len() != h.Len() {
+		t.Fatalf("Len %d vs %d", g.Len(), h.Len())
+	}
+	for i := 0; i < 20; i++ {
+		q := randUnit(rng, 64)
+		if !reflect.DeepEqual(h.Query(q, 10), g.Query(q, 10)) {
+			t.Fatalf("query %d: loaded int8 index returns different hits", i)
+		}
+	}
+	// The int8 blob must be smaller than the f32 one (the persistence win).
+	f32blob, _ := BuildHNSW(vecs, cfg).MarshalBinary()
+	if len(blob) >= len(f32blob) {
+		t.Errorf("int8 blob %d not smaller than f32 blob %d", len(blob), len(f32blob))
+	}
+	t.Logf("int8 HNSW blob %d bytes vs f32 %d (%.0f%% of f32)", len(blob), len(f32blob), 100*float64(len(blob))/float64(len(f32blob)))
+}
+
 func FuzzLoadHNSW(f *testing.F) {
 	seed, _ := BuildHNSW(randUnitSet(rand.New(rand.NewPCG(2, 3)), 60, 16), Config{Seed: 1}).MarshalBinary()
 	f.Add(seed)
