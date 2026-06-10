@@ -1,0 +1,45 @@
+name: fuzz-nightly
+
+# The longer active-fuzz pass (roadmap §3.1/§3.4). The per-PR ci.yml runs a 20s
+# smoke per target to catch obvious regressions fast; this runs each target for
+# minutes on a schedule to reach the deeper inputs a smoke can't, and uploads any
+# discovered crasher so it can be replayed and turned into a regression seed.
+on:
+  schedule:
+    - cron: "0 7 * * *" # daily, 07:00 UTC
+  workflow_dispatch: # and on demand
+
+jobs:
+  fuzz:
+    name: long fuzz
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { pkg: embed, fn: FuzzParseGGUF }
+          - { pkg: embed, fn: FuzzParseSafetensors }
+          - { pkg: embed, fn: FuzzParseShardIndex }
+          - { pkg: embed, fn: FuzzGGUFDequant }
+          - { pkg: bm25, fn: FuzzTokenize }
+          - { pkg: chunk, fn: FuzzLineChunker }
+          - { pkg: chunk/markdown, fn: FuzzMarkdownChunk }
+          - { pkg: chunk/regex, fn: FuzzRegexChunk }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.x"
+
+      - name: fuzz ${{ matrix.pkg }} ${{ matrix.fn }}
+        run: go test "./${{ matrix.pkg }}/" -run '^$' -fuzz "^${{ matrix.fn }}\$" -fuzztime=5m
+
+      # A crash drops a reproducer under testdata/fuzz/<Target>/; keep it so the
+      # failure can be replayed locally and promoted to a committed seed.
+      - name: upload crashers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-${{ matrix.fn }}
+          path: "**/testdata/fuzz/${{ matrix.fn }}/**"
+          if-no-files-found: ignore

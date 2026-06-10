@@ -256,9 +256,10 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    GGUF dequant paths) — ✅ **DONE**. Four native fuzz targets (parse ×3 +
    `FuzzGGUFDequant`); found & fixed 5 crashes (untrusted-count OOM, two int
    overflows wrapping bounds checks, a negative-length and the ∏dims overflow).
-   Four committed regression seeds; CI runs a 20s/target smoke. **Remaining:**
-   only the "longer nightly" run (the PR smoke is the short pass) — `chunk`
-   tokenizer/scanner fuzzing is now done (§3.4).
+   Four committed regression seeds; CI runs a 20s/target smoke per PR, and the
+   `fuzz-nightly.yml` workflow runs each target (these plus §3.4's) for 5 min on a
+   daily schedule, uploading any crasher as an artifact. `chunk` tokenizer/scanner
+   fuzzing is done (§3.4). Section 3 complete.
 2. **Debug-build alignment asserts in quant kernels** — ✅ **DONE.** A
    build-tagged check layer (`checks_on.go` / `checks_off.go`, `//go:build
    aikit_checks`): `checkDequantInt8`/`checkDequantInt4`/`checkGroupMatmul`
