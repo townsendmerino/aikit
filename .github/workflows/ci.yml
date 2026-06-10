@@ -54,7 +54,7 @@ jobs:
       # longer nightly run is a follow-up (roadmap §3.1).
       - name: fuzz (smoke)
         run: |
-          for fn in FuzzParseGGUF FuzzParseSafetensors FuzzParseShardIndex; do
+          for fn in FuzzParseGGUF FuzzParseSafetensors FuzzParseShardIndex FuzzGGUFDequant; do
             go test ./embed/ -run xxx -fuzz="^$fn\$" -fuzztime=20s
           done
 

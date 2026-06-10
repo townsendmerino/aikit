@@ -64,7 +64,18 @@ it.
   All three parse entrypoints (`OpenGGUFBytes`/`parseGGUF`, `parseSafetensors`,
   `parseShardIndex`) now return an error rather than panic/OOM on any input. The
   OOM repro is committed as a regression seed; CI runs a short fuzz smoke.
-  Dequant-path fuzzing (`Tensor`/`RowDequantizer`) is a tracked follow-up.
+- **Hardened the GGUF dequant path** (`Tensor`/`RowDequantizer`, `FuzzGGUFDequant`).
+  The tensor directory's dims and data offset are untrusted; fuzzing found two
+  more crashes:
+  - `∏dims` (element count) overflowed `int` for hostile dims, wrapping the
+    byte-size check and OOM-ing `make([]float32, n)`. The count is now computed
+    with a check-before-multiply and bounded by the data section (no supported
+    type packs fewer than ~0.5 bytes/element).
+  - the tensor data-range check `offset + nbytes > len(data)` overflowed `uint64`
+    for an `offset` near 2⁶⁴, passing the guard and panicking on the slice — same
+    fix as safetensors (compare without adding).
+  Both repros are committed as regression seeds; the dequant fuzzer is in the CI
+  smoke set.
 
 ### Documentation
 

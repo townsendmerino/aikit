@@ -88,3 +88,34 @@ func FuzzParseGGUF(f *testing.F) {
 		}
 	})
 }
+
+// FuzzGGUFDequant drives the dequant path (Tensor → RowDequantizer → dequantRange)
+// on successfully-parsed files. The tensor directory is untrusted: dims, type,
+// and data offset come straight from the bytes, and the element count ∏dims feeds
+// make([]float32, n) and the byte-size arithmetic. The contract is the same as
+// parse — error or succeed, never panic / OOM — for any input.
+func FuzzGGUFDequant(f *testing.F) {
+	f.Add(ggufWithContent())
+	f.Add(minimalGGUF())
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		g, err := OpenGGUFBytes(data)
+		if err != nil {
+			return
+		}
+		for _, name := range g.Names() {
+			dims, vals, err := g.Tensor(name)
+			if err != nil {
+				continue
+			}
+			// A successful dequant must be internally consistent: len(vals) = ∏dims.
+			n := 1
+			for _, d := range dims {
+				n *= d
+			}
+			if len(vals) != n {
+				t.Fatalf("tensor %q: len(data)=%d but ∏dims=%d %v", name, len(vals), n, dims)
+			}
+		}
+	})
+}

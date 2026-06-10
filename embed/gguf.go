@@ -401,11 +401,25 @@ func (g *GGUFFile) RowDequantizer(name string) (dims []int, into func(start int,
 	if !ok {
 		return nil, nil, fmt.Errorf("gguf: tensor %q not found", name)
 	}
+	// ∏dims feeds make([]float32, n) and the byte-size arithmetic, and every dim
+	// is an untrusted uint64. A hostile tensor can claim dims whose product
+	// overflows int (wrapping the byte check and OOM-ing the make). Bound it:
+	// even the densest supported type packs ≥ ~0.5 bytes/element, so a tensor's
+	// element count can't exceed 2×|data section|. Check before each multiply so
+	// the product itself can never overflow; tensorBytes does the exact check.
+	maxElems := 2*len(g.data) + qkK
 	n := 1
 	dims = make([]int, len(info.dims))
 	for i, d := range info.dims {
-		dims[i] = int(d)
-		n *= int(d)
+		if d > uint64(maxElems) {
+			return nil, nil, fmt.Errorf("gguf: tensor %q dim %d (%d) exceeds data section (%d bytes)", name, i, d, len(g.data))
+		}
+		di := int(d)
+		if di != 0 && n > maxElems/di {
+			return nil, nil, fmt.Errorf("gguf: tensor %q element count exceeds data section (%d bytes)", name, len(g.data))
+		}
+		dims[i] = di
+		n *= di
 	}
 	bs, ok := ggmlBlockElems(info.typ)
 	if !ok {
@@ -538,8 +552,10 @@ func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
 	default:
 		return nil, fmt.Errorf("unsupported ggml type %d", info.typ)
 	}
-	if info.offset+uint64(nbytes) > uint64(len(g.data)) {
-		return nil, fmt.Errorf("data range [%d:%d] past section end %d", info.offset, info.offset+uint64(nbytes), len(g.data))
+	// info.offset is an untrusted uint64; compare without adding so a near-2^64
+	// offset can't wrap the sum past this guard and panic the slice below.
+	if info.offset > uint64(len(g.data)) || uint64(nbytes) > uint64(len(g.data))-info.offset {
+		return nil, fmt.Errorf("data range [%d:+%d] past section end %d", info.offset, nbytes, len(g.data))
 	}
 	return g.data[info.offset : info.offset+uint64(nbytes)], nil
 }
