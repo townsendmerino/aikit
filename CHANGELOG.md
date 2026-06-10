@@ -10,6 +10,27 @@ it.
 
 ## [Unreleased]
 
+## [1.2.1] — 2026-06-10
+
+Docs/CI only — no code or API changes. These edits missed the v1.2.0 tag, so
+pkg.go.dev rendered a stale package graph on the module front page; this tag
+corrects what it renders.
+
+### Documentation
+
+- **Package DAG + dependency table synced with v1.2 reality** (`README.md`,
+  `docs/architecture.md`): `ann → linalg, topk`; `bm25` and `sparse → topk`;
+  `bench → ann` (its only production dep — `embed` is test-only); added the
+  `sparse` and `bench` nodes and the `ann → linalg` edge (`ann` scores through
+  `linalg`'s SIMD dot kernels since v1.2).
+- **`chunk/treesitter` lockstep wording softened** — from unconditional "versioned
+  in lockstep with the core" to "tagged in lockstep whenever the submodule itself
+  changes," matching practice (its code is unchanged since v1.0.0, and the
+  Hard-tier `chunk.Chunker` contract means an unchanged submodule keeps working
+  across core minors; no 1.1.x or 1.2.x submodule tag).
+- **CI: pinned the Windows job to `windows-2025`** (was `windows-latest`) ahead of
+  GitHub's 2026-06-15 runner redirect, so the image can't shift unannounced.
+
 ## [1.2.0] — 2026-06-09
 
 ### Changed
@@ -687,7 +708,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.2.1...HEAD
+[1.2.1]: https://github.com/townsendmerino/aikit/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/townsendmerino/aikit/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/townsendmerino/aikit/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/townsendmerino/aikit/compare/v1.0.1...v1.1.0
