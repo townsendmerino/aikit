@@ -190,6 +190,9 @@ settles.
   scorer half (an in-process masked-LM expansion head is a planned follow-up that
   may extend the surface), so it stays Experimental until that lands.
 - `encoder.LoadQ8` / `encoder.ModelQ8` (int8 quant) — alternate precision path.
+- `encoder.LoadBERT` / `encoder.BERT` / `BERT.Encode` — MiniLM-class BERT encoder
+  (learned positions + GELU FFN + mean pooling), cgo-free, parity-pinned to
+  all-MiniLM-L6-v2 (cosine 1.0). New surface, settling.
 - The mmap variant of `embed.OpenSafetensors`.
 - The concrete chunker structs (`regex.Chunker`, `markdown.Chunker`,
   `treesitter.Chunker`) and their `New()` — prefer `chunk.Get("regex")`.

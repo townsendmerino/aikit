@@ -92,15 +92,13 @@ Items 2–5 are sequenced behind item 1.
    `scripts/requirements.txt` with a `scripts/README.md` setup + regeneration doc.
    Validated by loading all-MiniLM-L6-v2 and embedding (dim 384). Unblocks the rest
    of the model-blocked track (§2.2–2.4).
-2. **MiniLM-class encoder support (§2.5 remainder)** — [high / high]. The
-   pooling axis is done (internal seam); remaining axes are learned absolute
-   positions + GELU FFN + the sentence-transformers config loader, each
-   parity-pinned one at a time against all-MiniLM-L6-v2. Raised in priority
-   since v1: hugot's CrossEncoders pipeline now serves this exact use case,
-   and MiniLM is *the* commodity reranker/embedder family — supporting it
-   converts aikit from "two specific models" to "the BERT family you already
-   use", cgo-free. Graduating the pooling knob to public comes free with the
-   first mean-pooled golden.
+2. **MiniLM-class encoder support** — ✅ **DONE.** A second encoder architecture
+   (`encoder.BERT`, `bert.go`) alongside CodeRankEmbed: learned absolute positions,
+   GELU FFN, no-RoPE attention, mean pooling. `LoadBERT(dir)` + `Encode(text)` is
+   the cgo-free `.encode()`. Parity-pinned to all-MiniLM-L6-v2 (golden via
+   `pin_minilm.py`): hidden states Δ~1e-6, sentence embedding cosine 1.000000,
+   tokenizer ids identical to HF. Separate file, CodeRankEmbed untouched (additive).
+   This is the "BERT family you already use" answer to hugot's CrossEncoders.
 3. **SPLADE expansion head (§2.1 remainder)** — [medium-high / high]. The
    index/scorer half shipped; the in-process masked-LM head (logits →
    log(1+ReLU), max-pool) reuses `encoder`'s machinery and needs a SPLADE

@@ -10,6 +10,20 @@ it.
 
 ## [Unreleased]
 
+### Added
+
+- **`encoder.LoadBERT` / `BERT.Encode` — MiniLM-class BERT encoder** (Experimental
+  surface). A second encoder architecture alongside CodeRankEmbed, implementing the
+  three axes a sentence-transformers BERT model differs on: learned ABSOLUTE
+  position embeddings (not RoPE), a GELU FFN (not SwiGLU), and mean pooling (not
+  CLS). `LoadBERT(dir)` + `Encode(text)` is the cgo-free equivalent of
+  sentence-transformers' `.encode()`. Parity-pinned to all-MiniLM-L6-v2 (golden via
+  the new `scripts/pin_minilm.py` + the §2.1 toolchain): hidden states match to
+  ~1e-6 and the sentence embedding to cosine 1.000000, with aikit's WordPiece
+  producing the same token ids as HF. Kept in a separate `bert.go` — the
+  CodeRankEmbed path is untouched (additive, no regression). Turns "two specific
+  models" into "the BERT family you already use."
+
 ## [1.3.0] — 2026-06-10
 
 ### Added
