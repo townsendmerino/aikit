@@ -51,9 +51,38 @@ type SafetensorsFile struct {
 	// one per shard for OpenSafetensorsShardedMmap. Close/the finalizer
 	// syscall.Munmap each; the heap opens leave it nil.
 	mmapped [][]byte
+
+	// closed is set by Close so Tensor() returns a clean error instead of
+	// handing out an alias into a region Close may have unmapped.
+	closed bool
 }
 
 // Tensor is a single named tensor within a SafetensorsFile.
+//
+// Lifetime: the bytes a Tensor exposes (Float32s, BFloat16sToF32, …) alias the
+// owning SafetensorsFile's mapped region — they are NOT copies. They stay valid
+// only while that file is alive and un-Closed. Calling Tensor() after Close
+// returns an error; but a tensor (or slice) obtained BEFORE Close and read AFTER
+// it dereferences unmapped memory — a crash or silent garbage the flag can't
+// catch. Keep the file alive for the whole lifetime of any data drawn from it:
+//
+//	// WRONG — the returned slice outlives the file's mapping.
+//	func load() []float32 {
+//	    f, _ := embed.OpenSafetensorsMmap("model.safetensors")
+//	    defer f.Close()                 // unmaps on return…
+//	    t, _ := f.Tensor("weight")
+//	    v, _ := t.Float32s()
+//	    return v                        // …v now aliases freed memory
+//	}
+//
+//	// RIGHT — copy out, or keep the file alive as long as the data is used.
+//	func load() []float32 {
+//	    f, _ := embed.OpenSafetensorsMmap("model.safetensors")
+//	    defer f.Close()
+//	    t, _ := f.Tensor("weight")
+//	    v, _ := t.Float32s()
+//	    return append([]float32(nil), v...) // independent copy; safe to outlive f
+//	}
 type Tensor struct {
 	Name  string
 	DType string // "F32", "F64", "I64", ...
@@ -267,6 +296,7 @@ func finalizeMmaps(s *SafetensorsFile) {
 // them is undefined behavior. Callers MUST stop using the model and any
 // downstream objects that hold tensor data before calling Close.
 func (sf *SafetensorsFile) Close() error {
+	sf.closed = true // make Tensor() error afterward, mmap-backed or not
 	if len(sf.mmapped) == 0 {
 		return nil
 	}
@@ -341,8 +371,14 @@ func parseSafetensors(data []byte) (*SafetensorsFile, error) {
 	return &SafetensorsFile{data: data, tensors: tensors}, nil
 }
 
-// Tensor returns the named tensor or an error if not present.
+// Tensor returns the named tensor or an error if not present. After Close it
+// errors rather than hand out an alias into a possibly-unmapped region — a clean
+// guard for the common use-after-close mistake (the held-slice case the Tensor
+// doc warns about can't be caught here).
 func (f *SafetensorsFile) Tensor(name string) (Tensor, error) {
+	if f.closed {
+		return Tensor{}, fmt.Errorf("safetensors: Tensor(%q) called after Close", name)
+	}
 	t, ok := f.tensors[name]
 	if !ok {
 		return Tensor{}, fmt.Errorf("safetensors: tensor %q not found", name)

@@ -12,6 +12,10 @@ it.
 
 ### Changed
 
+- **`embed`: `SafetensorsFile.Tensor()` now errors after `Close()`** (§3.3) instead
+  of returning a tensor aliasing a possibly-unmapped region — a guard for the
+  common use-after-close mistake. The `Tensor` doc gains a WRONG/RIGHT example for
+  the harder held-slice-outlives-Close trap (copy out, or keep the file alive).
 - **`encoder` forward is now internally pooling-parameterized** (groundwork for
   BERT-family support, §2.5; no behavior or API change). The CLS extraction in
   both f32 forwards is now a `poolOne` seam (CLS default / mean alternative, the

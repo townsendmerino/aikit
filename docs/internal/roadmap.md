@@ -268,11 +268,15 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    (no boxing, no branch, zero hot-path cost). `TestChecks_fire`/`passClean` (run
    under the tag) prove they fire on misuse and pass clean calls; a CI step runs
    `go test -tags aikit_checks ./linalg/`.
-3. **Mmap-lifetime guardrail** — [medium / low-medium]. Tensor slices outlive
-   `Close()` only by documented contract. Options: a `runtime.SetFinalizer`
-   + use-after-close poison in debug builds, or a `vet`-style doc example.
-   At minimum, promote the contract into the package doc with a WRONG/RIGHT
-   example pair.
+3. **Mmap-lifetime guardrail** — ✅ **DONE.** The `Tensor` doc now carries the
+   WRONG/RIGHT example pair (the held-slice-outlives-Close trap, and the
+   copy-out / keep-alive fixes). Plus a portable runtime guard: a `closed` flag
+   makes `Tensor()` return a clean error after `Close()` instead of handing out
+   an alias into a possibly-unmapped region (`TestSafetensors_tensorAfterClose`).
+   The poison-on-close idea is out — the mapping is `PROT_READ`/`MAP_PRIVATE`, so
+   writing to it would fault; the held-slice case stays a doc contract (the slice
+   doesn't reference the file, so the API can't catch it) backed by the existing
+   `SetFinalizer` munmap.
 4. **Fuzz `chunk` tokenizer/scanner paths** (`bm25.Tokenize`, markdown
    scanner, regex chunkers) — ✅ **DONE.** Four native fuzz targets:
    `FuzzTokenize` (bm25 code + plain tokenizers), `FuzzLineChunker` (the
