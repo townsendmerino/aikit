@@ -124,6 +124,8 @@ settles.
 - `ann.FlatI8` / `ann.NewFlatI8` — int8-quantized dense index (¼ the memory,
   scored via the W8A8 kernel). Same `Hit`/`Query` shape as `Flat`; new surface, so
   Experimental.
+- `Flat`/`HNSW`/`FlatI8` `.QueryFilter(q, k, keep)` — query-time logical-delete /
+  live-set filter (the index stays immutable). New surface, settling.
 - `bm25.TokenizePlain` — new general-text (Unicode word) analyzer alongside the
   code-tuned `Tokenize` (which stays the default); pick whichever fits the corpus.
 - `fuse.RSF` / `fuse.RSFWeighted` / `fuse.Scored` / `fuse.Scores` — new
@@ -158,6 +160,11 @@ settles.
 - `embed` accumulates in **float64** during inference and indexes through
   `mapping[]` — both correctness-critical (float32 silently fails the ≥1−1e-5
   cosine bar on longer inputs; non-mapping access produces wrong embeddings).
+- **Indexes are immutable after build** (`ann`, `bm25`, `sparse`) — a cornerstone
+  that gives lock-free concurrent `Query` and snapshot consistency. Changing
+  corpora are handled by rebuild-and-swap, base+delta+`fuse`, or logical delete
+  (`QueryFilter`), never by mutating an index. See
+  [architecture.md](docs/architecture.md#design-rules) design rule 4.
 
 ---
 

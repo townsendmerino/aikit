@@ -227,7 +227,7 @@ func (h *HNSW) Add(vec []float32) int {
 	// Insert layers min(l, maxLayer) … 0.
 	start := min(h.maxLayer, l)
 	for layer := start; layer >= 0; layer-- {
-		w := h.searchLayer(vec, []int{ep}, h.efConstruction, layer, &h.buildVis)
+		w := h.searchLayer(vec, []int{ep}, h.efConstruction, layer, &h.buildVis, nil)
 		neighbors := h.selectNeighbors(w, h.mmax(layer))
 		// Link id → neighbors.
 		ids := make([]int32, len(neighbors))
@@ -292,7 +292,10 @@ func (h *HNSW) greedyClosest(q []float32, ep, layer int) int {
 // searchLayer returns the ef vectors in `layer` most similar to q,
 // reachable from entryPoints, as a slice sorted by descending
 // similarity. This is the HNSW inner loop (paper Algorithm 2).
-func (h *HNSW) searchLayer(q []float32, entryPoints []int, ef, layer int, vis *visitTracker) []cand {
+// keep, if non-nil, restricts the COLLECTED results to ids where keep(id) is
+// true. Filtered-out nodes still route the search (pushed to the frontier) — graph
+// connectivity is preserved — they're just not added to the result set.
+func (h *HNSW) searchLayer(q []float32, entryPoints []int, ef, layer int, vis *visitTracker, keep func(int) bool) []cand {
 	vis.reset(len(h.vecs))
 	// candidates: max-heap on sim (expand the closest-to-q first).
 	candidates := &candHeap{min: false}
@@ -304,7 +307,9 @@ func (h *HNSW) searchLayer(q []float32, entryPoints []int, ef, layer int, vis *v
 		s := h.sim(q, ep)
 		vis.mark(ep)
 		candidates.push(cand{id: ep, sim: s})
-		results.push(cand{id: ep, sim: s})
+		if keep == nil || keep(ep) {
+			results.push(cand{id: ep, sim: s})
+		}
 	}
 
 	for candidates.len() > 0 {
@@ -323,10 +328,12 @@ func (h *HNSW) searchLayer(q []float32, entryPoints []int, ef, layer int, vis *v
 			vis.mark(n)
 			s := h.sim(q, n)
 			if results.len() < ef || s > results.items[0].sim {
-				candidates.push(cand{id: n, sim: s})
-				results.push(cand{id: n, sim: s})
-				if results.len() > ef {
-					results.pop() // drop the current worst
+				candidates.push(cand{id: n, sim: s}) // route through it
+				if keep == nil || keep(n) {
+					results.push(cand{id: n, sim: s})
+					if results.len() > ef {
+						results.pop() // drop the current worst
+					}
 				}
 			}
 		}
@@ -348,27 +355,42 @@ func (h *HNSW) searchLayer(q []float32, entryPoints []int, ef, layer int, vis *v
 // the configured EfSearch (effective ef = max(EfSearch, k)). Returns nil
 // for an empty index or a dimension-mismatched q.
 func (h *HNSW) Query(q []float32, k int) []Hit {
-	return h.QueryEf(q, k, h.efSearch)
+	return h.queryEf(q, k, h.efSearch, nil)
 }
 
 // QueryEf is Query with an explicit ef (candidate-list size) for this
 // call, the recall/latency knob: larger ef ⇒ higher recall, slower.
 // Effective ef is max(ef, k).
 func (h *HNSW) QueryEf(q []float32, k, ef int) []Hit {
+	return h.queryEf(q, k, ef, nil)
+}
+
+// QueryFilter is Query restricted to the documents for which keep(id) is true — a
+// logical-delete / live-set filter applied at query time, so the index stays
+// immutable (the cornerstone). Filtered-out nodes still ROUTE the search, so graph
+// connectivity is intact and live recall holds; they're simply not returned. Under
+// heavy deletion the live result can fall short of k (the search runs out of live
+// nodes within ef) — rebuild the index to purge tombstones when that bites. A nil
+// keep is exactly Query.
+func (h *HNSW) QueryFilter(q []float32, k int, keep func(id int) bool) []Hit {
+	return h.queryEf(q, k, h.efSearch, keep)
+}
+
+func (h *HNSW) queryEf(q []float32, k, ef int, keep func(int) bool) []Hit {
 	if h.Len() == 0 || k <= 0 || len(q) != h.dim {
 		return nil
 	}
 	if ef < k {
 		ef = k
 	}
-	// Descend greedily from the top entry point to layer 1.
+	// Descend greedily from the top entry point to layer 1 (routing is never
+	// filtered — only the final collected set is).
 	ep := h.entry
 	for layer := h.maxLayer; layer >= 1; layer-- {
 		ep = h.greedyClosest(q, ep, layer)
 	}
-	// Full ef search at layer 0.
 	vis := h.getVis()
-	found := h.searchLayer(q, []int{ep}, ef, 0, vis)
+	found := h.searchLayer(q, []int{ep}, ef, 0, vis, keep)
 	h.putVis(vis)
 	if len(found) > k {
 		found = found[:k]

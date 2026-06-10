@@ -83,12 +83,26 @@ func (f *Flat) Len() int { return len(f.vecs) }
 //     heap-internal order). The K-sized stable sort is O(K log K) —
 //     cheap at K=10.
 func (f *Flat) Query(q []float32, k int) []Hit {
+	return f.query(q, k, nil)
+}
+
+// QueryFilter is Query restricted to documents for which keep(id) is true — a
+// logical-delete / live-set filter applied at query time, so the index stays
+// immutable. Exact for Flat (it scores every vector and filters before selecting),
+// unlike the approximate HNSW.QueryFilter. A nil keep is exactly Query.
+func (f *Flat) QueryFilter(q []float32, k int, keep func(id int) bool) []Hit {
+	return f.query(q, k, keep)
+}
+
+func (f *Flat) query(q []float32, k int, keep func(int) bool) []Hit {
 	// Full-sort path: k<=0 returns everything; k>=Len would have nothing
 	// to discard anyway. Either way the heap buys us nothing.
 	if k <= 0 || k >= len(f.vecs) {
 		hits := make([]Hit, 0, len(f.vecs))
 		scanFlat(q, f.vecs, func(i int, score float64) {
-			hits = append(hits, Hit{Index: i, Score: score})
+			if keep == nil || keep(i) {
+				hits = append(hits, Hit{Index: i, Score: score})
+			}
 		})
 		sort.Slice(hits, func(a, b int) bool {
 			if hits[a].Score != hits[b].Score {
@@ -103,7 +117,9 @@ func (f *Flat) Query(q []float32, k int) []Hit {
 	// min-heap; the heap only retains the K highest seen so far.
 	sel := topk.New[int](k)
 	scanFlat(q, f.vecs, func(i int, score float64) {
-		sel.Push(i, score)
+		if keep == nil || keep(i) {
+			sel.Push(i, score)
+		}
 	})
 	items := sel.Result() // descending by score; tie order is heap-internal
 	// Stable secondary sort by ascending Index to honor the doc-comment

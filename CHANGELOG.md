@@ -58,6 +58,16 @@ it.
 
 ### Added
 
+- **`QueryFilter` on `ann.Flat`/`HNSW`/`FlatI8` — query-time logical delete**
+  (Experimental surface). `QueryFilter(q, k, keep func(id int) bool)` returns only
+  documents for which `keep` is true, so a live-set / tombstone applies WITHOUT
+  mutating the index — keeping the immutability cornerstone (lock-free reads,
+  snapshot consistency; now design rule 4 in `docs/architecture.md`). Flat and
+  FlatI8 are exact; HNSW still routes the search through filtered nodes so graph
+  connectivity (and live recall) holds — measured recall@10 = 1.00 under 20%
+  deletion. Under heavy deletion, rebuild to purge tombstones. With the
+  base+delta+fuse recipe (`Example_baseDeltaFusion`), these cover the
+  changing-corpus cases without in-place mutation.
 - **`embed.Truncate` — Matryoshka embedding truncation** (Experimental surface).
   Returns the first `dim` components of an embedding, L2-renormalized — a
   lower-dimensional embedding for MRL-trained models, composing with `ann.FlatI8`

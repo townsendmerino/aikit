@@ -214,11 +214,19 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    the code-RAG default. Tests pin the contract (e.g. `getUserName` → one token
    under plain, split under code) + a runnable Example. Widens the audience to
    natural-language corpora.
-7. **Streaming / incremental index updates** — [medium / medium]. `ann.Flat`
-   and `bm25.Build` are build-once. Add/delete on HNSW (tombstones) and an
-   incremental BM25 segment story would cover the "long-running process,
-   corpus changes" case Termite/Bleve handle natively. Scope carefully —
-   immutability-by-design is part of the current safety story.
+7. **Streaming / incremental index updates** — ✅ **DONE the low-risk way (and
+   immutability is now a cornerstone, design rule 4).** Rather than make the
+   indexes mutable — which would trade away lock-free reads + snapshot consistency
+   for a mutable-database concern outside aikit's niche — the changing-corpus cases
+   are served WITHOUT mutation: (a) **logical delete** via `QueryFilter(q, k, keep)`
+   on `Flat`/`HNSW`/`FlatI8` — a caller-supplied live-set predicate applied at query
+   time (Flat/FlatI8 exact; HNSW routes through filtered nodes, recall@10 = 1.00
+   under 20% deletion); (b) **base + delta + fuse** — a small frequently-rebuilt
+   delta index fused with the big base (`Example_baseDeltaFusion`); (c)
+   rebuild-and-swap (the existing ken pattern). True in-place mutation (HNSW
+   tombstone graph-repair, concurrent Add-during-Query, incremental BM25 segments)
+   stays **explicitly out of scope** per the cornerstone — revisit only if a real
+   consumer proves rebuild/delta/swap is insufficient at scale.
 8. **Matryoshka dimension truncation support in `embed`/`ann`** — ✅ **DONE.**
    `embed.Truncate(v, dim)` returns the L2-renormalized prefix (fresh slice); the
    indexes are already dim-agnostic. Composes with §2.4's FlatI8 for a compounded

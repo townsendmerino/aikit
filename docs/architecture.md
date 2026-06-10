@@ -8,7 +8,7 @@ doc is about structure and the decisions behind it.
 
 ## Design rules
 
-Three rules generate most of the structure:
+Four rules generate most of the structure:
 
 1. **The core stays pure Go (no cgo).** Enforced in CI (`CGO_ENABLED=0` build
    + a dependency-graph grep). Anything that would break this is pushed
@@ -19,6 +19,30 @@ Three rules generate most of the structure:
    `encoder`, the `linalg` quant kernels) is tested against golden fixtures
    produced by Python references in [`scripts/`](../scripts/) — see
    [`testdata/README.md`](../testdata/README.md).
+4. **Indexes are immutable after build.** Every retrieval index — `ann.Flat`,
+   `ann.HNSW`, `ann.FlatI8`, `bm25.Index`, `sparse.Index` — is read-only once
+   built. This is a cornerstone, not an accident: it buys two things the rest of
+   the design leans on, and gives them up the moment in-place mutation is allowed.
+
+   - **Lock-free concurrent reads.** A built index takes no locks in `Query`, so
+     it scales across goroutines for free. Mutation would force an `RWMutex` (or
+     hand-rolled lock-free structures) onto the query hot path — slower, and a
+     whole class of concurrency bugs that immutability simply does not have.
+   - **Snapshot consistency without coordination.** A "the corpus changed" update
+     builds a *new* index and swaps a pointer atomically (ken's ADR-012 pattern);
+     a reader holds one consistent snapshot for the life of a query — no torn
+     reads, no mid-query mutation.
+
+   Changing corpora are served *without* breaking this, in increasing order of
+   freshness: **rebuild-and-swap** (the default — re-index, publish the new
+   pointer); a **base + delta + fuse** split (a small, frequently-rebuilt delta
+   index fused with the big base via `fuse.RRF`/`RSF`, periodically folded in);
+   and **logical delete** via a caller-supplied tombstone predicate
+   (`Flat`/`HNSW`/`FlatI8` `QueryFilter`) consulted at query time — the index
+   itself is never mutated. True in-place mutation (HNSW tombstone graph-repair,
+   concurrent `Add`-during-`Query`, incremental BM25 segments) is deliberately out
+   of scope: it's a mutable-database concern that would trade away both properties
+   above, for a use case outside aikit's embedded, read-heavy niche.
 
 ## Package DAG
 

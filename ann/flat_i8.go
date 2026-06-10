@@ -58,6 +58,17 @@ func (f *FlatI8) Len() int { return f.n }
 // by ascending index for determinism — the same contract as Flat.Query. k <= 0 or
 // k >= Len returns all, sorted. A query of the wrong dimension returns nil.
 func (f *FlatI8) Query(q []float32, k int) []Hit {
+	return f.query(q, k, nil)
+}
+
+// QueryFilter is Query restricted to documents for which keep(id) is true — a
+// logical-delete / live-set filter applied at query time, so the index stays
+// immutable. Exact over the int8 scores. A nil keep is exactly Query.
+func (f *FlatI8) QueryFilter(q []float32, k int, keep func(id int) bool) []Hit {
+	return f.query(q, k, keep)
+}
+
+func (f *FlatI8) query(q []float32, k int, keep func(int) bool) []Hit {
 	if f.n == 0 || len(q) != f.dim {
 		return nil
 	}
@@ -67,9 +78,11 @@ func (f *FlatI8) Query(q []float32, k int) []Hit {
 	linalg.MatmulBTW8A8(q, f.bq, f.scales, dst, 1, f.dim, f.n)
 
 	if k <= 0 || k >= f.n {
-		hits := make([]Hit, f.n)
+		hits := make([]Hit, 0, f.n)
 		for i, s := range dst {
-			hits[i] = Hit{Index: i, Score: float64(s)}
+			if keep == nil || keep(i) {
+				hits = append(hits, Hit{Index: i, Score: float64(s)})
+			}
 		}
 		sort.Slice(hits, func(a, b int) bool {
 			if hits[a].Score != hits[b].Score {
@@ -82,7 +95,9 @@ func (f *FlatI8) Query(q []float32, k int) []Hit {
 
 	sel := topk.New[int](k)
 	for i, s := range dst {
-		sel.Push(i, float64(s))
+		if keep == nil || keep(i) {
+			sel.Push(i, float64(s))
+		}
 	}
 	items := sel.Result()
 	sort.SliceStable(items, func(a, b int) bool {
