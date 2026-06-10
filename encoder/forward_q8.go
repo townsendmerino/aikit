@@ -142,29 +142,30 @@ func selfAttentionQ8(h []float32, WqkvQ []int8, WqkvScales []float32,
 	for headIdx := range heads {
 		qH := make([]float32, L*headDim)
 		kH := make([]float32, L*headDim)
-		vH := make([]float32, L*headDim)
+		vHT := make([]float32, headDim*L)
 		for i := range L {
 			src := i*D + headIdx*headDim
 			copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
 			copy(kH[i*headDim:(i+1)*headDim], K[src:src+headDim])
-			copy(vH[i*headDim:(i+1)*headDim], V[src:src+headDim])
+			// V transposed: vHT[d, i] = V[i, head, d], folded into the extract so
+			// scores·V can use the A·Bᵀ matmul (Vᵀ as its b operand) instead of the
+			// scalar triple-loop — matching the f32 selfAttention (§1.3 → §2.5).
+			for d := range headDim {
+				vHT[d*L+i] = V[src+d]
+			}
 		}
-		raw := matmulBT(qH, kH, L, headDim, L)
+		raw := matmulBT(qH, kH, L, headDim, L) // QKᵀ
 		for i := range raw {
 			raw[i] *= scale
 		}
 		for i := range L {
 			softmaxRow(raw[i*L : (i+1)*L])
 		}
+		// ctxHead[L, headDim] = scores[L, L] · V[L, headDim], as scores · (vHT)ᵀ.
+		ctxHead := matmulBT(raw, vHT, L, L, headDim)
 		for i := range L {
-			scoresRow := raw[i*L : (i+1)*L]
-			for d := range headDim {
-				var s float32
-				for j := range L {
-					s += scoresRow[j] * vH[j*headDim+d]
-				}
-				ctx[i*D+headIdx*headDim+d] = s
-			}
+			dst := i*D + headIdx*headDim
+			copy(ctx[dst:dst+headDim], ctxHead[i*headDim:(i+1)*headDim])
 		}
 	}
 	out := matmulBTQ8(ctx, OutProjQ, OutProjScales, L, D, D)
