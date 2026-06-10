@@ -104,6 +104,30 @@ func MatmulBT(a, b, dst []float32, M, K, N int) {
 	})
 }
 
+// MatmulBTAcc64 is MatmulBT (dst[M,N] = a[M,K] · b[N,K]ᵀ) but each output dot is
+// accumulated in float64 before rounding to float32 — bit-identical to a
+// sequential-order f64 reference. Inputs and output stay []float32; same shape
+// contract as MatmulBT, only the reduction precision changes.
+//
+// Use it where the f32 reassociation error is amplified downstream. The motivating
+// case: a transformer attention (QKᵀ / scores·V) feeding a discrete MoE top-k
+// router. f32 reassociation differs from the scalar f64 reference by ~1e-6, which
+// can flip an expert at a near-tie and cascade into different generated tokens; the
+// f64 accumulate drops the error to ~1e-15, below any realistic router boundary,
+// while keeping the parallelism over N. For dense models MatmulBT's f32 accumulate
+// is fine — prefer it (this is slower).
+func MatmulBTAcc64(a, b, dst []float32, M, K, N int) {
+	parallelCols(M*N*K, N, func(j0, j1 int) {
+		for i := range M {
+			arow := a[i*K : i*K+K]
+			drow := dst[i*N : i*N+N]
+			for j := j0; j < j1; j++ {
+				drow[j] = float32(dotF32Acc64(arow, b[j*K:j*K+K]))
+			}
+		}
+	})
+}
+
 // parallelCols runs fn over the [0,N) output columns, split into one chunk per
 // worker. Serial below parThreshold MACs (work) where the goroutine fan-out
 // would cost more than it saves. Both the f32 and int8 matmuls share it.

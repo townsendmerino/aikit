@@ -91,6 +91,16 @@ corrects what it renders.
 
 ### Added
 
+- **`linalg.MatmulBTAcc64` — f64-accumulating A·Bᵀ matmul** (Experimental surface).
+  Same shape contract as `MatmulBT` (dst[M,N] = a[M,K]·b[N,K]ᵀ, all `[]float32`),
+  but each output dot accumulates in float64 in sequential order — **bit-identical
+  to a scalar f64 reference** (measured max Δ 0), not just close. For where f32
+  reassociation error is amplified downstream: a transformer attention feeding a
+  discrete MoE top-k router, where a ~1e-6 f32 difference flips an expert at a
+  near-tie and changes generated tokens; f64 drops it to ~1e-15. Keeps the
+  parallelism over N, so it's ~6.5× faster than a single-threaded scalar f64 matmul
+  (and ~3.7× slower than f32 `MatmulBT`, M=512/K=128/N=2048). `MatmulBT` is
+  unchanged — prefer it for dense models where f32 is fine.
 - **`ann.Config.Int8` — int8-quantized HNSW** (Experimental surface). The HNSW
   graph's vectors are stored as int8 (per-vector symmetric quantization) instead of
   float32 — ¼ the vector memory, and the persisted/`//go:embed`-ed blob shrinks to

@@ -169,6 +169,9 @@ settles.
 - `ann.Config.Int8` — int8-quantized HNSW: ¼ the vector memory, built + searched +
   persisted in the integer domain (uses `linalg.DotI8`). Recall is unchanged on
   real embeddings (measured Δ0 vs f32). New surface, settling.
+- `linalg.MatmulBTAcc64` — `MatmulBT` with float64 dot accumulation (bit-identical
+  to a scalar f64 reference), for f32 reassociation error amplified downstream
+  (attention → discrete MoE router). New surface.
 - `ann.FlatI8.MarshalBinary` / `ann.LoadFlatI8` / `ann.LoadFlatI8Mmap` — int8-index
   persistence (the `//go:embed`-an-index pattern). `LoadFlatI8Mmap` is zero-copy
   (aliases the int8 codes from a read-only mapping for instant startup + page-cache
