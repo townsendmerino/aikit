@@ -25,6 +25,7 @@ large embedded-grammar payload) — is quarantined in the separate
 | `ann` | cosine ANN over a dense matrix — exact flat scan + approximate HNSW graph | — |
 | `bm25` | identifier-aware BM25 lexical index (Lucene-variant) | — |
 | `fuse` | reciprocal-rank fusion (RRF) — blend lexical + dense rankings for hybrid search | — |
+| `sparse` | learned-sparse (SPLADE-style) retrieval — inverted index + sparse-dot scoring over pre-computed vectors | — |
 | `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | — |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `golang.org/x/text` |
 | `encoder` | CodeRankEmbed transformer reranker (NomicBert, 12-layer) — higher-fidelity embeddings scored by cosine; pluggable matmul `Backend` | `embed`, `linalg` |
@@ -114,6 +115,10 @@ settles.
   matmul-provider seam; new in v0.4.0.
 - `ann.HNSW` / `ann.NewHNSW` / `ann.BuildHNSW` / `ann.Config` — the `Hit`/`Query`
   surface is stable, but graph internals and `Config` defaults may tune.
+- `sparse` — the whole package is new (learned-sparse / SPLADE retrieval). The
+  `SparseVec` / `Index` / `Query` shape is settled, but it ships only the index +
+  scorer half (an in-process masked-LM expansion head is a planned follow-up that
+  may extend the surface), so it stays Experimental until that lands.
 - `encoder.LoadQ8` / `encoder.ModelQ8` (int8 quant) — alternate precision path.
 - The mmap variant of `embed.OpenSafetensors`.
 - The concrete chunker structs (`regex.Chunker`, `markdown.Chunker`,

@@ -39,6 +39,16 @@ it.
 
 ### Added
 
+- **`sparse` package — learned-sparse (SPLADE-style) retrieval** (Experimental
+  tier). The third retrieval signal alongside dense (`ann`) and lexical (`bm25`):
+  an inverted index over sparse document vectors scored by sparse dot product
+  (`score(q,d) = Σ_t q_t·d_t`). `Hit.Index` matches `ann.Hit`, so a sparse ranking
+  feeds the existing `fuse.RRF` flow identically. This is the inference-OPTIONAL
+  half — `New`/`Query` operate on pre-computed `SparseVec` values (term id →
+  weight) produced by any SPLADE-family model out of band; an in-process masked-LM
+  expansion head (reusing `encoder`'s NomicBert machinery) is a planned follow-up.
+  Pure Go, immutable-after-`New` (concurrent-`Query`-safe), validated against a
+  brute-force sparse-dot reference.
 - **amd64 AVX2 fused `MatmulBTW4A8` kernel** (`dot_w4a8_amd64.s`,
   `quant_w4a8_amd64.go`) — completes the v1.1.0 follow-up: the int4×int8 decode
   kernel now has an amd64 path, not just arm64. Same shape as the arm64 kernel —

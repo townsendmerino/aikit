@@ -156,13 +156,17 @@ building blocks that products like that would otherwise build in-house —
 and to cover their headline retrieval features in library form. hugot's full
 speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
 
-1. **Learned sparse retrieval (SPLADE-style) package** — [high / high]. The
-   biggest functional gap vs Termite's retrieval stack (dense + sparse +
-   BM25). Shape: a `sparse` package — doc/query expansion inference (a small
-   masked-LM head, same family as `encoder`'s NomicBert machinery) + an
-   inverted-index scorer; fuses into the existing `fuse.RRF` flow. Big lift;
-   consider starting with *pre-computed* sparse-vector indexing + scoring
-   (inference-optional) to ship the index half first.
+1. **Learned sparse retrieval (SPLADE-style) package** — 🟡 **INDEX HALF DONE;
+   inference half remains.** Shipped the `sparse` package (Experimental tier):
+   `SparseVec`, an inverted `Index`, and `Query` (sparse-dot top-k) that fuses
+   into `fuse.RRF` via `Hit.Index` (matches `ann.Hit`). Inference-optional — it
+   indexes/scores pre-computed vectors from any SPLADE model; validated against a
+   brute-force reference, pure Go, concurrent-Query-safe. **Remaining (the bigger
+   lift):** the in-process masked-LM expansion head that produces the vectors —
+   a small MLM head over `encoder`'s NomicBert machinery (logits → log(1+ReLU)
+   max-pool over the vocab), parity-pinned to a Python SPLADE reference like the
+   other model paths. That's model-dependent (needs a SPLADE checkpoint + golden
+   fixtures); the index half is fully usable without it.
 2. **HNSW persistence: serialize/load, mmap-friendly** — [high / medium].
    Today the graph is rebuilt per process. Serialization + zero-copy load
    unlocks the `//go:embed`-an-index pattern — the same embedded-corpus story
