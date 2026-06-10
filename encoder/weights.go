@@ -56,6 +56,11 @@ type Config struct {
 	ScaleAttnWeights    bool    `json:"scale_attn_weights"`
 	Causal              bool    `json:"causal"`
 	ParallelBlock       bool    `json:"parallel_block"`
+	// pooling reduces the per-token hidden states to one vector. Not in
+	// NomicBert's config.json (it's a sentence-transformers module setting); the
+	// loader leaves it the zero value, which poolOne treats as CLS — CodeRankEmbed's
+	// behavior. A future BERT-family loader sets it (e.g. mean for MiniLM).
+	pooling pooling
 }
 
 // HeadDim returns the per-head hidden dimension (HiddenDim / NumHeads).

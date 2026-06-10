@@ -120,12 +120,13 @@ func (w *Weights) forwardBatch(idsList [][]int32) [][]float32 {
 		layerNorm(h, l.Norm2W, l.Norm2B, B*Lmax, D, eps)
 	}
 
-	// 5) CLS pool: extract position 0 of each sequence. Pad positions
-	// (i > 0 past realLen[b]) are discarded; we only ever read i=0.
+	// 5) Pool each sequence's [realLen, D] hidden states to one vector. CLS reads
+	// position 0; Mean averages only the real tokens (pad positions excluded via
+	// realLen). See Pooling.
 	out := make([][]float32, B)
 	for b := range B {
-		out[b] = make([]float32, D)
-		copy(out[b], h[b*Lmax*D:b*Lmax*D+D])
+		seq := h[b*Lmax*D : b*Lmax*D+realLen[b]*D]
+		out[b] = poolOne(seq, realLen[b], D, w.Cfg.pooling)
 	}
 	return out
 }

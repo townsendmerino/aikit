@@ -77,9 +77,7 @@ func (w *Weights) forward(ids []int32) []float32 {
 		layerNorm(h, l.Norm2W, l.Norm2B, L, D, eps)
 	}
 
-	// 5) CLS pool: return position 0 (a fresh allocation so the caller
-	// can mutate / L2-normalize without aliasing into h).
-	cls := make([]float32, D)
-	copy(cls, h[:D])
-	return cls
+	// 5) Pool the [L, D] hidden states to one vector (fresh allocation, so the
+	// caller can L2-normalize without aliasing h). CLS by default; see pooling.
+	return poolOne(h[:L*D], L, D, w.Cfg.pooling)
 }

@@ -12,6 +12,12 @@ it.
 
 ### Changed
 
+- **`encoder` forward is now internally pooling-parameterized** (groundwork for
+  BERT-family support, §2.5; no behavior or API change). The CLS extraction in
+  both f32 forwards is now a `poolOne` seam (CLS default / mean alternative, the
+  batched path masking padding via `realLen`), kept unexported until a
+  parity-pinned mean-pooled model exists. CodeRankEmbed stays CLS — golden
+  unchanged.
 - **`ann.HNSW` build is ~20% faster with 7× fewer allocations** (no graph/recall
   change). Profiling the build (which the Alg-4 default below made heavier) found
   two pure-overhead hotspots: a fresh `map` allocated per search step, and

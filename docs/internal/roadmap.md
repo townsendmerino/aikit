@@ -201,12 +201,27 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    HNSW (its `sim()` would int8-dot during search/build); and the **binary/Hamming
    pre-filter + f32 rescore** the item flagged.
 5. **Generalize `encoder` beyond NomicBert (config-driven BERT-family
-   loader)** — [medium / high]. Today: CodeRankEmbed only. Termite/hugot run
-   arbitrary HF models. Full generality is ONNX-shaped (don't go there);
-   instead parameterize the existing forward pass (layers, heads, RoPE vs
-   learned positions, pooling) to cover the popular MiniLM / bge /
-   mxbai-class rerankers and embedders from safetensors. Each new
-   architecture stays parity-pinned like CodeRankEmbed.
+   loader)** — [medium / high]. *Partial: the first architecture axis is
+   parameterized.* Full generality is ONNX-shaped (don't go there); instead
+   parameterize the existing forward pass (RoPE vs learned positions, SwiGLU
+   vs GELU FFN, CLS vs mean pooling) to cover MiniLM / bge / mxbai-class models
+   from safetensors. Each new architecture stays parity-pinned like CodeRankEmbed.
+
+   - **Pooling axis — done (internal seam).** `poolOne` reduces the per-token
+     hidden states by `pooling` mode (CLS default, mean alternative; float64
+     accumulation), wired into both f32 forwards (`forward`, `forwardBatch` —
+     the batched mean masks padding via `realLen`). Unit-tested (`TestPoolOne`)
+     and validated end-to-end on the real model (`TestPooling_meanEndToEnd`:
+     mean ≠ CLS, batched-mean == single-mean). Kept **unexported** — there's no
+     parity-pinned mean-pooled model to validate against yet, so no public knob
+     is committed; CodeRankEmbed stays CLS (golden unchanged).
+   - **Remaining — blocked on a parity oracle.** Learned absolute positions, a
+     GELU FFN (different weights/structure than SwiGLU), and the loader that
+     reads a sentence-transformers model's config — each new code path must be
+     parity-pinned against a real model's golden, which needs torch +
+     sentence-transformers + a downloaded model (not in this env). Add a target
+     model (e.g. all-MiniLM-L6-v2), generate its golden via `pin_encoder.py`,
+     then implement + validate, one axis at a time.
 6. **General-NLP tokenizer option for `bm25`** — ✅ **DONE.** `bm25.TokenizePlain`
    is a Unicode word tokenizer (lowercase, split on any non-letter/non-digit, no
    snake/camel identifier splitting) alongside the code-tuned `Tokenize`. `Build`/
