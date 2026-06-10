@@ -53,6 +53,8 @@ type BERT struct {
 	embLNW  []float32
 	embLNB  []float32
 	layers  []bertLayer
+	tok     *embed.Tokenizer       // WordPiece tokenizer (tokenizer.json)
+	maxSeq  int                    // sentence-transformers max_seq_length (right-truncation)
 	st      *embed.SafetensorsFile // retained so the aliased weights stay valid
 }
 
@@ -119,7 +121,36 @@ func LoadBERT(dir string) (*BERT, error) {
 		_ = st.Close()
 		return nil, err
 	}
+
+	// max sequence length: sentence-transformers right-truncates here (the position
+	// table is the hard ceiling). Falls back to the position capacity.
+	b.maxSeq = c.MaxPos
+	if sb, e := os.ReadFile(filepath.Join(dir, "sentence_bert_config.json")); e == nil {
+		var v struct {
+			MaxSeqLength int `json:"max_seq_length"`
+		}
+		if json.Unmarshal(sb, &v) == nil && v.MaxSeqLength > 0 {
+			b.maxSeq = v.MaxSeqLength
+		}
+	}
+	tok, terr := embed.LoadTokenizer(filepath.Join(dir, "tokenizer.json"))
+	if terr != nil {
+		_ = st.Close()
+		return nil, fmt.Errorf("encoder: BERT tokenizer: %w", terr)
+	}
+	b.tok = tok
 	return b, nil
+}
+
+// Encode tokenizes text (WordPiece, wrapped [CLS]…[SEP], right-truncated to the
+// model's max sequence length) and returns the mean-pooled, L2-normalized sentence
+// embedding — the end-to-end MiniLM equivalent of sentence-transformers' .encode().
+func (b *BERT) Encode(text string) ([]float32, error) {
+	ids, err := b.tok.EncodeWithSpecials(text, b.maxSeq)
+	if err != nil {
+		return nil, err
+	}
+	return b.Embed(ids), nil
 }
 
 // hiddenStates runs the transformer forward on token ids (already wrapped with

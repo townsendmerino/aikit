@@ -68,3 +68,58 @@ func TestBERT_parity(t *testing.T) {
 	}
 	t.Logf("MiniLM parity over %d cases: worst hidden maxΔ %.2e, worst emb cosine %.6f", len(g.Cases), worstHidden, worstCos)
 }
+
+// TestBERT_encodeEndToEnd pins the full text→embedding pipeline: aikit's WordPiece
+// tokenizer must produce the same input_ids as HF, and BERT.Encode(text) must match
+// the golden sentence embedding.
+func TestBERT_encodeEndToEnd(t *testing.T) {
+	const dir = "../testdata/minilm-model"
+	if _, err := os.Stat(dir + "/model.safetensors"); err != nil {
+		t.Skipf("no MiniLM model at %s", dir)
+	}
+	b, err := LoadBERT(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("../testdata/minilm_golden.json")
+	if err != nil {
+		t.Skip("no golden")
+	}
+	var g struct {
+		Cases []struct {
+			Text     string    `json:"text"`
+			InputIDs []int32   `json:"input_ids"`
+			Emb      []float32 `json:"embedding"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	tokMismatch := 0
+	for _, c := range g.Cases {
+		ids, err := b.tok.EncodeWithSpecials(c.Text, b.maxSeq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		same := len(ids) == len(c.InputIDs)
+		for i := range ids {
+			if same && ids[i] != c.InputIDs[i] {
+				same = false
+			}
+		}
+		if !same {
+			tokMismatch++
+			t.Logf("tokenizer mismatch %q: got %v want %v", c.Text, ids, c.InputIDs)
+		}
+		emb, err := b.Encode(c.Text)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cos := cos32(emb, c.Emb); cos < 0.9999 {
+			t.Errorf("%q: Encode cosine %.6f < 0.9999", c.Text, cos)
+		}
+	}
+	if tokMismatch > 0 {
+		t.Errorf("%d/%d cases: aikit WordPiece ids differ from the HF golden", tokMismatch, len(g.Cases))
+	}
+}
