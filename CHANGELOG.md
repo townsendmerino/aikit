@@ -15,9 +15,13 @@ it.
 - **`ann` similarity now uses the SIMD dot kernel.** Both backends scored every
   candidate with a scalar `float64` dot loop and didn't import `linalg` at all.
   `Flat.Query` (the brute-force scan — 100% of its query cost) and `HNSW.sim`
-  (the graph-walk inner loop) now call `linalg.Dot`. Measured: **~4.1–4.5× faster
-  Flat scan** (N=10k–50k, d=128) and **~1.4× faster HNSW search** (d=64; build
-  benefits via the same `sim`). **Precision:** `linalg.Dot` accumulates in
+  (the graph-walk inner loop) now use the SIMD kernels. `Flat.Query` further
+  streams 8 candidates per pass through `linalg.Dot8x4` (the shared query loaded
+  once, reused across 8 vectors — the blocked-matmul a-reuse trick). Measured:
+  **~7× faster Flat scan** (N=50k, d=128: 5.18 ms → 0.72 ms; the per-vector
+  `linalg.Dot` swap is ~4.4× and the 8-vector streaming adds ~1.6× on top, now
+  near memory bandwidth) and **~1.4× faster HNSW search** (d=64; build benefits
+  via the same `sim`). **Precision:** the SIMD kernels accumulate in
   `float32` (vs the old `float64` scalar sum). For unit-norm `float32` inputs the
   per-element error is bounded — recall is unchanged (verified: 0 boundary flips,
   new-vs-`float64` top-k identical); only sub-ULP near-ties may order differently.

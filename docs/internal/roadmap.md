@@ -16,11 +16,12 @@
   ~2.85× single `Encode` at long sequences (L²-scaled), bit-exact. See §1.3.
 - **`ann` SIMD similarity — DONE** (follow-up to 58c947b's pattern). `Flat.Query`
   and `HNSW.sim` were scalar `float64` dot loops not using `linalg`; now call
-  `linalg.Dot`. ~4.1–4.5× Flat scan (d=128), ~1.4× HNSW search. Decision:
+  `linalg.Dot`; `Flat.Query` then streams 8 vecs/pass through `Dot8x4` (shared-q
+  a-reuse). ~7× Flat scan total (d=128: 5.18→0.72 ms; +1.6× from streaming over
+  the per-vector swap, near memory bandwidth), ~1.4× HNSW search. Decision:
   `float32`-precision scores accepted (HNSW approximate → silent; Flat documented,
-  recall verified unchanged — 0 tie-flips vs float64). *Follow-up:* `Dot8x4`
-  streaming (8 vecs/pass against shared q) could ~2× the Flat scan again, but
-  needs N%8 + d%4 tail handling over the `[][]float32` layout — scoped, not done.
+  recall verified unchanged — 0 tie-flips vs float64; the recall test also caught
+  an arm64 Dot8x4 4-lane-partial-sum bug before it shipped).
 - **§3.1 Fuzz binary parsers — DONE.** Added `FuzzParseGGUF` /
   `FuzzParseSafetensors` / `FuzzParseShardIndex` + seed corpus; found & fixed an
   OOM (`make(map, ~5e10)` from an untrusted `tensorCount`), a negative-length
