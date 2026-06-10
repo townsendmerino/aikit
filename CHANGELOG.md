@@ -10,6 +10,8 @@ it.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-06-09
+
 ### Changed
 
 - **`embed`: `SafetensorsFile.Tensor()` now errors after `Close()`** (§3.3) instead
@@ -182,6 +184,20 @@ it.
   fires on which CPU, and why), and `Dot8x4` documents its large-K throughput
   cliff with the "tile K to ≤~768" guidance. README's model-fetch quick start no
   longer requires `ken` — it uses the Hugging Face CLI directly.
+
+## [1.1.1] — 2026-06-08
+
+### Added
+
+- **amd64 AVX2 fused kernel for `linalg.MatmulBTW4A8`** — the follow-up promised in
+  1.1.0. The int4×int8 *decode* (M=1) path now has a SIMD kernel on amd64, not just
+  arm64: a nibble-unpack prologue (16 packed bytes → 32 centered int8 weights) feeds
+  the proven `dotI8AVX2` body (`VPMOVSXBW` + `VPMADDWD` + `VPADDD`), gated by
+  `hasAVX2` (non-AVX2 amd64 keeps the scalar reference). Validated on Zen 2 (Ryzen 7
+  3700X): bit-for-bit vs the scalar oracle, race-clean; at M=1 decode ~1.7–1.9× of
+  `MatmulBTW8A8` and ~32× faster than `MatmulBTQ4`, on par with the arm64 SDOT
+  kernel. A VNNI (`VPDPBUSD`) variant for Zen 4+ / Cascade Lake+ remains a follow-up
+  behind the same CPUID gate. No signatures changed.
 
 ## [1.1.0] — 2026-06-08
 
@@ -671,7 +687,9 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/townsendmerino/aikit/compare/v1.1.1...v1.2.0
+[1.1.1]: https://github.com/townsendmerino/aikit/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/townsendmerino/aikit/compare/v1.0.1...v1.1.0
 [1.0.1]: https://github.com/townsendmerino/aikit/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/townsendmerino/aikit/compare/v0.5.2...v1.0.0
