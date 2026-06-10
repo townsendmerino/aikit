@@ -70,6 +70,7 @@ type HNSW struct {
 	mL             float64 // level-generation normalizer = 1/ln(M)
 	entry          int     // entry-point node id (top of the graph)
 	maxLayer       int
+	seed           uint64 // Config.Seed, retained so a loaded index re-seeds rng
 	rng            *rand.Rand
 }
 
@@ -95,6 +96,7 @@ func NewHNSW(cfg Config) *HNSW {
 		efSearch:       efs,
 		mL:             1.0 / math.Log(float64(m)),
 		entry:          -1,
+		seed:           cfg.Seed,
 		rng:            rand.New(rand.NewPCG(cfg.Seed, cfg.Seed^0x9e3779b97f4a7c15)),
 	}
 }

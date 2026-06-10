@@ -167,12 +167,16 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    max-pool over the vocab), parity-pinned to a Python SPLADE reference like the
    other model paths. That's model-dependent (needs a SPLADE checkpoint + golden
    fixtures); the index half is fully usable without it.
-2. **HNSW persistence: serialize/load, mmap-friendly** — [high / medium].
-   Today the graph is rebuilt per process. Serialization + zero-copy load
-   unlocks the `//go:embed`-an-index pattern — the same embedded-corpus story
-   the ken critique calls the real differentiator. `coder/hnsw` has
-   import/export; aikit shouldn't lack it. Design the format versioned from
-   day one (Experimental tier).
+2. **HNSW persistence: serialize/load** — ✅ **DONE.** `HNSW.MarshalBinary` (also
+   `encoding.BinaryMarshaler`) + `ann.Load([]byte)` — the `//go:embed`-an-index
+   pattern (build offline, embed, load query-ready at startup). Format versioned
+   from day one (magic + version); `Load` validates graph integrity (out-of-range
+   ids, layer-inconsistent edges, truncation, config bounds) so a hostile/corrupt
+   blob errors instead of panicking/OOM-ing (fuzzed, `FuzzLoadHNSW`); round-trip
+   reproduces identical `Query` results, `MarshalBinary` deterministic.
+   Experimental tier. *Follow-up:* a true **zero-copy mmap `Load`** (vectors
+   aliasing the mapped bytes, no copy) — the format is already a contiguous
+   little-endian vector block, so it's mmap-friendly; the current `Load` copies.
 3. **Published recall/latency benchmark harness** — [high / medium]. Antfly
    leads with "0.9975 recall, 10–12 ms p95 on 50K VectorDBBench". aikit has
    strong internal perf discipline but no public, reproducible

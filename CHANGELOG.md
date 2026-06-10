@@ -39,6 +39,15 @@ it.
 
 ### Added
 
+- **`ann.HNSW` persistence — `MarshalBinary` + `Load`** (Experimental tier). The
+  graph was rebuilt per process; now a built index serializes to a versioned byte
+  blob (`MarshalBinary`, also `encoding.BinaryMarshaler`) and reloads query-ready
+  via `Load([]byte)` — the `//go:embed`-an-index pattern: build the graph once
+  offline, embed the bytes, load at startup. The format is versioned from day one
+  (magic + version, rejects unknown versions) and `Load` validates graph integrity
+  — out-of-range neighbor ids, layer-inconsistent edges, truncation — so a corrupt
+  or hostile blob returns an error rather than panicking or OOM-ing (fuzzed). A
+  round-trip reproduces identical `Query` results; `MarshalBinary` is deterministic.
 - **`sparse` package — learned-sparse (SPLADE-style) retrieval** (Experimental
   tier). The third retrieval signal alongside dense (`ann`) and lexical (`bm25`):
   an inverted index over sparse document vectors scored by sparse dot product

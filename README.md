@@ -115,6 +115,9 @@ settles.
   matmul-provider seam; new in v0.4.0.
 - `ann.HNSW` / `ann.NewHNSW` / `ann.BuildHNSW` / `ann.Config` — the `Hit`/`Query`
   surface is stable, but graph internals and `Config` defaults may tune.
+- `ann.HNSW.MarshalBinary` / `ann.Load` — index persistence (the
+  `//go:embed`-an-index pattern). The serialized format is versioned from day one
+  but stays Experimental until the graph internals settle.
 - `sparse` — the whole package is new (learned-sparse / SPLADE retrieval). The
   `SparseVec` / `Index` / `Query` shape is settled, but it ships only the index +
   scorer half (an in-process masked-LM expansion head is a planned follow-up that
