@@ -91,6 +91,14 @@ corrects what it renders.
 
 ### Added
 
+- **`ann.FlatI8` persistence — `MarshalBinary` + `LoadFlatI8`** (Experimental
+  surface). The int8 index — the one you'd most want to `//go:embed` (¼ the float32
+  memory at ~equal recall, per the benchmarks) — now serializes to a versioned blob
+  and loads back query-ready, like `ann.HNSW`. Same discipline: little-endian
+  versioned format, a bounds-checked cursor, an overflow-safe payload-size check
+  before allocation, and a `FuzzLoadFlatI8` target (plus the previously-unwired
+  `FuzzLoadHNSW`) now in the CI fuzz smoke + nightly. Quantize the corpus once
+  offline, embed the bytes, skip re-quantization per process.
 - **`QueryFilter` on `ann.Flat`/`HNSW`/`FlatI8` — query-time logical delete**
   (Experimental surface). `QueryFilter(q, k, keep func(id int) bool)` returns only
   documents for which `keep` is true, so a live-set / tombstone applies WITHOUT

@@ -25,6 +25,8 @@ jobs:
           - { pkg: chunk, fn: FuzzLineChunker }
           - { pkg: chunk/markdown, fn: FuzzMarkdownChunk }
           - { pkg: chunk/regex, fn: FuzzRegexChunk }
+          - { pkg: ann, fn: FuzzLoadHNSW }
+          - { pkg: ann, fn: FuzzLoadFlatI8 }
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6

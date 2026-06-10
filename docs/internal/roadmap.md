@@ -112,10 +112,14 @@ Items 2–5 are sequenced behind item 1.
 
 The `//go:embed` story is the moat; these make it uniform. All unblocked.
 
-1. **`FlatI8.MarshalBinary` + `Load`** — [medium / low]. HNSW persists;
-   FlatI8 (the ¼-memory index, the one you'd *most* want to embed) doesn't.
-   Same versioned-format + integrity-validation + fuzz discipline as
-   `FuzzLoadHNSW`.
+1. **`FlatI8.MarshalBinary` + `Load`** — ✅ **DONE.** `FlatI8.MarshalBinary` +
+   `LoadFlatI8` (`flat_i8_persist.go`): versioned little-endian format, a
+   bounds-checked `fcur` cursor (per-format convention, alongside `hcur`/`gcur`),
+   and an overflow-safe `int64` payload-size check before allocation. Round-trip /
+   empty / bad-blob tests + `FuzzLoadFlatI8` (and the previously-unwired
+   `FuzzLoadHNSW`) now run in the CI fuzz smoke + nightly. The benchmark's headline
+   index can now be `//go:embed`-ed — directly enabling §1.2's smallest-blob
+   example.
 2. **Zero-copy mmap `ann.Load`** — [medium / medium]. The v2 format already
    lays vectors out as one contiguous little-endian block; `Load` currently
    copies. An mmap-aliasing variant gives instant startup on big indexes —

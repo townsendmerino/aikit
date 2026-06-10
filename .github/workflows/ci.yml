@@ -71,6 +71,8 @@ jobs:
           fuzz chunk FuzzLineChunker
           fuzz chunk/markdown FuzzMarkdownChunk
           fuzz chunk/regex FuzzRegexChunk
+          fuzz ann FuzzLoadHNSW
+          fuzz ann FuzzLoadFlatI8
 
   treesitter:
     name: chunk/treesitter submodule
