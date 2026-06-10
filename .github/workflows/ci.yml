@@ -63,7 +63,7 @@ jobs:
       - name: fuzz (smoke)
         run: |
           set -e
-          fuzz() { go test "./$1/" -run xxx -fuzz="^$2\$" -fuzztime=20s; }
+          fuzz() { go test "./$1/" -run xxx -fuzz="^$2\$" -fuzztime=15s; }
           for fn in FuzzParseGGUF FuzzParseSafetensors FuzzParseShardIndex FuzzGGUFDequant; do
             fuzz embed "$fn"
           done

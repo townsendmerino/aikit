@@ -107,8 +107,12 @@ func flatI8Layout(data []byte) (dim, n, codesAt int, err error) {
 	if c.err != nil {
 		return 0, 0, 0, c.err
 	}
-	if n > 0 && dim == 0 {
-		return 0, 0, 0, fmt.Errorf("ann: FlatI8 has %d vectors but dim 0", n)
+	// An index is either empty (n=0, dim=0, like NewFlatI8(nil)) or non-empty
+	// (both > 0). Reject the mixed cases — in particular n=0 with a huge dim, which
+	// the size check below would otherwise wave through (n*dim = 0), leaving a
+	// loaded index whose dim could drive a gigantic query-vector allocation.
+	if (n == 0) != (dim == 0) {
+		return 0, 0, 0, fmt.Errorf("ann: FlatI8 inconsistent shape (n=%d, dim=%d): both must be zero or both nonzero", n, dim)
 	}
 	codesAt = c.pos
 	// Payload must be exactly n×dim code bytes + n×4 scale bytes. Computed in int64

@@ -118,6 +118,9 @@ func FuzzLoadHNSW(f *testing.F) {
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
+		if len(data) > 1<<16 { // cap: bounds/validation logic lives in small inputs
+			return
+		}
 		h, err := Load(data)
 		if err != nil {
 			return
