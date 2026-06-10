@@ -48,6 +48,12 @@ jobs:
       - name: test (race)
         run: go test -race ./...
 
+      # Exercise the debug-only quant-kernel contract checks (§3.2): build the
+      # checks_on.go path and confirm the real kernels honor their own shape
+      # contracts (and that the asserts compile + fire). No-ops in normal builds.
+      - name: test (aikit_checks)
+        run: go test -tags aikit_checks ./linalg/
+
       # Short fuzz smoke on the untrusted-input surfaces: the binary parsers
       # (GGUF / safetensors, §3.1) and the indexing-pipeline text paths (bm25
       # tokenizers + chunkers, §3.4) — a panic in either takes down an index

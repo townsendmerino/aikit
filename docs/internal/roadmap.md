@@ -259,10 +259,15 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    Four committed regression seeds; CI runs a 20s/target smoke. **Remaining:**
    only the "longer nightly" run (the PR smoke is the short pass) — `chunk`
    tokenizer/scanner fuzzing is now done (§3.4).
-2. **Debug-build alignment asserts in quant kernels** — [medium / low].
-   `DequantizeRow`/W4A8 group paths trust K alignment (caller contract).
-   A build-tagged (`//go:build aikit_checks`) assert layer catches misuse
-   without taxing the hot path.
+2. **Debug-build alignment asserts in quant kernels** — ✅ **DONE.** A
+   build-tagged check layer (`checks_on.go` / `checks_off.go`, `//go:build
+   aikit_checks`): `checkDequantInt8`/`checkDequantInt4`/`checkGroupMatmul`
+   validate the shape + `group>0` contracts of `DequantizeRowInt8/Int4`,
+   `MatmulBTW4A8`, `MatmulBTQ4` and panic naming the kernel. In production they
+   compile to empty functions taking concrete args — the calls inline to nothing
+   (no boxing, no branch, zero hot-path cost). `TestChecks_fire`/`passClean` (run
+   under the tag) prove they fire on misuse and pass clean calls; a CI step runs
+   `go test -tags aikit_checks ./linalg/`.
 3. **Mmap-lifetime guardrail** — [medium / low-medium]. Tensor slices outlive
    `Close()` only by documented contract. Options: a `runtime.SetFinalizer`
    + use-after-close poison in debug builds, or a `vet`-style doc example.

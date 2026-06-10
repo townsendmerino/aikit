@@ -65,6 +65,7 @@ func QuantizeRowInt8(row []float32, q []int8) (scale float32) {
 // DequantizeRowInt8 reconstructs one row into dst: dst[j] = float32(q[j])*scale.
 // Used for the tied embedding lookup when the table is stored int8.
 func DequantizeRowInt8(q []int8, scale float32, dst []float32) {
+	checkDequantInt8(q, dst)
 	for j, c := range q {
 		dst[j] = float32(c) * scale
 	}
@@ -346,6 +347,7 @@ func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales 
 // and per-group scales (both already sliced to the row). Used for the tied
 // embedding lookup when the table is stored int4.
 func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []float32) {
+	checkDequantInt4(packed, scales, group, cols, dst)
 	for k := range cols {
 		b := packed[k/2]
 		var nib byte
@@ -374,6 +376,7 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 // — the W8A8 tradeoff — so it's the explicit-opt-in kernel for RAM-constrained
 // int4 CPU decode, not a drop-in for the f32-activation path.
 func MatmulBTW4A8(a []float32, w4 []byte, wScales []float32, dst []float32, M, K, N, group int) {
+	checkGroupMatmul("MatmulBTW4A8", len(a), w4, wScales, len(dst), M, K, N, group)
 	nGroups, bpr := groupsFor(K, group)
 	aq := make([]int8, M*K)
 	aScales := make([]float32, M)
@@ -431,6 +434,7 @@ func unpackInt4Row(packed []byte, n int, dst []int8) {
 // Q4 parity test references); the prior per-group-dot kernel only matched within
 // tolerance, so this is also slightly MORE faithful, not less.
 func MatmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
+	checkGroupMatmul("MatmulBTQ4", len(a), bPacked, bScales, len(dst), M, K, N, group)
 	nGroups, bpr := groupsFor(K, group)
 	parallelCols(M*N*K, N, func(j0, j1 int) {
 		deq := make([]float32, K) // per-worker scratch: one full dequantized weight row
