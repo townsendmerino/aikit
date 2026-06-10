@@ -10,6 +10,49 @@ it.
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-06-10
+
+### Added
+
+- **`linalg.MatmulBTAcc64` — f64-accumulating A·Bᵀ matmul** (Experimental surface).
+  Same shape contract as `MatmulBT` (dst[M,N] = a[M,K]·b[N,K]ᵀ, all `[]float32`),
+  but each output dot accumulates in float64 in sequential order — **bit-identical
+  to a scalar f64 reference** (measured max Δ 0), not just close. For where f32
+  reassociation error is amplified downstream: a transformer attention feeding a
+  discrete MoE top-k router, where a ~1e-6 f32 difference flips an expert at a
+  near-tie and changes generated tokens; f64 drops it to ~1e-15. Keeps the
+  parallelism over N, so it's ~6.5× faster than a single-threaded scalar f64 matmul
+  (and ~3.7× slower than f32 `MatmulBT`, M=512/K=128/N=2048). `MatmulBT` is
+  unchanged — prefer it for dense models where f32 is fine.
+- **`ann.Config.Int8` — int8-quantized HNSW** (Experimental surface). The HNSW
+  graph's vectors are stored as int8 (per-vector symmetric quantization) instead of
+  float32 — ¼ the vector memory, and the persisted/`//go:embed`-ed blob shrinks to
+  match. Build, search, and persistence all run in the integer domain (a new
+  exported `linalg.DotI8` is the node-node primitive; the query is quantized once
+  per search via a prepared `queryVec` threaded through the search — the float32
+  path is behaviorally unchanged). Recall is essentially unaffected:
+  `TestHNSW_int8RecallGate` and `TestHNSW_int8_real` measure recall@10 Δ0.0000 vs
+  the f32 HNSW on real Model2Vec embeddings (the gate the roadmap required before
+  building this). The persisted format is bumped to **v3** (an int8-mode byte +
+  int8 codes/scales); `Load` rejects the brief-lived v2, like the v1→v2 bump.
+- **`ann.FlatI8` persistence — `MarshalBinary` + `LoadFlatI8`** (Experimental
+  surface). The int8 index — the one you'd most want to `//go:embed` (¼ the float32
+  memory at ~equal recall, per the benchmarks) — now serializes to a versioned blob
+  and loads back query-ready, like `ann.HNSW`. Same discipline: little-endian
+  versioned format, a bounds-checked cursor, an overflow-safe payload-size check
+  before allocation, and a `FuzzLoadFlatI8` target (plus the previously-unwired
+  `FuzzLoadHNSW`) now in the CI fuzz smoke + nightly. Quantize the corpus once
+  offline, embed the bytes, skip re-quantization per process.
+- **`ann.LoadFlatI8Mmap` — zero-copy mmap load + `FlatI8.Close`** (Experimental
+  surface). Memory-maps a FlatI8 blob and *aliases* the int8 codes straight from
+  the read-only mapping (the codes are 1-byte, so no alignment constraint), copying
+  only the tiny scales — so a large embedded index is query-ready instantly (no
+  parse-and-copy) and its bytes live in the OS page cache, not the Go heap.
+  `Close` releases the mapping (a finalizer is the backstop); querying after Close
+  panics. Non-unix falls back to a heap read (same result). HNSW zero-copy is a
+  follow-up — its float32 vectors need format-level alignment and its graph is
+  parsed regardless.
+
 ## [1.2.1] — 2026-06-10
 
 Docs/CI only — no code or API changes. These edits missed the v1.2.0 tag, so
@@ -91,44 +134,6 @@ corrects what it renders.
 
 ### Added
 
-- **`linalg.MatmulBTAcc64` — f64-accumulating A·Bᵀ matmul** (Experimental surface).
-  Same shape contract as `MatmulBT` (dst[M,N] = a[M,K]·b[N,K]ᵀ, all `[]float32`),
-  but each output dot accumulates in float64 in sequential order — **bit-identical
-  to a scalar f64 reference** (measured max Δ 0), not just close. For where f32
-  reassociation error is amplified downstream: a transformer attention feeding a
-  discrete MoE top-k router, where a ~1e-6 f32 difference flips an expert at a
-  near-tie and changes generated tokens; f64 drops it to ~1e-15. Keeps the
-  parallelism over N, so it's ~6.5× faster than a single-threaded scalar f64 matmul
-  (and ~3.7× slower than f32 `MatmulBT`, M=512/K=128/N=2048). `MatmulBT` is
-  unchanged — prefer it for dense models where f32 is fine.
-- **`ann.Config.Int8` — int8-quantized HNSW** (Experimental surface). The HNSW
-  graph's vectors are stored as int8 (per-vector symmetric quantization) instead of
-  float32 — ¼ the vector memory, and the persisted/`//go:embed`-ed blob shrinks to
-  match. Build, search, and persistence all run in the integer domain (a new
-  exported `linalg.DotI8` is the node-node primitive; the query is quantized once
-  per search via a prepared `queryVec` threaded through the search — the float32
-  path is behaviorally unchanged). Recall is essentially unaffected:
-  `TestHNSW_int8RecallGate` and `TestHNSW_int8_real` measure recall@10 Δ0.0000 vs
-  the f32 HNSW on real Model2Vec embeddings (the gate the roadmap required before
-  building this). The persisted format is bumped to **v3** (an int8-mode byte +
-  int8 codes/scales); `Load` rejects the brief-lived v2, like the v1→v2 bump.
-- **`ann.FlatI8` persistence — `MarshalBinary` + `LoadFlatI8`** (Experimental
-  surface). The int8 index — the one you'd most want to `//go:embed` (¼ the float32
-  memory at ~equal recall, per the benchmarks) — now serializes to a versioned blob
-  and loads back query-ready, like `ann.HNSW`. Same discipline: little-endian
-  versioned format, a bounds-checked cursor, an overflow-safe payload-size check
-  before allocation, and a `FuzzLoadFlatI8` target (plus the previously-unwired
-  `FuzzLoadHNSW`) now in the CI fuzz smoke + nightly. Quantize the corpus once
-  offline, embed the bytes, skip re-quantization per process.
-- **`ann.LoadFlatI8Mmap` — zero-copy mmap load + `FlatI8.Close`** (Experimental
-  surface). Memory-maps a FlatI8 blob and *aliases* the int8 codes straight from
-  the read-only mapping (the codes are 1-byte, so no alignment constraint), copying
-  only the tiny scales — so a large embedded index is query-ready instantly (no
-  parse-and-copy) and its bytes live in the OS page cache, not the Go heap.
-  `Close` releases the mapping (a finalizer is the backstop); querying after Close
-  panics. Non-unix falls back to a heap read (same result). HNSW zero-copy is a
-  follow-up — its float32 vectors need format-level alignment and its graph is
-  parsed regardless.
 - **`QueryFilter` on `ann.Flat`/`HNSW`/`FlatI8` — query-time logical delete**
   (Experimental surface). `QueryFilter(q, k, keep func(id int) bool)` returns only
   documents for which `keep` is true, so a live-set / tombstone applies WITHOUT
@@ -746,7 +751,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/townsendmerino/aikit/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/townsendmerino/aikit/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/townsendmerino/aikit/compare/v1.1.1...v1.2.0
 [1.1.1]: https://github.com/townsendmerino/aikit/compare/v1.1.0...v1.1.1
