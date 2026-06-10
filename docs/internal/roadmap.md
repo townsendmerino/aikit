@@ -180,13 +180,16 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
    Experimental tier. *Follow-up:* a true **zero-copy mmap `Load`** (vectors
    aliasing the mapped bytes, no copy) — the format is already a contiguous
    little-endian vector block, so it's mmap-friendly; the current `Load` copies.
-3. **Published recall/latency benchmark harness** — [high / medium]. Antfly
-   leads with "0.9975 recall, 10–12 ms p95 on 50K VectorDBBench". aikit has
-   strong internal perf discipline but no public, reproducible
-   recall+latency numbers, and no comparative table vs hugot / Ollama /
-   coder/hnsw. A `bench/` harness (VectorDBBench subset or BEIR slice +
-   p50/p95/p99 + recall@k) turns "parity-tested" into a marketable number.
-   Doubles as the regression gate §3.1 needs.
+3. **Published recall/latency benchmark harness** — ✅ **DONE (and it already
+   earned its keep).** `bench.Run(corpus, queries, k, cfg)` measures recall@k vs
+   exact Flat + p50/p95/p99 latency + build time + memory for Flat/HNSW/FlatI8,
+   rendered as a Markdown `Table`; synthetic (reproducible) and real-embedding
+   (model-gated) harness tests, with FlatI8 recall as a machine-independent
+   regression gate. **First run surfaced a real finding** (see §4.1): on clustered
+   real embeddings HNSW recall@10 caps ~0.68 and barely moves with ef, while
+   random vectors hit 1.0 at ef=256 — the Alg-3 limitation the old random/d=64
+   test (0.99) hid. *Follow-ups:* a cross-library comparison table (§6.2, needs
+   hugot/coder-hnsw runs) and a VectorDBBench/BEIR slice for absolute numbers.
 4. **Quantized ANN storage (int8 vectors)** — ✅ **DONE (Flat).** `ann.FlatI8`
    stores each unit vector as int8 + a per-vector scale (¼ the float32 footprint)
    and scores via `linalg.MatmulBTW8A8` at M=1 (dynamic query quant, SIMD +
@@ -242,11 +245,15 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
 ## 4. Retrieval quality
 
 1. **HNSW Algorithm-4 neighbor-diversity heuristic** — [medium / medium].
-   Current "M nearest" (Alg-3) is honest and documented (`ann/hnsw.go:21-26`)
-   but costs recall-per-ef on clustered data — and code-corpus embeddings are
-   clustered. Implement behind `Config`, measure with §2.3's harness, flip
-   the default if it wins. (Per the ken critique: recall is the one axis
-   that materially improves the *product*.)
+   **⬆ NOW QUANTIFIED + URGENT — the §2.3 harness measured the damage.** Current
+   "M nearest" (Alg-3, `ann/hnsw.go:21-26`) costs recall-per-ef on clustered data,
+   and the harness shows it's severe on real (clustered) code embeddings: recall@10
+   caps ~0.68 and barely moves with ef (0.63→0.77 over ef 64→512), vs 1.0 on random
+   vectors at ef=256. So on the actual use case HNSW misses ~⅓ of the true top-10 at
+   any search effort — the graph, not ef, is the limit. (Interim: FlatI8 is exact-ish
+   at ¼ memory and a better choice than Alg-3 HNSW for clustered corpora until this
+   lands.) Implement Alg-4 behind `Config`, measure with the harness, flip the
+   default if it wins. Recall is the one axis that materially improves the *product*.
 2. **Recall regression tests on a real slice** — [medium / low-medium]. The
    golden tests pin numerics; nothing pins end-to-end retrieval quality.
    A small fixed corpus + frozen relevance set, recall@10 asserted with

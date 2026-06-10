@@ -39,6 +39,17 @@ it.
 
 ### Added
 
+- **`bench` package — reproducible recall + latency harness** (Experimental
+  tooling). `bench.Run(corpus, queries, k, cfg)` measures, for Flat / HNSW /
+  FlatI8: recall@k vs the exact Flat top-k, per-query latency percentiles
+  (p50/p95/p99), build time, and index memory, rendered as a Markdown `Table`. It
+  turns "parity-tested" into concrete numbers and doubles as a recall regression
+  gate. Its first run already surfaced a real finding: on **clustered** real
+  embeddings (the actual use case), HNSW recall@10 caps ~0.68 and barely improves
+  with `EfSearch` (0.63→0.77 over ef 64→512), while on random vectors ef=256
+  reaches 1.0 — the Alg-3-vs-Alg-4 limitation (roadmap §4.1), which the old
+  random/d=64 unit test (0.99) masked. FlatI8 measured 0.98–1.00 recall at ¼ the
+  memory.
 - **`ann.FlatI8` — int8-quantized dense index** (Experimental tier). The int8
   sibling of `Flat`: stores each L2-normalized vector as int8 codes + a per-vector
   scale (¼ the memory) and scores a query by int8×int8 dot through `linalg`'s W8A8
