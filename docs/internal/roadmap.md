@@ -22,12 +22,14 @@
   `float32`-precision scores accepted (HNSW approximate → silent; Flat documented,
   recall verified unchanged — 0 tie-flips vs float64; the recall test also caught
   an arm64 Dot8x4 4-lane-partial-sum bug before it shipped).
-- **§3.1 Fuzz binary parsers — DONE.** Added `FuzzParseGGUF` /
+- **§3.1 Fuzz binary parsers — DONE (parse + dequant).** Parse: `FuzzParseGGUF` /
   `FuzzParseSafetensors` / `FuzzParseShardIndex` + seed corpus; found & fixed an
   OOM (`make(map, ~5e10)` from an untrusted `tensorCount`), a negative-length
-  slice panic, and a safetensors `8+headerLen` overflow. OOM repro committed as
-  a regression seed; CI runs a 20s/target fuzz smoke. **Follow-up:** dequant-path
-  fuzzing (`Tensor`/`RowDequantizer`) — its own OOM-bounding work.
+  slice panic, and a safetensors `8+headerLen` overflow. Dequant (`FuzzGGUFDequant`,
+  `63c73ea`): found & fixed two more — `∏dims` overflowing `int` → `make([]float32,
+  n)` OOM/panic, and `offset+nbytes` overflowing `uint64` → slice panic (same
+  class as the safetensors fix). All four repros are committed regression seeds;
+  CI runs a 20s/target fuzz smoke over all four targets.
 - **§1.2 Dot8x4 K-crossover — DONE (as a doc fix, not a code change).** The
   premise was wrong: the encoder tiles K at `kBlockDefault=768` (Dot8x4's peak),
   so it never feeds a large-K strip — `fc2` (K=3072) runs as 4×768. A call-site
@@ -63,21 +65,25 @@ land. goinfer inherits every one of these.
    for the VPMOVSXBW+VPMADDWD pair) behind the same CPUID gate, for Zen 4+ /
    Cascade Lake+ — drop-in for a VNNI-capable box; the AVX2 path is the proven
    fallback. [low-med / medium] — see also §1.6 (AVX-512/VNNI tier).
-2. **Wire the K-dependent kernel crossover** — [medium / low]. `Dot8x4`
-   regresses below `Dot4x4` at large K on amd64 (40.5 vs 51.4 GB/s at K=3072,
-   `cpu-acceleration.md` §1) but `encoder/linalg.go:206` calls `Dot8x4`
-   unconditionally. Add the conditional, benchmark the crossover point per
-   arch. Cheapest real win on the list.
+2. **Wire the K-dependent kernel crossover** — ✅ **DONE (non-issue + doc fix).**
+   The premise didn't survive the code: the encoder tiles K at `kBlockDefault=768`
+   (exactly `Dot8x4`'s peak), so the sole caller never feeds it a large-K strip —
+   `fc2` (K=3072) runs as 4×768. A call-site conditional would be dead code. The
+   real exposure was the *public* `linalg.Dot8x4` godoc, which now documents the
+   large-K cliff + "tile K to ≤~768". See the Progress note above.
 3. **Per-head attention QKᵀ parallelism — DONE: QKᵀ CLOSED, scores·V vectorized
    instead.** Profiling `Model.Encode` on real weights (the item's own mandate)
    inverted the premise: QKᵀ is already SIMD and ~2.6% of `Encode`, so the
    microbench's 3.4× is irrelevant — closed. The real hotspot was the **scores·V
    context loop** (scalar, ~⅓ of `Encode`), now routed through the SIMD matmul in
    both `selfAttention`/`selfAttentionBatched`. ~2.85× single `Encode` at ~500
-   tokens (L²-scaled; neutral at short rerank passages), bit-exact. *Follow-ups:*
-   `forward_q8.go` has the same scalar loop (dormant, off the default path); and
-   the goinfer **prefill** decoder likely has the analogous scores·V — a
-   cross-repo transfer (decode M=1 won't benefit; it's a gemv there).
+   tokens (L²-scaled; neutral at short rerank passages), bit-exact. The
+   cross-repo transfer landed: goinfer's **prefill** had the same hotspot — and
+   there BOTH terms were scalar (QKᵀ 26% + scores·V 16% = 49% of forward) — now
+   vectorized onto `MatmulBT` (`goinfer@7fa82c2`, prefill 12.3→42.1 tok/s, 3.4×,
+   parity argmax-exact). Decode (M=1) correctly untouched — scores·V is a gemv
+   there. *Remaining follow-up:* aikit's `forward_q8.go` has the same scalar loop
+   but is dormant (off the default `Encode` path, not model-test-covered).
 4. **Int8 multi-row register tiling (M-loop) for W8A8** — [medium / medium].
    Noted as possible follow-up in the 0.5.2 CHANGELOG entry. Benefits prefill
    / speculative-verify / encoder (M>1), on top of the column-outer reblock.
@@ -151,10 +157,12 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
 ## 3. Robustness & correctness
 
 1. **Fuzz the binary parsers** (`embed/gguf.go`, `embed/safetensors.go`,
-   GGUF dequant paths) — [high / low]. Native `go test -fuzz` + seed corpus
-   from `testdata/`. These parse untrusted files; bounds-checking discipline
-   is good, fuzzing verifies it. CI: short fuzz on PRs, longer nightly. The
-   single best robustness-per-hour item in this document.
+   GGUF dequant paths) — ✅ **DONE**. Four native fuzz targets (parse ×3 +
+   `FuzzGGUFDequant`); found & fixed 5 crashes (untrusted-count OOM, two int
+   overflows wrapping bounds checks, a negative-length and the ∏dims overflow).
+   Four committed regression seeds; CI runs a 20s/target smoke. **Remaining:**
+   the "longer nightly" run (the PR smoke is the short pass); and `chunk`
+   tokenizer/scanner fuzzing (§3.4) is still open.
 2. **Debug-build alignment asserts in quant kernels** — [medium / low].
    `DequantizeRow`/W4A8 group paths trust K alignment (caller contract).
    A build-tagged (`//go:build aikit_checks`) assert layer catches misuse
@@ -207,10 +215,10 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
 
 Per `road-to-1.0-critique.md`: the code is past 1.0; the gap is audience.
 
-1. **`ken`-free quick start** — [high / low]. README's model-fetch path
-   routes through `ken download-model`, a tool a new reader doesn't have. A
-   tiny `cmd/aikit-fetch` (or documented `curl`s of the HF files) makes the
-   first `go test` green without leaving the repo.
+1. **`ken`-free quick start** — ✅ **DONE.** README's model-fetch now uses
+   `huggingface-cli` directly (both `minishlab/potion-code-16M` and
+   `nomic-ai/CodeRankEmbed`), with `ken download-model` noted as an optional
+   shortcut — a fresh checkout can populate `testdata/` without aikit tooling.
 2. **Comparative README table + published benchmarks** — [high / low-medium,
    gated on §2.3]. aikit vs hugot (pure-Go backend), Ollama-as-a-service,
    coder/hnsw, Bleve: cgo, model coverage, recall, p95, binary size. The
@@ -227,10 +235,9 @@ Per `road-to-1.0-critique.md`: the code is past 1.0; the gap is audience.
 5. **Public architecture doc** — ✅ done 2026-06-09: [`docs/architecture.md`](../architecture.md)
    (package DAG, ecosystem map, Backend seam, quarantines, invariant index,
    ADR resolution table). Keep it current as surfaces move.
-6. **`doc.go` for `linalg`** with kernel/dispatch map — [low / low]. The
-   asm is well-commented file-by-file; a package-level "which kernel fires
-   on which CPU, and why" table is the missing on-ramp for a second
-   maintainer.
+6. **`doc.go` for `linalg`** with kernel/dispatch map — ✅ **DONE.**
+   `linalg/doc.go` carries the package doc with the "which kernel fires on which
+   CPU, and why" dispatch table + the bit-identical-parallelism invariant.
 
 ---
 
