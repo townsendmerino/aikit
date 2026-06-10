@@ -57,10 +57,9 @@ func randUnitSet(seed uint64, n, d int) [][]float32 {
 }
 
 // efCurve logs HNSW recall@k as a function of EfSearch against the exact Flat
-// top-k — the harness's headline finding: ef is the recall knob, and the
-// recall-per-ef cost grows with dimension (the default ef=64, tuned for the
-// d=64 unit tests, undershoots at the d=256–768 of real embeddings). Lifting
-// recall-per-ef is what the Alg-4 diversity heuristic (roadmap §4.1) buys.
+// top-k. With the default Alg-4 diversity heuristic the graph is well-connected,
+// so recall is high even at low ef; opting into Config.SimpleNeighbors (Alg-3)
+// makes this curve cap low on clustered data regardless of ef — the §4.1 finding.
 func efCurve(t *testing.T, corpus, queries [][]float32, k int) {
 	t.Helper()
 	f := ann.New(corpus)
@@ -132,13 +131,12 @@ func TestHarnessReal(t *testing.T) {
 	for _, r := range res {
 		switch r.Name {
 		case "HNSW":
-			// FINDING: on clustered real embeddings, Alg-3 (M-nearest) HNSW recall
-			// caps low (~0.68 here) and barely moves with ef — the ef-curve above
-			// shows it. Improving recall-per-ef on clustered data is roadmap §4.1
-			// (Alg-4 diversity heuristic). This floor only catches a graph BREAK
-			// (e.g. a connectivity regression); the recall TARGET (≥0.9) is §4.1.
-			if r.Recall < 0.55 {
-				t.Errorf("HNSW recall@10 on real embeddings = %.4f, below the break floor (0.55) — graph regression?", r.Recall)
+			// §4.1 RESOLVED: the Alg-4 diversity heuristic (now the default) fixed
+			// the clustered-data recall this harness first exposed — it was ~0.68
+			// with the old Alg-3 selection, now ~1.0. This is the recall TARGET.
+			// (Set Config.SimpleNeighbors to opt back to Alg-3 and watch it drop.)
+			if r.Recall < 0.95 {
+				t.Errorf("HNSW recall@10 on real embeddings = %.4f, want ≥ 0.95 (Alg-4 default)", r.Recall)
 			}
 		case "FlatI8":
 			if r.Recall < 0.95 {

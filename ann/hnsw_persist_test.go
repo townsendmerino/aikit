@@ -26,7 +26,7 @@ func TestHNSW_roundTrip(t *testing.T) {
 	if got.dim != orig.dim || got.m != orig.m || got.m0 != orig.m0 ||
 		got.efConstruction != orig.efConstruction || got.efSearch != orig.efSearch ||
 		got.entry != orig.entry || got.maxLayer != orig.maxLayer ||
-		got.mL != orig.mL || got.seed != orig.seed || got.Len() != orig.Len() {
+		got.mL != orig.mL || got.seed != orig.seed || got.heuristic != orig.heuristic || got.Len() != orig.Len() {
 		t.Fatalf("config mismatch:\norig %+v\nload %+v", orig, got)
 	}
 	if !reflect.DeepEqual(got.vecs, orig.vecs) {

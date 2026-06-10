@@ -12,6 +12,16 @@ it.
 
 ### Changed
 
+- **`ann.HNSW` now defaults to the Algorithm-4 diversity heuristic for neighbor
+  selection** (Experimental tier; was plain M-nearest, Algorithm 3). The `bench`
+  harness exposed that the old selection capped HNSW recall@10 at ~0.68 on
+  clustered real embeddings (and barely improved with `EfSearch`) — its edges
+  piled into near-clone clusters and never reached the rest of the graph. The
+  heuristic fans edges across directions; on the same real Model2Vec corpus
+  recall@10 went **0.68 → 1.00** (and 0.57 → 1.00 on a synthetic clustered set),
+  at ~2× build cost and unchanged query latency. `Config.SimpleNeighbors` opts
+  back to the cheaper-to-build Algorithm 3. The persisted-index format is bumped
+  to **v2** (one byte for the selection mode); `Load` rejects the brief-lived v1.
 - **`ann` similarity now uses the SIMD dot kernel.** Both backends scored every
   candidate with a scalar `float64` dot loop and didn't import `linalg` at all.
   `Flat.Query` (the brute-force scan — 100% of its query cost) and `HNSW.sim`
@@ -44,12 +54,10 @@ it.
   FlatI8: recall@k vs the exact Flat top-k, per-query latency percentiles
   (p50/p95/p99), build time, and index memory, rendered as a Markdown `Table`. It
   turns "parity-tested" into concrete numbers and doubles as a recall regression
-  gate. Its first run already surfaced a real finding: on **clustered** real
-  embeddings (the actual use case), HNSW recall@10 caps ~0.68 and barely improves
-  with `EfSearch` (0.63→0.77 over ef 64→512), while on random vectors ef=256
-  reaches 1.0 — the Alg-3-vs-Alg-4 limitation (roadmap §4.1), which the old
-  random/d=64 unit test (0.99) masked. FlatI8 measured 0.98–1.00 recall at ¼ the
-  memory.
+  gate. Its first run surfaced — and then verified the fix for — a real recall
+  problem: HNSW recall@10 on clustered real embeddings was ~0.68, which the old
+  random/d=64 unit test (0.99) had masked. That drove the HNSW Algorithm-4 change
+  above (recall → 1.00). FlatI8 measured 0.98–1.00 recall at ¼ the memory.
 - **`ann.FlatI8` — int8-quantized dense index** (Experimental tier). The int8
   sibling of `Flat`: stores each L2-normalized vector as int8 codes + a per-vector
   scale (¼ the memory) and scores a query by int8×int8 dot through `linalg`'s W8A8

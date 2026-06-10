@@ -115,7 +115,9 @@ settles.
 - `encoder.Backend` / `encoder.RegisterBackend` / `encoder.NewBackend` — the
   matmul-provider seam; new in v0.4.0.
 - `ann.HNSW` / `ann.NewHNSW` / `ann.BuildHNSW` / `ann.Config` — the `Hit`/`Query`
-  surface is stable, but graph internals and `Config` defaults may tune.
+  surface is stable, but graph internals and `Config` defaults may tune. Neighbor
+  selection defaults to the diversity heuristic (Algorithm 4) for high recall on
+  clustered data; `Config.SimpleNeighbors` opts back to plain M-nearest.
 - `ann.HNSW.MarshalBinary` / `ann.Load` — index persistence (the
   `//go:embed`-an-index pattern). The serialized format is versioned from day one
   but stays Experimental until the graph internals settle.

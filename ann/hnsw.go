@@ -18,12 +18,14 @@ package ann
 //     Flat (New not thread-safe, Query is). There is no internal locking
 //     on the hot path.
 //
-// This is a correctness-first cut: neighbor selection is "M nearest"
-// (paper Algorithm 3), not the diversity heuristic (Algorithm 4). It
-// hits high recall on the benchmarks in hnsw_test.go; the heuristic is a
-// documented recall/tuning follow-up. Determinism: level assignment is
-// seeded (Config.Seed), so a given (vectors, Config) builds the same
-// graph every time — important for reproducible tests.
+// Neighbor selection defaults to the diversity heuristic (paper Algorithm 4,
+// selectHeuristic): edges fan out across directions instead of clustering, which
+// is what holds recall up on clustered data — a real Model2Vec code corpus went
+// from 0.68 (plain M-nearest, Algorithm 3) to 1.00 recall@10 with it (bench/).
+// Config.SimpleNeighbors opts back to the cheaper-to-build Algorithm 3.
+// Determinism: level assignment is seeded (Config.Seed), so a given
+// (vectors, Config) builds the same graph every time — important for
+// reproducible tests.
 
 import (
 	"container/heap"
@@ -51,6 +53,14 @@ type Config struct {
 	EfSearch int
 	// Seed seeds the level-assignment RNG for reproducible builds.
 	Seed uint64
+	// SimpleNeighbors opts into plain M-nearest neighbor selection (paper
+	// Algorithm 3) instead of the DEFAULT diversity heuristic (Algorithm 4). The
+	// heuristic spreads each node's edges across directions rather than piling
+	// them into one cluster, which sharply improves recall on CLUSTERED data — on
+	// a real Model2Vec code corpus it lifted recall@10 from 0.68 to 1.00 — at
+	// roughly 2× build cost (query cost unchanged). Set this only to trade that
+	// recall for a faster build. See selectHeuristic.
+	SimpleNeighbors bool
 }
 
 type hnswNode struct {
@@ -71,6 +81,7 @@ type HNSW struct {
 	entry          int     // entry-point node id (top of the graph)
 	maxLayer       int
 	seed           uint64 // Config.Seed, retained so a loaded index re-seeds rng
+	heuristic      bool   // Config.Heuristic — Alg-4 diversity neighbor selection
 	rng            *rand.Rand
 }
 
@@ -97,6 +108,7 @@ func NewHNSW(cfg Config) *HNSW {
 		mL:             1.0 / math.Log(float64(m)),
 		entry:          -1,
 		seed:           cfg.Seed,
+		heuristic:      !cfg.SimpleNeighbors,
 		rng:            rand.New(rand.NewPCG(cfg.Seed, cfg.Seed^0x9e3779b97f4a7c15)),
 	}
 }
@@ -170,7 +182,7 @@ func (h *HNSW) Add(vec []float32) int {
 	start := min(h.maxLayer, l)
 	for layer := start; layer >= 0; layer-- {
 		w := h.searchLayer(vec, []int{ep}, h.efConstruction, layer)
-		neighbors := selectNearest(w, h.mmax(layer))
+		neighbors := h.selectNeighbors(w, h.mmax(layer))
 		// Link id → neighbors.
 		ids := make([]int32, len(neighbors))
 		for i, c := range neighbors {
@@ -203,7 +215,7 @@ func (h *HNSW) prune(id, layer int) {
 	for i, n := range nbrs {
 		cands[i] = cand{id: int(n), sim: h.sim(self, int(n))}
 	}
-	kept := selectNearest(cands, h.mmax(layer))
+	kept := h.selectNeighbors(cands, h.mmax(layer))
 	out := make([]int32, len(kept))
 	for i, c := range kept {
 		out[i] = int32(c.id)
@@ -323,18 +335,85 @@ func (h *HNSW) QueryEf(q []float32, k, ef int) []Hit {
 // selectNearest returns the m highest-similarity candidates from w
 // (which searchLayer already returns sorted desc, but prune passes an
 // unsorted slice, so re-rank via a K-selector for O(N log m)).
+// selectNeighbors picks up to m edges from the candidate set w, dispatching to
+// the diversity heuristic (Algorithm 4) when Config.Heuristic is set, else the
+// plain M-nearest (Algorithm 3). Both return the result descending by sim, so the
+// caller's ep = result[0] handoff is unaffected.
+func (h *HNSW) selectNeighbors(w []cand, m int) []cand {
+	if h.heuristic {
+		return h.selectHeuristic(w, m)
+	}
+	return selectNearest(w, m)
+}
+
+// simIDs is the cosine similarity (dot product on unit vectors) between two
+// indexed vectors — the heuristic's candidate-vs-candidate comparison.
+func (h *HNSW) simIDs(a, b int) float64 { return float64(linalg.Dot(h.vecs[a], h.vecs[b])) }
+
+// selectHeuristic is the HNSW neighbor-diversity heuristic (paper Algorithm 4):
+// processing candidates nearest-first, it keeps one only if it is closer to the
+// base element than to every neighbor already chosen — so an edge is dropped when
+// a closer, already-selected neighbor lies in the same direction. The kept edges
+// fan out across directions instead of piling into one cluster, which is what
+// gives long-range connectivity (and recall-per-ef) on clustered data, where
+// plain M-nearest (selectNearest) links a node to a tight cluster of near-clones
+// and never reaches the rest of the graph. keepPrunedConnections then tops the
+// result back up to m from the discards so node degree is preserved.
+//
+// Cost: O(|w|·m) similarity computations vs selectNearest's heap — heavier, paid
+// once at build time for the recall win.
+func (h *HNSW) selectHeuristic(w []cand, m int) []cand {
+	cands := sortCandsDesc(w)
+	if len(cands) <= m {
+		return cands
+	}
+	r := make([]cand, 0, m)
+	discarded := make([]cand, 0, len(cands))
+	for _, e := range cands {
+		if len(r) >= m {
+			break
+		}
+		keep := true
+		for _, sel := range r {
+			// e is closer to an already-selected neighbor than to the base ⇒
+			// redundant (same direction), discard it.
+			if h.simIDs(e.id, sel.id) > e.sim {
+				keep = false
+				break
+			}
+		}
+		if keep {
+			r = append(r, e)
+		} else {
+			discarded = append(discarded, e)
+		}
+	}
+	for _, e := range discarded { // keepPrunedConnections: maintain degree
+		if len(r) >= m {
+			break
+		}
+		r = append(r, e)
+	}
+	return r
+}
+
+// sortCandsDesc returns a copy of w ordered by descending sim, ties by ascending
+// id — deterministic, for the heuristic's nearest-first pass.
+func sortCandsDesc(w []cand) []cand {
+	out := make([]cand, len(w))
+	copy(out, w)
+	sort.Slice(out, func(a, b int) bool {
+		if out[a].sim != out[b].sim {
+			return out[a].sim > out[b].sim
+		}
+		return out[a].id < out[b].id
+	})
+	return out
+}
+
 func selectNearest(w []cand, m int) []cand {
 	if len(w) <= m {
-		// Still ensure descending order for the caller's ep = w[0] use.
-		out := make([]cand, len(w))
-		copy(out, w)
-		sort.Slice(out, func(a, b int) bool {
-			if out[a].sim != out[b].sim {
-				return out[a].sim > out[b].sim
-			}
-			return out[a].id < out[b].id
-		})
-		return out
+		return sortCandsDesc(w)
 	}
 	sel := topk.New[int](m)
 	for _, c := range w {

@@ -244,16 +244,17 @@ speed requires ONNX Runtime (cgo); aikit's no-cgo lane stays open.
 
 ## 4. Retrieval quality
 
-1. **HNSW Algorithm-4 neighbor-diversity heuristic** — [medium / medium].
-   **⬆ NOW QUANTIFIED + URGENT — the §2.3 harness measured the damage.** Current
-   "M nearest" (Alg-3, `ann/hnsw.go:21-26`) costs recall-per-ef on clustered data,
-   and the harness shows it's severe on real (clustered) code embeddings: recall@10
-   caps ~0.68 and barely moves with ef (0.63→0.77 over ef 64→512), vs 1.0 on random
-   vectors at ef=256. So on the actual use case HNSW misses ~⅓ of the true top-10 at
-   any search effort — the graph, not ef, is the limit. (Interim: FlatI8 is exact-ish
-   at ¼ memory and a better choice than Alg-3 HNSW for clustered corpora until this
-   lands.) Implement Alg-4 behind `Config`, measure with the harness, flip the
-   default if it wins. Recall is the one axis that materially improves the *product*.
+1. **HNSW Algorithm-4 neighbor-diversity heuristic** — ✅ **DONE, and it's the
+   default now.** The §2.3 harness measured the damage (Alg-3 recall@10 capped
+   ~0.68 on clustered real embeddings, barely moving with ef), so `selectHeuristic`
+   (Algorithm 4) was implemented and — since it won decisively — made the default.
+   Measured with the same harness: recall@10 **0.68 → 1.00** on the real Model2Vec
+   corpus (and 0.57 → 1.00 on a synthetic clustered set, the model-free regression
+   test), at ~2× build cost and unchanged query latency; neutral on random data.
+   `Config.SimpleNeighbors` opts back to Alg-3. Persisted format bumped to v2 (one
+   selection-mode byte). Textbook measure-fix-measure: the harness found it, drove
+   the fix, and verified it. *Follow-up:* HNSW build is still slow at scale (~17s
+   for 50k with the heuristic) — a separate perf item, not a correctness one.
 2. **Recall regression tests on a real slice** — [medium / low-medium]. The
    golden tests pin numerics; nothing pins end-to-end retrieval quality.
    A small fixed corpus + frozen relevance set, recall@10 asserted with

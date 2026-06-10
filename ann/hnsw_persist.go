@@ -12,7 +12,7 @@ import (
 //
 //	magic uint32 | version uint32
 //	dim, ndocs, m, m0, efConstruction, efSearch, entry, maxLayer  (int32 each)
-//	mL float64 | seed uint64
+//	mL float64 | seed uint64 | heuristic uint8 (0/1)
 //	vectors:  ndocs × dim float32 (little-endian, row-major)
 //	graph:    per node — layer int32, then for l in 0..layer:
 //	          nbrCount int32, then nbrCount × neighbor id int32
@@ -23,7 +23,7 @@ import (
 // over-allocating.
 const (
 	hnswMagic   uint32 = 0x484E5357 // "HNSW"
-	hnswVersion uint32 = 1
+	hnswVersion uint32 = 2          // v2 added the neighbor-selection (heuristic) byte
 	// rngSplit matches NewHNSW's PCG seeding so a loaded index re-creates an
 	// equivalently-seeded rng (for Add-after-load).
 	rngSplit uint64 = 0x9e3779b97f4a7c15
@@ -60,6 +60,11 @@ func (h *HNSW) MarshalBinary() ([]byte, error) {
 	puti(h.maxLayer)
 	b = binary.LittleEndian.AppendUint64(b, math.Float64bits(h.mL))
 	b = binary.LittleEndian.AppendUint64(b, h.seed)
+	if h.heuristic {
+		b = append(b, 1)
+	} else {
+		b = append(b, 0)
+	}
 
 	for _, v := range h.vecs {
 		for _, f := range v {
@@ -118,6 +123,15 @@ func (c *hcur) u64() uint64 {
 }
 
 func (c *hcur) f32() float32 { return math.Float32frombits(c.u32()) }
+
+func (c *hcur) u8() uint8 {
+	if !c.need(1) {
+		return 0
+	}
+	v := c.b[c.pos]
+	c.pos++
+	return v
+}
 
 // asInt reads a signed int32 (used for entry, which is -1 for an empty index).
 func (c *hcur) asInt() int { return int(int32(c.u32())) }
@@ -179,6 +193,7 @@ func Load(data []byte) (*HNSW, error) {
 	maxLayer := c.cfg("maxLayer")
 	mL := math.Float64frombits(c.u64())
 	seed := c.u64()
+	heuristic := c.u8() != 0
 	if c.err != nil {
 		return nil, c.err
 	}
@@ -252,6 +267,7 @@ func Load(data []byte) (*HNSW, error) {
 		entry:          entry,
 		maxLayer:       maxLayer,
 		seed:           seed,
+		heuristic:      heuristic,
 		rng:            rand.New(rand.NewPCG(seed, seed^rngSplit)),
 	}, nil
 }
