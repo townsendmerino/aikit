@@ -91,7 +91,9 @@ jobs:
 
   windows:
     name: windows (pure-Go core)
-    runs-on: windows-latest
+    # Pinned: GitHub redirects `windows-latest` to windows-2025 by 2026-06-15;
+    # pin explicitly so the runner image doesn't shift under us unannounced.
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6

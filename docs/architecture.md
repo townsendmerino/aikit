@@ -50,15 +50,23 @@ Four rules generate most of the structure:
 graph TD
     subgraph core ["aikit core (one module, pure Go, no cgo)"]
         topk["topk<br/><i>bounded top-K heap</i>"]
-        ann["ann<br/><i>flat + HNSW cosine ANN</i>"]
+        ann["ann<br/><i>flat / FlatI8 / HNSW cosine ANN</i>"]
         bm25["bm25<br/><i>identifier-aware lexical index</i>"]
-        fuse["fuse<br/><i>reciprocal-rank fusion</i>"]
+        sparse["sparse<br/><i>learned-sparse (SPLADE) index</i>"]
+        fuse["fuse<br/><i>RRF + RSF rank fusion</i>"]
         chunk["chunk (+ regex, markdown, line)<br/><i>chunker registry</i>"]
         linalg["linalg<br/><i>SIMD f32/int8/int4 kernels</i>"]
         embed["embed<br/><i>Model2Vec + safetensors/GGUF loaders</i>"]
         encoder["encoder<br/><i>CodeRankEmbed reranker</i>"]
+        bench["bench<br/><i>recall + latency harness</i>"]
         encoder --> embed
         encoder --> linalg
+        ann --> linalg
+        ann --> topk
+        bm25 --> topk
+        sparse --> topk
+        bench --> ann
+        bench --> embed
     end
     ts["chunk/treesitter<br/><i>separate module</i>"] -.->|implements chunk.Chunker| chunk
     ts --> gts["gotreesitter<br/>(pure Go, large grammars)"]
@@ -66,9 +74,11 @@ graph TD
 ```
 
 Everything not shown depending on something depends only on the stdlib.
-`topk`, `ann`, `bm25`, `fuse`, `chunk`, `linalg` are leaves; `embed` adds one
-dependency (`golang.org/x/text`, for tokenizer normalization); `encoder` is
-the sole composite. The dotted edge is registry-based, not an import: the
+`topk`, `fuse`, `chunk`, and `linalg` are leaves; the index packages (`ann`,
+`bm25`, `sparse`) use `topk` for selection, and since v1.2 `ann` scores
+through `linalg`'s SIMD dot kernels; `embed` adds the one external dependency
+(`golang.org/x/text`, for tokenizer normalization); `encoder` and `bench` are
+the composites. The dotted edge is registry-based, not an import: the
 `chunk/treesitter` module registers itself via `chunk.Register` on import.
 
 ## Repo ecosystem

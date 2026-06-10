@@ -22,11 +22,11 @@ large embedded-grammar payload) — is quarantined in the separate
 | Package | Purpose | Deps (beyond stdlib) |
 |---|---|---|
 | `topk` | bounded min-heap top-K selector (generic) | — |
-| `ann` | cosine ANN over a dense matrix — exact flat scan + approximate HNSW graph | — |
-| `bm25` | identifier-aware BM25 lexical index (Lucene-variant); `Tokenize` (code) + `TokenizePlain` (general text) | — |
+| `ann` | cosine ANN over a dense matrix — exact flat scan + approximate HNSW graph | `linalg`, `topk` |
+| `bm25` | identifier-aware BM25 lexical index (Lucene-variant); `Tokenize` (code) + `TokenizePlain` (general text) | `topk` |
 | `fuse` | rank fusion (RRF) + relative-score fusion (RSF) — blend lexical + dense rankings for hybrid search | — |
-| `sparse` | learned-sparse (SPLADE-style) retrieval — inverted index + sparse-dot scoring over pre-computed vectors | — |
-| `bench` | reproducible recall + latency harness for the dense indexes (Flat / HNSW / FlatI8) — Experimental tooling | — |
+| `sparse` | learned-sparse (SPLADE-style) retrieval — inverted index + sparse-dot scoring over pre-computed vectors | `topk` |
+| `bench` | reproducible recall + latency harness for the dense indexes (Flat / HNSW / FlatI8) — Experimental tooling | `ann`, `embed` |
 | `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | — |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `golang.org/x/text` |
 | `encoder` | CodeRankEmbed transformer reranker (NomicBert, 12-layer) — higher-fidelity embeddings scored by cosine; pluggable matmul `Backend` | `embed`, `linalg` |
@@ -140,10 +140,13 @@ settles.
 - The mmap variant of `embed.OpenSafetensors`.
 - The concrete chunker structs (`regex.Chunker`, `markdown.Chunker`,
   `treesitter.Chunker`) and their `New()` — prefer `chunk.Get("regex")`.
-- `chunk/treesitter` — its own opt-in module, **versioned in lockstep with the
-  core** (`chunk/treesitter/v1.0.0` requires `aikit v1.0.0`). Its
-  `treesitter.Chunker` API is stable, but it stays Experimental because it
-  depends on the pre-1.0, single-maintainer
+- `chunk/treesitter` — its own opt-in module, **tagged in lockstep with the core
+  whenever the submodule itself changes** (`chunk/treesitter/v1.0.0` requires
+  `aikit v1.0.0`). When a core release doesn't touch the submodule it gets no new
+  tag — the existing one keeps working, since the core's `chunk.Chunker` contract
+  is Hard-tier stable (e.g. nothing in 1.1.x or 1.2.0 changed it). Its
+  `treesitter.Chunker` API is stable, but it stays Experimental because it depends
+  on the pre-1.0, single-maintainer
   [`gotreesitter`](https://github.com/odvcencio/gotreesitter) — a break there
   could force a change here.
 
