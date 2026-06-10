@@ -22,6 +22,11 @@
   `float32`-precision scores accepted (HNSW approximate → silent; Flat documented,
   recall verified unchanged — 0 tie-flips vs float64; the recall test also caught
   an arm64 Dot8x4 4-lane-partial-sum bug before it shipped).
+- **§1.4 Int8 M-loop register tiling for W8A8 — CLOSED (measured no win).** Built
+  + benchmarked the 4-row arm64 SDOT tile (bit-identical); M=64 was a statistical
+  tie. W8A8 at M>1 is SDOT-throughput-bound (~3 SDOT/cycle, near M1 peak) and the
+  column-outer reblock already took the reuse — nothing for register tiling to
+  exploit. Reverted. See §1.4.
 - **§3.1 Fuzz binary parsers — DONE (parse + dequant).** Parse: `FuzzParseGGUF` /
   `FuzzParseSafetensors` / `FuzzParseShardIndex` + seed corpus; found & fixed an
   OOM (`make(map, ~5e10)` from an untrusted `tensorCount`), a negative-length
@@ -84,9 +89,18 @@ land. goinfer inherits every one of these.
    parity argmax-exact). Decode (M=1) correctly untouched — scores·V is a gemv
    there. *Remaining follow-up:* aikit's `forward_q8.go` has the same scalar loop
    but is dormant (off the default `Encode` path, not model-test-covered).
-4. **Int8 multi-row register tiling (M-loop) for W8A8** — [medium / medium].
-   Noted as possible follow-up in the 0.5.2 CHANGELOG entry. Benefits prefill
-   / speculative-verify / encoder (M>1), on top of the column-outer reblock.
+4. **Int8 multi-row register tiling (M-loop) for W8A8** — ❌ **CLOSED: measured
+   no win.** Built the 4-row arm64 SDOT tile (`dotI8x4SDOT`: weight row held in a
+   register, reused across 4 activation rows — one b-load + one reduction per 4
+   rows instead of per row), bit-identical to the column-outer path. Benchmarked
+   M=64 (K2048,N2048), `-count=5`: tile 1703µs vs per-row 1713µs — a statistical
+   tie. W8A8 at M>1 runs at ~3 SDOT/cycle (near the M1 NEON peak): it's
+   SDOT-throughput-bound, and the column-outer reblock already captured the
+   weight reuse at the cache level, so register-level reuse / fewer reductions
+   have nothing to exploit. amd64's int8 dot is *more* instruction-heavy
+   (VPMOVSXBW+VPMADDWD, no SDOT), so even less likely load-bound there. Reverted
+   the kernel — no complexity for a no-op. Revisit only if a real amd64 prefill
+   profile shows W8A8 load-bound (the arm64 evidence says it won't).
 5. **Evaluate Go 1.26 `GOEXPERIMENT=simd` (go-highway-style portable
    kernels)** — [medium / medium, strategic]. Antfly's engine got
    AVX2/AVX-512/NEON from one portable kernel source. A spike: port `dotF32`
