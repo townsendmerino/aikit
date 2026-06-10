@@ -10,6 +10,12 @@
 //     ‖a‖‖b‖-divided cosine. Passing non-normalized vectors silently
 //     produces incorrect rankings; the precision contract lives at the
 //     embed boundary, not here.
+//   - **Scores are float32-precision.** Query scores each vector with the
+//     SIMD dot kernel (linalg.Dot, float32 accumulation), not a float64
+//     scalar sum. For unit-norm float32 inputs the per-element error is
+//     bounded and recall is unaffected; only sub-ULP near-ties may order
+//     differently than an exact float64 scan would. The ascending-Index
+//     tie-break still makes the result deterministic.
 //   - **Similarity, not distance.** semble's dense backend (vicinity)
 //     returns cosine *distance* (1 − sim) and search.py flips it back to
 //     similarity; ken skips the round-trip and scores similarity
@@ -31,6 +37,7 @@ package ann
 import (
 	"sort"
 
+	"github.com/townsendmerino/aikit/linalg"
 	"github.com/townsendmerino/aikit/topk"
 )
 
@@ -84,11 +91,7 @@ func (f *Flat) Query(q []float32, k int) []Hit {
 			if len(v) != len(q) {
 				continue // dimension mismatch ⇒ skip rather than panic
 			}
-			var dot float64
-			for j := range v {
-				dot += float64(v[j]) * float64(q[j])
-			}
-			hits = append(hits, Hit{Index: i, Score: dot})
+			hits = append(hits, Hit{Index: i, Score: float64(linalg.Dot(q, v))})
 		}
 		sort.Slice(hits, func(a, b int) bool {
 			if hits[a].Score != hits[b].Score {
@@ -106,11 +109,7 @@ func (f *Flat) Query(q []float32, k int) []Hit {
 		if len(v) != len(q) {
 			continue // dimension mismatch ⇒ skip rather than panic
 		}
-		var dot float64
-		for j := range v {
-			dot += float64(v[j]) * float64(q[j])
-		}
-		sel.Push(i, dot)
+		sel.Push(i, float64(linalg.Dot(q, v)))
 	}
 	items := sel.Result() // descending by score; tie order is heap-internal
 	// Stable secondary sort by ascending Index to honor the doc-comment

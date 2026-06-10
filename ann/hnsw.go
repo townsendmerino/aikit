@@ -31,6 +31,7 @@ import (
 	"math/rand/v2"
 	"sort"
 
+	"github.com/townsendmerino/aikit/linalg"
 	"github.com/townsendmerino/aikit/topk"
 )
 
@@ -120,14 +121,11 @@ func (h *HNSW) mmax(layer int) int {
 }
 
 // sim is the cosine similarity (dot product on unit vectors) between q
-// and indexed vector id.
+// and indexed vector id. Scored with the SIMD dot kernel (linalg.Dot,
+// float32 accumulation); HNSW is approximate by contract, so the sub-ULP
+// difference from a float64 scalar sum is immaterial to recall.
 func (h *HNSW) sim(q []float32, id int) float64 {
-	v := h.vecs[id]
-	var dot float64
-	for j := range v {
-		dot += float64(v[j]) * float64(q[j])
-	}
-	return dot
+	return float64(linalg.Dot(q, h.vecs[id]))
 }
 
 func (h *HNSW) randomLevel() int {

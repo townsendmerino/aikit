@@ -12,6 +12,17 @@ it.
 
 ### Changed
 
+- **`ann` similarity now uses the SIMD dot kernel.** Both backends scored every
+  candidate with a scalar `float64` dot loop and didn't import `linalg` at all.
+  `Flat.Query` (the brute-force scan — 100% of its query cost) and `HNSW.sim`
+  (the graph-walk inner loop) now call `linalg.Dot`. Measured: **~4.1–4.5× faster
+  Flat scan** (N=10k–50k, d=128) and **~1.4× faster HNSW search** (d=64; build
+  benefits via the same `sim`). **Precision:** `linalg.Dot` accumulates in
+  `float32` (vs the old `float64` scalar sum). For unit-norm `float32` inputs the
+  per-element error is bounded — recall is unchanged (verified: 0 boundary flips,
+  new-vs-`float64` top-k identical); only sub-ULP near-ties may order differently.
+  HNSW is approximate by contract (accepted silently); `Flat` now documents the
+  `float32`-precision scoring in its invariants.
 - **`encoder` attention: vectorized the scores·V context step.** An end-to-end
   CPU profile of `Model.Encode` on real weights showed the per-head `ctx =
   scores · V` accumulation — a scalar triple-loop — was the single hottest line,
