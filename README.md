@@ -26,7 +26,7 @@ large embedded-grammar payload) — is quarantined in the separate
 | `bm25` | identifier-aware BM25 lexical index (Lucene-variant); `Tokenize` (code) + `TokenizePlain` (general text) | `topk` |
 | `fuse` | rank fusion (RRF) + relative-score fusion (RSF) — blend lexical + dense rankings for hybrid search | — |
 | `sparse` | learned-sparse (SPLADE-style) retrieval — inverted index + sparse-dot scoring over pre-computed vectors | `topk` |
-| `bench` | reproducible recall + latency harness for the dense indexes (Flat / HNSW / FlatI8) — Experimental tooling | `ann`, `embed` |
+| `bench` | reproducible recall + latency harness for the dense indexes (Flat / HNSW / FlatI8) — Experimental tooling | `ann` |
 | `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | — |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `golang.org/x/text` |
 | `encoder` | CodeRankEmbed transformer reranker (NomicBert, 12-layer) — higher-fidelity embeddings scored by cosine; pluggable matmul `Backend` | `embed`, `linalg` |

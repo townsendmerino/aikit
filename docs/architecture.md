@@ -66,7 +66,6 @@ graph TD
         bm25 --> topk
         sparse --> topk
         bench --> ann
-        bench --> embed
     end
     ts["chunk/treesitter<br/><i>separate module</i>"] -.->|implements chunk.Chunker| chunk
     ts --> gts["gotreesitter<br/>(pure Go, large grammars)"]
