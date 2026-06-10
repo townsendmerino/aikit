@@ -130,10 +130,18 @@ The `//go:embed` story is the moat; these make it uniform. All unblocked.
    v2 header ends at a non-4-aligned offset) and its graph is a nested structure
    that's parsed regardless — so only the vector block could be aliased, behind a
    format v3. Lower value than FlatI8's, deferred.
-3. **Int8 HNSW** — [medium / medium]. `FlatI8` proved int8 recall holds
-   (1.00 real / 0.986 adversarial); HNSW's `sim()` doing int8 dots during
-   build+search extends the ¼-memory win to the log-scale index. Gate on the
-   recall regression test before flipping anything.
+3. **Int8 HNSW** — **gate PASSED; productionization pending.** The roadmap's
+   prerequisite — does building + searching at int8 precision hold recall? — is
+   answered: `TestHNSW_int8RecallGate` (dequantize proxy: build/search an f32 HNSW
+   on int8-round-tripped vectors, queries quantized too) measures recall@10 **f32
+   1.0000 vs int8 1.0000, Δ 0.0000** on real Model2Vec embeddings. int8 adds no
+   recall loss to the graph; the risk is retired. **Remaining (the larger core
+   change):** store `bq []int8` + `scales` instead of f32 vecs (the ¼-memory win),
+   a node-node int8 dot kernel for `simIDs`, query-path q-quantization for `sim`,
+   and persistence (format v3 / a sibling of FlatI8's). Value is real for
+   *large* repo-scale (at ~500k vectors HNSW's sublinear query beats FlatI8's
+   linear scan ~80×, and int8 keeps it ¼-memory) — so worth doing, but it's
+   invasive to the core HNSW + hot path; sequence deliberately.
 4. **Binary/Hamming pre-filter + f32 rescore** — [low-medium / medium]. The
    third compression tier (32× candidate filter). Only worth it at corpus
    sizes aikit doesn't see yet — keep behind §1.3's adopter signal.
