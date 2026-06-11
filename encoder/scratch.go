@@ -60,6 +60,23 @@ type scratch struct {
 	ctxHead []float32
 	// Attention scores [L, L].
 	scores []float32
+	// deqW holds one int8 weight matrix dequantized to f32 for the q8 linear path:
+	// matmulBTQ8Into widens the int8 weights here ONCE per matmul (N*K) and then runs
+	// the SIMD f32 matmulBTInto, instead of the scalar inline-widen (which redid the
+	// widen M times). Pooled, so the 60 matmuls of a forward reuse it. The stored
+	// weights stay int8 (¼ memory); this is transient runtime scratch.
+	deqW []float32
+}
+
+// ensureDeqW sizes the q8 weight-dequant buffer to the largest weight matrix the
+// forward will dequantize: N*K over {Wqkv 3D×D, OutProj D×D, fc1 inter×D, fc2 D×inter}
+// → D·max(3D, intermediate). Only the q8 path calls this, so f32 forwards don't pay it.
+func (s *scratch) ensureDeqW(D, intermediate int) {
+	n := 3 * D
+	if intermediate > n {
+		n = intermediate
+	}
+	s.deqW = ensureF32(s.deqW, n*D)
 }
 
 // ensureF32 grows b to capacity n (returning a slice of length n).

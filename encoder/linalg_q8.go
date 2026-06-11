@@ -27,58 +27,36 @@ package encoder
 // triggered for the big linear layers Wqkv/OutProj/fc11/fc12/fc2,
 // all of which have M*K*N ≫ the matmulBT small-shape threshold).
 func matmulBTQ8(a []float32, bQ []int8, bScales []float32, M, K, N int) []float32 {
-	if len(a) != M*K || len(bQ) != N*K || len(bScales) != N {
-		panic("encoder: matmulBTQ8 shape mismatch")
-	}
-	const (
-		mBlock = 32
-		nBlock = 32
-		kBlock = 128
-	)
 	dst := make([]float32, M*N)
-	for i0 := 0; i0 < M; i0 += mBlock {
-		iEnd := min(i0+mBlock, M)
-		for n0 := 0; n0 < N; n0 += nBlock {
-			nEnd := min(n0+nBlock, N)
-			for k0 := 0; k0 < K; k0 += kBlock {
-				kEnd := min(k0+kBlock, K)
-				// Micro-kernel: (iEnd-i0) × (nEnd-n0) tile, K strip [k0, kEnd).
-				for i := i0; i < iEnd; i++ {
-					aRow := a[i*K+k0 : i*K+kEnd]
-					dstRow := dst[i*N+n0 : i*N+nEnd]
-					n := n0
-					nEndAligned := n0 + ((nEnd-n0)/4)*4
-					for ; n < nEndAligned; n += 4 {
-						bq0 := bQ[n*K+k0 : n*K+kEnd]
-						bq1 := bQ[(n+1)*K+k0 : (n+1)*K+kEnd]
-						bq2 := bQ[(n+2)*K+k0 : (n+2)*K+kEnd]
-						bq3 := bQ[(n+3)*K+k0 : (n+3)*K+kEnd]
-						var s0, s1, s2, s3 float32
-						for k := 0; k < kEnd-k0; k++ {
-							av := aRow[k]
-							s0 += av * float32(bq0[k])
-							s1 += av * float32(bq1[k])
-							s2 += av * float32(bq2[k])
-							s3 += av * float32(bq3[k])
-						}
-						// Scale the partial sums by the row scales
-						// and add into dst (k-tile accumulation).
-						dstRow[n-n0+0] += s0 * bScales[n]
-						dstRow[n-n0+1] += s1 * bScales[n+1]
-						dstRow[n-n0+2] += s2 * bScales[n+2]
-						dstRow[n-n0+3] += s3 * bScales[n+3]
-					}
-					for ; n < nEnd; n++ {
-						bqRow := bQ[n*K+k0 : n*K+kEnd]
-						var s float32
-						for k := 0; k < kEnd-k0; k++ {
-							s += aRow[k] * float32(bqRow[k])
-						}
-						dstRow[n-n0] += s * bScales[n]
-					}
-				}
-			}
+	matmulBTQ8Into(dst, a, bQ, bScales, M, K, N, make([]float32, N*K))
+	return dst
+}
+
+// matmulBTQ8Into is matmulBTQ8 writing into a caller-supplied dst[:M*N] and using a
+// caller-supplied deqW[:N*K] weight-dequant buffer — both pooled in the q8 forward's
+// scratch. It widens each int8 weight to f32 ONCE (N*K) into deqW, then runs the
+// vectorized f32 matmulBTInto.
+//
+// This replaced a scalar blocked kernel that did the int8→f32 widen INLINE in the
+// GEMM (so the conversion ran M times per weight), which measured ~26× slower than
+// the f32 SIMD matmul and ~36× slower than the SDOT W8A8 kernel on the Wqkv shape —
+// the actual reason LoadQ8 was ~5× slower than Load, NOT the allocation churn the
+// pooling fix already removed. Dequant-then-SIMD keeps the weight-only numerics
+// exactly (cosine vs f32 unchanged at 0.997), unlike full W8A8 which quantizes
+// activations and fell below the 0.97 reranker bar; the weights stay int8 in storage
+// (¼ the //go:embed footprint) — deqW is transient runtime scratch only.
+func matmulBTQ8Into(dst, a []float32, bQ []int8, bScales []float32, M, K, N int, deqW []float32) {
+	if len(a) != M*K || len(bQ) != N*K || len(bScales) != N || len(dst) < M*N || len(deqW) < N*K {
+		panic("encoder: matmulBTQ8Into shape mismatch")
+	}
+	w := deqW[:N*K]
+	for n := 0; n < N; n++ {
+		sc := bScales[n]
+		row := w[n*K : n*K+K]
+		bq := bQ[n*K : n*K+K]
+		for k := range row {
+			row[k] = float32(bq[k]) * sc
 		}
 	}
-	return dst
+	matmulBTInto(a, w, dst, M, K, N)
 }

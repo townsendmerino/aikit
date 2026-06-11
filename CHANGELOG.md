@@ -35,6 +35,20 @@ it.
   header-flags word (anti-churn) + the HNSW float32-vector alignment for a future
   zero-copy `LoadHNSWMmap`.
 
+### Fixed
+
+- **int8 reranker (`encoder.LoadQ8`) is now latency-competitive with f32** — was ~5×
+  slower on arm64 (consumer report from ken evaluating an int8 default). Two causes,
+  both fixed: (1) the q8 forward allocated per-call/per-layer scratch where the f32
+  path pools it — ~4.4 GiB for a 50-doc rerank — now mirrored to the shared scratch
+  arena (10 MB/op, in line with f32); (2) the bigger one, the weight-only matmul
+  widened int8→f32 in a *scalar* inner loop (~26× slower than the f32 SIMD matmul),
+  now dequantizes the weights once per matmul and runs the vectorized `matmulBTInto`.
+  Net: q8 reaches ~f32 latency at ¼ the weight storage, with weight-only numerics
+  unchanged (cosine 0.997 vs f32). Full W8A8/SDOT (even faster) was rejected — it
+  quantizes activations and fell below the 0.97 reranker bar. A `-benchmem` rerank
+  bench guards against silent regression.
+
 ## [1.4.0] — 2026-06-11
 
 ### Added
