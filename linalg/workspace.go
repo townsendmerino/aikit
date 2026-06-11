@@ -11,9 +11,41 @@ package linalg
 // its KV cache). The zero value is ready to use; buffers grow on demand and are
 // never shrunk.
 type Workspace struct {
-	i8   []int8
-	f32  []float32
-	pool *pool // nil ⇒ parallel matmuls spawn goroutines per call (the default)
+	i8           []int8
+	f32          []float32
+	pool         *pool // nil ⇒ parallel matmuls spawn goroutines per call (the default)
+	threshold    int   // per-Workspace parallelization threshold (when thresholdSet)
+	thresholdSet bool  // false ⇒ inherit the process-wide SetParallelThreshold default
+}
+
+// SetThreshold overrides the parallelization threshold (see SetParallelThreshold)
+// for matmuls run through THIS Workspace, leaving the process-wide default untouched
+// — so independent decode streams can tune the whether-to-parallelize decision
+// without racing on a global. macs is the MAC count (M*N*K) at/above which a matmul
+// parallelizes; macs ≤ 0 forces always-parallel. The zero-value Workspace inherits
+// the process default. Pairs with SetWorkers, which scopes the fan-out width.
+func (w *Workspace) SetThreshold(macs int) {
+	w.threshold = macs
+	w.thresholdSet = true
+}
+
+// threshold resolves this Workspace's parallelization threshold: its own override if
+// set, otherwise the process-wide default.
+func (w *Workspace) thr() int {
+	if w.thresholdSet {
+		return w.threshold
+	}
+	return parThreshold
+}
+
+// parallelCols is the Workspace-scoped sibling of the package parallelCols: it uses
+// this Workspace's threshold and pool (width) instead of the globals.
+func (w *Workspace) parallelCols(work, N int, fn func(j0, j1 int)) {
+	if work < w.thr() || N < 2 {
+		fn(0, N)
+		return
+	}
+	w.parallel(N, fn)
 }
 
 // SetWorkers gives this Workspace a persistent pool of n worker goroutines that

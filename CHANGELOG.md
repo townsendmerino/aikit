@@ -12,6 +12,16 @@ it.
 
 ### Added
 
+- **`linalg.Workspace.SetThreshold` + `(*Workspace).MatmulBT` / `MatmulBTAcc64` —
+  per-Workspace parallelism scoping** (Experimental surface). The process-wide
+  `SetParallelThreshold` / `SetParallelWidth` globals are now *defaults*: a Workspace
+  can override the parallelization threshold (`SetThreshold`) alongside the existing
+  width scoping (`SetWorkers`), so independent decode streams tune their own
+  parallelism without mutating — or racing on — a global. The W8A8 path
+  (`MatmulBTW8A8Into` / `Batch`) honors the scoped threshold, and the f32 matmuls
+  gained Workspace methods. A zero-value Workspace inherits the global defaults;
+  parallelization stays numerically inert (bit-identical results). Settles the API
+  shape before `linalg` graduates from Experimental.
 - **`ann.ErrFormat` + `embed.ErrFormat` — typed sentinel errors for the blob
   loaders** (additive; `embed.OpenSafetensors*` is Hard-tier, gains only a wrapped
   sentinel). Every versioned-blob load path now wraps a sentinel so callers can

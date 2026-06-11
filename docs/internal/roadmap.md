@@ -165,10 +165,17 @@ Experimental tier grows toward graduation.
    are additive (apidiff: `ErrFormat: added`); per-tensor lookups and mmap I/O are
    deliberately *not* wrapped. (Chose one `ErrFormat` per package over a magic-only
    `ErrBadMagic` since it also covers version + truncation.)
-2. **Scope the global knobs** (`linalg.SetParallelThreshold/Width`) —
-   [low-medium / medium]. Per-`Workspace`/per-call overrides, globals as
-   defaults. Do before `linalg` graduates from Experimental — cheap now,
-   breaking later.
+2. **Scope the global knobs** (`linalg.SetParallelThreshold/Width`) — ✅ **DONE.**
+   The threshold is now scoped into `Workspace` (`SetThreshold`) alongside the
+   pre-existing width scoping (`SetWorkers`), with the globals as process-wide
+   defaults a zero-value `Workspace` inherits. The W8A8 hot path (`MatmulBTW8A8Into`/
+   `Batch`) reads the scoped threshold, and the f32 matmuls gained `Workspace`
+   methods (`(*Workspace).MatmulBT` / `MatmulBTAcc64`) — so independent decode
+   streams tune parallelism without racing on a global. Bit-identical (parallelism
+   is numerically inert), race-clean across concurrent Workspaces, additive (apidiff:
+   3 methods added). Remaining matmul variants (`MatmulBTQ8/W4A8/Q4`) can gain
+   `Workspace` methods additively if needed — the shape is settled, so no longer a
+   pre-graduation break risk.
 3. **Decide the worker pool's fate** — [low / low]. Still built, still
    measured-neutral, still shipped-but-unused. Delete it (the measurement
    note in git history is the record) or mark deprecated. Pick one this

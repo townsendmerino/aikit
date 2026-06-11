@@ -166,7 +166,7 @@ func MatmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, 
 	// Serial fast-path calls the named span directly (no closure → no heap
 	// escape → zero alloc, the steady-state decode case). Only the parallel
 	// branch pays a closure allocation, where it's noise next to the goroutines.
-	if M*N*K < parThreshold || N < 2 {
+	if M*N*K < ws.thr() || N < 2 {
 		w8a8Span(aq, aScales, bQ, bScales, dst, M, K, N, 0, N)
 		return
 	}
@@ -233,7 +233,7 @@ func MatmulBTW8A8Batch(ws *Workspace, a []float32, M, K int, ops []W8A8Op) {
 	for _, op := range ops {
 		totalN += op.N
 	}
-	if M*totalN*K < parThreshold || totalN < 2 {
+	if M*totalN*K < ws.thr() || totalN < 2 {
 		w8a8BatchSpan(aq, aScales, ops, M, K, 0, totalN)
 		return
 	}

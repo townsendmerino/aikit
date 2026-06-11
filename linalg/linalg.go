@@ -45,11 +45,15 @@ var parThreshold = 1 << 24 // 16.78M MACs
 // (16.78M) keeps M=1 single-token decode serial — the regime where per-call
 // fork/join dominates — while prompt/prefill and the encoder still parallelize.
 //
-// It's a process-wide knob for callers tuning a specific workload + machine
+// It's a process-wide DEFAULT for callers tuning a specific workload + machine
 // against an end-to-end benchmark (a microbenchmark of back-to-back matmuls
 // can't reproduce the cold goroutine park/wake that makes serial win in a real
 // decode loop). Set it once at startup, before concurrent matmuls run; it is
 // not safe to change while matmuls are in flight. n ≤ 0 forces always-parallel.
+//
+// To override it for one workload WITHOUT mutating the global — e.g. independent
+// decode streams on the same machine — use Workspace.SetThreshold (and
+// Workspace.SetWorkers for width) and call the Workspace's matmul methods.
 func SetParallelThreshold(macs int) { parThreshold = macs }
 
 // ParallelThreshold reports the current threshold (see SetParallelThreshold).
@@ -71,8 +75,9 @@ var parWidth = 0
 //
 // Numerically inert: parallel matmuls partition output COLUMNS, so each output
 // is computed by one worker doing the full K-reduction — any width is
-// bit-identical. Process-wide; set once at startup. The effective worker count
-// is min(width-or-GOMAXPROCS, GOMAXPROCS, columns).
+// bit-identical. Process-wide DEFAULT; set once at startup. The effective worker
+// count is min(width-or-GOMAXPROCS, GOMAXPROCS, columns). For per-stream scoping
+// without touching the global, give a Workspace a pool via Workspace.SetWorkers.
 func SetParallelWidth(n int) { parWidth = n }
 
 // ParallelWidth reports the current fan-out width cap (0 = GOMAXPROCS).
@@ -93,15 +98,26 @@ func effectiveWidth() int {
 // the N output columns (always large in the transformer projections, and the
 // only dimension with parallelism on the M=1 single-token decode path).
 func MatmulBT(a, b, dst []float32, M, K, N int) {
-	parallelCols(M*N*K, N, func(j0, j1 int) {
-		for i := range M {
-			arow := a[i*K : i*K+K]
-			drow := dst[i*N : i*N+N]
-			for j := j0; j < j1; j++ {
-				drow[j] = dotF32(arow, b[j*K:j*K+K])
-			}
+	parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTSpan(a, b, dst, M, K, N, j0, j1) })
+}
+
+// MatmulBT run through a Workspace uses that Workspace's scoped threshold and worker
+// pool (SetThreshold / SetWorkers) instead of the process-wide globals — so an
+// independent decode stream tunes its own parallelism. Same shape and numerics as
+// the package-level MatmulBT.
+func (w *Workspace) MatmulBT(a, b, dst []float32, M, K, N int) {
+	w.parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTSpan(a, b, dst, M, K, N, j0, j1) })
+}
+
+// matmulBTSpan computes output columns [j0,j1) of dst[M,N] = a[M,K]·b[N,K]ᵀ.
+func matmulBTSpan(a, b, dst []float32, M, K, N, j0, j1 int) {
+	for i := range M {
+		arow := a[i*K : i*K+K]
+		drow := dst[i*N : i*N+N]
+		for j := j0; j < j1; j++ {
+			drow[j] = dotF32(arow, b[j*K:j*K+K])
 		}
-	})
+	}
 }
 
 // MatmulBTAcc64 is MatmulBT (dst[M,N] = a[M,K] · b[N,K]ᵀ) but each output dot is
@@ -117,15 +133,22 @@ func MatmulBT(a, b, dst []float32, M, K, N int) {
 // while keeping the parallelism over N. For dense models MatmulBT's f32 accumulate
 // is fine — prefer it (this is slower).
 func MatmulBTAcc64(a, b, dst []float32, M, K, N int) {
-	parallelCols(M*N*K, N, func(j0, j1 int) {
-		for i := range M {
-			arow := a[i*K : i*K+K]
-			drow := dst[i*N : i*N+N]
-			for j := j0; j < j1; j++ {
-				drow[j] = float32(dotF32Acc64(arow, b[j*K:j*K+K]))
-			}
+	parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTAcc64Span(a, b, dst, M, K, N, j0, j1) })
+}
+
+// MatmulBTAcc64 run through a Workspace uses its scoped threshold + worker pool.
+func (w *Workspace) MatmulBTAcc64(a, b, dst []float32, M, K, N int) {
+	w.parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTAcc64Span(a, b, dst, M, K, N, j0, j1) })
+}
+
+func matmulBTAcc64Span(a, b, dst []float32, M, K, N, j0, j1 int) {
+	for i := range M {
+		arow := a[i*K : i*K+K]
+		drow := dst[i*N : i*N+N]
+		for j := j0; j < j1; j++ {
+			drow[j] = float32(dotF32Acc64(arow, b[j*K:j*K+K]))
 		}
-	})
+	}
 }
 
 // parallelCols runs fn over the [0,N) output columns, split into one chunk per
