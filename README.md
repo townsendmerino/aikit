@@ -7,7 +7,7 @@ with a transformer reranking model — each package is small, independently
 importable, and parity-tested against a Python reference.
 
 The dependency DAG is shallow: most packages are leaves; `encoder` requires
-`embed` + `linalg`. The one heavier dependency — `gotreesitter` (pure-Go, but a
+`embed` + `linalg` (+ `sparse` for the SPLADE expansion head). The one heavier dependency — `gotreesitter` (pure-Go, but a
 large embedded-grammar payload) — is quarantined in the separate
 `chunk/treesitter` submodule, so importing the core never pulls it in.
 
@@ -25,11 +25,11 @@ large embedded-grammar payload) — is quarantined in the separate
 | `ann` | cosine ANN over a dense matrix — exact flat scan + approximate HNSW graph | `linalg`, `topk` |
 | `bm25` | identifier-aware BM25 lexical index (Lucene-variant); `Tokenize` (code) + `TokenizePlain` (general text) | `topk` |
 | `fuse` | rank fusion (RRF) + relative-score fusion (RSF) — blend lexical + dense rankings for hybrid search | — |
-| `sparse` | learned-sparse (SPLADE-style) retrieval — inverted index + sparse-dot scoring over pre-computed vectors | `topk` |
+| `sparse` | learned-sparse (SPLADE) retrieval — inverted index + sparse-dot scoring over vectors from `encoder.SPLADE` (in-process) or precomputed | `topk` |
 | `bench` | reproducible recall + latency harness for the dense indexes (Flat / HNSW / FlatI8) — Experimental tooling | `ann` |
 | `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | — |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `golang.org/x/text` |
-| `encoder` | CodeRankEmbed transformer reranker (NomicBert, 12-layer) — higher-fidelity embeddings scored by cosine; pluggable matmul `Backend` | `embed`, `linalg` |
+| `encoder` | CodeRankEmbed reranker (NomicBert) + MiniLM-class BERT embedder + SPLADE expansion head — transformer inference scored by cosine / sparse dot; pluggable matmul `Backend` | `embed`, `linalg`, `sparse` |
 | `chunk` | language-aware chunker registry + `regex`, `markdown`, `line` chunkers | — |
 | `chunk/treesitter` *(submodule)* | tree-sitter-backed syntactic chunker | `gotreesitter`, `…/aikit` |
 
@@ -193,6 +193,9 @@ settles.
 - `encoder.LoadBERT` / `encoder.BERT` / `BERT.Encode` — MiniLM-class BERT encoder
   (learned positions + GELU FFN + mean pooling), cgo-free, parity-pinned to
   all-MiniLM-L6-v2 (cosine 1.0). New surface, settling.
+- `encoder.LoadSPLADE` / `encoder.SPLADE` / `SPLADE.Expand` — in-process SPLADE
+  learned-sparse expansion (BERT + masked-LM head → `sparse.SparseVec`), parity 1.0
+  vs the reference. Closes the `sparse` loop end-to-end. New surface.
 - The mmap variant of `embed.OpenSafetensors`.
 - The concrete chunker structs (`regex.Chunker`, `markdown.Chunker`,
   `treesitter.Chunker`) and their `New()` — prefer `chunk.Get("regex")`.

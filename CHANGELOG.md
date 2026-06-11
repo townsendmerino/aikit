@@ -12,6 +12,17 @@ it.
 
 ### Added
 
+- **`encoder.LoadSPLADE` / `SPLADE.Expand` — in-process SPLADE expansion**
+  (Experimental surface). A SPLADE model is a BERT encoder (`LoadBERT`) plus a
+  masked-LM head; `Expand(text)` projects each token's hidden state to vocab logits,
+  applies log(1+ReLU), and max-pools to a `sparse.SparseVec` — so learned-sparse
+  retrieval runs end-to-end in-process (`Expand` → `sparse.New` / `Index.Query`), no
+  Python at query time. This completes the `sparse` package: the index half shipped
+  in 1.2.0, the expansion head ships now. Parity-pinned to
+  naver/splade-cocondenser-ensembledistil (golden via `scripts/pin_splade.py`):
+  identical term sets and cosine 1.000000 across cases. Reuses the §2.2 BERT forward
+  (prefix-aware now, so `LoadBERT` also reads raw `BertForMaskedLM`). Adds a small
+  `encoder → sparse` edge.
 - **`embed.Load` now reads the standard Model2Vec format** (Hard-tier `embed.Load`
   gains capability — additive). Previously it required the vocabulary-quantized
   layout (`embeddings` + `mapping` + `weights` tensors, e.g. `potion-code-16M`); it

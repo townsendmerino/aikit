@@ -92,6 +92,16 @@ func LoadBERT(dir string) (*BERT, error) {
 	D, I := c.Hidden, c.Intermediate
 	b := &BERT{cfg: c, st: st, layers: make([]bertLayer, c.Layers)}
 
+	// Encoder tensors are bare in sentence-transformers exports (embeddings.*,
+	// encoder.layer.N.*) but carry a "bert." prefix in a raw BertModel /
+	// BertForMaskedLM (e.g. SPLADE). Detect which.
+	prefix := ""
+	if _, e := st.Tensor("embeddings.word_embeddings.weight"); e != nil {
+		if _, e2 := st.Tensor("bert.embeddings.word_embeddings.weight"); e2 == nil {
+			prefix = "bert."
+		}
+	}
+
 	get := func(name string, want ...int) []float32 {
 		if err != nil {
 			return nil
@@ -100,13 +110,13 @@ func LoadBERT(dir string) (*BERT, error) {
 		v, err = loadF32(st, name, want)
 		return v
 	}
-	b.wordEmb = get("embeddings.word_embeddings.weight", c.VocabSize, D)
-	b.posEmb = get("embeddings.position_embeddings.weight", c.MaxPos, D)
-	b.typeEmb = get("embeddings.token_type_embeddings.weight", c.TypeVocab, D)
-	b.embLNW = get("embeddings.LayerNorm.weight", D)
-	b.embLNB = get("embeddings.LayerNorm.bias", D)
+	b.wordEmb = get(prefix+"embeddings.word_embeddings.weight", c.VocabSize, D)
+	b.posEmb = get(prefix+"embeddings.position_embeddings.weight", c.MaxPos, D)
+	b.typeEmb = get(prefix+"embeddings.token_type_embeddings.weight", c.TypeVocab, D)
+	b.embLNW = get(prefix+"embeddings.LayerNorm.weight", D)
+	b.embLNB = get(prefix+"embeddings.LayerNorm.bias", D)
 	for i := range b.layers {
-		p := fmt.Sprintf("encoder.layer.%d.", i)
+		p := fmt.Sprintf("%sencoder.layer.%d.", prefix, i)
 		l := &b.layers[i]
 		l.Wq, l.Bq = get(p+"attention.self.query.weight", D, D), get(p+"attention.self.query.bias", D)
 		l.Wk, l.Bk = get(p+"attention.self.key.weight", D, D), get(p+"attention.self.key.bias", D)
