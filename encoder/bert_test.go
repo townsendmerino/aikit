@@ -40,7 +40,7 @@ func TestBERT_parity(t *testing.T) {
 
 	var worstHidden, worstCos float64 = 0, 1
 	for _, c := range g.Cases {
-		h := b.hiddenStates(c.InputIDs)
+		h := b.hiddenStates(c.InputIDs, nil)
 		if len(h) != len(c.HiddenSt) {
 			t.Fatalf("%q: hidden len %d != golden %d", c.Text, len(h), len(c.HiddenSt))
 		}

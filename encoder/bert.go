@@ -164,20 +164,25 @@ func (b *BERT) Encode(text string) ([]float32, error) {
 }
 
 // hiddenStates runs the transformer forward on token ids (already wrapped with
-// [CLS]…[SEP]) and returns the last hidden state [L, hidden], row-major. Token type
-// is 0 for every position (single segment).
-func (b *BERT) hiddenStates(ids []int32) []float32 {
+// [CLS]…[SEP]) and returns the last hidden state [L, hidden], row-major. segs is the
+// token-type (segment) id per position; nil means a single segment (all 0), as the
+// embedder uses — a cross-encoder passes two segments for the query/document pair.
+func (b *BERT) hiddenStates(ids, segs []int32) []float32 {
 	c := b.cfg
 	L, D := len(ids), c.Hidden
 	headDim := D / c.Heads
 	eps := c.LNEps
 
-	// Embeddings: word + learned position + token-type[0], then LayerNorm.
+	// Embeddings: word + learned position + token-type[seg], then LayerNorm.
 	h := make([]float32, L*D)
 	for i, id := range ids {
+		seg := 0
+		if segs != nil {
+			seg = int(segs[i])
+		}
 		w := b.wordEmb[int(id)*D : int(id)*D+D]
 		pos := b.posEmb[i*D : i*D+D]
-		typ := b.typeEmb[0:D]
+		typ := b.typeEmb[seg*D : seg*D+D]
 		row := h[i*D : i*D+D]
 		for j := range D {
 			row[j] = w[j] + pos[j] + typ[j]
@@ -246,7 +251,7 @@ func (b *BERT) hiddenStates(ids []int32) []float32 {
 // Embed returns the mean-pooled, L2-normalized sentence embedding for token ids.
 func (b *BERT) Embed(ids []int32) []float32 {
 	D := b.cfg.Hidden
-	h := b.hiddenStates(ids)
+	h := b.hiddenStates(ids, nil)
 	v := poolOne(h, len(ids), D, poolMean) // mean over the L tokens
 	return l2norm(v)
 }

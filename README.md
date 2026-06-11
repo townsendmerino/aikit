@@ -29,7 +29,7 @@ large embedded-grammar payload) — is quarantined in the separate
 | `bench` | reproducible recall + latency harness for the dense indexes (Flat / HNSW / FlatI8) — Experimental tooling | `ann` |
 | `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | — |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `golang.org/x/text` |
-| `encoder` | CodeRankEmbed reranker (NomicBert) + MiniLM-class BERT embedder + SPLADE expansion head — transformer inference scored by cosine / sparse dot; pluggable matmul `Backend` | `embed`, `linalg`, `sparse` |
+| `encoder` | CodeRankEmbed (NomicBert) + MiniLM-class BERT embedder + SPLADE expansion + cross-encoder reranker — transformer inference scored by cosine / sparse dot / relevance logit; pluggable matmul `Backend` | `embed`, `linalg`, `sparse` |
 | `chunk` | language-aware chunker registry + `regex`, `markdown`, `line` chunkers | — |
 | `chunk/treesitter` *(submodule)* | tree-sitter-backed syntactic chunker | `gotreesitter`, `…/aikit` |
 
@@ -202,6 +202,9 @@ settles.
 - `encoder.LoadSPLADE` / `encoder.SPLADE` / `SPLADE.Expand` — in-process SPLADE
   learned-sparse expansion (BERT + masked-LM head → `sparse.SparseVec`), parity 1.0
   vs the reference. Closes the `sparse` loop end-to-end. New surface.
+- `encoder.LoadCrossEncoder` / `encoder.CrossEncoder` / `CrossEncoder.Score` — BERT
+  cross-encoder reranker (scores a query/document pair → relevance logit), parity-
+  pinned to ms-marco-MiniLM-L-6-v2. The cross-encoder half of reranking. New surface.
 - The mmap variant of `embed.OpenSafetensors`.
 - The concrete chunker structs (`regex.Chunker`, `markdown.Chunker`,
   `treesitter.Chunker`) and their `New()` — prefer `chunk.Get("regex")`.

@@ -10,6 +10,7 @@ testdata/encoder-model
 testdata/minilm-model
 testdata/retrieval-model
 testdata/splade-model
+testdata/crossencoder-model
 testdata/gemma-3-270m
 *.safetensors
 

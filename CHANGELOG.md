@@ -10,6 +10,20 @@ it.
 
 ## [Unreleased]
 
+### Added
+
+- **`encoder.LoadCrossEncoder` / `CrossEncoder.Score` — BERT cross-encoder reranker**
+  (Experimental surface). Scores a (query, document) pair *jointly* — the trunk runs
+  over `[CLS] query [SEP] document [SEP]` (token types 0/1), then the `[CLS]` hidden
+  state goes through the BERT pooler (dense + tanh) and a linear classification head
+  to a relevance logit; rank candidates by descending `Score`. A small additive step
+  on the v1.4.0 BERT trunk: `LoadCrossEncoder` reuses `LoadBERT` and adds the pooler +
+  head, and `hiddenStates` gained token-type segments for the pair. Parity-pinned to
+  **cross-encoder/ms-marco-MiniLM-L-6-v2** (hugot's CrossEncoders headline + Antfly's
+  reranker default) at Δ 5e-6 — both the forward and the end-to-end pipeline (aikit's
+  own pair tokenization matches HF); golden via `scripts/pin_crossencoder.py`. aikit
+  now covers both halves of reranking (bi-encoder + cross-encoder), cgo-free.
+
 ## [1.4.0] — 2026-06-11
 
 ### Added

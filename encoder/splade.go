@@ -77,7 +77,7 @@ func (s *SPLADE) Expand(text string) (sparse.SparseVec, error) {
 
 func (s *SPLADE) expandIDs(ids []int32) sparse.SparseVec {
 	D, V, L := s.bert.cfg.Hidden, s.vocab, len(ids)
-	h := s.bert.hiddenStates(ids) // [L, D]
+	h := s.bert.hiddenStates(ids, nil) // [L, D]
 
 	// MLM transform head: t = LayerNorm(gelu(h·Wᵀ + b)).
 	t := matmulBT(h, s.transformW, L, D, D)
