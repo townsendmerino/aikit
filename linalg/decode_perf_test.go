@@ -92,26 +92,20 @@ func withThreshold(serial bool, fn func()) {
 	fn()
 }
 
-// BenchmarkDecodePool compares the spawn-per-call fan-out vs the persistent
-// spin-then-park pool on the goinfer-style batched decode layer (M=1, forced
-// parallel — the regime goinfer runs decode in). The pool keeps workers hot
-// across the layer's ~4 dispatches instead of spawning + parking each. NOTE:
-// this back-to-back microbench can't reproduce the between-token cooling of a
-// real decode loop, so goinfer's end-to-end sweep is the arbiter (it under-
-// shows here, per the task doc).
-func BenchmarkDecodePool(b *testing.B) {
+// BenchmarkDecodeWidth sweeps the per-Workspace fan-out width cap (SetWorkers) on
+// the goinfer-style batched decode layer (M=1, forced parallel). width=0 inherits
+// the global default (GOMAXPROCS); lower caps trade total throughput against fewer
+// E-core stragglers at the fork/join barrier on heterogeneous CPUs.
+func BenchmarkDecodeWidth(b *testing.B) {
 	acts, p := buildLayer(1)
-	for _, workers := range []int{0, 2, 6, 8} { // 0 = spawn-per-call (no pool)
-		name := fmt.Sprintf("workers=%d", workers)
-		if workers == 0 {
-			name = "spawn"
+	for _, width := range []int{0, 2, 6, 8} {
+		name := fmt.Sprintf("width=%d", width)
+		if width == 0 {
+			name = "default"
 		}
 		b.Run(name, func(b *testing.B) {
 			ws := &Workspace{}
-			if workers > 0 {
-				ws.SetWorkers(workers)
-				defer ws.Close()
-			}
+			ws.SetWorkers(width)
 			withThreshold(false, func() { // force parallel
 				runLayerBatch(ws, acts, p, 1)
 				b.ReportAllocs()

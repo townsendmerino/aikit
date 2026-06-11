@@ -65,6 +65,18 @@ it.
   CodeRankEmbed path is untouched (additive, no regression). Turns "two specific
   models" into "the BERT family you already use."
 
+### Changed
+
+- **`linalg`: removed the unused persistent worker pool; `Workspace.SetWorkers` is
+  now a per-Workspace fan-out width cap** (Experimental surface — `(*Workspace).Close`
+  is removed). The spin-then-park pool (built for decode hot-worker reuse) measured
+  neutral and shipped unused: the serial-decode threshold keeps M=1 decode serial —
+  the regime it targeted — so it only ran where goroutine spawn is already amortized.
+  Deleted 154 lines of single-dispatcher concurrency. `SetWorkers` keeps its useful
+  role — capping the spawn fan-out (e.g. to the P-core count on heterogeneous CPUs) —
+  now as a numerically-inert width field on the per-call spawn path; `Close` is gone
+  (nothing to stop). The design + measurement live in git (commit 2df6b52).
+
 ## [1.3.0] — 2026-06-10
 
 ### Added

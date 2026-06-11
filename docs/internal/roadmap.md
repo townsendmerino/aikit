@@ -176,10 +176,15 @@ Experimental tier grows toward graduation.
    3 methods added). Remaining matmul variants (`MatmulBTQ8/W4A8/Q4`) can gain
    `Workspace` methods additively if needed — the shape is settled, so no longer a
    pre-graduation break risk.
-3. **Decide the worker pool's fate** — [low / low]. Still built, still
-   measured-neutral, still shipped-but-unused. Delete it (the measurement
-   note in git history is the record) or mark deprecated. Pick one this
-   cycle.
+3. **Decide the worker pool's fate** — ✅ **DONE: deleted.** The persistent
+   spin-then-park pool (154 lines, `pool.go`) measured neutral and shipped unused —
+   the serial-decode threshold keeps M=1 decode serial, the very regime it targeted,
+   so it only ran where goroutine spawn is already amortized. Removed, *preserving*
+   the useful half: `Workspace.SetWorkers` is now a numerically-inert per-Workspace
+   fan-out width cap on the spawn path (the P/E heterogeneous-CPU use), so the
+   scoping from item 2 is intact. `(*Workspace).Close` removed (Experimental; nothing
+   to stop now). The design + measurement live in git (commit 2df6b52) if a future
+   profile ever justifies resurrecting it.
 4. **`linalg` surface audit before graduation** — [low-medium / low]. *New:*
    the Experimental surface keeps growing opportunistically (`DotI8` exported
    for int8 HNSW, `MatmulBTAcc64` for goinfer's MoE router). Each is justified,

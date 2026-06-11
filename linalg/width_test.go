@@ -72,15 +72,15 @@ func TestParallelWidth_effective(t *testing.T) {
 	defer SetParallelWidth(oldW)
 
 	SetParallelWidth(0)
-	if effectiveWidth() <= 0 {
+	if resolveWidth(0) <= 0 {
 		t.Error("width 0 should resolve to GOMAXPROCS (>0)")
 	}
 	SetParallelWidth(1 << 30) // absurdly high → clamped to GOMAXPROCS
-	if got, max := effectiveWidth(), runtime.GOMAXPROCS(0); got != max {
+	if got, max := resolveWidth(0), runtime.GOMAXPROCS(0); got != max {
 		t.Errorf("over-large width resolved to %d, want GOMAXPROCS %d", got, max)
 	}
 	SetParallelWidth(2)
-	if got := effectiveWidth(); got != 2 && runtime.GOMAXPROCS(0) >= 2 {
+	if got := resolveWidth(0); got != 2 && runtime.GOMAXPROCS(0) >= 2 {
 		t.Errorf("width 2 resolved to %d, want 2", got)
 	}
 }

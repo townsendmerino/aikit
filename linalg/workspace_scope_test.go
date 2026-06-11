@@ -78,3 +78,30 @@ func TestWorkspace_scopedW8A8(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+// TestWorkspace_scopedWidth: SetWorkers caps the fan-out per-Workspace and is
+// numerically inert (parallel matmuls partition columns — any width is bit-identical
+// to the serial reference), without touching the global SetParallelWidth default.
+func TestWorkspace_scopedWidth(t *testing.T) {
+	rng := rand.New(rand.NewPCG(11, 12))
+	M, K, N := 4, 64, 300
+	a, b := randVec(rng, M*K), randVec(rng, N*K)
+	ref := make([]float32, M*N)
+	MatmulBT(a, b, ref, M, K, N)
+
+	for _, width := range []int{0, 1, 2, 3, 1 << 20} {
+		var ws Workspace
+		ws.SetThreshold(0) // force parallel
+		ws.SetWorkers(width)
+		got := make([]float32, M*N)
+		ws.MatmulBT(a, b, got, M, K, N)
+		for i := range ref {
+			if got[i] != ref[i] {
+				t.Fatalf("width=%d MatmulBT[%d]=%v != %v", width, i, got[i], ref[i])
+			}
+		}
+	}
+	if ParallelWidth() != 0 {
+		t.Errorf("SetWorkers leaked to the global ParallelWidth: %d", ParallelWidth())
+	}
+}

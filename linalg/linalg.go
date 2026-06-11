@@ -83,13 +83,18 @@ func SetParallelWidth(n int) { parWidth = n }
 // ParallelWidth reports the current fan-out width cap (0 = GOMAXPROCS).
 func ParallelWidth() int { return parWidth }
 
-// effectiveWidth resolves the configured width against GOMAXPROCS.
-func effectiveWidth() int {
+// resolveWidth resolves a fan-out width — 0 means the process-wide default
+// (SetParallelWidth) — against GOMAXPROCS. Used by both the global spawn path
+// (width 0) and per-Workspace overrides (Workspace.width).
+func resolveWidth(width int) int {
+	if width <= 0 {
+		width = parWidth
+	}
 	g := runtime.GOMAXPROCS(0)
-	if parWidth <= 0 || parWidth > g {
+	if width <= 0 || width > g {
 		return g
 	}
-	return parWidth
+	return width
 }
 
 // MatmulBT computes dst[M,N] = a[M,K] · b[N,K]ᵀ — the PyTorch [out,in] weight
@@ -159,7 +164,7 @@ func parallelCols(work, N int, fn func(j0, j1 int)) {
 		fn(0, N)
 		return
 	}
-	parallelSpawnCols(N, fn)
+	parallelSpawnCols(N, resolveWidth(0), fn)
 }
 
 // parallelSpawnCols splits [0,N) into one chunk per worker and runs fn on each
@@ -167,8 +172,14 @@ func parallelCols(work, N int, fn func(j0, j1 int)) {
 // (so the fn closure's heap escape here is paid only on the parallel path —
 // callers that want a zero-alloc serial path call their span function directly
 // when below threshold, rather than routing a closure through parallelCols).
-func parallelSpawnCols(N int, fn func(j0, j1 int)) {
-	workers := min(effectiveWidth(), N)
+// workers is the resolved fan-out (see resolveWidth); it is clamped to [1, N].
+func parallelSpawnCols(N, workers int, fn func(j0, j1 int)) {
+	if workers > N {
+		workers = N
+	}
+	if workers < 1 {
+		workers = 1
+	}
 	chunk := (N + workers - 1) / workers
 	var wg sync.WaitGroup
 	for j0 := 0; j0 < N; j0 += chunk {

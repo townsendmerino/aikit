@@ -13,9 +13,9 @@ package linalg
 type Workspace struct {
 	i8           []int8
 	f32          []float32
-	pool         *pool // nil ⇒ parallel matmuls spawn goroutines per call (the default)
-	threshold    int   // per-Workspace parallelization threshold (when thresholdSet)
-	thresholdSet bool  // false ⇒ inherit the process-wide SetParallelThreshold default
+	width        int  // per-Workspace fan-out cap; 0 ⇒ inherit SetParallelWidth
+	threshold    int  // per-Workspace parallelization threshold (when thresholdSet)
+	thresholdSet bool // false ⇒ inherit the process-wide SetParallelThreshold default
 }
 
 // SetThreshold overrides the parallelization threshold (see SetParallelThreshold)
@@ -39,7 +39,7 @@ func (w *Workspace) thr() int {
 }
 
 // parallelCols is the Workspace-scoped sibling of the package parallelCols: it uses
-// this Workspace's threshold and pool (width) instead of the globals.
+// this Workspace's threshold and width instead of the globals.
 func (w *Workspace) parallelCols(work, N int, fn func(j0, j1 int)) {
 	if work < w.thr() || N < 2 {
 		fn(0, N)
@@ -48,46 +48,19 @@ func (w *Workspace) parallelCols(work, N int, fn func(j0, j1 int)) {
 	w.parallel(N, fn)
 }
 
-// SetWorkers gives this Workspace a persistent pool of n worker goroutines that
-// spin briefly before parking, so the back-to-back matmuls of a decode step
-// reuse hot workers instead of spawning + parking goroutines per call. n is the
-// total degree of parallelism (the dispatcher counts as one), so n = number of
-// cores to use; n ≤ 1 disables the pool (and stops any existing one). Pass the
-// P-core count to avoid E-core load-imbalance stalls.
-//
-// The pool is owned by this Workspace and driven by a SINGLE dispatcher, so —
-// like the rest of Workspace — it is NOT safe for concurrent use; keep one per
-// decode stream. Call Close to stop the workers when the stream ends, or they
-// leak. The zero-value Workspace has no pool, so the allocating matmul wrappers
-// (which use a transient Workspace) never start one.
-func (w *Workspace) SetWorkers(n int) {
-	if w.pool != nil {
-		w.pool.close()
-		w.pool = nil
-	}
-	if n > 1 {
-		w.pool = newPool(n)
-	}
-}
+// SetWorkers caps how many worker shards a parallel matmul run through THIS
+// Workspace fans out to (0 ⇒ inherit the process-wide SetParallelWidth default).
+// Lower it to the P-core count on a heterogeneous CPU (Apple big.LITTLE, Intel P/E)
+// to cut E-core stragglers at the fork/join barrier. Per-Workspace, so independent
+// decode streams pick their own width without racing on a global, and the zero-value
+// Workspace inherits the default. Numerically inert: parallel matmuls partition
+// output columns, so any width is bit-identical. Pairs with SetThreshold.
+func (w *Workspace) SetWorkers(n int) { w.width = n }
 
-// Close stops the Workspace's worker pool, if any. Idempotent. After Close the
-// Workspace still works (scratch + spawn-per-call fallback); only the persistent
-// pool is gone.
-func (w *Workspace) Close() {
-	if w.pool != nil {
-		w.pool.close()
-		w.pool = nil
-	}
-}
-
-// parallel runs fn over [0,N) using the pool when present, else a per-call
-// goroutine fan-out. Caller has already decided the work clears parThreshold.
+// parallel runs fn over [0,N) as a per-call goroutine fan-out capped at this
+// Workspace's width. Caller has already decided the work clears the threshold.
 func (w *Workspace) parallel(N int, fn func(j0, j1 int)) {
-	if w.pool != nil {
-		w.pool.run(N, fn)
-		return
-	}
-	parallelSpawnCols(N, fn)
+	parallelSpawnCols(N, resolveWidth(w.width), fn)
 }
 
 // int8Buf returns a length-n int8 scratch slice backed by reusable storage.
