@@ -99,13 +99,14 @@ Items 2–5 are sequenced behind item 1.
    `pin_minilm.py`): hidden states Δ~1e-6, sentence embedding cosine 1.000000,
    tokenizer ids identical to HF. Separate file, CodeRankEmbed untouched (additive).
    This is the "BERT family you already use" answer to hugot's CrossEncoders.
-3. **SPLADE expansion head (§2.1 remainder)** — [medium-high / high]. The
-   index/scorer half shipped; the in-process masked-LM head (logits →
-   log(1+ReLU), max-pool) reuses `encoder`'s machinery and needs a SPLADE
-   checkpoint + golden. Until then, an interim unlock at [low / low]: a
-   `scripts/pin_splade.py` that emits `SparseVec` JSON out-of-band, so the
-   shipped index half is *usable end-to-end* today — document the recipe in
-   the `sparse` package example.
+3. **SPLADE expansion head** — ✅ **DONE** (the full in-process head, not the interim
+   pin-script fallback). §2.2's BERT forward made it tractable: a SPLADE model is a
+   BERT + a masked-LM head, so `LoadSPLADE` reuses `LoadBERT` (now prefix-aware for
+   raw `BertForMaskedLM`) and adds the head; `Expand(text)` → log(1+ReLU) → max-pool
+   → `sparse.SparseVec`. Parity 1.000000 (identical term sets) vs
+   naver/splade-cocondenser-ensembledistil. Learned-sparse retrieval now runs
+   end-to-end in-process (`Expand` → `sparse.New`/`Query`) — the `sparse` package
+   (index half from 1.2.0) is complete.
 4. **potion-retrieval-32M parity pin** — ✅ **DONE** (and bigger than scoped). The
    "loads already, same format" premise was wrong: potion-retrieval-32M uses the
    *standard* Model2Vec layout (only an `embeddings` tensor), while embed required
