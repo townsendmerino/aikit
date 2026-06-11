@@ -1,0 +1,54 @@
+name: release-gate
+
+# Tag-triggered release gate (roadmap §1.2): on a vX.Y.Z tag, validate the repo is
+# release-ready (CHANGELOG section, no Hard-tier API breakage, dependency invariant)
+# and create the GitHub Release from the CHANGELOG section if it doesn't exist yet.
+# workflow_dispatch runs the same checks against a given version for testing (no
+# release is created).
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to validate (no leading v), e.g. 1.4.0"
+        required: true
+
+permissions:
+  contents: write # to create the GitHub Release
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # full history + tags for apidiff vs the previous tag
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Resolve version
+        id: ver
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Release-gate checks
+        run: ./scripts/release-gate.sh "${{ steps.ver.outputs.version }}"
+      - name: Create GitHub Release from the CHANGELOG section
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          VER="${TAG#v}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG already exists — leaving it as is"
+          else
+            notes="$(awk -v v="$VER" 'index($0, "## ["v"]")==1 {f=1; next} /^## \[/{f=0} f' CHANGELOG.md)"
+            if [ -z "${notes//[[:space:]]/}" ]; then notes="See CHANGELOG.md for v${VER}."; fi
+            printf '%s\n' "$notes" | gh release create "$TAG" --title "$TAG" --notes-file -
+            echo "created release $TAG from the CHANGELOG section"
+          fi

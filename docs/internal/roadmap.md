@@ -59,13 +59,15 @@ true two releases later). Everything here is unblocked today.
    buildable today exactly as the README prose describes. This is the
    pattern neither Python nor hugot-on-ONNX can match, and it's the demo
    that recruits §1.3's adopter.
-2. **Release-process gate in CI** — [medium / low]. *Raised since v2:* three
-   tags shipped in two days and each cycle surfaced a small process gap
-   (missing 1.1.1 CHANGELOG entry; stale docs nearly tagged in 1.2.0; the
-   v1.2.0 GitHub Release object was forgotten until prompted). Tag-triggered
-   CI job: matching `## [x.y.z]` CHANGELOG section exists; `apidiff` vs
-   previous tag shows no Hard-tier breakage; docs-vs-`go list` dep check;
-   release object exists or is auto-created from the CHANGELOG section.
+2. **Release-process gate in CI** — ✅ **DONE.** `scripts/release-gate.sh` (a
+   testable script, not trapped in YAML) + `.github/workflows/release.yml`,
+   tag-triggered (`v*.*.*`) with a `workflow_dispatch` test path. Checks: the
+   `## [x.y.z]` CHANGELOG section + compare link exist; `apidiff` shows no Hard-tier
+   incompatible change vs the previous tag (the release bar); and the core module
+   pulls no external dep beyond `golang.org/x/text` (the dependency-light invariant,
+   a robust stand-in for the docs-vs-`go list` check). On a tag it then creates the
+   GitHub Release from the CHANGELOG section if absent — closing every gap the
+   v1.1.1/1.2.0/1.2.1 cycles leaked.
 3. **One named external adopter** — [high / not-engineering]. Unchanged and
    still the highest-leverage non-code item: ship the next minor *with* a
    consumer (an MCP server embedding a docs corpus is the natural shape).
