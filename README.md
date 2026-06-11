@@ -125,6 +125,16 @@ inference *and* dense + lexical + sparse retrieval *and* fusion — in a single
 the vector DBs cover indexing but not inference. The `//go:embed`-a-corpus,
 zero-deploy story is the lane no Python or ONNX stack reaches.
 
+### Retrieval quality on a standard benchmark
+
+On the **BeIR/scifact** test set (a canonical BEIR task), aikit — `potion-retrieval-32M`
+embeddings + exact Flat cosine — scores **nDCG@10 0.638** (300 queries, 5183 docs).
+That's a cross-referenceable number: SciFact + nDCG@10 is the standard MTEB/BEIR
+protocol (the model's overall MTEB retrieval score is 35.06), and 0.638 is right where
+a strong static retriever lands — near all-MiniLM-L6-v2's own SciFact nDCG@10, at a
+fraction of the cost and pure-Go. Reproduce: `scripts/prep_beir.py`, then
+`cd benchmarks && GOWORK=off go run ./beir`.
+
 ---
 
 ## Stability tiers
