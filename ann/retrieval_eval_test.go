@@ -107,10 +107,7 @@ func recallVsRelevance(query func([]float32, int) []ann.Hit, fx evalFixture, k i
 				got++
 			}
 		}
-		denom := k
-		if len(q.Relevant) < k {
-			denom = len(q.Relevant)
-		}
+		denom := min(len(q.Relevant), k)
 		sum += float64(got) / float64(denom)
 	}
 	return sum / float64(len(fx.Queries))

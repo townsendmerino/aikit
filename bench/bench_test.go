@@ -30,7 +30,7 @@ func realCorpus(t *testing.T, modelDir string) (m *embed.StaticModel, vecs, quer
 			}
 		}
 	}
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		queries = append(queries, m.Encode(fmt.Sprintf("%s the %s %s value", verbs[i%len(verbs)], nouns[i%len(nouns)], types[i%len(types)])))
 	}
 	return m, vecs, queries

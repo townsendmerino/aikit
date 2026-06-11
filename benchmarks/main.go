@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	cohnsw "github.com/coder/hnsw"
@@ -246,7 +247,7 @@ func groundTruth(corpus, queries [][]float32, k int) [][]int {
 		}
 		sort.Slice(scores, func(a, b int) bool { return scores[a].dot > scores[b].dot })
 		ids := make([]int, k)
-		for i := 0; i < k; i++ {
+		for i := range k {
 			ids[i] = scores[i].id
 		}
 		truth[qi] = ids
@@ -288,11 +289,12 @@ func meanf(xs []float64) float64 {
 }
 
 func table(rs []result) string {
-	s := "| index | recall@" + strconv.Itoa(K) + " | build | p50 | p95 | p99 | mem |\n"
-	s += "|---|---|---|---|---|---|---|\n"
+	var s strings.Builder
+	s.WriteString("| index | recall@" + strconv.Itoa(K) + " | build | p50 | p95 | p99 | mem |\n")
+	s.WriteString("|---|---|---|---|---|---|---|\n")
 	for _, r := range rs {
-		s += fmt.Sprintf("| %s | %.4f | %.0f ms | %.3f ms | %.3f ms | %.3f ms | ~%.0f MB |\n",
-			r.name, r.recall, r.buildMs, r.p50, r.p95, r.p99, r.memMB)
+		s.WriteString(fmt.Sprintf("| %s | %.4f | %.0f ms | %.3f ms | %.3f ms | %.3f ms | ~%.0f MB |\n",
+			r.name, r.recall, r.buildMs, r.p50, r.p95, r.p99, r.memMB))
 	}
-	return s
+	return s.String()
 }

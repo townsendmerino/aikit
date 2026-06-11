@@ -191,7 +191,7 @@ func w8a8Span(aq []int8, aScales []float32, bQ []int8, bScales, dst []float32, M
 	for j := j0; j < j1; j++ {
 		bj := bQ[j*K : j*K+K]
 		bs := bScales[j]
-		for i := 0; i < M; i++ {
+		for i := range M {
 			if aScales[i] == 0 {
 				dst[i*N+j] = 0
 				continue
@@ -255,7 +255,7 @@ func w8a8BatchSpan(aq []int8, aScales []float32, ops []W8A8Op, M, K, g0, g1 int)
 				jj := j - base
 				bj := op.BQ[jj*K : jj*K+K]
 				bs := op.Scales[jj]
-				for i := 0; i < M; i++ {
+				for i := range M {
 					if aScales[i] == 0 {
 						op.Dst[i*op.N+jj] = 0
 						continue
@@ -440,7 +440,7 @@ func MatmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M
 		deq := make([]float32, K) // per-worker scratch: one full dequantized weight row
 		for j := j0; j < j1; j++ {
 			DequantizeRowInt4(bPacked[j*bpr:j*bpr+bpr], bScales[j*nGroups:j*nGroups+nGroups], group, K, deq)
-			for i := 0; i < M; i++ {
+			for i := range M {
 				dst[i*N+j] = dotF32(a[i*K:i*K+K], deq)
 			}
 		}

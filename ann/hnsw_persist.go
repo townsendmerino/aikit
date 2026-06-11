@@ -149,7 +149,7 @@ func (c *hcur) int8s(n int) []int8 {
 		return nil
 	}
 	out := make([]int8, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		out[i] = int8(c.b[c.pos+i])
 	}
 	c.pos += n

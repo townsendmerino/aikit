@@ -13,7 +13,7 @@ func randCorpus(rng *rand.Rand, n, V, density int) []SparseVec {
 	docs := make([]SparseVec, n)
 	for d := range docs {
 		seen := map[uint32]bool{}
-		for j := 0; j < density; j++ {
+		for range density {
 			t := uint32(rng.IntN(V))
 			if seen[t] {
 				continue
@@ -49,7 +49,7 @@ func TestScores_matchesBruteForce(t *testing.T) {
 	rng := rand.New(rand.NewPCG(1, 2))
 	docs := randCorpus(rng, 2000, 5000, 80)
 	ix := New(docs)
-	for qi := 0; qi < 30; qi++ {
+	for qi := range 30 {
 		q := randCorpus(rng, 1, 5000, 20)[0]
 		got := ix.Scores(q)
 		want := bruteScores(docs, q)

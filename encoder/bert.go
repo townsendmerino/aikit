@@ -179,7 +179,7 @@ func (b *BERT) hiddenStates(ids []int32) []float32 {
 		pos := b.posEmb[i*D : i*D+D]
 		typ := b.typeEmb[0:D]
 		row := h[i*D : i*D+D]
-		for j := 0; j < D; j++ {
+		for j := range D {
 			row[j] = w[j] + pos[j] + typ[j]
 		}
 	}
@@ -202,11 +202,11 @@ func (b *BERT) hiddenStates(ids []int32) []float32 {
 			qH := make([]float32, L*headDim)
 			kH := make([]float32, L*headDim)
 			vHT := make([]float32, headDim*L)
-			for i := 0; i < L; i++ {
+			for i := range L {
 				src := i*D + hd*headDim
 				copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
 				copy(kH[i*headDim:(i+1)*headDim], K[src:src+headDim])
-				for d := 0; d < headDim; d++ {
+				for d := range headDim {
 					vHT[d*L+i] = V[src+d]
 				}
 			}
@@ -214,11 +214,11 @@ func (b *BERT) hiddenStates(ids []int32) []float32 {
 			for i := range scores {
 				scores[i] *= scale
 			}
-			for i := 0; i < L; i++ {
+			for i := range L {
 				softmaxRow(scores[i*L : (i+1)*L])
 			}
 			ctxHead := matmulBT(scores, vHT, L, L, headDim)
-			for i := 0; i < L; i++ {
+			for i := range L {
 				copy(ctx[i*D+hd*headDim:i*D+hd*headDim+headDim], ctxHead[i*headDim:(i+1)*headDim])
 			}
 		}

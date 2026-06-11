@@ -51,10 +51,7 @@ func (v *visitTracker) reset(n int) {
 	if cap(v.stamp) < n {
 		// Grow with headroom — during a build n rises by 1 each insert, so an
 		// exact-size make would reallocate every call.
-		c := 2 * cap(v.stamp)
-		if c < n {
-			c = n
-		}
+		c := max(2*cap(v.stamp), n)
 		v.stamp = make([]uint32, n, c)
 	} else {
 		v.stamp = v.stamp[:n]

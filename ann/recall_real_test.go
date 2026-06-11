@@ -88,7 +88,7 @@ func TestFlat_recallReal_Model2Vec(t *testing.T) {
 			inNew[h.Index] = true
 		}
 		kth := got[len(got)-1].Score
-		for r := 0; r < k; r++ {
+		for r := range k {
 			if inNew[ref[r].d] {
 				continue
 			}

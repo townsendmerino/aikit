@@ -77,7 +77,7 @@ func New(docs []SparseVec) *Index {
 	ix := &Index{postings: make(map[uint32][]posting), ndocs: len(docs)}
 	for d, v := range docs {
 		n := min(len(v.Terms), len(v.Weights))
-		for i := 0; i < n; i++ {
+		for i := range n {
 			w := v.Weights[i]
 			if w <= 0 {
 				continue
@@ -99,7 +99,7 @@ func (ix *Index) Scores(q SparseVec) []float64 {
 	scores := make([]float64, ix.ndocs)
 	n := min(len(q.Terms), len(q.Weights))
 	qw := make(map[uint32]float64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		qw[q.Terms[i]] += float64(q.Weights[i])
 	}
 	for t, w := range qw {

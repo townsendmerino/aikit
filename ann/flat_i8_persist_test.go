@@ -38,7 +38,7 @@ func TestFlatI8_roundTrip(t *testing.T) {
 		t.Fatal("round-trip: loaded index differs from original")
 	}
 	// Behavioral equivalence: identical query results.
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		q := randUnit(rng, 64)
 		if !reflect.DeepEqual(f.Query(q, 10), g.Query(q, 10)) {
 			t.Fatalf("query %d: loaded index returns different hits", i)

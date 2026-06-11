@@ -159,7 +159,7 @@ func markdownChunks(path string) []Chunk {
 		}
 		chunks = append(chunks, Chunk{Source: "aikit-docs", Ref: ref, Text: text})
 	}
-	for _, line := range strings.Split(string(data), "\n") {
+	for line := range strings.SplitSeq(string(data), "\n") {
 		if strings.HasPrefix(line, "## ") && len(cur) > 0 {
 			flush()
 		}

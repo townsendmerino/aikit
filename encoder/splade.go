@@ -91,7 +91,7 @@ func (s *SPLADE) expandIDs(ids []int32) sparse.SparseVec {
 
 	// SPLADE pooling: max over tokens of log(1 + relu(logit)).
 	pooled := make([]float32, V)
-	for i := 0; i < L; i++ {
+	for i := range L {
 		row := logits[i*V : (i+1)*V]
 		for v, x := range row {
 			if x > 0 {

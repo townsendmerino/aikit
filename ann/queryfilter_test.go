@@ -23,7 +23,7 @@ func TestQueryFilter_excludesDeleted(t *testing.T) {
 		"HNSW":   BuildHNSW(vecs, Config{M: 16, EfConstruction: 200, EfSearch: 128, Seed: 1}),
 		"FlatI8": NewFlatI8(vecs),
 	}
-	for qi := 0; qi < 20; qi++ {
+	for range 20 {
 		q := randUnit(rng, 64)
 		for name, ix := range idx {
 			for _, h := range ix.QueryFilter(q, 10, keep) {
@@ -42,7 +42,7 @@ func TestFlatQueryFilter_exactVsManualFilter(t *testing.T) {
 	keep := func(id int) bool { return id%3 != 0 }
 	f := New(vecs)
 
-	for qi := 0; qi < 10; qi++ {
+	for qi := range 10 {
 		q := randUnit(rng, 64)
 		got := f.QueryFilter(q, 10, keep)
 		// Reference: full ranking, drop filtered, take 10.
@@ -72,7 +72,7 @@ func TestHNSW_QueryFilter_recallUnderDeletion(t *testing.T) {
 
 	const Q, k = 60, 10
 	var sum float64
-	for i := 0; i < Q; i++ {
+	for range Q {
 		q := randUnit(rng, 64)
 		truth := make(map[int]bool, k)
 		for _, h := range flat.QueryFilter(q, k, keep) { // exact live top-k

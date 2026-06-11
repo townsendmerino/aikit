@@ -18,10 +18,10 @@ func randF32(rng *rand.Rand, n int) []float32 {
 // in sequential index order.
 func seqF64(a, b []float32, M, K, N int) []float32 {
 	dst := make([]float32, M*N)
-	for i := 0; i < M; i++ {
-		for j := 0; j < N; j++ {
+	for i := range M {
+		for j := range N {
 			var s float64
-			for k := 0; k < K; k++ {
+			for k := range K {
 				s += float64(a[i*K+k]) * float64(b[j*K+k])
 			}
 			dst[i*N+j] = float32(s)

@@ -43,7 +43,7 @@ func TestLoadFlatI8Mmap_matchesCopy(t *testing.T) {
 	if !reflect.DeepEqual([]int8(m.bq), orig.bq) {
 		t.Error("aliased codes differ from original")
 	}
-	for i := 0; i < 25; i++ {
+	for i := range 25 {
 		q := randUnit(rng, 64)
 		if !reflect.DeepEqual(m.Query(q, 10), orig.Query(q, 10)) {
 			t.Fatalf("query %d: mmap result differs from in-memory", i)

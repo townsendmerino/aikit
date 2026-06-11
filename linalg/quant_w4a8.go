@@ -8,7 +8,7 @@ package linalg
 func dotW4A8Scalar(act []int8, packed []byte, scales []float32, group, K int) float32 {
 	var total float32
 	nGroups := (K + group - 1) / group
-	for g := 0; g < nGroups; g++ {
+	for g := range nGroups {
 		ks := g * group
 		ke := min(ks+group, K)
 		var acc int32

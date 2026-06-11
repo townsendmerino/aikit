@@ -20,7 +20,7 @@ func dotW4A8(act []int8, packed []byte, scales []float32, group, K int, sums []i
 		nFull := K / 32
 		dotW4A8GroupsSDOT(&act[0], &packed[0], &sums[0], nFull)
 		var total float32
-		for g := 0; g < nFull; g++ {
+		for g := range nFull {
 			total += float32(sums[g]) * scales[g]
 		}
 		if done := nFull * 32; done < K {

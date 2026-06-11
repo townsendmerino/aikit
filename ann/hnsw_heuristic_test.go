@@ -12,7 +12,7 @@ import (
 func clusteredCorpus(rng *rand.Rand, nClusters, perCluster, dim int) (vecs [][]float32, centers [][]float32) {
 	centers = randUnitSet(rng, nClusters, dim)
 	for _, c := range centers {
-		for j := 0; j < perCluster; j++ {
+		for range perCluster {
 			v := make([]float32, dim)
 			var ss float64
 			for d := range v {
@@ -46,7 +46,7 @@ func TestHNSW_heuristicBeatsSimpleOnClustered(t *testing.T) {
 		h := BuildHNSW(vecs, Config{M: 16, EfConstruction: 200, EfSearch: 128, Seed: 1, SimpleNeighbors: simple})
 		const Q, k = 80, 10
 		var sum float64
-		for i := 0; i < Q; i++ {
+		for i := range Q {
 			// Query near a random cluster center so the true top-k is a tight
 			// cluster — the intra/inter-cluster navigation Alg-3 fails at.
 			c := centers[i%len(centers)]

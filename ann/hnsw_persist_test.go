@@ -37,7 +37,7 @@ func TestHNSW_roundTrip(t *testing.T) {
 	}
 
 	// The whole point: identical query results.
-	for qi := 0; qi < 25; qi++ {
+	for qi := range 25 {
 		q := randUnit(rng, 64)
 		want := orig.Query(q, 10)
 		gotHits := got.Query(q, 10)
@@ -135,7 +135,7 @@ func TestHNSW_int8_roundTrip(t *testing.T) {
 	if g.Len() != h.Len() {
 		t.Fatalf("Len %d vs %d", g.Len(), h.Len())
 	}
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		q := randUnit(rng, 64)
 		if !reflect.DeepEqual(h.Query(q, 10), g.Query(q, 10)) {
 			t.Fatalf("query %d: loaded int8 index returns different hits", i)

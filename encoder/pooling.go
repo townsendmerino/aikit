@@ -34,9 +34,9 @@ func poolOne(seq []float32, L, D int, mode pooling) []float32 {
 	}
 	if mode == poolMean {
 		acc := make([]float64, D)
-		for i := 0; i < L; i++ {
+		for i := range L {
 			row := seq[i*D : i*D+D]
-			for j := 0; j < D; j++ {
+			for j := range D {
 				acc[j] += float64(row[j])
 			}
 		}
