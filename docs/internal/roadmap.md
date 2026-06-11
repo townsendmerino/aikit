@@ -106,11 +106,13 @@ Items 2–5 are sequenced behind item 1.
    `scripts/pin_splade.py` that emits `SparseVec` JSON out-of-band, so the
    shipped index half is *usable end-to-end* today — document the recipe in
    the `sparse` package example.
-4. **potion-retrieval-32M parity pin** — [medium / low]. *New.* The README
-   quickstart fetches potion-code-16M; upstream's best static *retrieval*
-   model is potion-retrieval-32M. `embed` should load it already (same
-   format) — add it to the parity matrix and the docs so general-retrieval
-   users land on the right model, not the code-tuned one.
+4. **potion-retrieval-32M parity pin** — ✅ **DONE** (and bigger than scoped). The
+   "loads already, same format" premise was wrong: potion-retrieval-32M uses the
+   *standard* Model2Vec layout (only an `embeddings` tensor), while embed required
+   the vocabulary-quantized layout (`mapping` + `weights`). Made both optional —
+   absent ⇒ direct token-id indexing + mean pooling. Parity cosine 1.000000 vs
+   StaticModel.encode (golden via `pin_retrieval.py`); potion-code-16M unregressed.
+   Docs point general-retrieval users to potion-retrieval-32M.
 5. **forward_q8 scores·V vectorization** — ✅ **DONE.** It *was* oracled after all
    — `TestModelQ8_cosineMatchesF32` (cosine ≥ 0.97 vs the f32 model) + the testdata
    model cover the Q8 forward. So `selfAttentionQ8`'s scalar scores·V triple-loop

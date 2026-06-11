@@ -8,6 +8,7 @@
 testdata/model
 testdata/encoder-model
 testdata/minilm-model
+testdata/retrieval-model
 testdata/gemma-3-270m
 *.safetensors
 

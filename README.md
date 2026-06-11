@@ -244,6 +244,12 @@ huggingface-cli download nomic-ai/CodeRankEmbed \
     tokenizer.json config.json model.safetensors --local-dir testdata/encoder-model
 ```
 
+`embed.Load` handles both Model2Vec on-disk formats: the vocabulary-quantized
+`potion-code-16M` (with `mapping`/`weights` tensors) **and** the standard format
+with only an `embeddings` tensor (direct token-id indexing, mean pooling). For
+**general (non-code) retrieval**, prefer **`minishlab/potion-retrieval-32M`** — the
+strongest static retrieval model — over the code-tuned `potion-code-16M`.
+
 (If you also use [`ken`](https://github.com/townsendmerino/ken), `ken
 download-model [--rerank] --to <dir>` fetches the same snapshots.)
 

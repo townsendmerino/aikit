@@ -12,6 +12,16 @@ it.
 
 ### Added
 
+- **`embed.Load` now reads the standard Model2Vec format** (Hard-tier `embed.Load`
+  gains capability — additive). Previously it required the vocabulary-quantized
+  layout (`embeddings` + `mapping` + `weights` tensors, e.g. `potion-code-16M`); it
+  now also loads the standard layout with only an `embeddings` tensor (token ids
+  index rows directly, plain mean pooling), so **`minishlab/potion-retrieval-32M`**
+  — the strongest static *retrieval* model — works (parity cosine 1.000000 vs
+  `StaticModel.encode`, golden via the new `scripts/pin_retrieval.py`). Docs now
+  point general-retrieval users to it over the code-tuned model. `potion-code-16M`
+  is unregressed.
+
 - **`encoder.LoadBERT` / `BERT.Encode` — MiniLM-class BERT encoder** (Experimental
   surface). A second encoder architecture alongside CodeRankEmbed, implementing the
   three axes a sentence-transformers BERT model differs on: learned ABSOLUTE

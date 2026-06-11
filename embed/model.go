@@ -77,43 +77,43 @@ func LoadFromFS(fsys fs.FS, dir string) (*StaticModel, error) {
 	if err != nil {
 		return nil, fmt.Errorf("embeddings tensor: %w", err)
 	}
-	mapT, err := st.Tensor("mapping")
-	if err != nil {
-		return nil, fmt.Errorf("mapping tensor: %w", err)
-	}
-	wT, err := st.Tensor("weights")
-	if err != nil {
-		return nil, fmt.Errorf("weights tensor: %w", err)
-	}
-
 	if len(embT.Shape) != 2 {
 		return nil, fmt.Errorf("embeddings tensor: expected 2-D, got shape %v", embT.Shape)
 	}
 	vocab := embT.Shape[0]
 	dim := embT.Shape[1]
 
-	if len(mapT.Shape) != 1 || mapT.Shape[0] != vocab {
-		return nil, fmt.Errorf("mapping tensor: expected shape [%d], got %v", vocab, mapT.Shape)
-	}
-	if len(wT.Shape) != 1 || wT.Shape[0] != vocab {
-		return nil, fmt.Errorf("weights tensor: expected shape [%d], got %v", vocab, wT.Shape)
-	}
-
 	embData, err := embT.Float32s()
 	if err != nil {
 		return nil, err
 	}
-	mapData, err := mapT.Int64s()
-	if err != nil {
-		return nil, err
-	}
-	wData, err := wT.Float64s()
-	if err != nil {
-		return nil, err
-	}
-
 	if len(embData) != vocab*dim {
 		return nil, fmt.Errorf("embeddings element count %d != vocab*dim (%d*%d)", len(embData), vocab, dim)
+	}
+
+	// mapping + weights are optional. The original potion format (vocabulary-
+	// quantized, e.g. potion-code-16M) indexes embeddings through mapping[id] and
+	// pools with per-token zipf weights[id]. The newer/standard Model2Vec format
+	// (e.g. potion-retrieval-32M) bakes both in: embeddings are indexed directly by
+	// token id and pooled with uniform weights (plain mean). Absence ⇒ nil ⇒ the
+	// direct / uniform path in encodeIDs.
+	var mapData []int64
+	if mapT, e := st.Tensor("mapping"); e == nil {
+		if len(mapT.Shape) != 1 || mapT.Shape[0] != vocab {
+			return nil, fmt.Errorf("mapping tensor: expected shape [%d], got %v", vocab, mapT.Shape)
+		}
+		if mapData, err = mapT.Int64s(); err != nil {
+			return nil, err
+		}
+	}
+	var wData []float64
+	if wT, e := st.Tensor("weights"); e == nil {
+		if len(wT.Shape) != 1 || wT.Shape[0] != vocab {
+			return nil, fmt.Errorf("weights tensor: expected shape [%d], got %v", vocab, wT.Shape)
+		}
+		if wData, err = wT.Float64s(); err != nil {
+			return nil, err
+		}
 	}
 
 	return &StaticModel{
@@ -189,7 +189,10 @@ func (m *StaticModel) encodeIDs(ids []int32) []float32 {
 			w[i] = 0
 			continue
 		}
-		embRow := m.mapping[id]
+		embRow := int64(id) // standard format: token id indexes embeddings directly
+		if m.mapping != nil {
+			embRow = m.mapping[id] // quantized format: indirect through mapping[]
+		}
 		if embRow < 0 || int(embRow) >= m.vocab {
 			rows[i] = nil
 			w[i] = 0
@@ -197,7 +200,10 @@ func (m *StaticModel) encodeIDs(ids []int32) []float32 {
 		}
 		start := int(embRow) * m.dim
 		rows[i] = m.embeddings[start : start+m.dim]
-		w[i] = m.weights[id]
+		w[i] = 1.0 // uniform (plain mean) when no explicit weights
+		if m.weights != nil {
+			w[i] = m.weights[id]
+		}
 	}
 
 	pooled := weightedMeanPoolSafe(rows, w, m.dim)
