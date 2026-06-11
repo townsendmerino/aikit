@@ -20,6 +20,13 @@ import (
 // the small scales block is always copied. flatI8Layout validates the payload size
 // against the remaining bytes before any allocation, so a corrupt or hostile blob
 // returns an error rather than panicking or over-allocating.
+// Format-stability policy (pre-1.0): rebuild-per-minor — Load rejects any other
+// version with ErrFormat (loud, never a silent misread). See README "Serialized blob
+// formats". FORMAT-BUMP CHECKLIST: the next version bump should add a reserved uint32
+// flags word right after the version, so later additive changes extend via flags
+// without a version bump (the anti-churn mechanism). FlatI8 already zero-copy-mmaps
+// its int8 codes (1-byte, no alignment); the f32 scales are copied, so no alignment
+// change is needed here (unlike HNSW's float32 vectors).
 const (
 	flatI8Magic   uint32 = 0x46493800 // "FI8\0"
 	flatI8Version uint32 = 1

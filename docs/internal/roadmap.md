@@ -94,12 +94,17 @@ Everything high-impact that remains is here, and none of it is blocked.
    *conscious* keep rather than a default one; re-evaluate at the graduation promise if
    still unconsumed (trimming stays additive-to-undo). The getters
    (`ParallelThreshold/Width`) pair the consumed setters — kept.
-2. **Blob format-stability policy** — [low-medium / low]. *Rises with
-   every step toward an adopter:* formats burned v1→v2→v3 in 48 hours,
-   fine pre-circulation, but an adopter embedding blobs in *their*
-   releases changes the calculus. Decide and document ("Load reads N−1" or
-   "rebuild per minor"), reserve header bytes, and bundle the HNSW
-   zero-copy alignment fix (§3.1) into whatever bump comes next.
+2. **Blob format-stability policy** — ✅ **DONE (decided + documented; bump deferred
+   per spec).** Decision: **rebuild-per-minor pre-1.0** — blobs aren't a stable
+   cross-version interchange format; `Load*` already rejects any other version with
+   `ann.ErrFormat` (loud, never a silent misread), so the policy is enforced by
+   construction. Documented in README ("Serialized blob formats"), the
+   architecture invariants table, and a FORMAT-BUMP CHECKLIST comment at each version
+   const (`hnsw_persist.go`, `flat_i8_persist.go`). The reserved-header-bytes + HNSW
+   float32 alignment (for the deferred zero-copy `LoadHNSWMmap`, §3.2) are *specced at
+   the bump site* to bundle into the next bump — not forced now, since a gratuitous
+   bump is the very churn the policy curbs (and "whatever bump comes next" defers it).
+   At 1.0 this tightens to read-N−1 / reserved-field forward-compat.
 
 ## 3. Gated — do not start without the stated trigger
 

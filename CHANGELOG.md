@@ -24,6 +24,17 @@ it.
   own pair tokenization matches HF); golden via `scripts/pin_crossencoder.py`. aikit
   now covers both halves of reranking (bi-encoder + cross-encoder), cgo-free.
 
+### Documentation
+
+- **Blob format-stability policy decided + documented** (no code change). Serialized
+  index blobs (`ann.HNSW`/`ann.FlatI8` `MarshalBinary`) are **rebuild-per-minor**
+  pre-1.0 — not a stable cross-version interchange format; `Load*` rejects any other
+  version with `ann.ErrFormat` (loud, never a silent misread), so the policy is
+  enforced by construction. README gains a "Serialized blob formats" section; a
+  FORMAT-BUMP CHECKLIST at each version const specs the next bump to bundle a reserved
+  header-flags word (anti-churn) + the HNSW float32-vector alignment for a future
+  zero-copy `LoadHNSWMmap`.
+
 ## [1.4.0] — 2026-06-11
 
 ### Added

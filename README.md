@@ -315,6 +315,20 @@ bar, so it is **frozen for v1.0**. From v1.0 the Hard tier follows semver
 (breaking changes only at a v2.0); the Experimental tier is excluded from that
 promise and may change in any release until it graduates.
 
+### Serialized blob formats
+
+The persisted index blobs (`ann.HNSW` / `ann.FlatI8` `MarshalBinary`) are
+magic-tagged and versioned. **Pre-1.0 policy: rebuild per minor** — a blob is not a
+stable cross-version interchange format; re-serialize your index after an aikit minor
+upgrade. The safety net is loud, not silent: `Load*` rejects any version it doesn't
+recognize with `ann.ErrFormat` (never a crash or a misread), so a stale blob fails
+visibly and you regenerate. The format version is bumped freely within `0.x` when the
+layout improves. If you `//go:embed` blobs in your own releases, pin the aikit minor
+or rebuild in your pipeline (a `go generate` step, as
+[`examples/embedded-corpus`](examples/embedded-corpus) does). At 1.0 this tightens to
+a stronger guarantee (read N−1, or reserved-field forward-compatibility) — the next
+format bump reserves header flag bytes as the mechanism for the latter.
+
 ## License
 
 MIT. See [`THIRD_PARTY_LICENSES.md`](THIRD_PARTY_LICENSES.md) for upstream

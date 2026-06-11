@@ -21,6 +21,16 @@ import (
 // other count is non-negative. Load validates every length against the bytes that
 // remain, so a corrupt or hostile blob returns an error rather than panicking or
 // over-allocating.
+// Format-stability policy (pre-1.0): rebuild-per-minor — a blob is not a stable
+// cross-version interchange format; Load rejects any other version with ErrFormat
+// (loud, never a silent misread), so callers regenerate. See README "Serialized blob
+// formats". FORMAT-BUMP CHECKLIST — the next version bump should bundle, in ONE bump
+// (to curb the v1→v2→v3 churn):
+//   1. a reserved uint32 flags word right after the version, so later additive
+//      changes extend via flags WITHOUT a version bump (the anti-churn mechanism);
+//   2. pad the header so the float32 vector block starts 8-byte aligned, unblocking
+//      zero-copy mmap aliasing of the vectors (the deferred LoadHNSWMmap, mirroring
+//      LoadFlatI8Mmap's int8 aliasing — §3.2).
 const (
 	hnswMagic   uint32 = 0x484E5357 // "HNSW"
 	hnswVersion uint32 = 3          // v3 added the int8 storage-mode byte (+ int8 codes/scales)

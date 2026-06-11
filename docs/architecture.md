@@ -167,6 +167,7 @@ is the index:
 | Quant kernels trust block-size-aligned K (caller contract) | `linalg/quant.go` |
 | Parallel matmuls are bit-identical at any width (column partition) | `linalg/linalg.go`, CHANGELOG 0.5.1 |
 | Kernel dispatch / CPU feature detection map | [`internal/cpu-acceleration.md`](./internal/cpu-acceleration.md) |
+| Serialized blob formats: rebuild-per-minor pre-1.0; `Load*` rejects other versions with `ann.ErrFormat` (loud, never silent) | [README versioning](../README.md#serialized-blob-formats), `ann/hnsw_persist.go` + `ann/flat_i8_persist.go` format-bump checklist |
 
 ## ADR index
 
