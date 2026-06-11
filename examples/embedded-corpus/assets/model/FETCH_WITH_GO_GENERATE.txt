@@ -1,0 +1,3 @@
+The Model2Vec model (minishlab/potion-code-16M, ~61 MB) is fetched here by
+`go generate` and embedded into the binary at build — it is not committed.
+Until then this placeholder just lets `//go:embed assets/model` compile.

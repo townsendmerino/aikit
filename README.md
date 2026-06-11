@@ -57,6 +57,12 @@ fused := fuse.RRF(fuse.DefaultK,
 A WebGPU backend can be slotted in by importing `goinfer/gpu` under `-tags gpu`
 — without aikit ever importing cgo.
 
+For the zero-deploy story, [`examples/embedded-corpus/`](examples/embedded-corpus)
+is a single self-contained binary that `//go:embed`s the Model2Vec model, a prebuilt
+int8 index, and the corpus, and answers Go/aikit questions over hybrid (dense +
+lexical) search with **no external files** and ~50 ms startup — the
+`//go:embed`-a-corpus lane no Python or ONNX stack reaches.
+
 ---
 
 ## Platforms

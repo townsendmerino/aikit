@@ -51,14 +51,17 @@
 The code is ahead of its audience (the road-to-1.0 critique's point, still
 true two releases later). Everything here is unblocked today.
 
-1. **`examples/embedded-corpus` showcase** — [high / low]. **Now the #1
-   unblocked item, and maximally unblocked**: v1.3.0 completed the whole
-   supporting stack (FlatI8 persistence + zero-copy mmap + int8 HNSW), so the
-   smallest-blob version — `//go:embed` corpus + Model2Vec model + prebuilt
-   int8 index, hybrid search from one static binary, instant startup — is
-   buildable today exactly as the README prose describes. This is the
-   pattern neither Python nor hugot-on-ONNX can match, and it's the demo
-   that recruits §1.3's adopter.
+1. **`examples/embedded-corpus` showcase** — ✅ **DONE.** A separate module
+   (`GOWORK=off`, so its `//go:embed`-model can't touch the root build) with a
+   `gen/` builder (Go stdlib + aikit package docs via `go doc -all` + aikit markdown
+   → embed → `FlatI8` → committed `index.bin` + `corpus.json`) and a `main.go`
+   runtime that `//go:embed`s the model + index + corpus and answers Go/aikit
+   questions over hybrid dense (int8 ANN) + lexical (BM25) → RRF. Measured: one
+   ~70 MB self-contained binary (64 MB is the model; the aikit surface + 443 KB int8
+   index + corpus is ~5 MB), **~50 ms startup, zero external files**. Model-gated
+   smoke test; results are spot-on (file I/O → `bufio.ReadLine`, int8 quant →
+   `NewFlatI8`/`QuantizeRowInt8`). The demo that recruits §1.3's adopter — the
+   `//go:embed`-a-corpus lane no Python/ONNX stack reaches.
 2. **Release-process gate in CI** — ✅ **DONE.** `scripts/release-gate.sh` (a
    testable script, not trapped in YAML) + `.github/workflows/release.yml`,
    tag-triggered (`v*.*.*`) with a `workflow_dispatch` test path. Checks: the

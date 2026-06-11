@@ -1,0 +1,6 @@
+# Model2Vec model — fetched by `go generate` (≈61 MB), embedded into the binary at
+# build, never committed. See README.md. The placeholder keeps //go:embed compiling.
+assets/model/*
+!assets/model/FETCH_WITH_GO_GENERATE.txt
+# the example binary
+embedded-corpus
