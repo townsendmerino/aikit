@@ -81,12 +81,19 @@ Everything high-impact that remains is here, and none of it is blocked.
 
 ## 2. Pre-graduation hygiene — short, then stop
 
-1. **`linalg` surface audit** — [low-medium / low]. The last v2 engineering
-   item still open. The Experimental surface grew opportunistically
-   (`DotI8`, `MatmulBTAcc64`, the Workspace methods); do a deliberate
-   keep/unexport pass with goinfer's actual usage as consumer evidence
-   before any graduation promise. Do it soon — goinfer builds against
-   these exports daily and each day raises the cost.
+1. **`linalg` surface audit** — ✅ **DONE (deliberate keep; no trim).** Cross-referenced
+   the whole exported surface against consumer evidence — goinfer (pins v1.3.0) + the
+   aikit-internal callers (`ann`, `encoder`). Findings: two of the three flagged
+   exports are in fact consumed — `DotI8` (ann int8 HNSW) and `MatmulBTAcc64` (goinfer's
+   MoE router, added for it). The genuinely unconsumed surface is the four `Workspace`
+   scoping methods (`SetThreshold`, `SetWorkers`, `MatmulBT`, `MatmulBTAcc64`): goinfer
+   uses the *global* `SetParallelThreshold/Width` + the `Workspace` only as W8A8 scratch
+   (its `decoder/scratch.go` explicitly opts out of the pool). **Decision: keep them**,
+   as deliberate forward-looking concurrency-safe design (independent per-stream
+   parallelism) — not accidental surface. The point of the pass was to make that a
+   *conscious* keep rather than a default one; re-evaluate at the graduation promise if
+   still unconsumed (trimming stays additive-to-undo). The getters
+   (`ParallelThreshold/Width`) pair the consumed setters — kept.
 2. **Blob format-stability policy** — [low-medium / low]. *Rises with
    every step toward an adopter:* formats burned v1→v2→v3 in 48 hours,
    fine pre-circulation, but an adopter embedding blobs in *their*
