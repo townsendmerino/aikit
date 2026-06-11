@@ -157,11 +157,14 @@ mmap + `Close`, int8 HNSW (`Config.Int8`, recall Δ0.0000, format v3). The
 Carried over intact; all three remain open and got *more* relevant as the
 Experimental tier grows toward graduation.
 
-1. **Typed sentinel errors** (`embed.ErrBadMagic`, `ann.ErrFormat`, …) —
-   [medium / low]. Additive, and *more pressing each release*: there are now
-   three versioned-blob `Load` paths (HNSW, FlatI8, FlatI8Mmap) whose
-   corrupt-blob and version-mismatch errors callers can only string-match. A
-   single `ann.ErrFormat` + `errors.Is` support across them is an afternoon.
+1. **Typed sentinel errors** — ✅ **DONE.** `ann.ErrFormat` is wrapped by all three
+   blob loaders (`Load`, `LoadFlatI8`, `LoadFlatI8Mmap` — the last via the shared
+   `flatI8Layout`, so its I/O errors stay un-tagged), and `embed.ErrFormat` by
+   `OpenSafetensors*` / `OpenGGUF*` for bad-magic / unsupported-version / truncated
+   blobs. Callers `errors.Is(err, ann.ErrFormat)` instead of string-matching. Both
+   are additive (apidiff: `ErrFormat: added`); per-tensor lookups and mmap I/O are
+   deliberately *not* wrapped. (Chose one `ErrFormat` per package over a magic-only
+   `ErrBadMagic` since it also covers version + truncation.)
 2. **Scope the global knobs** (`linalg.SetParallelThreshold/Width`) —
    [low-medium / medium]. Per-`Workspace`/per-call overrides, globals as
    defaults. Do before `linalg` graduates from Experimental — cheap now,

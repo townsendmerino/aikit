@@ -2,7 +2,6 @@ package ann
 
 import (
 	"encoding/binary"
-	"fmt"
 	"math"
 )
 
@@ -63,7 +62,7 @@ func (c *fcur) need(n int) bool {
 		return false
 	}
 	if n < 0 || n > len(c.b)-c.pos {
-		c.err = fmt.Errorf("ann: FlatI8 blob truncated (need %d at %d of %d)", n, c.pos, len(c.b))
+		c.err = errFormatf("ann: FlatI8 blob truncated (need %d at %d of %d)", n, c.pos, len(c.b))
 		return false
 	}
 	return true
@@ -85,7 +84,7 @@ func (c *fcur) nonNeg(name string) int {
 		return 0
 	}
 	if v < 0 {
-		c.err = fmt.Errorf("ann: FlatI8 %s %d is negative", name, v)
+		c.err = errFormatf("ann: FlatI8 %s %d is negative", name, v)
 		return 0
 	}
 	return int(v)
@@ -97,10 +96,10 @@ func (c *fcur) nonNeg(name string) int {
 func flatI8Layout(data []byte) (dim, n, codesAt int, err error) {
 	c := &fcur{b: data}
 	if c.u32() != flatI8Magic {
-		return 0, 0, 0, fmt.Errorf("ann: not a FlatI8 blob (bad magic)")
+		return 0, 0, 0, errFormatf("ann: not a FlatI8 blob (bad magic)")
 	}
 	if v := c.u32(); v != flatI8Version {
-		return 0, 0, 0, fmt.Errorf("ann: unsupported FlatI8 format version %d (want %d)", v, flatI8Version)
+		return 0, 0, 0, errFormatf("ann: unsupported FlatI8 format version %d (want %d)", v, flatI8Version)
 	}
 	dim = c.nonNeg("dim")
 	n = c.nonNeg("n")
@@ -112,7 +111,7 @@ func flatI8Layout(data []byte) (dim, n, codesAt int, err error) {
 	// the size check below would otherwise wave through (n*dim = 0), leaving a
 	// loaded index whose dim could drive a gigantic query-vector allocation.
 	if (n == 0) != (dim == 0) {
-		return 0, 0, 0, fmt.Errorf("ann: FlatI8 inconsistent shape (n=%d, dim=%d): both must be zero or both nonzero", n, dim)
+		return 0, 0, 0, errFormatf("ann: FlatI8 inconsistent shape (n=%d, dim=%d): both must be zero or both nonzero", n, dim)
 	}
 	codesAt = c.pos
 	// Payload must be exactly n×dim code bytes + n×4 scale bytes. Computed in int64
@@ -120,7 +119,7 @@ func flatI8Layout(data []byte) (dim, n, codesAt int, err error) {
 	// check also rejects truncation and trailing bytes in one shot.
 	want := int64(n)*int64(dim) + int64(n)*4
 	if got := int64(len(data) - codesAt); want != got {
-		return 0, 0, 0, fmt.Errorf("ann: FlatI8 payload size %d != n*dim + n*4 = %d (n=%d dim=%d)", got, want, n, dim)
+		return 0, 0, 0, errFormatf("ann: FlatI8 payload size %d != n*dim + n*4 = %d (n=%d dim=%d)", got, want, n, dim)
 	}
 	return dim, n, codesAt, nil
 }

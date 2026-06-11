@@ -95,7 +95,7 @@ func (c *gcur) need(n int) bool {
 	// (a hostile string/array length ≥ 2^63); compare against the remaining
 	// span without adding, so c.pos+n can't itself overflow.
 	if n < 0 || n > len(c.b)-c.pos {
-		c.err = fmt.Errorf("gguf: unexpected EOF (need %d at %d of %d)", n, c.pos, len(c.b))
+		c.err = errFormatf("gguf: unexpected EOF (need %d at %d of %d)", n, c.pos, len(c.b))
 		return false
 	}
 	return true
@@ -279,11 +279,11 @@ func finalizeGGUFMmap(g *GGUFFile) { _ = g.Close() }
 func parseGGUF(raw []byte) (*GGUFFile, error) {
 	c := &gcur{b: raw}
 	if c.u32() != ggufMagic {
-		return nil, fmt.Errorf("gguf: bad magic (not a GGUF file)")
+		return nil, errFormatf("gguf: bad magic (not a GGUF file)")
 	}
 	version := c.u32()
 	if version != 2 && version != 3 {
-		return nil, fmt.Errorf("gguf: unsupported version %d (want 2 or 3)", version)
+		return nil, errFormatf("gguf: unsupported version %d (want 2 or 3)", version)
 	}
 	tensorCount := c.u64()
 	kvCount := c.u64()
@@ -335,7 +335,7 @@ func parseGGUF(raw []byte) (*GGUFFile, error) {
 		start += align - start%align
 	}
 	if start > uint64(len(raw)) {
-		return nil, fmt.Errorf("gguf: data section start %d past EOF %d", start, len(raw))
+		return nil, errFormatf("gguf: data section start %d past EOF %d", start, len(raw))
 	}
 	g.data = raw[start:]
 	return g, nil

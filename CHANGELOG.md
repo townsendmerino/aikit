@@ -12,6 +12,16 @@ it.
 
 ### Added
 
+- **`ann.ErrFormat` + `embed.ErrFormat` — typed sentinel errors for the blob
+  loaders** (additive; `embed.OpenSafetensors*` is Hard-tier, gains only a wrapped
+  sentinel). Every versioned-blob load path now wraps a sentinel so callers can
+  `errors.Is(err, ann.ErrFormat)` instead of string-matching: `ann.ErrFormat` across
+  `Load` (HNSW), `LoadFlatI8`, and `LoadFlatI8Mmap` (bad magic, unsupported version,
+  truncated / inconsistent blob — the mmap path via the shared parse, so its open/
+  mmap I/O errors stay un-tagged); `embed.ErrFormat` across `OpenSafetensors*` /
+  `OpenGGUF*` (bad magic, unsupported version, truncated header). Per-tensor lookups
+  (tensor-not-found, use-after-Close) are deliberately not wrapped. Error messages
+  are otherwise unchanged.
 - **`encoder.LoadSPLADE` / `SPLADE.Expand` — in-process SPLADE expansion**
   (Experimental surface). A SPLADE model is a BERT encoder (`LoadBERT`) plus a
   masked-LM head; `Expand(text)` projects each token's hidden state to vocab logits,

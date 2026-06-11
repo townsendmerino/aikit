@@ -2,7 +2,6 @@ package ann
 
 import (
 	"encoding/binary"
-	"fmt"
 	"math"
 	"math/rand/v2"
 )
@@ -118,7 +117,7 @@ func (c *hcur) need(n int) bool {
 		return false
 	}
 	if n < 0 || n > len(c.b)-c.pos {
-		c.err = fmt.Errorf("ann: HNSW blob truncated (need %d at %d of %d)", n, c.pos, len(c.b))
+		c.err = errFormatf("ann: HNSW blob truncated (need %d at %d of %d)", n, c.pos, len(c.b))
 		return false
 	}
 	return true
@@ -179,7 +178,7 @@ func (c *hcur) count() int {
 		return 0
 	}
 	if v < 0 || int(v) > (len(c.b)-c.pos)/4 {
-		c.err = fmt.Errorf("ann: HNSW blob count %d exceeds remaining bytes", v)
+		c.err = errFormatf("ann: HNSW blob count %d exceeds remaining bytes", v)
 		return 0
 	}
 	return int(v)
@@ -197,7 +196,7 @@ func (c *hcur) cfg(name string) int {
 		return 0
 	}
 	if v < 0 || int(v) > cfgMax {
-		c.err = fmt.Errorf("ann: HNSW %s %d out of [0,%d]", name, v, cfgMax)
+		c.err = errFormatf("ann: HNSW %s %d out of [0,%d]", name, v, cfgMax)
 		return 0
 	}
 	return int(v)
@@ -211,10 +210,10 @@ func (c *hcur) cfg(name string) int {
 func Load(data []byte) (*HNSW, error) {
 	c := &hcur{b: data}
 	if c.u32() != hnswMagic {
-		return nil, fmt.Errorf("ann: not an HNSW blob (bad magic)")
+		return nil, errFormatf("ann: not an HNSW blob (bad magic)")
 	}
 	if v := c.u32(); v != hnswVersion {
-		return nil, fmt.Errorf("ann: unsupported HNSW format version %d (want %d)", v, hnswVersion)
+		return nil, errFormatf("ann: unsupported HNSW format version %d (want %d)", v, hnswVersion)
 	}
 	dim := c.count()
 	ndocs := c.count()
@@ -240,7 +239,7 @@ func Load(data []byte) (*HNSW, error) {
 		// graph (computed in int64 so a hostile ndocs/dim can't wrap to a small
 		// allocation).
 		if int64(ndocs)*int64(dim)+int64(ndocs)*4 > int64(len(c.b)-c.pos) {
-			return nil, fmt.Errorf("ann: HNSW int8 vector block (ndocs=%d dim=%d) exceeds remaining bytes", ndocs, dim)
+			return nil, errFormatf("ann: HNSW int8 vector block (ndocs=%d dim=%d) exceeds remaining bytes", ndocs, dim)
 		}
 		bq = c.int8s(ndocs * dim)
 		scales = make([]float32, ndocs)
@@ -275,7 +274,7 @@ func Load(data []byte) (*HNSW, error) {
 		return nil, c.err
 	}
 	if c.pos != len(c.b) {
-		return nil, fmt.Errorf("ann: HNSW blob has %d trailing bytes", len(c.b)-c.pos)
+		return nil, errFormatf("ann: HNSW blob has %d trailing bytes", len(c.b)-c.pos)
 	}
 
 	// Validate graph integrity: Query indexes vecs[id] and nodes[id].nbrs[layer]
@@ -283,24 +282,24 @@ func Load(data []byte) (*HNSW, error) {
 	// panic mid-query. Reject it here instead.
 	if ndocs == 0 {
 		if entry != -1 {
-			return nil, fmt.Errorf("ann: empty HNSW must have entry -1, got %d", entry)
+			return nil, errFormatf("ann: empty HNSW must have entry -1, got %d", entry)
 		}
 	} else {
 		if entry < 0 || entry >= ndocs {
-			return nil, fmt.Errorf("ann: HNSW entry %d out of [0,%d)", entry, ndocs)
+			return nil, errFormatf("ann: HNSW entry %d out of [0,%d)", entry, ndocs)
 		}
 		if maxLayer > nodes[entry].layer {
-			return nil, fmt.Errorf("ann: HNSW maxLayer %d exceeds entry-node layer %d", maxLayer, nodes[entry].layer)
+			return nil, errFormatf("ann: HNSW maxLayer %d exceeds entry-node layer %d", maxLayer, nodes[entry].layer)
 		}
 	}
 	for d := range nodes {
 		for l := 0; l <= nodes[d].layer; l++ {
 			for _, id := range nodes[d].nbrs[l] {
 				if id < 0 || int(id) >= ndocs {
-					return nil, fmt.Errorf("ann: HNSW node %d layer %d neighbor id %d out of [0,%d)", d, l, id, ndocs)
+					return nil, errFormatf("ann: HNSW node %d layer %d neighbor id %d out of [0,%d)", d, l, id, ndocs)
 				}
 				if nodes[id].layer < l {
-					return nil, fmt.Errorf("ann: HNSW node %d layer %d links node %d, which exists only to layer %d", d, l, id, nodes[id].layer)
+					return nil, errFormatf("ann: HNSW node %d layer %d links node %d, which exists only to layer %d", d, l, id, nodes[id].layer)
 				}
 			}
 		}

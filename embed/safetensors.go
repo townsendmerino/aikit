@@ -318,7 +318,7 @@ func (sf *SafetensorsFile) Close() error {
 // data aliases into it).
 func parseSafetensors(data []byte) (*SafetensorsFile, error) {
 	if len(data) < 8 {
-		return nil, errors.New("safetensors: file too short for header length prefix")
+		return nil, errFormatf("safetensors: file too short for header length prefix")
 	}
 
 	// First 8 bytes: little-endian uint64 header length.
@@ -335,7 +335,7 @@ func parseSafetensors(data []byte) (*SafetensorsFile, error) {
 	// headerLen near 2^64, which would wrap the bound small and let the slice
 	// below panic. len(data) ≥ 8 is guaranteed above, so the subtraction is safe.
 	if headerLen > uint64(len(data))-8 {
-		return nil, fmt.Errorf("safetensors: file truncated (header claims %d bytes, only %d available)",
+		return nil, errFormatf("safetensors: file truncated (header claims %d bytes, only %d available)",
 			headerLen, len(data)-8)
 	}
 
@@ -344,7 +344,7 @@ func parseSafetensors(data []byte) (*SafetensorsFile, error) {
 
 	var raw rawHeader
 	if err := json.Unmarshal(headerBytes, &raw); err != nil {
-		return nil, fmt.Errorf("safetensors: parse header JSON: %w", err)
+		return nil, fmt.Errorf("safetensors: parse header JSON: %w: %w", err, ErrFormat)
 	}
 
 	tensors := make(map[string]Tensor, len(raw))
@@ -354,10 +354,10 @@ func parseSafetensors(data []byte) (*SafetensorsFile, error) {
 		}
 		var t rawTensor
 		if err := json.Unmarshal(rawJSON, &t); err != nil {
-			return nil, fmt.Errorf("safetensors: parse tensor %q: %w", name, err)
+			return nil, fmt.Errorf("safetensors: parse tensor %q: %w: %w", name, err, ErrFormat)
 		}
 		if t.DataOffsets[0] < 0 || t.DataOffsets[1] > len(payload) || t.DataOffsets[0] > t.DataOffsets[1] {
-			return nil, fmt.Errorf("safetensors: tensor %q has invalid offsets %v (payload size %d)",
+			return nil, errFormatf("safetensors: tensor %q has invalid offsets %v (payload size %d)",
 				name, t.DataOffsets, len(payload))
 		}
 		tensors[name] = Tensor{
