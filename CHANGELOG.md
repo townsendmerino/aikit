@@ -10,6 +10,8 @@ it.
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-06-11
+
 ### Added
 
 - **`linalg.Workspace.SetThreshold` + `(*Workspace).MatmulBT` / `MatmulBTAcc64` —
@@ -818,7 +820,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/townsendmerino/aikit/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/townsendmerino/aikit/compare/v1.2.1...v1.3.0
 [1.2.1]: https://github.com/townsendmerino/aikit/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/townsendmerino/aikit/compare/v1.1.1...v1.2.0
