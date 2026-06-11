@@ -121,8 +121,8 @@ correct distance, full k, finds the right region) — see the
 aikit is the only one of these that ships the **whole pipeline** — local model
 inference *and* dense + lexical + sparse retrieval *and* fusion — in a single
 **1.8 MB pure-Go static binary** (`CGO_ENABLED=0`, the full `ann`+`bm25`+`fuse`+
-`embed` surface). hugot covers inference but needs the ONNX Runtime native library;
-the vector DBs cover indexing but not inference. The `//go:embed`-a-corpus,
+`embed` surface). hugot covers inference but its fast backend needs the ONNX Runtime
+native library (cgo); the vector DBs cover indexing but not inference. The `//go:embed`-a-corpus,
 zero-deploy story is the lane no Python or ONNX stack reaches.
 
 ### Retrieval quality on a standard benchmark
@@ -134,6 +134,24 @@ protocol (the model's overall MTEB retrieval score is 35.06), and 0.638 is right
 a strong static retriever lands — near all-MiniLM-L6-v2's own SciFact nDCG@10, at a
 fraction of the cost and pure-Go. Reproduce: `scripts/prep_beir.py`, then
 `cd benchmarks && GOWORK=off go run ./beir`.
+
+### Inference throughput (vs hugot)
+
+aikit runs the transformer paths — the MiniLM bi-encoder and the cross-encoder — in
+pure Go. all-MiniLM-L6-v2 encodes at **~21 texts/sec (≈47 ms/text, single thread)** on
+CPU with no ONNX Runtime, no GPU, `CGO_ENABLED=0`; concurrent encoding scales that
+~linearly across cores. (Primary dense retrieval uses Model2Vec static embeddings —
+microseconds per text, the table above; the transformer path is the higher-fidelity
+reranking/embedding step over a shortlist.) Measure it: `cd benchmarks && GOWORK=off go
+run ./inference`.
+
+The contrast with [hugot](https://github.com/knights-analytics/hugot) is a deployment
+tradeoff, not a raw-speed one. hugot's fast CPU backend is ONNX Runtime — a native
+shared library + cgo — and *is* faster than pure Go; it also ships a pure-Go GoMLX
+backend its docs scope to "simpler workloads / smaller models." aikit's bet runs the
+other way: no runtime to install, link, or version — one static binary that already
+holds the model. Same checkpoint on both sides, so it's apples-to-apples on quality;
+the difference is what you deploy.
 
 ---
 
