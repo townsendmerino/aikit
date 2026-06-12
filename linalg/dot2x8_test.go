@@ -3,16 +3,24 @@ package linalg
 import (
 	"math"
 	"math/rand/v2"
+	"runtime"
 	"testing"
 )
 
 // TestDot2x8_equalsDot8x4 is the correctness proof: the 2×8 microkernel computes each
 // dot in the SAME accumulation order as the proven 1×8 Dot8x4 (same b-rows, same 4-lane
-// FMLA sequence, same final reduction) — it only folds 2 a-rows into one call. So its
-// per-row results must equal two Dot8x4 calls bit-for-bit on arm64 (both asm); we assert
-// a tight relative bound to stay portable to the generic fallback. This bit-identity is
-// what keeps the encoder golden cosine unchanged when the kernel is wired in.
+// FMLA sequence, same final reduction) — it only folds 2 a-rows into one call.
+//
+// On arm64 both kernels are the NEON asm, so the results are bit-identical (this is what
+// keeps the encoder golden cosine unchanged when the kernel is wired in) — assert a tight
+// bound. On other arches Dot2x8 is the portable scalar fallback while Dot8x4 is the AVX2
+// asm: they compute the same math in different orders, so they agree only to f32 precision
+// (~1e-5 over K=3072) — assert an f32-appropriate bound there.
 func TestDot2x8_equalsDot8x4(t *testing.T) {
+	tol := 1e-4 // f32 reassociation between the scalar fallback and the arch asm
+	if runtime.GOARCH == "arm64" {
+		tol = 1e-6 // same NEON kernel on both sides ⇒ bit-identical
+	}
 	rng := rand.New(rand.NewPCG(7, 11))
 	rv := func(n int) []float32 {
 		v := make([]float32, n)
@@ -45,10 +53,10 @@ func TestDot2x8_equalsDot8x4(t *testing.T) {
 			rel := func(g, w float32) float64 {
 				return math.Abs(float64(g-w)) / (math.Abs(float64(w)) + 1e-9)
 			}
-			if rel(got0, want0) > 1e-6 {
+			if rel(got0, want0) > tol {
 				t.Errorf("K=%d a0·b%d: 2x8=%v 8x4=%v", K, j, got0, want0)
 			}
-			if rel(got1, want1) > 1e-6 {
+			if rel(got1, want1) > tol {
 				t.Errorf("K=%d a1·b%d: 2x8=%v 8x4=%v", K, j, got1, want1)
 			}
 		}
