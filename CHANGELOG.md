@@ -10,6 +10,24 @@ it.
 
 ## [Unreleased]
 
+## [1.7.1] — 2026-06-12
+
+### Added
+
+- **`linalg.WrapInt8` / `linalg.WrapInt4` — zero-copy constructors for
+  already-quantized `WeightMat` weights (Experimental).** The inverse of the
+  `Int8()`/`Int4()` accessors: they wrap caller-owned, pre-quantized slices (int8
+  + per-row scales; or packed int4 nibbles + per-group scales + group size)
+  **without copying or re-quantizing**, aliasing the caller's backing arrays the
+  same way `WrapF32` does. This fills the gap that blocked the goinfer
+  `decoder.weightMat` → `WeightMat` migration: 1.7.0 shipped only quantize-from-f32
+  constructors (`QuantizeInt8`/`QuantizeInt4`), but the decoder's `.giw`
+  deserialization reads weights already quantized and **zero-copy-aliases the int4
+  nibbles straight off an mmap'd blob** — re-quantizing from f32 would have
+  regressed both that fast load and its OS-page-cache residency. The wrap path
+  preserves both. Shape-validated (panics on a mismatched length, like
+  `QuantizeRowsInt8`). Additive.
+
 ## [1.7.0] — 2026-06-12
 
 ### Added
@@ -992,7 +1010,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.7.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.7.1...HEAD
+[1.7.1]: https://github.com/townsendmerino/aikit/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/townsendmerino/aikit/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/townsendmerino/aikit/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/townsendmerino/aikit/compare/v1.4.0...v1.5.0

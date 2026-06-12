@@ -52,6 +52,36 @@ func QuantizeInt4(w []float32, rows, cols, group int) WeightMat {
 	return WeightMat{q4: q4, q4s: q4s, group: group, rows: rows, cols: cols}
 }
 
+// WrapInt8 wraps ALREADY-quantized per-row int8 weights (q8 [rows*cols] + per-row
+// scales [rows]) WITHOUT copying or re-quantizing — the inverse of Int8(). Like
+// WrapF32 it aliases the caller's slices (which may point into an mmap'd blob), so
+// the caller keeps them alive. w8a8 selects the matmul (false ⇒ weight-only Q8,
+// true ⇒ full int8×int8). For a loader that reads pre-quantized weights straight
+// off disk and must not pay a dequant→requantize round-trip.
+func WrapInt8(q8 []int8, scales []float32, rows, cols int, w8a8 bool) WeightMat {
+	if len(q8) != rows*cols || len(scales) != rows {
+		panic("linalg: WrapInt8 shape mismatch")
+	}
+	return WeightMat{q8: q8, scales: scales, w8a8: w8a8, rows: rows, cols: cols}
+}
+
+// WrapInt4 wraps ALREADY-quantized group-wise int4 weights WITHOUT copying or
+// re-quantizing — the inverse of Int4(). q4 is [rows*((cols+1)/2)] packed nibbles
+// (two per byte, row-major) and q4s is [rows*nGroups] per-group scales, where
+// nGroups = ⌈cols/group⌉. Aliases the caller's slices (e.g. a zero-copy mmap of a
+// quantized checkpoint), so the caller keeps them alive.
+func WrapInt4(q4 []byte, q4s []float32, rows, cols, group int) WeightMat {
+	if group <= 0 {
+		panic("linalg: WrapInt4 needs group > 0")
+	}
+	bpr := (cols + 1) / 2
+	nGroups := (cols + group - 1) / group
+	if len(q4) != rows*bpr || len(q4s) != rows*nGroups {
+		panic("linalg: WrapInt4 shape mismatch")
+	}
+	return WeightMat{q4: q4, q4s: q4s, group: group, rows: rows, cols: cols}
+}
+
 // MatmulBT computes dst[M, rows] = a[M, cols] · weight[rows, cols]ᵀ, dispatching by
 // stored precision to the matching linalg kernel. CPU only — a consumer with a GPU
 // backend dispatches via the raw accessors and uses this as the fallback.
