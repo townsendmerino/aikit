@@ -8,6 +8,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/townsendmerino/aikit/encoder"
@@ -47,6 +48,22 @@ func main() {
 		}
 	}
 	el := time.Since(start)
-	fmt.Printf("aikit all-MiniLM-L6-v2 (pure-Go, no runtime): %d encodes in %s — %.0f texts/sec, %.2f ms/text\n",
-		n, el.Round(time.Millisecond), float64(n)/el.Seconds(), float64(el.Microseconds())/float64(n)/1000)
+	fmt.Printf("aikit all-MiniLM-L6-v2 short text  (~12 tok): %.0f texts/sec, %.2f ms/text  (small-M, bandwidth-bound)\n",
+		float64(n)/el.Seconds(), float64(el.Microseconds())/float64(n)/1000)
+
+	// Long context: a text that fills the 256-token window (right-truncated by Encode),
+	// so the per-layer matmuls run at M=256 — the large-M regime the blocked GEMM speeds
+	// up. tokens/sec uses the model's max_seq_length (256); the text far exceeds it.
+	const maxSeq = 256
+	long := strings.Repeat(strings.Join(sentences, ". ")+". ", 12) // ≫ 256 tokens ⇒ truncates to 256
+	m.Encode(long)                                                 // warm
+	const longReps = 120
+	start = time.Now()
+	for i := 0; i < longReps; i++ {
+		m.Encode(long)
+	}
+	el = time.Since(start)
+	msPer := float64(el.Microseconds()) / float64(longReps) / 1000
+	fmt.Printf("aikit all-MiniLM-L6-v2 long context (256 tok): %.0f texts/sec, %.1f ms/text, %.0f tokens/sec\n",
+		float64(longReps)/el.Seconds(), msPer, maxSeq/(msPer/1000))
 }

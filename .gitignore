@@ -5,6 +5,7 @@
 # Model artifacts — large, downloaded per-machine, never committed.
 # Tests skip cleanly when these aren't present. Populate via symlink
 # into ~/.cache/huggingface/... or `ken download-model --to ...`.
+benchmarks/testdata/
 testdata/model
 testdata/encoder-model
 testdata/minilm-model

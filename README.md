@@ -138,9 +138,11 @@ fraction of the cost and pure-Go. Reproduce: `scripts/prep_beir.py`, then
 ### Inference throughput (vs hugot)
 
 aikit runs the transformer paths — the MiniLM bi-encoder and the cross-encoder — in
-pure Go. all-MiniLM-L6-v2 encodes at **~21 texts/sec (≈47 ms/text, single thread)** on
-CPU with no ONNX Runtime, no GPU, `CGO_ENABLED=0`; concurrent encoding scales that
-~linearly across cores. (Primary dense retrieval uses Model2Vec static embeddings —
+pure Go. all-MiniLM-L6-v2 encodes short queries at **~22 texts/sec (≈46 ms/text, single
+thread)**; at the full 256-token context the per-token rate climbs to **~710 tokens/sec
+(≈360 ms/text)** as the larger matmuls amortize per-call overhead — the regime aikit's
+cache-blocked GEMM (`linalg.MatmulBT`) accelerates. All on CPU with no ONNX Runtime, no
+GPU, `CGO_ENABLED=0`; concurrent encoding scales ~linearly across cores. (Primary dense retrieval uses Model2Vec static embeddings —
 microseconds per text, the table above; the transformer path is the higher-fidelity
 reranking/embedding step over a shortlist.) Measure it: `cd benchmarks && GOWORK=off go
 run ./inference`.
