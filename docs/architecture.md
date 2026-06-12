@@ -58,9 +58,12 @@ graph TD
         linalg["linalg<br/><i>SIMD f32/int8/int4 kernels</i>"]
         embed["embed<br/><i>Model2Vec + safetensors/GGUF loaders</i>"]
         encoder["encoder<br/><i>CodeRankEmbed reranker</i>"]
+        vision["vision<br/><i>SigLIP/ViT image encoder (Experimental)</i>"]
         bench["bench<br/><i>recall + latency harness</i>"]
         encoder --> embed
         encoder --> linalg
+        vision --> embed
+        vision --> linalg
         ann --> linalg
         ann --> topk
         bm25 --> topk
@@ -76,8 +79,13 @@ Everything not shown depending on something depends only on the stdlib.
 `topk`, `fuse`, `chunk`, and `linalg` are leaves; the index packages (`ann`,
 `bm25`, `sparse`) use `topk` for selection, and since v1.2 `ann` scores
 through `linalg`'s SIMD dot kernels; `embed` adds the one external dependency
-(`golang.org/x/text`, for tokenizer normalization); `encoder` and `bench` are
-the composites. The dotted edge is registry-based, not an import: the
+(`golang.org/x/text`, for tokenizer normalization); `encoder`, `vision`, and
+`bench` are the composites. `vision` (the SigLIP/ViT image encoder) is a new leaf
+consumer on `embed`+`linalg` and adds **no** external dependency — its image
+decode uses only stdlib codecs (`image/jpeg`, `image/png`), and like `encoder` it
+exposes an import-free GPU-export seam (`GPUWeights`) plus a `RegisterResident`
+inversion so goinfer's WebGPU backend plugs in without the core importing it. The
+dotted edge is registry-based, not an import: the
 `chunk/treesitter` module registers itself via `chunk.Register` on import.
 
 ## Repo ecosystem
@@ -91,7 +99,7 @@ graph LR
     goinfer["<b>goinfer</b><br/>LLM decoder runtime<br/>Gemma/Qwen/Llama, tokenizers<br/><i>faster-moving</i>"]
     gpu["goinfer/gpu<br/>WebGPU backend (cgo)<br/><i>opt-in, -tags gpu</i>"]
     ken --> aikit
-    goinfer -->|"embed, linalg"| aikit
+    goinfer -->|"embed, linalg, vision"| aikit
     gpu -.->|"RegisterBackend(#quot;webgpu#quot;)"| aikit
     gpu --- goinfer
 ```

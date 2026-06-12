@@ -10,7 +10,33 @@ it.
 
 ## [Unreleased]
 
+## [1.7.0] — 2026-06-12
+
 ### Added
+
+- **`vision` — a pure-Go SigLIP / ViT image encoder (Experimental).** aikit gains
+  image embeddings: decode (stdlib `image/jpeg`+`png`) → preprocess (resize +
+  normalize → `pixel_values`, with a pre-decode pixel-count guard against
+  decompression bombs) → a pure-Go transformer forward (bidirectional MHA +
+  gelu-tanh MLP, patch-embed conv as im2col+matmul) → `last_hidden_state`. The
+  attention/FFN projections run f32 or int8 W8A8; parity is cosine vs the HF
+  `SiglipVisionModel` golden (`scripts/pin_siglip_vision.py`) — **1.0 f32,
+  ~0.9999 int8**. No cgo, no new external dependency (it's `embed`+`linalg`; the
+  image codecs are stdlib). It exposes an import-free GPU-export seam
+  (`GPUWeights`/`GPUMat`) and a `RegisterResident` inversion so goinfer's WebGPU
+  backend attaches without the core importing it — the same seam pattern as
+  `encoder.Backend`. **This makes aikit the only cgo-free image-embedding
+  retrieval library** (image→image similarity and image-as-document indexing work
+  day one). Additive — a new leaf package; nothing existing changes.
+
+  The code moves in from goinfer's `vision` package (same author, MIT), verbatim
+  and parity-preserving; goinfer deletes its copy and imports aikit's on the next
+  pin bump. The Gemma-specific connector (the vision→LLM-token projector and the
+  image-soft-token sentinels) stays in goinfer — aikit ships the encoder, not the
+  multimodal glue. **Not yet present: a SigLIP text tower**, so true text↔image
+  retrieval is a documented follow-up (Gemma drives the text side with its LLM,
+  which aikit doesn't have); image→image and image-as-document need only the
+  encoder shipped here.
 
 - **`linalg.WeightMat` — a precision-hiding quantized-weight matrix (Experimental).**
   One type that holds an f32 / per-row-int8 / group-int4 weight behind a uniform

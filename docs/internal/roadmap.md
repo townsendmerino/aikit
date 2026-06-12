@@ -153,22 +153,31 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    clean, no in-flight `weightMat` change. This proceeded as **Francis's
    owner override**, and was scoped to land the type + in-repo consumer
    without disturbing goinfer's fastest-moving internal type.
-   *Remaining:* migrate goinfer `vision.qmat` (smallest; validates the
-   GPU-export accessors) then `decoder.weightMat` (richest, keep goinfer's
-   `quantMode.embedding()` policy as a thin shim) against the released
-   aikit minor — `go.work replace` for dev, goinfer pins on release.
-9. **`vision` (SigLIP/ViT encoder) → aikit** — *new (goinfer review):*
-   goinfer's vision tower is an *encoder* (bidirectional, emits
-   embeddings, parity-pinned, deps already aikit-only: `embed`+`linalg`;
-   the GPU export is an import-free seam, same inversion as
-   `encoder.Backend`) — by the split's own logic it sits on aikit's side,
-   and would make aikit the only pure-Go image-embedding retrieval
-   library. But it's capability acquisition, not deduplication: useful
-   *retrieval* also needs SigLIP's **text** tower (Gemma's pipeline uses
-   the LLM for text), which doesn't exist yet in either repo. Trigger:
-   launch feedback / an adopter asking for image or multimodal retrieval.
-   The projector + preprocessing-for-generation glue stays in goinfer
-   regardless.
+   *Remaining:* migrate goinfer `vision.qmat` (now an in-aikit refactor
+   after §2.9's move; validates the GPU-export accessors) then
+   `decoder.weightMat` (richest, keep goinfer's `quantMode.embedding()`
+   policy as a thin shim) against the released aikit minor — `go.work
+   replace` for dev, goinfer pins on release.
+9. **`vision` (SigLIP/ViT encoder) → aikit** — ✅ **DONE (aikit side).**
+   The vision tower moved into `aikit/vision` (Experimental), verbatim and
+   parity-preserving — decode/preprocess/forward/qmat/resident + the
+   import-free GPU-export seam; deps are `embed`+`linalg` only and it adds
+   **no** external dependency (image codecs are stdlib). aikit is now the
+   only **cgo-free** image-embedding library. The full decision/scoping
+   record is `docs/internal/vision-move-decision.md`.
+   *Gate:* the stated trigger (launch feedback / an adopter asking for
+   image or multimodal retrieval) had **not** fired — the move proceeded as
+   **Francis's owner override**, recorded in the decision doc + CHANGELOG.
+   *Dependency audit (the one real risk):* the decode path is stdlib
+   `image/jpeg`+`png` only — no `x/image`, no cgo — so the "stdlib + x/text
+   only" promise holds without a decode quarantine.
+   *Scope held:* the Gemma-specific projector (vision→LLM tokens) and the
+   image-soft-token sentinels stay in goinfer; the projector↔encoder
+   boundary is a plain `[]float32`, no decoder imports `vision`.
+   *Remaining (goinfer side):* delete goinfer's encoder copy, rename its
+   leftover to `package multimodal`, point `gpu/vision_*.go` at
+   `aikit/vision`, bump the pin on aikit release — validated green via
+   `go.work replace` first. And see the new §2.13 (text tower).
 10. **Explicitly left in goinfer** (reviewed, no move): GPTQ/AWQ
    reconstruction (decoder-checkpoint formats, no aikit consumer);
    BPE/SentencePiece tokenizers (generation-side; note a future
@@ -186,6 +195,16 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    the one hot f32 `MatmulBT` consumer with M≥2048. Measured dead-ends recorded so they
    aren't re-tried: smaller kBlock and wide n-panels both regress. Bundle the amd64 AVX2
    packed kernel (§2.4) with it.
+13. **SigLIP *text* tower** — *new (opened by §2.9's vision move).* The vision
+   encoder shipped in `aikit/vision` does image→image and image-as-document
+   today, but **text↔image** retrieval needs SigLIP's text tower — which exists
+   in neither repo (Gemma drives the text side with its LLM, which aikit
+   doesn't have). It's BERT-shaped, so `encoder`'s transformer machinery + the
+   parity toolchain make it tractable, but it is its own parity-pinned work: its
+   own pin script, its own golden, a shared embedding space verified against the
+   HF `SiglipModel` (image+text). Trigger: someone actually needs text↔image (a
+   cross-modal search adopter), **not** just image→image — don't build the text
+   tower speculatively off the image move alone.
 
 ---
 

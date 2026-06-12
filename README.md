@@ -30,6 +30,7 @@ large embedded-grammar payload) — is quarantined in the separate
 | `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | — |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `golang.org/x/text` |
 | `encoder` | CodeRankEmbed (NomicBert) + MiniLM-class BERT embedder + SPLADE expansion + cross-encoder reranker — transformer inference scored by cosine / sparse dot / relevance logit; pluggable matmul `Backend` | `embed`, `linalg`, `sparse` |
+| `vision` *(Experimental)* | SigLIP / ViT image encoder — decode → preprocess → pure-Go transformer forward → image embeddings (f32 or int8 W8A8), parity-pinned to HF `SiglipVisionModel`; stdlib image codecs, no cgo | `embed`, `linalg` |
 | `chunk` | language-aware chunker registry + `regex`, `markdown`, `line` chunkers | — |
 | `chunk/treesitter` *(submodule)* | tree-sitter-backed syntactic chunker | `gotreesitter`, `…/aikit` |
 
@@ -110,20 +111,23 @@ correct distance, full k, finds the right region) — see the
 
 ### Capability matrix
 
-| | cgo-free | model inference | exact | ANN graph | int8 | persistence | lexical + hybrid | learned-sparse | static binary |
-|---|---|---|---|---|---|---|---|---|---|
-| **aikit** | ✅ | ✅ Model2Vec + CodeRankEmbed | ✅ Flat | ✅ HNSW (Alg-4) | ✅ FlatI8 | ✅ HNSW | ✅ BM25 + RRF/RSF | ✅ sparse | ✅ **1.8 MB** |
-| coder/hnsw | ✅ | — | — | ✅ | — | ✅ | — | — | ✅ |
-| chromem-go | ✅ | via external API | ✅ | — | — | ✅ | — | — | ✅ |
-| Bleve v2 | dense needs cgo (faiss) | — | — | ✅ vector | — | ✅ | ✅ full-text | — | dense: ✗ |
-| hugot | ✗ (ONNX Runtime) | ✅ HF pipelines | — | — | — | — | — | — | ✗ |
+| | cgo-free | model inference | image embed | exact | ANN graph | int8 | persistence | lexical + hybrid | learned-sparse | static binary |
+|---|---|---|---|---|---|---|---|---|---|---|
+| **aikit** | ✅ | ✅ Model2Vec + CodeRankEmbed | ✅ SigLIP/ViT | ✅ Flat | ✅ HNSW (Alg-4) | ✅ FlatI8 | ✅ HNSW | ✅ BM25 + RRF/RSF | ✅ sparse | ✅ **1.8 MB** |
+| coder/hnsw | ✅ | — | — | — | ✅ | — | ✅ | — | — | ✅ |
+| chromem-go | ✅ | via external API | — | ✅ | — | — | ✅ | — | — | ✅ |
+| Bleve v2 | dense needs cgo (faiss) | — | — | — | ✅ vector | — | ✅ | ✅ full-text | — | dense: ✗ |
+| hugot | ✗ (ONNX Runtime) | ✅ HF pipelines | ✗ (ONNX) | — | — | — | — | — | — | ✗ |
 
 aikit is the only one of these that ships the **whole pipeline** — local model
 inference *and* dense + lexical + sparse retrieval *and* fusion — in a single
 **1.8 MB pure-Go static binary** (`CGO_ENABLED=0`, the full `ann`+`bm25`+`fuse`+
-`embed` surface). hugot covers inference but its fast backend needs the ONNX Runtime
-native library (cgo); the vector DBs cover indexing but not inference. The `//go:embed`-a-corpus,
-zero-deploy story is the lane no Python or ONNX stack reaches.
+`embed` surface). It's also the only **cgo-free image embedder** here: the `vision`
+SigLIP/ViT tower runs the whole forward in pure Go, so image→image similarity and
+image-as-document indexing need no ONNX runtime or sidecar (hugot can embed images
+but only via the ONNX Runtime native library). hugot otherwise covers inference but
+needs that cgo backend; the vector DBs cover indexing but not inference. The
+`//go:embed`-a-corpus, zero-deploy story is the lane no Python or ONNX stack reaches.
 
 ### Retrieval quality on a standard benchmark
 
