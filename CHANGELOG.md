@@ -10,7 +10,32 @@ it.
 
 ## [Unreleased]
 
+### Changed
+
+- **`linalg.MatmulBT` is now cache + register blocked — ~6× faster at prefill shapes,
+  and the blocked GEMM is now shared, not duplicated.** `MatmulBT` was a naive
+  dot-per-output span that re-streamed `b` from DRAM once per `a`-row; a cross-repo gate
+  (goinfer) measured it at **~7% of this M1 Pro's f32 peak** at decoder prefill shapes —
+  every kit consumer of `MatmulBT`, not just one, was paying for the missing cache
+  blocking. The encoder already had a proper blocked + register-tiled GEMM (32×32×768
+  tiles + Dot8x4/Dot2x8); that implementation is **hoisted into `linalg`
+  (`matmul_blocked.go`) as the single home** behind `MatmulBT`, the encoder's transformer
+  matmuls, and other consumers. Measured: M=512×4096×4096 prefill **7%→46% of peak
+  (~6.3×)**; the K=768 transformer tiles **68–75%**. Small matmuls (e.g. attention QKᵀ)
+  keep the naive span via an M·K·N threshold, so they don't regress. `MatmulBT`'s results
+  now differ from the old naive order by ~1e-5 (f32 reassociation, same class as the
+  v1.2.0 ann change); its documented width-invariance is **preserved** — column shards are
+  aligned to the kernel's 8-column group so fan-out width stays numerically inert
+  (`TestParallelWidth_bitIdentical`). `MatmulBTAcc64` (f64-exact) is unchanged for callers
+  needing determinism. The encoder's golden parity is bit-identical across the move.
+
 ### Added
+
+- **`linalg.MatmulBTInto(dst, a, b, M, K, N)` — serial cache+register-blocked GEMM into a
+  caller-provided dst** (Experimental surface). The entry for consumers that own their own
+  parallelism (the encoder row-splits a batch across cores; goinfer's batch/vision paths
+  likewise) and want each matmul serial; for process-level column parallelism use
+  `MatmulBT`. Overwrites `dst` (len ≥ M*N).
 
 - **`linalg.Dot2x8` + 2×8 register micro-kernel for the encoder GEMM** (arm64;
   ~1.5–1.6× on the encoder's f32 matmuls). The blocked GEMM's inner kernel was

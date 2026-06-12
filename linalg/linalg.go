@@ -116,7 +116,14 @@ func resolveWidth(width int) int {
 // the N output columns (always large in the transformer projections, and the
 // only dimension with parallelism on the M=1 single-token decode path).
 func MatmulBT(a, b, dst []float32, M, K, N int) {
-	parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTSpan(a, b, dst, M, K, N, j0, j1) })
+	if int64(M)*int64(K)*int64(N) < blockedMACThreshold {
+		parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTSpan(a, b, dst, M, K, N, j0, j1) })
+		return
+	}
+	zeroSpanF32(dst[:M*N])
+	parallelCols(M*N*K, N, func(j0, j1 int) {
+		blockedFill(a, b, dst, M, K, N, j0, j1, mBlockDefault, nBlockDefault, kBlockDefault)
+	})
 }
 
 // MatmulBT run through a Workspace uses that Workspace's scoped threshold and worker
@@ -124,7 +131,14 @@ func MatmulBT(a, b, dst []float32, M, K, N int) {
 // independent decode stream tunes its own parallelism. Same shape and numerics as
 // the package-level MatmulBT.
 func (w *Workspace) MatmulBT(a, b, dst []float32, M, K, N int) {
-	w.parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTSpan(a, b, dst, M, K, N, j0, j1) })
+	if int64(M)*int64(K)*int64(N) < blockedMACThreshold {
+		w.parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTSpan(a, b, dst, M, K, N, j0, j1) })
+		return
+	}
+	zeroSpanF32(dst[:M*N])
+	w.parallelCols(M*N*K, N, func(j0, j1 int) {
+		blockedFill(a, b, dst, M, K, N, j0, j1, mBlockDefault, nBlockDefault, kBlockDefault)
+	})
 }
 
 // matmulBTSpan computes output columns [j0,j1) of dst[M,N] = a[M,K]·b[N,K]ᵀ.
@@ -194,6 +208,14 @@ func parallelSpawnCols(N, workers int, fn func(j0, j1 int)) {
 		workers = 1
 	}
 	chunk := (N + workers - 1) / workers
+	// Round the shard width up to a multiple of 8 (the blocked f32 kernel's column-
+	// group size) so an 8-column group is never split across workers. That keeps
+	// MatmulBT's per-element result independent of the fan-out width — the
+	// numerically-inert width contract (TestParallelWidth_bitIdentical). Harmless for
+	// the int8 matmuls, whose per-column dot doesn't depend on column grouping.
+	if r := chunk % 8; r != 0 {
+		chunk += 8 - r
+	}
 	var wg sync.WaitGroup
 	for j0 := 0; j0 < N; j0 += chunk {
 		j1 := min(j0+chunk, N)

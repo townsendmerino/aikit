@@ -4,6 +4,8 @@ import (
 	"runtime"
 	"sync"
 	"sync/atomic"
+
+	"github.com/townsendmerino/aikit/linalg"
 )
 
 // Intra-op (within-one-forward) matmul parallelism for the standalone-
@@ -60,8 +62,9 @@ func leaveForward() { inflightForwards.Add(-1) }
 const parallelThreshold = 32_000_000
 
 // minRowsPerWorker keeps each goroutine's slice fat enough to be worth
-// a spawn (and ≥ mBlockDefault so no worker gets a sub-tile sliver).
-const minRowsPerWorker = mBlockDefault
+// a spawn (and ≥ the linalg blocked-GEMM mBlock tile, so no worker gets a
+// sub-tile sliver).
+const minRowsPerWorker = 32
 
 // wantParallelMatmul reports whether matmulBTInto should row-split this
 // call across cores: only when no other forward is in flight and the
@@ -98,7 +101,6 @@ func matmulBTBlockedIntoParallel(a, b, dst []float32, M, K, N int) {
 		return
 	}
 
-	zeroF32Slice(dst[:M*N])
 	rowsPer := (M + workers - 1) / workers
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
@@ -111,9 +113,9 @@ func matmulBTBlockedIntoParallel(a, b, dst []float32, M, K, N int) {
 		go func(iStart, iEnd int) {
 			defer wg.Done()
 			m := iEnd - iStart
-			// matmulBTBlockedFillInto (not …Into) — dst sub-slice is
-			// already zeroed above, so skip the per-worker re-zero.
-			matmulBTBlockedFillInto(a[iStart*K:iEnd*K], b, dst[iStart*N:iEnd*N], m, K, N)
+			// Each worker owns a disjoint row block; MatmulBTInto zeroes and
+			// fills its own dst sub-slice, so no shared up-front zeroing.
+			linalg.MatmulBTInto(dst[iStart*N:iEnd*N], a[iStart*K:iEnd*K], b, m, K, N)
 		}(iStart, iEnd)
 	}
 	wg.Wait()

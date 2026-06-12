@@ -86,6 +86,22 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    outer-product kernel could chase the last ~25% to ~90% of peak but needs a real
    throughput trigger to justify the packing path.
 
+3. **Blocked GEMM hoisted into shared `linalg.MatmulBT`** — ✅ **DONE.** [high / medium].
+   goinfer's gate (recorded in its `matmulbt-prefill-headroom` note) found the *public*
+   `linalg.MatmulBT` was a naive dot-per-output span with **no cache blocking** —
+   re-streaming `b` per a-row, **~7% of peak** at prefill shapes. That's a defect every
+   kit consumer of `MatmulBT` inherits (goinfer's own f32 vision encoder sat there), not
+   just a goinfer concern — so it was fixed despite goinfer deferring its *own* adoption.
+   The encoder's blocked + register-tiled GEMM was hoisted into `linalg`
+   (`matmul_blocked.go`) as the single shared home; `MatmulBT` (column-parallel) and a new
+   Experimental `MatmulBTInto` (serial) both use it, and the encoder delegates
+   (bit-identical, golden parity unchanged). Measured **7%→46%** at M=512×4096×4096
+   (~6.3×), **68–75%** at the K=768 transformer tiles; small matmuls keep the naive span
+   (threshold); width stays numerically inert (8-aligned shards). The large-K/N prefill
+   shape lands at 46% not 68% (64 MB b-panel spills L2) — tile-tuning for big shapes is a
+   small remaining lever, deferred until a consumer's prefill latency is a watched number
+   (goinfer's stated trigger: multimodal image-prefill).
+
 ## 2. Gated — unchanged triggers, now the only path for engineering
 
 1. **HNSW zero-copy mmap** — bundle with the next format bump (specced at
