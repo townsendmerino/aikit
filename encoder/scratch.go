@@ -72,10 +72,7 @@ type scratch struct {
 // forward will dequantize: N*K over {Wqkv 3D×D, OutProj D×D, fc1 inter×D, fc2 D×inter}
 // → D·max(3D, intermediate). Only the q8 path calls this, so f32 forwards don't pay it.
 func (s *scratch) ensureDeqW(D, intermediate int) {
-	n := 3 * D
-	if intermediate > n {
-		n = intermediate
-	}
+	n := max(intermediate, 3*D)
 	s.deqW = ensureF32(s.deqW, n*D)
 }
 

@@ -91,10 +91,7 @@ func (ce *CrossEncoder) pairIDs(query, doc string) (ids, segs []int32) {
 	q := ce.bert.tok.Encode(query)
 	d := ce.bert.tok.Encode(doc)
 
-	avail := ce.bert.maxSeq - 3 // [CLS] + 2×[SEP]
-	if avail < 0 {
-		avail = 0
-	}
+	avail := max(ce.bert.maxSeq-3, 0) // room for [CLS] + 2×[SEP]
 	if len(q) > avail {
 		q = q[:avail]
 	}

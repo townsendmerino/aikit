@@ -50,7 +50,7 @@ func matmulBTQ8Into(dst, a []float32, bQ []int8, bScales []float32, M, K, N int,
 		panic("encoder: matmulBTQ8Into shape mismatch")
 	}
 	w := deqW[:N*K]
-	for n := 0; n < N; n++ {
+	for n := range N {
 		sc := bScales[n]
 		row := w[n*K : n*K+K]
 		bq := bQ[n*K : n*K+K]
