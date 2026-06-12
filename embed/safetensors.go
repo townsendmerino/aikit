@@ -395,6 +395,59 @@ func (f *SafetensorsFile) Names() []string {
 	return out
 }
 
+// TensorF32 reads the named tensor as []float32, widening BF16 or F16 to f32 if
+// needed (allocating), so callers loading weights don't dispatch on dtype themselves.
+// If want is non-empty the tensor's shape must equal it, else an error is returned —
+// the common shape-checked weight read, e.g.
+//
+//	w, err := sf.TensorF32("model.layers.0.mlp.down_proj.weight", outDim, inDim)
+//
+// Omit want to read without a shape check.
+func (f *SafetensorsFile) TensorF32(name string, want ...int) ([]float32, error) {
+	t, err := f.Tensor(name)
+	if err != nil {
+		return nil, err
+	}
+	if len(want) > 0 && !shapeEqual(t.Shape, want) {
+		return nil, fmt.Errorf("safetensors: tensor %q shape %v != want %v", name, t.Shape, want)
+	}
+	switch t.DType {
+	case "F32":
+		return t.Float32s()
+	case "BF16":
+		return t.BFloat16sToF32()
+	case "F16":
+		return t.Float16sToF32()
+	default:
+		return nil, fmt.Errorf("safetensors: tensor %q dtype %q unsupported for an F32 read (want F32/BF16/F16)", name, t.DType)
+	}
+}
+
+// TensorI32 reads the named tensor as []int32 (optionally shape-checked against want).
+// Requires DType I32 — e.g. GPTQ packed qweight/qzeros/g_idx.
+func (f *SafetensorsFile) TensorI32(name string, want ...int) ([]int32, error) {
+	t, err := f.Tensor(name)
+	if err != nil {
+		return nil, err
+	}
+	if len(want) > 0 && !shapeEqual(t.Shape, want) {
+		return nil, fmt.Errorf("safetensors: tensor %q shape %v != want %v", name, t.Shape, want)
+	}
+	return t.Int32s()
+}
+
+func shapeEqual(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // Float32s returns the tensor data as []float32. Requires DType "F32".
 // The returned slice aliases the file's []byte; do not mutate.
 // This assumes little-endian host byte order (x86, arm64).

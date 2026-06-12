@@ -179,20 +179,5 @@ func contains(s, sub string) bool {
 	return false
 }
 
-func TestShapeEqual(t *testing.T) {
-	cases := []struct {
-		a, b []int
-		want bool
-	}{
-		{[]int{}, []int{}, true},
-		{[]int{1}, []int{1}, true},
-		{[]int{1, 2, 3}, []int{1, 2, 3}, true},
-		{[]int{1, 2}, []int{1, 2, 3}, false},
-		{[]int{1, 2, 3}, []int{1, 2, 4}, false},
-	}
-	for _, c := range cases {
-		if got := shapeEqual(c.a, c.b); got != c.want {
-			t.Errorf("shapeEqual(%v, %v) = %v, want %v", c.a, c.b, got, c.want)
-		}
-	}
-}
+// (shapeEqual moved to embed.SafetensorsFile's TensorF32/I32 shape check; its
+// behavior is covered by embed's TestSafetensorsFile_typedAccessors.)

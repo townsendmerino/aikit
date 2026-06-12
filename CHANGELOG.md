@@ -10,6 +10,18 @@ it.
 
 ## [Unreleased]
 
+### Added
+
+- **`embed.SafetensorsFile.TensorF32` / `TensorI32` — shape-checked typed tensor
+  reads** (Hard-tier surface; additive). `TensorF32(name, want...)` reads a tensor as
+  `[]float32`, widening BF16/F16 to f32 and optionally asserting the shape; `TensorI32`
+  is the int32 sibling (GPTQ packed tensors). Lifts the read pattern that the loaders
+  hand-wrote repeatedly — the in-repo `encoder.loadF32` now delegates to it (validated
+  against the CodeRankEmbed / MiniLM / SPLADE / cross-encoder loaders), and the
+  cross-repo consumer (goinfer, which open-codes the same shape-checked dispatch ≥6×
+  in its decoder/vision loaders) can drop its helpers at its next aikit bump. Surfaced
+  by the 2026-06-12 goinfer cross-repo review.
+
 ## [1.5.0] — 2026-06-11
 
 ### Added

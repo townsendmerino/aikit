@@ -1,149 +1,141 @@
-# aikit roadmap v3 — post-1.4.0
+# aikit roadmap v4 — post-1.5.0
 
-> Rewritten 2026-06-11, after v1.4.0. v1 of this roadmap was captured at
-> v1.1.0 from an external review; three release cycles (v1.2.0, v1.3.0,
-> v1.4.0 — three days) executed v1 and v2 almost in full. Per-item
-> annotations and measurements live in git history
-> (`git log -- docs/internal/roadmap.md`) and the CHANGELOG; the v2 file at
-> tag v1.4.0 is the last fully-annotated version.
+> Rewritten 2026-06-11, after v1.5.0. History: v1 (at v1.1.0) and v2 (at
+> v1.2.0) were engineering roadmaps; v3 (at v1.4.0) predicted the backlog
+> would empty into adoption work; v1.5.0 made that literal. Annotated prior
+> versions live in git history (`git log -- docs/internal/roadmap.md`).
 >
-> **Where this leaves the project:** the engineering backlog is effectively
-> empty. The retrieval stack is feature-complete against the 2026 hybrid-
-> retrieval bar (dense f32/int8, lexical, learned-sparse with in-process
-> expansion, fusion, reranking, persistence/mmap/`//go:embed`, published
-> benchmarks), parity-pinned throughout, fuzzed, and release-gated. What
-> remains is almost entirely *adoption* work plus a short pre-graduation
-> hygiene list. The roadmap is now correspondingly short — if the next
-> session adds engineering items faster than adoption items, that's the
-> failure mode to notice.
+> **There are zero unblocked engineering items.** Four releases in three days
+> (v1.2.0 → v1.5.0) shipped the full 2026 hybrid-retrieval bar — dense
+> f32/int8 + lexical + learned-sparse, bi- and cross-encoder reranking,
+> persistence/mmap/`//go:embed`, parity pins on every model path, fuzzing,
+> benchmarks, an automated release gate. This document is now an adoption
+> campaign and a list of triggers. **The standing rule: new engineering
+> enters only through §2's triggers or §1's feedback. If a future session
+> finds itself adding kernels while §1 is unstarted, stop and do §1.**
 
-## The three-cycle scorecard (v1.2.0 → v1.4.0)
+## Scorecard (cumulative, v1.2.0 → v1.5.0)
 
-- **Perf**: amd64 W4A8 parity, scores·V vectorization (f32 + Q8 + goinfer
-  prefill 3.4×), ann SIMD scoring (~7× Flat), HNSW build −20%/-7× allocs.
-- **Features**: `sparse` end-to-end (index + in-process SPLADE expansion),
-  `encoder.BERT` (MiniLM-class, parity 1.000000), standard-Model2Vec
-  loading (potion-retrieval-32M), FlatI8 + int8 HNSW (recall Δ0), HNSW +
-  FlatI8 persistence + zero-copy mmap, `QueryFilter`/base+delta+fuse,
-  `Truncate`, `TokenizePlain`, RSF.
-- **Quality**: HNSW Alg-4 default (recall@10 0.68 → 1.00, found by the
-  `bench` harness), recall regression gate.
-- **Robustness**: parser/dequant/chunk fuzzing (5 crashes fixed), kernel
-  contract checks, mmap guardrails, nightly fuzz.
-- **Health**: typed `ErrFormat` sentinels, Workspace-scoped parallel knobs,
-  worker pool deleted, release gate automated (and it ran v1.4.0's release).
-- **Proof**: comparative benchmarks in the README (aikit ~0.995 recall vs
-  coder/hnsw ~0.22, chromem-go ~45× p50), `examples/embedded-corpus`
-  (~70 MB single binary, ~50 ms startup, zero external files).
-- **Measured-and-closed**: int8 M-tiling, worker pool, K-crossover,
-  GOEXPERIMENT=simd spike. **Off-roadmap adds**: `MatmulBTAcc64`, `DotI8`.
+Retrieval: Flat / FlatI8 / HNSW (Alg-4, recall@10 0.68→1.00) / int8 HNSW
+(Δ0) / BM25 ×2 analyzers / SPLADE end-to-end / RRF+RSF / QueryFilter.
+Models: Model2Vec (both formats), CodeRankEmbed, MiniLM BERT, SPLADE head,
+ms-marco cross-encoder — all parity ≤1e-5, golden-pinned, cgo-free.
+Embedded: versioned blobs + zero-copy mmap + `//go:embed` demo (~50 ms
+startup). Proof: README comparative table, BeIR/scifact nDCG@10 0.638,
+~21 texts/s pure-Go MiniLM. Health: fuzzing (5 fixes), typed errors, scoped
+knobs, pool deleted, surface audit (deliberate keep), format policy
+(rebuild-per-minor), release gate (ran 1.4.0 and 1.5.0 unattended).
 
 ---
 
-## 1. Adoption — the entire critical path
+## 1. The adoption campaign — the only live work
 
-Everything high-impact that remains is here, and none of it is blocked.
+In order. Items 1–3 are a sequence, not a menu; each feeds the next.
 
-1. **Cross-encoder reranking head (`encoder.LoadCrossEncoder`)** — ✅ **DONE.**
-   As predicted, a small additive step over v1.4.0's BERT trunk: `LoadCrossEncoder`
-   reuses `LoadBERT` (prefix-aware) and adds the pooler + a classification head, and
-   `hiddenStates` gained token-type segments for the query/document pair
-   ([CLS] q [SEP] d [SEP], types 0/1). `Score(query, doc)` → relevance logit; pins
-   **ms-marco-MiniLM-L-6-v2** (hugot's CrossEncoders headline + Antfly's reranker
-   default) at Δ 5e-6 forward AND end-to-end (aikit's own pair tokenization matches
-   HF) — golden via `pin_crossencoder.py`. aikit now covers both halves of the modern
-   rerank story (bi-encoder + cross-encoder), cgo-free; closes the last pipeline gap
-   vs hugot/Antfly. Additive (apidiff: `CrossEncoder` + `LoadCrossEncoder` added).
-2. **One named external adopter** — [high / not-engineering]. Three
-   releases of recruiting assets exist (benchmark table, embedded-corpus
-   demo, BERT/SPLADE support); the road-to-1.0 critique's warning now
-   applies to 1.4. The natural shapes: an MCP server `//go:embed`-ing a
-   docs corpus; or ken itself publicly badged as built-on-aikit with the
-   embedded-corpus pattern productized. Ship v1.5 *with* one.
-3. **Announcement post** — [medium-high / low]. *New:* there is now a
-   story worth telling ("a pure-Go, no-cgo retrieval stack: BERT-family
-   inference, SPLADE, int8 ANN, one static binary — with parity proofs and
-   honest benchmarks") and three days of measure-fix-measure material (the
-   0.68→1.00 recall find is a genuinely good engineering-blog arc). A post
-   + Show HN / r/golang is the cheapest adopter-recruiting channel that
-   exists. Blocked on nothing.
-4. **Benchmark remainder** — ✅ **DONE.** (b) BEIR slice: `benchmarks/beir` evals
-   aikit (`potion-retrieval-32M` + exact Flat) on BeIR/scifact → **nDCG@10 0.638**
-   (300 queries / 5183 docs), a cross-referenceable standard number; data via
-   `scripts/prep_beir.py`. (a) Inference throughput: `benchmarks/inference` measures
-   aikit's pure-Go all-MiniLM-L6-v2 at **~21 texts/sec (≈47 ms/text, single thread)**,
-   no runtime. Shipped framed (not as a fabricated 3-way): the honest headline is a
-   deployment tradeoff — hugot's fast path is ONNX Runtime (native lib + cgo), its
-   pure-Go GoMLX backend is "for simpler workloads"; aikit needs neither. Deliberately
-   did *not* sink effort into the GoMLX integration for a likely-≈-or-slower pure-Go
-   column or fight the native ONNX lib (the engineering-mass-over-adoption trap the
-   header names). Both strengthen items 2–3.
+1. **Post the announcement** — [high / trivial; asset exists]. The r/golang
+   draft is written (`r-golang-post.md`, repo root — strip the posting-notes
+   footer). Post it; optionally follow with Show HN a few days later (HN
+   wants a different lead: the war story or the `//go:embed` demo, not the
+   feature list). Submit to awesome-go the same week (its bar: API docs,
+   coverage, CI — all already met).
+2. **Work the response** — [high / reactive]. Answer every comment and
+   issue fast for the first two weeks; the prepped Q&A (footer of the post
+   draft) covers the four predictable threads. Triage feature requests
+   against §2's triggers rather than accepting them reflexively — but a
+   request that *matches* a trigger (e.g. a Windows consumer, a >1M-vector
+   corpus) is the trigger firing, and unblocks that item immediately.
+3. **Land one named adopter** — [high / not-engineering]. The strategic
+   item the last three roadmap versions agreed on. Shapes, best first: an
+   external Go service wiring in semantic search (offer hands-on help, as
+   the post does); an MCP server `//go:embed`-ing a docs corpus (build it
+   *with* someone, not speculatively); ken publicly badged as built-on-aikit
+   (first-party, so it half-counts, but it's honest social proof and free).
+   Ship v1.6 *with* the adopter named in the README.
+4. **The recall war-story blog post** — [medium / low]. Separate asset from
+   the announcement: "synthetic vectors can't measure recall" (0.99 → 0.68
+   → 1.00) is a standalone engineering post that travels on its own and
+   back-links the repo. Write after #1's response settles, using what the
+   comments reveal about which framing lands.
 
-## 2. Pre-graduation hygiene — short, then stop
+## 1b. One small unblocked item (from the 2026-06-12 goinfer cross-repo review)
 
-1. **`linalg` surface audit** — ✅ **DONE (deliberate keep; no trim).** Cross-referenced
-   the whole exported surface against consumer evidence — goinfer (pins v1.3.0) + the
-   aikit-internal callers (`ann`, `encoder`). Findings: two of the three flagged
-   exports are in fact consumed — `DotI8` (ann int8 HNSW) and `MatmulBTAcc64` (goinfer's
-   MoE router, added for it). The genuinely unconsumed surface is the four `Workspace`
-   scoping methods (`SetThreshold`, `SetWorkers`, `MatmulBT`, `MatmulBTAcc64`): goinfer
-   uses the *global* `SetParallelThreshold/Width` + the `Workspace` only as W8A8 scratch
-   (its `decoder/scratch.go` explicitly opts out of the pool). **Decision: keep them**,
-   as deliberate forward-looking concurrency-safe design (independent per-stream
-   parallelism) — not accidental surface. The point of the pass was to make that a
-   *conscious* keep rather than a default one; re-evaluate at the graduation promise if
-   still unconsumed (trimming stays additive-to-undo). The getters
-   (`ParallelThreshold/Width`) pair the consumed setters — kept.
-2. **Blob format-stability policy** — ✅ **DONE (decided + documented; bump deferred
-   per spec).** Decision: **rebuild-per-minor pre-1.0** — blobs aren't a stable
-   cross-version interchange format; `Load*` already rejects any other version with
-   `ann.ErrFormat` (loud, never a silent misread), so the policy is enforced by
-   construction. Documented in README ("Serialized blob formats"), the
-   architecture invariants table, and a FORMAT-BUMP CHECKLIST comment at each version
-   const (`hnsw_persist.go`, `flat_i8_persist.go`). The reserved-header-bytes + HNSW
-   float32 alignment (for the deferred zero-copy `LoadHNSWMmap`, §3.2) are *specced at
-   the bump site* to bundle into the next bump — not forced now, since a gratuitous
-   bump is the very churn the policy curbs (and "whatever bump comes next" defers it).
-   At 1.0 this tightens to read-N−1 / reserved-field forward-compat.
+The review's headline: **the split is holding** — goinfer consumes aikit's
+loaders/kernels properly, deps point inward only, no container-format
+duplication. One deduplication earns immediate work; the rest is gated (§2).
 
-## 3. Gated — do not start without the stated trigger
+1. **Typed tensor accessors on `embed.SafetensorsFile`** — ✅ **DONE.** [medium / low].
+   goinfer hand-writes the same shape-checked typed reads ≥6 times across
+   `decoder/weights.go`, `vision/encoder.go`, `decoder/lora.go`,
+   `decoder/gptq.go` (`tensorF32`, `loadF32(want…)`, `f16Tensor`,
+   `i32Tensor`). Add `TensorF32(name string, want ...int)` (+ I32, and F16
+   widening) as methods. Additive to the Hard tier; goinfer deletes its
+   helpers at its next aikit bump. Permitted under the standing rule as
+   measured deduplication with a named consumer, not new capability.
 
-1. **HNSW zero-copy mmap** — needs a format-v4 alignment bump; bundle with
-   the §2.2 policy work, never standalone.
-2. **Binary/Hamming pre-filter + f32 rescore** — corpus sizes aikit doesn't
-   see yet; trigger: an adopter with >1M vectors.
+## 2. Gated — unchanged triggers, now the only path for engineering
+
+1. **HNSW zero-copy mmap** — bundle with the next format bump (specced at
+   the bump sites), never standalone.
+2. **Binary/Hamming pre-filter + rescore** — trigger: an adopter with >1M
+   vectors.
 3. **Windows real mmap** — trigger: a sizable Windows consumer.
-4. **Hardware-gated x86 tail** (VNNI W4A8, AVX-512 tier) — trigger: Zen 4+ /
-   Cascade Lake+ access; a cloud c7i/c7a spot instance remains the cheap
-   unblock. Bundle both when it happens.
-5. **`GOEXPERIMENT=simd` portable kernels** — trigger: archsimd ships arm64
-   AND graduates (still amd64-only + gated as of June 2026; arm64 via SVE
-   planned on dev.simd for Go 1.27). Then re-spike; if within ~10% of the
-   hand asm, migrate and delete the `.s` files. Note hugot expects 3–10×
-   from this same graduation — another reason §1.3-4 publish now.
+4. **x86 tail (VNNI W4A8, AVX-512)** — trigger: Zen 4+/Cascade Lake+ access
+   (cloud c7i/c7a spot remains the cheap unblock); bundle both.
+5. **`GOEXPERIMENT=simd` migration** — trigger: archsimd ships arm64 AND
+   graduates (amd64-only + gated as of June 2026; arm64/SVE on dev.simd for
+   Go 1.27). Then re-spike; within ~10% of hand asm ⇒ migrate, delete `.s`.
 6. **In-place index mutation** — trigger: a real consumer proving
-   rebuild/delta/swap insufficient. Design rule 4 holds until then.
-7. **AMX** — out of scope.
+   rebuild/delta/swap insufficient. Design rule 4 holds.
+7. **Experimental→Hard graduation** — *new, the long-game item:* BERT /
+   SPLADE / CrossEncoder / int8 indexes / persistence graduate to the
+   semver tier once they survive two quiet consecutive minors under an
+   external consumer (the same bar the original Hard tier met). Trigger:
+   §1.3's adopter + that stability window. Re-run the surface audit's
+   "re-evaluate" notes (unconsumed Workspace methods) at that moment.
+8. **`linalg.WeightMat` — unify the quantized-weight abstraction** —
+   *new (goinfer review):* the precision-hiding weight-matrix wrapper is
+   now implemented **three times** — aikit `encoder.LayerWeightsQ8`,
+   goinfer `decoder.weightMat` (f32/int8/int4-group/W8A8, the richest),
+   goinfer `vision.qmat` (f32/W8A8) — all dispatching into `linalg`.
+   A shared Experimental `linalg.WeightMat` would collapse them, but
+   `weightMat` is goinfer's fastest-moving internal type, so hoisting it
+   now adds semver friction exactly where iteration happens. Trigger:
+   the next time goinfer must *change* the abstraction anyway, or a
+   fourth implementation appears. Not standalone work.
+9. **`vision` (SigLIP/ViT encoder) → aikit** — *new (goinfer review):*
+   goinfer's vision tower is an *encoder* (bidirectional, emits
+   embeddings, parity-pinned, deps already aikit-only: `embed`+`linalg`;
+   the GPU export is an import-free seam, same inversion as
+   `encoder.Backend`) — by the split's own logic it sits on aikit's side,
+   and would make aikit the only pure-Go image-embedding retrieval
+   library. But it's capability acquisition, not deduplication: useful
+   *retrieval* also needs SigLIP's **text** tower (Gemma's pipeline uses
+   the LLM for text), which doesn't exist yet in either repo. Trigger:
+   launch feedback / an adopter asking for image or multimodal retrieval.
+   The projector + preprocessing-for-generation glue stays in goinfer
+   regardless.
+10. **Explicitly left in goinfer** (reviewed, no move): GPTQ/AWQ
+   reconstruction (decoder-checkpoint formats, no aikit consumer);
+   BPE/SentencePiece tokenizers (generation-side; note a future
+   bge-m3-class multilingual embedder would need SentencePiece *Unigram*,
+   which neither repo has); `rmsnorm`/`rope` (small, intentional
+   duplication per the split); constrain/chat/sampler/serve/gpu.
+11. **AMX** — out of scope.
 
 ---
 
 ## Competitive context (refreshed 2026-06-11)
 
-- **hugot** — the comparison flipped from aspiration to head-to-head:
-  aikit now runs the same MiniLM models (and SPLADE, which hugot lacks),
-  cgo-free vs ONNX-runtime; §1.1 (cross-encoder) closes the last pipeline
-  hugot has that aikit doesn't, and §1.4(a) measures the rest. Their Go
-  SIMD bet (3–10×) matures when archsimd graduates — aikit's window for
-  publishing a perf lead is now.
-- **Antfly/Termite** — core now Zig; feature bar matched in library form,
-  including SPLADE end-to-end as of v1.4.0. Their reranker example's
-  default model is exactly §1.1's target.
-- **coder/hnsw** — measured at recall@10 ~0.22 on real embeddings vs
-  aikit ~0.995 (construction-limited; plain selection vs Alg-4). Keep the
-  README table honest if upstream improves.
-- **Bleve / chromem-go / sqlite-vec / LanceDB-go** — index-only, no
-  embedded inference; unchanged moat.
-- **Ollama** — unchanged (server dependency); aikit's pitch stays
-  in-process, zero-deploy, now with a runnable 70 MB-binary proof.
-- **Model2Vec upstream** — potion-retrieval-32M supported as of v1.4.0;
-  parity discipline inherits upstream gains. Watch for new potion releases.
+Unchanged from v3 in substance; deltas only:
+
+- **hugot** — the last pipeline gap closed (cross-encoder, same checkpoint,
+  Δ5e-6). The comparison is now fully head-to-head and framed honestly in
+  the README (deployment tradeoff, not a drag race). Their Go-SIMD bet
+  matures with archsimd (§2.5's trigger) — the announcement window is open
+  *now* and narrows when that graduates.
+- **Antfly/Termite** (Zig core), **coder/hnsw** (measured 0.22 vs 0.995),
+  **Bleve/chromem-go/sqlite-vec** (index-only), **Ollama** (server) — all
+  unchanged; the README table and capability matrix carry these.
+- **Model2Vec upstream** — supported including standard format; watch for
+  new potion releases (a better static model is a free quality bump through
+  the parity pipeline).

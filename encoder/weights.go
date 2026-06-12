@@ -264,29 +264,10 @@ func loadConfig(fsys fs.FS, p string) (*Config, error) {
 	return &c, nil
 }
 
+// loadF32 reads a shape-checked f32 weight. It delegates to the shared
+// embed.SafetensorsFile.TensorF32 (which also widens BF16/F16 — CodeRankEmbed's
+// weights are F32, so the F32 path is taken); kept as a thin alias so the call sites
+// don't churn.
 func loadF32(st *embed.SafetensorsFile, name string, want []int) ([]float32, error) {
-	t, err := st.Tensor(name)
-	if err != nil {
-		return nil, fmt.Errorf("encoder: tensor %q: %w", name, err)
-	}
-	if !shapeEqual(t.Shape, want) {
-		return nil, fmt.Errorf("encoder: tensor %q shape %v != expected %v", name, t.Shape, want)
-	}
-	data, err := t.Float32s()
-	if err != nil {
-		return nil, fmt.Errorf("encoder: tensor %q decode: %w", name, err)
-	}
-	return data, nil
-}
-
-func shapeEqual(a, b []int) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
+	return st.TensorF32(name, want...)
 }
