@@ -1,6 +1,10 @@
 package encoder
 
-import "math"
+import (
+	"math"
+
+	"github.com/townsendmerino/aikit/linalg"
+)
 
 // (*WeightsQ8).forward runs the int8 forward pass on a single sequence. It mirrors
 // Weights.forward exactly — same pooled scratch arena, same attention math — except
@@ -53,11 +57,10 @@ func (w *WeightsQ8) forward(ids []int32) []float32 {
 	rope := newRopeTable(L, headDim, w.Cfg.RoPEBase)
 	for i := 0; i < w.Cfg.NumLayers; i++ {
 		l := &w.Layers[i]
-		selfAttentionQ8(h, l.WqkvQ, l.WqkvScales, l.OutProjQ, l.OutProjScales,
+		selfAttentionQ8(h, &l.Wqkv, &l.OutProj,
 			heads, headDim, D, L, rope, s)
 		layerNorm(h, l.Norm1W, l.Norm1B, L, D, eps)
-		swigluMLPQ8(h, l.Fc11Q, l.Fc11Scales, l.Fc12Q, l.Fc12Scales,
-			l.Fc2Q, l.Fc2Scales, D, intermediate, L, s)
+		swigluMLPQ8(h, &l.Fc11, &l.Fc12, &l.Fc2, D, intermediate, L, s)
 		layerNorm(h, l.Norm2W, l.Norm2B, L, D, eps)
 	}
 	cls := make([]float32, D)
@@ -123,11 +126,10 @@ func (w *WeightsQ8) forwardBatch(idsList [][]int32) [][]float32 {
 	rope := newRopeTable(Lmax, headDim, w.Cfg.RoPEBase)
 	for li := 0; li < w.Cfg.NumLayers; li++ {
 		l := &w.Layers[li]
-		selfAttentionQ8Batched(h, l.WqkvQ, l.WqkvScales, l.OutProjQ, l.OutProjScales,
+		selfAttentionQ8Batched(h, &l.Wqkv, &l.OutProj,
 			heads, headDim, D, B, Lmax, realLen, rope, s)
 		layerNorm(h, l.Norm1W, l.Norm1B, BL, D, eps)
-		swigluMLPQ8(h, l.Fc11Q, l.Fc11Scales, l.Fc12Q, l.Fc12Scales,
-			l.Fc2Q, l.Fc2Scales, D, intermediate, BL, s)
+		swigluMLPQ8(h, &l.Fc11, &l.Fc12, &l.Fc2, D, intermediate, BL, s)
 		layerNorm(h, l.Norm2W, l.Norm2B, BL, D, eps)
 	}
 	out := make([][]float32, B)
@@ -140,10 +142,10 @@ func (w *WeightsQ8) forwardBatch(idsList [][]int32) [][]float32 {
 
 // selfAttentionQ8 mirrors selfAttention (pooled scratch, vectorized QKᵀ + scores·V)
 // with Wqkv/OutProj in int8 via matmulBTQ8Into. Attention itself stays f32.
-func selfAttentionQ8(h []float32, WqkvQ []int8, WqkvScales []float32,
-	OutProjQ []int8, OutProjScales []float32,
+func selfAttentionQ8(h []float32, wqkv, outProj *linalg.WeightMat,
 	heads, headDim, D, L int, rope *ropeTable, s *scratch) {
 	qkv := s.qkv[:L*3*D]
+	WqkvQ, WqkvScales, _, _ := wqkv.Int8()
 	matmulBTQ8Into(qkv, h, WqkvQ, WqkvScales, L, D, 3*D, s.deqW)
 	Q := s.Q[:L*D]
 	K := s.K[:L*D]
@@ -186,6 +188,7 @@ func selfAttentionQ8(h []float32, WqkvQ []int8, WqkvScales []float32,
 		}
 	}
 	out := s.out[:L*D]
+	OutProjQ, OutProjScales, _, _ := outProj.Int8()
 	matmulBTQ8Into(out, ctx, OutProjQ, OutProjScales, L, D, D, s.deqW)
 	for i := range h {
 		h[i] += out[i]
@@ -194,11 +197,11 @@ func selfAttentionQ8(h []float32, WqkvQ []int8, WqkvScales []float32,
 
 // selfAttentionQ8Batched mirrors selfAttentionBatched (pooled scratch, hoisted
 // per-(b,head) buffers, vectorized scores·V) with the linears in int8.
-func selfAttentionQ8Batched(h []float32, WqkvQ []int8, WqkvScales []float32,
-	OutProjQ []int8, OutProjScales []float32,
+func selfAttentionQ8Batched(h []float32, wqkv, outProj *linalg.WeightMat,
 	heads, headDim, D, B, Lmax int, realLen []int, rope *ropeTable, s *scratch) {
 	BL := B * Lmax
 	qkv := s.qkv[:BL*3*D]
+	WqkvQ, WqkvScales, _, _ := wqkv.Int8()
 	matmulBTQ8Into(qkv, h, WqkvQ, WqkvScales, BL, D, 3*D, s.deqW)
 	Q := s.Q[:BL*D]
 	K := s.K[:BL*D]
@@ -256,6 +259,7 @@ func selfAttentionQ8Batched(h []float32, WqkvQ []int8, WqkvScales []float32,
 		}
 	}
 	out := s.out[:BL*D]
+	OutProjQ, OutProjScales, _, _ := outProj.Int8()
 	matmulBTQ8Into(out, ctx, OutProjQ, OutProjScales, BL, D, D, s.deqW)
 	for i := range h {
 		h[i] += out[i]
@@ -264,18 +268,19 @@ func selfAttentionQ8Batched(h []float32, WqkvQ []int8, WqkvScales []float32,
 
 // swigluMLPQ8 mirrors swigluMLP with fc11/fc12/fc2 in int8 via matmulBTQ8Into and the
 // SiLU gate in f32, writing into pooled scratch (val/gate/mid).
-func swigluMLPQ8(h []float32, Fc11Q []int8, Fc11Scales []float32,
-	Fc12Q []int8, Fc12Scales []float32,
-	Fc2Q []int8, Fc2Scales []float32,
+func swigluMLPQ8(h []float32, fc11, fc12, fc2 *linalg.WeightMat,
 	D, intermediate, L int, s *scratch) {
 	val := s.val[:L*intermediate]
 	gate := s.gate[:L*intermediate]
+	Fc11Q, Fc11Scales, _, _ := fc11.Int8()
+	Fc12Q, Fc12Scales, _, _ := fc12.Int8()
 	matmulBTQ8Into(val, h, Fc11Q, Fc11Scales, L, D, intermediate, s.deqW)
 	matmulBTQ8Into(gate, h, Fc12Q, Fc12Scales, L, D, intermediate, s.deqW)
 	for i, v := range val {
 		val[i] = v * silu(gate[i])
 	}
 	mid := s.mid[:L*D]
+	Fc2Q, Fc2Scales, _, _ := fc2.Int8()
 	matmulBTQ8Into(mid, val, Fc2Q, Fc2Scales, L, intermediate, D, s.deqW)
 	for i := range h {
 		h[i] += mid[i]

@@ -10,6 +10,37 @@ it.
 
 ## [Unreleased]
 
+### Added
+
+- **`linalg.WeightMat` — a precision-hiding quantized-weight matrix (Experimental).**
+  One type that holds an f32 / per-row-int8 / group-int4 weight behind a uniform
+  `MatmulBT(a, dst, M)` (+ a `Workspace`-scoped variant honoring `SetThreshold`/
+  `SetWorkers`), a `Row(i)` dequant for embedding lookup, and raw accessors
+  (`Int8()`/`Int4()`/`F32()`) for GPU export, serialization, and a consumer's own
+  kernel. It consolidates the weight-matrix wrapper that was open-coded **three
+  times** — aikit `encoder.LayerWeightsQ8`, goinfer `decoder.weightMat`
+  (f32/int8/int4-group/W8A8), goinfer `vision.qmat` (f32/W8A8). It hides **storage
+  only** — precision, scales, dispatch; model *policy* (which table gets which
+  precision, int4 group size, GPU-backend routing) stays with the consumer.
+  Dispatch reuses the existing `linalg` kernels — **no new asm**; outputs are
+  bit-identical to each consumer's prior kernel call. Additive.
+
+### Changed
+
+- **`encoder` int8 (Q8) path migrated onto `linalg.WeightMat` — bit-identical, zero
+  output change.** `LayerWeightsQ8` now stores each of the five big projections
+  (Wqkv/OutProj/fc11/fc12/fc2) as a weight-only-Q8 `linalg.WeightMat` instead of an
+  open-coded `[]int8` + `[]float32` scales pair. `LoadWeightsQ8` quantizes via
+  `linalg.QuantizeInt8`, which is bit-identical to the encoder's `quantizeRowsInt8`
+  (same per-row symmetric max/127 round+clamp), and the forward still drives the
+  encoder's own baked-scale `matmulBTQ8Into` over the codes/scales pulled via
+  `WeightMat.Int8()` — the kernel is unchanged (it is numerically distinct from
+  `linalg.MatmulBTQ8`: large-M dequant-once-into-scratch). `TestModelQ8_cosineMatchesF32`
+  holds at cosine 0.997, full Q8 golden/parity suite green, `-race` clean. The
+  removed `LayerWeightsQ8` int8/scales fields are Experimental-tier surface. First
+  of the three consumer migrations; goinfer's `vision.qmat` and `decoder.weightMat`
+  migrate against the released minor.
+
 ## [1.6.0] — 2026-06-12
 
 ### Changed

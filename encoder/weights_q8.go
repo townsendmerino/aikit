@@ -1,6 +1,9 @@
 package encoder
 
-import "github.com/townsendmerino/aikit/embed"
+import (
+	"github.com/townsendmerino/aikit/embed"
+	"github.com/townsendmerino/aikit/linalg"
+)
 
 // LayerWeightsQ8 is the M8 int8-quantized per-layer bundle. Only the
 // big linear projections are quantized — the LayerNorm parameters
@@ -8,23 +11,18 @@ import "github.com/townsendmerino/aikit/embed"
 // memory saving, plus LN is parity-sensitive: float-noise from
 // quantizing γ/β here would compound across the 12 layers).
 //
-// Each big matrix has its own (int8 weights, per-row f32 scales) pair.
-// Reconstruction: f32[i,j] ≈ float32(qWeights[i*K+j]) * scales[i].
+// Each big matrix is a weight-only Q8 linalg.WeightMat (per-row int8 +
+// per-row f32 scales; reconstruction f32[i,j] ≈ int8[i*K+j] * scale[i]).
+// The forward still drives the encoder's own baked-scale matmulBTQ8Into
+// over the int8 codes/scales pulled via WeightMat.Int8() — storage is
+// shared, the kernel stays the encoder's (it is numerically distinct
+// from linalg.MatmulBTQ8: large-M dequant-once-into-scratch).
 type LayerWeightsQ8 struct {
-	WqkvQ      []int8    // [3*HiddenDim * HiddenDim] int8
-	WqkvScales []float32 // [3*HiddenDim] per-row scales
-
-	OutProjQ      []int8
-	OutProjScales []float32
-
-	Fc11Q      []int8
-	Fc11Scales []float32
-
-	Fc12Q      []int8
-	Fc12Scales []float32
-
-	Fc2Q      []int8
-	Fc2Scales []float32
+	Wqkv    linalg.WeightMat // [3*HiddenDim, HiddenDim]
+	OutProj linalg.WeightMat // [HiddenDim, HiddenDim]
+	Fc11    linalg.WeightMat // [IntermediateDim, HiddenDim]
+	Fc12    linalg.WeightMat // [IntermediateDim, HiddenDim]
+	Fc2     linalg.WeightMat // [HiddenDim, IntermediateDim]
 
 	// LN weights stay f32 — small (768 each) so no memory saving, and
 	// LN is the parity-sensitive op the f32 forward already uses f64
@@ -90,12 +88,15 @@ func LoadWeightsQ8(dir string) (*WeightsQ8, error) {
 			Norm2W: cloneFloat32(l.Norm2W),
 			Norm2B: cloneFloat32(l.Norm2B),
 		}
-		// Quantize big projections (rows = output dim, cols = input dim).
-		lq.WqkvQ, lq.WqkvScales = quantizeRowsInt8(l.Wqkv, 3*cfg.HiddenDim, cfg.HiddenDim)
-		lq.OutProjQ, lq.OutProjScales = quantizeRowsInt8(l.OutProj, cfg.HiddenDim, cfg.HiddenDim)
-		lq.Fc11Q, lq.Fc11Scales = quantizeRowsInt8(l.Fc11, cfg.IntermediateDim, cfg.HiddenDim)
-		lq.Fc12Q, lq.Fc12Scales = quantizeRowsInt8(l.Fc12, cfg.IntermediateDim, cfg.HiddenDim)
-		lq.Fc2Q, lq.Fc2Scales = quantizeRowsInt8(l.Fc2, cfg.HiddenDim, cfg.IntermediateDim)
+		// Quantize big projections (rows = output dim, cols = input dim) to
+		// weight-only Q8. linalg.QuantizeInt8 is bit-identical to the encoder's
+		// quantizeRowsInt8 (same per-row symmetric max/127 round+clamp), so the
+		// stored codes/scales — and the forward — are unchanged.
+		lq.Wqkv = linalg.QuantizeInt8(l.Wqkv, 3*cfg.HiddenDim, cfg.HiddenDim, false)
+		lq.OutProj = linalg.QuantizeInt8(l.OutProj, cfg.HiddenDim, cfg.HiddenDim, false)
+		lq.Fc11 = linalg.QuantizeInt8(l.Fc11, cfg.IntermediateDim, cfg.HiddenDim, false)
+		lq.Fc12 = linalg.QuantizeInt8(l.Fc12, cfg.IntermediateDim, cfg.HiddenDim, false)
+		lq.Fc2 = linalg.QuantizeInt8(l.Fc2, cfg.HiddenDim, cfg.IntermediateDim, false)
 		q.Layers[i] = lq
 	}
 	// Release the underlying mmap (the f32 weights are no longer needed —

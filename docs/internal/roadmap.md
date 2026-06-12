@@ -132,16 +132,31 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    external consumer (the same bar the original Hard tier met). Trigger:
    §1.3's adopter + that stability window. Re-run the surface audit's
    "re-evaluate" notes (unconsumed Workspace methods) at that moment.
+   *Note (§2.8):* `WeightMat.MatmulBTInto`'s f32/W8A8 paths now route
+   through the `Workspace`-scoped matmul (honoring `SetThreshold`/
+   `SetWorkers`), but no in-repo consumer exercises them yet — the encoder
+   Q8 migration uses its own baked-scale kernel. The "unconsumed" status
+   flips only when the goinfer `decoder.weightMat` f32 path migrates onto
+   `MatmulBTInto`; re-evaluate then.
 8. **`linalg.WeightMat` — unify the quantized-weight abstraction** —
-   *new (goinfer review):* the precision-hiding weight-matrix wrapper is
-   now implemented **three times** — aikit `encoder.LayerWeightsQ8`,
-   goinfer `decoder.weightMat` (f32/int8/int4-group/W8A8, the richest),
-   goinfer `vision.qmat` (f32/W8A8) — all dispatching into `linalg`.
-   A shared Experimental `linalg.WeightMat` would collapse them, but
-   `weightMat` is goinfer's fastest-moving internal type, so hoisting it
-   now adds semver friction exactly where iteration happens. Trigger:
-   the next time goinfer must *change* the abstraction anyway, or a
-   fourth implementation appears. Not standalone work.
+   🟡 **IN PROGRESS (type + 1 of 3 consumers).** The precision-hiding
+   weight-matrix wrapper was implemented **three times** — aikit
+   `encoder.LayerWeightsQ8`, goinfer `decoder.weightMat`
+   (f32/int8/int4-group/W8A8, the richest), goinfer `vision.qmat`
+   (f32/W8A8) — all dispatching into `linalg`. The shared Experimental
+   `linalg.WeightMat` now exists (storage-only: precision/scales/dispatch;
+   model policy stays with each consumer) and **aikit's `encoder` Q8 path
+   is migrated onto it, bit-identically** (cosine 0.997 unchanged, Q8
+   golden green, -race clean).
+   *Gate note:* the stated trigger (goinfer must change the abstraction
+   anyway, or a 4th impl) was **not** actively firing — goinfer is on main,
+   clean, no in-flight `weightMat` change. This proceeded as **Francis's
+   owner override**, and was scoped to land the type + in-repo consumer
+   without disturbing goinfer's fastest-moving internal type.
+   *Remaining:* migrate goinfer `vision.qmat` (smallest; validates the
+   GPU-export accessors) then `decoder.weightMat` (richest, keep goinfer's
+   `quantMode.embedding()` policy as a thin shim) against the released
+   aikit minor — `go.work replace` for dev, goinfer pins on release.
 9. **`vision` (SigLIP/ViT encoder) → aikit** — *new (goinfer review):*
    goinfer's vision tower is an *encoder* (bidirectional, emits
    embeddings, parity-pinned, deps already aikit-only: `embed`+`linalg`;
