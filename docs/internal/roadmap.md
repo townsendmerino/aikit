@@ -57,7 +57,7 @@ In order. Items 1–3 are a sequence, not a menu; each feeds the next.
    back-links the repo. Write after #1's response settles, using what the
    comments reveal about which framing lands.
 
-## 1b. One small unblocked item (from the 2026-06-12 goinfer cross-repo review)
+## 1b. Unblocked items (from the 2026-06-12 goinfer cross-repo review + external kernel review)
 
 The review's headline: **the split is holding** — goinfer consumes aikit's
 loaders/kernels properly, deps point inward only, no container-format
@@ -71,6 +71,20 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    widening) as methods. Additive to the Hard tier; goinfer deletes its
    helpers at its next aikit bump. Permitted under the standing rule as
    measured deduplication with a named consumer, not new capability.
+
+2. **2×8 register GEMM micro-kernel** — ✅ **DONE.** [high / medium]. External
+   review flagged `Dot8x4` as a load-bound 1×8 kernel (each b-load → 1 FMLA, 8
+   accumulators < the ~16 to hide FMA latency). The gate — a peak-fraction bench
+   against a *measured* f32 ceiling (`fmaPeakARM64` clocked 95.4 GFLOPS, ≈15
+   FMA/cyc, settling the 8-vs-16-FMA/cycle question empirically) — put the GEMM at
+   40–49% of peak (≤50% ⇒ proceed). `linalg.Dot2x8` (2 a-rows × 8 b-rows, 16
+   accumulators) recovered it to **68–73%**: encoder FC matmuls 1.5–1.6×, end-to-end
+   encode 1.27–1.36×, bit-identical (same accumulation order as `Dot8x4`, golden
+   parity unchanged). arm64 NEON only. Remaining levers, *not* taken (measured win
+   already lands the target, and the standing rule discourages speculative kernels):
+   the AVX2 port belongs with §2.4 (gated on Zen 4+ access); a 4×8/B-packed
+   outer-product kernel could chase the last ~25% to ~90% of peak but needs a real
+   throughput trigger to justify the packing path.
 
 ## 2. Gated — unchanged triggers, now the only path for engineering
 

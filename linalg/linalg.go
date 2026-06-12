@@ -29,6 +29,19 @@ func Dot8x4(a, b0, b1, b2, b3, b4, b5, b6, b7 *float32, n4 int, sums *[32]float3
 	dotNEON8x4(a, b0, b1, b2, b3, b4, b5, b6, b7, n4, sums)
 }
 
+// Dot2x8 is the MR×NR (2 a-rows × 8 b-rows) register microkernel: it computes the 16
+// dot products of two shared rows a0,a1 against eight consecutive b-rows, with 16 live
+// 4-lane accumulators held across the K loop. Versus Dot8x4 (1×8), each b-load feeds 2
+// FMLAs instead of 1 and the accumulator count rises from 8 to 16 — addressing the 1×8
+// kernel's load- and latency-binding (see BenchmarkGEMMPeakFraction). sums holds 16
+// 4-lane partial-dot blocks ([a0·b0 … a0·b7, a1·b0 … a1·b7]); the caller sums each
+// block's 4 lanes and adds the K%4 scalar tail. arm64 has the NEON kernel; other arches
+// get a portable reduction (the encoder wires this in only on arm64, keeping amd64 on
+// the AVX2 Dot8x4 path).
+func Dot2x8(a0, a1, b0, b1, b2, b3, b4, b5, b6, b7 *float32, n4 int, sums *[64]float32) {
+	dotNEON2x8(a0, a1, b0, b1, b2, b3, b4, b5, b6, b7, n4, sums)
+}
+
 // parThreshold is the MAC count (M*N*K) below which a matmul runs serially —
 // under it the goroutine fork/join costs more than the parallelism saves. It is
 // set high enough that the M=1 single-token decode projections (≤ ~9M MACs for

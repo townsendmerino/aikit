@@ -25,7 +25,13 @@ by build tag + runtime CPU detection:
 | other | `linalg/dot_generic.go`, `dot_other.go` | portable scalar |
 
 On top of the dot kernels, `linalg` provides:
-- `Dot`, `Dot4x4`, `Dot8x4`, `MatmulBT` (f32 row-parallel).
+- `Dot`, `Dot4x4`, `Dot8x4`, `Dot2x8`, `MatmulBT` (f32 row-parallel). `Dot2x8`
+  (arm64 NEON) is the MR×NR register kernel: 2 a-rows × 8 b-rows, 16 accumulators
+  held across the K loop so each b-load feeds 2 FMLAs — vs `Dot8x4`'s 1×8, which
+  was load- and latency-bound (≈40% of the *measured* 95.4 GFLOPS M1-Pro f32
+  ceiling; `BenchmarkGEMMPeakFraction` + the `fmaPeakARM64` ceiling probe gate
+  this). It computes each dot in `Dot8x4`'s accumulation order, so it is
+  bit-identical, not a new-numerics path.
 - The quant matmuls: `MatmulBTQ8` (int8 weights), `MatmulBTQ4` (int4 group, f32
   activations — prefill path), **W8A8** (`MatmulBTW8A8` + the zero-alloc
   `…Into(ws *Workspace)` and the fused `MatmulBTW8A8Batch`), and **W4A8**
@@ -37,7 +43,10 @@ On top of the dot kernels, `linalg` provides:
   per-`Workspace` spin-then-park worker pool.
 
 **2. `encoder/` — the encoder's own matmul orchestration.** `encoder/linalg.go`
-is the cache-blocked `matmulBTInto` (calls `linalg.Dot8x4`/`Dot4x4`);
+is the cache-blocked `matmulBTInto` (calls `linalg.Dot2x8` for M≥2 row-pairs on
+arm64, falling back to `linalg.Dot8x4`/`Dot4x4` for the odd row, the <8-col tail
+via `accumRowRange`, and all of amd64 — gated by the `has2x8Kernel` build const);
+`encoder/linalg_q8.go` is its int8 variant; `encoder/parallel.go` row-splits a
 `encoder/linalg_q8.go` is its int8 variant; `encoder/parallel.go` row-splits a
 **single** `Encode` across cores (gated by an atomic in-flight-forward counter +
 its own `parallelThreshold`, so `EncodeBatch` — already core-saturated at the

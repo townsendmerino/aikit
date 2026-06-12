@@ -191,7 +191,42 @@ func matmulBTBlockedFillIntoTiled(a, b, dst []float32, M, K, N, mBlock, nBlock, 
 				// its n4 = kSpan/4 split + the inner scalar tail.
 				k4 := kSpan / 4
 				// Micro-kernel: (iEnd-i0) × (nEnd-n0) tile, K strip [k0, kEnd).
-				for i := i0; i < iEnd; i++ {
+				i := i0
+				if has2x8Kernel {
+					// arm64: fold row PAIRS through the 2×8 register kernel —
+					// each b-load feeds 2 FMLAs (vs 1 in the 1×8 Dot8x4) across
+					// 16 live accumulators, recovering the load/latency headroom
+					// the gate measured. 8-col groups go through Dot2x8; the
+					// <8-col n-tail (and any odd final row, below) reuse the
+					// Dot8x4/Dot4x4/scalar path via accumRowRange.
+					nEndAligned8 := n0 + ((nEnd-n0)/8)*8
+					var s [64]float32
+					for ; i+1 < iEnd; i += 2 {
+						a0 := &a[i*K+k0]
+						a1 := &a[(i+1)*K+k0]
+						n := n0
+						for ; n < nEndAligned8; n += 8 {
+							linalg.Dot2x8(a0, a1,
+								&b[n*K+k0], &b[(n+1)*K+k0], &b[(n+2)*K+k0], &b[(n+3)*K+k0],
+								&b[(n+4)*K+k0], &b[(n+5)*K+k0], &b[(n+6)*K+k0], &b[(n+7)*K+k0],
+								k4, &s)
+							for r := range 2 {
+								ii := i + r
+								base := r * 32
+								for j := range 8 {
+									sum := s[base+j*4] + s[base+j*4+1] + s[base+j*4+2] + s[base+j*4+3]
+									for k := k4 * 4; k < kSpan; k++ {
+										sum += a[ii*K+k0+k] * b[(n+j)*K+k0+k]
+									}
+									dst[ii*N+n+j] += sum
+								}
+							}
+						}
+						accumRowRange(a, b, dst, i, K, N, k0, k4, kSpan, n, nEnd)
+						accumRowRange(a, b, dst, i+1, K, N, k0, k4, kSpan, n, nEnd)
+					}
+				}
+				for ; i < iEnd; i++ {
 					aRowPtr := &a[i*K+k0]
 					dstRow := dst[i*N+n0 : i*N+nEnd]
 					n := n0
@@ -268,6 +303,80 @@ func matmulBTBlockedFillIntoTiled(a, b, dst []float32, M, K, N, mBlock, nBlock, 
 				}
 			}
 		}
+	}
+}
+
+// accumRowRange computes dst[i, n] += Σ_{k∈[k0,k0+kSpan)} a[i,k]·b[n,k] for n∈[nStart,
+// nEnd), via the 8-col Dot8x4 kernel, a 4-col Dot4x4 tail, and a scalar column tail. k4 =
+// kSpan/4 (the vectorised k-count; the inner scalar loop covers the kSpan%4 remainder).
+// It is the original single-row micro-kernel body, factored out so the 2×8 dual-row path
+// can reuse it for its <8-col n-tail and for an odd final row.
+func accumRowRange(a, b, dst []float32, i, K, N, k0, k4, kSpan, nStart, nEnd int) {
+	aRowPtr := &a[i*K+k0]
+	n := nStart
+	nEndAligned8 := nStart + ((nEnd-nStart)/8)*8
+	var sums8 [32]float32
+	for ; n < nEndAligned8; n += 8 {
+		linalg.Dot8x4(aRowPtr,
+			&b[n*K+k0], &b[(n+1)*K+k0], &b[(n+2)*K+k0], &b[(n+3)*K+k0],
+			&b[(n+4)*K+k0], &b[(n+5)*K+k0], &b[(n+6)*K+k0], &b[(n+7)*K+k0],
+			k4, &sums8)
+		s0 := sums8[0] + sums8[1] + sums8[2] + sums8[3]
+		s1 := sums8[4] + sums8[5] + sums8[6] + sums8[7]
+		s2 := sums8[8] + sums8[9] + sums8[10] + sums8[11]
+		s3 := sums8[12] + sums8[13] + sums8[14] + sums8[15]
+		s4 := sums8[16] + sums8[17] + sums8[18] + sums8[19]
+		s5 := sums8[20] + sums8[21] + sums8[22] + sums8[23]
+		s6 := sums8[24] + sums8[25] + sums8[26] + sums8[27]
+		s7 := sums8[28] + sums8[29] + sums8[30] + sums8[31]
+		for k := k4 * 4; k < kSpan; k++ {
+			av := a[i*K+k0+k]
+			s0 += av * b[n*K+k0+k]
+			s1 += av * b[(n+1)*K+k0+k]
+			s2 += av * b[(n+2)*K+k0+k]
+			s3 += av * b[(n+3)*K+k0+k]
+			s4 += av * b[(n+4)*K+k0+k]
+			s5 += av * b[(n+5)*K+k0+k]
+			s6 += av * b[(n+6)*K+k0+k]
+			s7 += av * b[(n+7)*K+k0+k]
+		}
+		dst[i*N+n+0] += s0
+		dst[i*N+n+1] += s1
+		dst[i*N+n+2] += s2
+		dst[i*N+n+3] += s3
+		dst[i*N+n+4] += s4
+		dst[i*N+n+5] += s5
+		dst[i*N+n+6] += s6
+		dst[i*N+n+7] += s7
+	}
+	nEndAligned4 := nStart + ((nEnd-nStart)/4)*4
+	var sums [16]float32
+	for ; n < nEndAligned4; n += 4 {
+		linalg.Dot4x4(aRowPtr,
+			&b[n*K+k0], &b[(n+1)*K+k0], &b[(n+2)*K+k0], &b[(n+3)*K+k0],
+			k4, &sums)
+		s0 := sums[0] + sums[1] + sums[2] + sums[3]
+		s1 := sums[4] + sums[5] + sums[6] + sums[7]
+		s2 := sums[8] + sums[9] + sums[10] + sums[11]
+		s3 := sums[12] + sums[13] + sums[14] + sums[15]
+		for k := k4 * 4; k < kSpan; k++ {
+			av := a[i*K+k0+k]
+			s0 += av * b[n*K+k0+k]
+			s1 += av * b[(n+1)*K+k0+k]
+			s2 += av * b[(n+2)*K+k0+k]
+			s3 += av * b[(n+3)*K+k0+k]
+		}
+		dst[i*N+n+0] += s0
+		dst[i*N+n+1] += s1
+		dst[i*N+n+2] += s2
+		dst[i*N+n+3] += s3
+	}
+	for ; n < nEnd; n++ {
+		var s float32
+		for k := range kSpan {
+			s += a[i*K+k0+k] * b[n*K+k0+k]
+		}
+		dst[i*N+n] += s
 	}
 }
 

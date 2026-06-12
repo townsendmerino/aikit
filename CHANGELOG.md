@@ -12,6 +12,26 @@ it.
 
 ### Added
 
+- **`linalg.Dot2x8` + 2×8 register micro-kernel for the encoder GEMM** (arm64;
+  ~1.5–1.6× on the encoder's f32 matmuls). The blocked GEMM's inner kernel was
+  `Dot8x4`, a 1×8 micro-kernel: one shared `a`-strip reused across 8 b-rows, but
+  each b-load feeding exactly one FMLA and only 8 live accumulators — both
+  load-bound and below the ~16 accumulators that hide NEON FMA latency. A
+  peak-fraction gate (`BenchmarkGEMMPeakFraction`) measured it at **40–49% of this
+  M1 Pro's f32 ceiling**, where the ceiling itself was *measured* — a
+  register-saturating FMA micro-bench clocked **95.4 GFLOPS** (≈15 f32-FMA/cycle,
+  confirming the 4-pipe Firestorm figure, not the 8 a back-of-envelope assumed).
+  ≤50% ⇒ headroom. `Dot2x8` folds 2 a-rows × 8 b-rows into one call with 16
+  accumulators held across the K loop, so each b-load now feeds 2 FMLAs. It
+  computes each dot in the **same accumulation order** as `Dot8x4`, so results are
+  bit-identical and the encoder golden parity is unchanged (no tolerance change
+  needed). Wired into `encoder`'s blocked matmul for M≥2 row-pairs (the odd final
+  row and amd64 keep the `Dot8x4` path). Measured: peak fraction **40%→68–73%**;
+  encoder FC matmuls **1.52–1.58×** (L80 fc11 8.7→5.5 ms, L512 fc11 54.8→34.6 ms);
+  end-to-end **EncodeBatch 1.36×**, single-doc encode **1.27×**. M=1 decode/gemv
+  paths are untouched. arm64 NEON only; the AVX2 port is gated on Zen 4+ access
+  (roadmap §2.4). cgo-free, `-race` clean, Windows cross-build verified.
+
 - **`embed.SafetensorsFile.TensorF32` / `TensorI32` — shape-checked typed tensor
   reads** (Hard-tier surface; additive). `TensorF32(name, want...)` reads a tensor as
   `[]float32`, widening BF16/F16 to f32 and optionally asserting the shape; `TensorI32`
