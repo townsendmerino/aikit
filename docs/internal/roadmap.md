@@ -107,9 +107,10 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    (K=768 dims are already low-stride) and arm64 (packed kernel is NEON `Dot2x8`; amd64
    AVX2 packing → §2.4). Remaining: large M (≥~2048) recovers less (≈53%) because the
    a-panel is re-read per column-group — full 3-level (Goto) blocking with A-packing would
-   close it (~70%+) but is a substantial new path, deferred until a real large-M-prefill
-   need (goinfer's trigger: multimodal image-prefill). Measured along the way: smaller
-   kBlock and wide n-panels both *hurt* — the simple 8-col pack is the sweet spot.
+   close it (~70%+) but is a substantial new path, promoted to **§2.12** with its trigger
+   (a real large-M f32 prefill that's watched — concretely goinfer's multimodal
+   image-prefill). Measured along the way: smaller kBlock and wide n-panels both *hurt* —
+   the simple 8-col pack is the sweet spot.
 
 ## 2. Gated — unchanged triggers, now the only path for engineering
 
@@ -160,6 +161,16 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    which neither repo has); `rmsnorm`/`rope` (small, intentional
    duplication per the split); constrain/chat/sampler/serve/gpu.
 11. **AMX** — out of scope.
+12. **3-level (Goto) f32 GEMM for large-M prefill** — *new (from the §1b.3 packing
+   work).* B-panel packing took large-K shapes to ~69% at M≤~1024, but large M
+   (≥~2048) recovers less (≈53%): the a-panel is re-read once per output column-group.
+   Closing it needs full Goto blocking — an L2-resident packed B panel reused across
+   M-blocks, plus A-packing, plus a 3-level (nc/kc/mc) loop. Substantial new kernel
+   path. Trigger: a real large-M f32 prefill that anyone watches — concretely goinfer's
+   multimodal **image**-prefill latency (the same trigger as §2.9 vision), since that is
+   the one hot f32 `MatmulBT` consumer with M≥2048. Measured dead-ends recorded so they
+   aren't re-tried: smaller kBlock and wide n-panels both regress. Bundle the amd64 AVX2
+   packed kernel (§2.4) with it.
 
 ---
 
