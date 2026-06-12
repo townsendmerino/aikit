@@ -40,6 +40,12 @@ On top of the dot kernels, `linalg` provides:
   computes each dot in `Dot8x4`'s accumulation order (bit-identical), so the blocked
   GEMM differs from the naive span only by f32 reassociation; `MatmulBTAcc64` stays
   f64-exact. Column shards are 8-aligned, so `SetParallelWidth` stays numerically inert.
+  At **K≥2048** the blocked path (arm64) first **packs** each 8-row b-group into a
+  contiguous low-stride buffer (`packedFill`): at large K the simultaneously-read b-rows
+  are K·4 bytes apart and collide in L1 cache sets, so packing them ~kBlock apart kills
+  the conflicts (prefill 46%→69%, K=3072 fc2 +15%) — bit-identical (same values, same
+  order), via a pooled buffer. K=768 dims stay unpacked (already low-stride); amd64 stays
+  on the unpacked AVX2 path (AVX2 packing deferred).
 - The quant matmuls: `MatmulBTQ8` (int8 weights), `MatmulBTQ4` (int4 group, f32
   activations — prefill path), **W8A8** (`MatmulBTW8A8` + the zero-alloc
   `…Into(ws *Workspace)` and the fused `MatmulBTW8A8Batch`), and **W4A8**

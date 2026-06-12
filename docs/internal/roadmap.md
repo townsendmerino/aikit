@@ -97,10 +97,19 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    Experimental `MatmulBTInto` (serial) both use it, and the encoder delegates
    (bit-identical, golden parity unchanged). Measured **7%→46%** at M=512×4096×4096
    (~6.3×), **68–75%** at the K=768 transformer tiles; small matmuls keep the naive span
-   (threshold); width stays numerically inert (8-aligned shards). The large-K/N prefill
-   shape lands at 46% not 68% (64 MB b-panel spills L2) — tile-tuning for big shapes is a
-   small remaining lever, deferred until a consumer's prefill latency is a watched number
-   (goinfer's stated trigger: multimodal image-prefill).
+   (threshold); width stays numerically inert (8-aligned shards).
+
+   Then the 46% itself was chased and mostly closed: the large-K shortfall wasn't tile
+   size but **L1 associativity conflicts** — the 8 b-rows a `Dot2x8` reads are K·4 bytes
+   apart and collide in the same cache sets. **B-panel packing** (copy each 8-row group
+   into a low-stride buffer first) fixed it **bit-identically**: prefill M=512 **46%→69%**,
+   and the encoder's own K=3072 fc2 **+15%** (golden parity unchanged). Gated to K≥2048
+   (K=768 dims are already low-stride) and arm64 (packed kernel is NEON `Dot2x8`; amd64
+   AVX2 packing → §2.4). Remaining: large M (≥~2048) recovers less (≈53%) because the
+   a-panel is re-read per column-group — full 3-level (Goto) blocking with A-packing would
+   close it (~70%+) but is a substantial new path, deferred until a real large-M-prefill
+   need (goinfer's trigger: multimodal image-prefill). Measured along the way: smaller
+   kBlock and wide n-panels both *hurt* — the simple 8-col pack is the sweet spot.
 
 ## 2. Gated — unchanged triggers, now the only path for engineering
 

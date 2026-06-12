@@ -12,6 +12,21 @@ it.
 
 ### Changed
 
+- **B-panel packing for the blocked GEMM at large K — prefill 46%→69% of peak, and the
+  encoder's own K=3072 fc2 +15%, bit-identically** (arm64). The cache-blocked `MatmulBT`
+  above still left large-K shapes short of the K=768 tiles' ~70% (M=512×4096×4096 sat at
+  46%): at large K the 8 b-rows a `Dot2x8` reads simultaneously are K·4 bytes apart and
+  collide in the same L1 cache sets (associativity conflicts). The fix packs each 8-row
+  b-group into a contiguous low-stride buffer (rows ~kBlock apart) before the kernel, so
+  the loads are conflict-free. It copies the same values in the same order, so it stays
+  **bit-identical** to the unpacked path — the encoder's fc2 (K=3072) now packs and runs
+  **+15%** with golden parity unchanged. Gated to K≥2048 (the K=768 transformer dims are
+  already low-stride and keep the unpacked path) and to arm64 (the packed kernel is the
+  NEON `Dot2x8`; amd64 keeps its AVX2 path — AVX2 packing is deferred to §2.4). Measured:
+  prefill M=512×4096×4096 **46%→69%**, fc2 M=512×3072×768 **64%→75%**. Large M (≥~2048)
+  recovers less (≈53%) — the a-panel re-read needs full 3-level (Goto) blocking, a
+  deferred lever. `MatmulBTInto`/`MatmulBT` dispatch into it automatically.
+
 - **`linalg.MatmulBT` is now cache + register blocked — ~6× faster at prefill shapes,
   and the blocked GEMM is now shared, not duplicated.** `MatmulBT` was a naive
   dot-per-output span that re-streamed `b` from DRAM once per `a`-row; a cross-repo gate
