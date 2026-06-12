@@ -992,7 +992,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.6.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/townsendmerino/aikit/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/townsendmerino/aikit/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/townsendmerino/aikit/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/townsendmerino/aikit/compare/v1.3.0...v1.4.0
