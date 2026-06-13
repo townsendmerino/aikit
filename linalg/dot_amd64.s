@@ -129,17 +129,21 @@ dotFMA4_loop8:
 dotFMA4_tail4:
 	CMPQ CX, $4
 	JL   dotFMA4_reduce
+	// Trailing single 4-group (n4 odd, n%8==4). Load the 4 a/b floats into the
+	// LOW 128 of YMMs — VEX.128 VMOVUPS zero-extends the upper lanes — then FMA
+	// in YMM form so the accumulators' lanes 4..7 (the loop's partials) are
+	// preserved. An XMM-form FMA into X0..X3 here would VEX-zero those lanes and
+	// drop the loop result (the odd-n4 bug fixed in v1.7.3). The zero upper lanes
+	// of the operands contribute 0, so only lanes 0..3 receive the tail.
 	VMOVUPS     0(SI), X8
-	VFMADD231PS 0(R8), X8, X0
-	VFMADD231PS 0(R9), X8, X1
-	VFMADD231PS 0(R10), X8, X2
-	VFMADD231PS 0(R11), X8, X3
-	ADDQ        $16, SI
-	ADDQ        $16, R8
-	ADDQ        $16, R9
-	ADDQ        $16, R10
-	ADDQ        $16, R11
-	SUBQ        $4, CX
+	VMOVUPS     0(R8), X9
+	VFMADD231PS Y9, Y8, Y0
+	VMOVUPS     0(R9), X9
+	VFMADD231PS Y9, Y8, Y1
+	VMOVUPS     0(R10), X9
+	VFMADD231PS Y9, Y8, Y2
+	VMOVUPS     0(R11), X9
+	VFMADD231PS Y9, Y8, Y3
 
 dotFMA4_reduce:
 	MOVQ out+48(FP), DI
@@ -220,25 +224,29 @@ dotFMA8_loop8:
 dotFMA8_tail4:
 	CMPQ CX, $4
 	JL   dotFMA8_reduce
+	// Trailing single 4-group (n4 odd, n%8==4). Load 4 a/b floats into the LOW
+	// 128 of YMMs (VEX.128 VMOVUPS zero-extends the upper lanes) and FMA in YMM
+	// form, so the accumulators' lanes 4..7 (the loop's partials) survive. An
+	// XMM-form FMA into X0..X7 would VEX-zero those lanes and drop the loop
+	// result — the odd-n4 bug fixed in v1.7.3. The zero upper operand lanes
+	// contribute 0, so only lanes 0..3 receive the tail.
 	VMOVUPS     0(SI), X8
-	VFMADD231PS 0(R8), X8, X0
-	VFMADD231PS 0(R9), X8, X1
-	VFMADD231PS 0(R10), X8, X2
-	VFMADD231PS 0(R11), X8, X3
-	VFMADD231PS 0(R12), X8, X4
-	VFMADD231PS 0(R13), X8, X5
-	VFMADD231PS 0(R14), X8, X6
-	VFMADD231PS 0(R15), X8, X7
-	ADDQ        $16, SI
-	ADDQ        $16, R8
-	ADDQ        $16, R9
-	ADDQ        $16, R10
-	ADDQ        $16, R11
-	ADDQ        $16, R12
-	ADDQ        $16, R13
-	ADDQ        $16, R14
-	ADDQ        $16, R15
-	SUBQ        $4, CX
+	VMOVUPS     0(R8), X9
+	VFMADD231PS Y9, Y8, Y0
+	VMOVUPS     0(R9), X9
+	VFMADD231PS Y9, Y8, Y1
+	VMOVUPS     0(R10), X9
+	VFMADD231PS Y9, Y8, Y2
+	VMOVUPS     0(R11), X9
+	VFMADD231PS Y9, Y8, Y3
+	VMOVUPS     0(R12), X9
+	VFMADD231PS Y9, Y8, Y4
+	VMOVUPS     0(R13), X9
+	VFMADD231PS Y9, Y8, Y5
+	VMOVUPS     0(R14), X9
+	VFMADD231PS Y9, Y8, Y6
+	VMOVUPS     0(R15), X9
+	VFMADD231PS Y9, Y8, Y7
 
 dotFMA8_reduce:
 	MOVQ out+80(FP), DI

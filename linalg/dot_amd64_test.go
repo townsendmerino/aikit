@@ -51,6 +51,63 @@ func TestAVX2_dotFMA_matchesGeneric(t *testing.T) {
 	}
 }
 
+// TestAVX2_blockedKernels_oddN4 directly exercises the register-blocked AVX2
+// kernels Dot8x4/Dot4x4 (the path the blocked GEMM uses) against a scalar
+// reference, over ODD and EVEN n4. The dotFMA4/dotFMA8 loop consumes 8 floats
+// (two 4-groups) per YMM iteration; a trailing single 4-group (n4 odd, i.e.
+// n%8==4) must accumulate WITHOUT zeroing the YMM accumulators' upper lanes —
+// the regression fixed in v1.7.3 (the XMM/VEX.128 tail FMA zeroed lanes 4..7,
+// dropping the loop's partials). Pre-fix this fails for every odd n4; the
+// single-row dotFMA (TestAVX2_dotFMA_matchesGeneric) was unaffected and hid it.
+func TestAVX2_blockedKernels_oddN4(t *testing.T) {
+	if !hasAVX2 {
+		t.Skip("CPU lacks AVX2/FMA; blocked asm path not exercised")
+	}
+	rng := rand.New(rand.NewPCG(7, 11))
+	randVec := func(n int) []float32 {
+		v := make([]float32, n)
+		for i := range v {
+			v[i] = float32(rng.NormFloat64() * 0.1)
+		}
+		return v
+	}
+	// Odd n4 (1,3,5,75) is the regression; even (4,8,160) was always correct.
+	for _, n4 := range []int{1, 3, 4, 5, 8, 75, 160} {
+		n := n4 * 4
+		a := randVec(n)
+		b := make([][]float32, 8)
+		for r := range b {
+			b[r] = randVec(n)
+		}
+		ref := func(bv []float32) float32 {
+			var s float32
+			for i := 0; i < n; i++ {
+				s += a[i] * bv[i]
+			}
+			return s
+		}
+		tol := func(want float32) float32 { return 1e-3*absF32(want) + 1e-4 }
+
+		var s8 [32]float32
+		Dot8x4(&a[0], &b[0][0], &b[1][0], &b[2][0], &b[3][0], &b[4][0], &b[5][0], &b[6][0], &b[7][0], n4, &s8)
+		for r := 0; r < 8; r++ {
+			want := ref(b[r])
+			if got := s8[r*4]; absF32(got-want) > tol(want) {
+				t.Errorf("Dot8x4 n4=%d row=%d: got=%v want=%v (Δ%v)", n4, r, got, want, absF32(got-want))
+			}
+		}
+
+		var s4 [16]float32
+		Dot4x4(&a[0], &b[0][0], &b[1][0], &b[2][0], &b[3][0], n4, &s4)
+		for r := 0; r < 4; r++ {
+			want := ref(b[r])
+			if got := s4[r*4]; absF32(got-want) > tol(want) {
+				t.Errorf("Dot4x4 n4=%d row=%d: got=%v want=%v (Δ%v)", n4, r, got, want, absF32(got-want))
+			}
+		}
+	}
+}
+
 // TestAVX2_detection sanity-checks that feature detection runs without
 // faulting and reports a plausible result (CPUID leaf 0 must be ≥1 on
 // any real amd64). It does not assert AVX2 presence — that's host-

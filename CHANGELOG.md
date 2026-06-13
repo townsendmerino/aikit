@@ -10,6 +10,29 @@ it.
 
 ## [Unreleased]
 
+## [1.7.3] — 2026-06-13
+
+### Fixed
+
+- **amd64 AVX2 `Dot8x4`/`Dot4x4` produced wrong results for odd `n4`** (= kSpan/4;
+  e.g. K=13 → n4=3, K=300 → n4=75). The register-blocked kernels (`dotFMA4`/
+  `dotFMA8` in `dot_amd64.s`) consume two 4-element groups per 256-bit YMM
+  iteration; a trailing single group (n4 odd ⇒ n%8==4) was accumulated with an
+  **XMM / VEX.128** FMA, which zero-extends and so **wiped the upper 128 bits** of
+  each YMM accumulator — discarding the loop's lane-4..7 partials. The tail now
+  loads the 4 a/b floats into zero-extended YMMs and FMAs in YMM form, preserving
+  the upper lanes (the zero upper operand lanes contribute 0). **Latent since
+  1.6.0** (the blocked-GEMM hoist): nothing routed odd-`n4` shapes through the
+  blocked kernel until **1.7.2** removed `MatmulBT`'s small-shape threshold — so
+  this is what makes 1.7.2's `MatmulBT` M-invariance actually correct on amd64.
+  amd64+AVX2 only — arm64 NEON and the non-AVX2 scalar fallback were always
+  correct (why every prior release and arm64 CI passed). It surfaced through
+  `MatmulBT` and, transitively, the f32 *reference* of `MatmulBTQ4` / `MatmulBTW4A8`
+  (whose quant kernels were never wrong — one root cause). The 1.7.2 threshold
+  removal **stands** (fixed forward, not reverted). Gated by a new direct kernel
+  regression test (`TestAVX2_blockedKernels_oddN4`, odd + even `n4` vs scalar) plus
+  `TestMatmulBT_MConsistent`.
+
 ## [1.7.2] — 2026-06-12
 
 ### Changed
@@ -1041,7 +1064,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.7.2...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.7.3...HEAD
+[1.7.3]: https://github.com/townsendmerino/aikit/compare/v1.7.2...v1.7.3
 [1.7.2]: https://github.com/townsendmerino/aikit/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/townsendmerino/aikit/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/townsendmerino/aikit/compare/v1.6.0...v1.7.0

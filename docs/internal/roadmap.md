@@ -143,6 +143,21 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    ("fixes X in goinfer") in a release note when only the local property
    (M-invariance) was verified. Chasing the dep cost a release of churn.
 
+   **Follow-up (v1.7.3): the threshold removal exposed a latent amd64 kernel bug —
+   found and fixed, not reverted.** Routing *all* shapes through the blocked kernel
+   meant small odd-`n4` shapes hit the amd64 AVX2 `Dot8x4`/`Dot4x4` for the first
+   time (nothing had since the 1.6.0 hoist), and those kernels were wrong for odd
+   `n4`: the trailing single 4-group used an XMM/VEX.128 FMA that zeroed the upper
+   128 bits of each YMM accumulator, dropping the loop's lane-4..7 partials (K=13,
+   K=300 failed; even-`n4` shapes passed — and arm64 / non-AVX2 were always
+   correct). 1.7.3 fixes the kernel (YMM-form tail FMA that preserves the upper
+   lanes), keeping 1.7.2's M-invariance — which is now actually correct on amd64.
+   A direct `TestAVX2_blockedKernels_oddN4` (odd + even `n4` vs scalar) closes the
+   test gap: the prior AVX2 test only exercised the single-row `dotFMA`, never the
+   multi-row blocked kernels, which is why the bug stayed latent. Meta-lesson #2:
+   a kernel test that doesn't cover the tail × every register-block width leaves a
+   blind spot exactly where reuse hides it.
+
 ## 2. Gated — unchanged triggers, now the only path for engineering
 
 1. **HNSW zero-copy mmap** — bundle with the next format bump (specced at
