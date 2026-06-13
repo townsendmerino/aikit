@@ -23,12 +23,6 @@ const (
 	kBlockDefault = 768
 )
 
-// blockedMACThreshold is the MAC count (M*K*N) below which MatmulBT stays on the naive
-// dot-per-output span: the blocked kernel's tiling/prologue overhead isn't worth it for
-// tiny matmuls (e.g. an attention QKᵀ at short sequence length). Matches the encoder's
-// long-standing naive/blocked cutoff.
-const blockedMACThreshold = 4_000_000
-
 func zeroSpanF32(s []float32) {
 	for i := range s {
 		s[i] = 0

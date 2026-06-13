@@ -10,6 +10,31 @@ it.
 
 ## [Unreleased]
 
+## [1.7.2] — 2026-06-12
+
+### Fixed
+
+- **`linalg.MatmulBT` is now M-invariant — fixes same-model speculative-decoding
+  parity (regressed since 1.6.0).** Each output `dst[i,j]` is bit-identical
+  regardless of `M`: a row computed alone (M=1) equals the same row computed inside
+  a batch (M>1). 1.6.0's blocked-GEMM hoist left a MAC-count threshold in `MatmulBT`
+  that switched a small matmul to a **naive dot-per-output span** (a different f32
+  reduction order than the blocked kernel). So a per-layer projection computed at
+  M=1 (single-token decode) and at M=K (batched verify) differed by the f32
+  reassociation (~1e-5) — enough to flip an occasional greedy argmax. Downstream
+  (goinfer) this broke same-model speculative decoding: the target's batched-verify
+  logits no longer matched the draft's one-at-a-time logits, dropping acceptance
+  from ~1.0 to 0.893 and diverging from plain greedy. The threshold is **removed** —
+  all `M` route through the one blocked-kernel reduction order, so the per-output
+  result no longer depends on `M` (nor on the parallel fan-out width, which already
+  shards 8-aligned). Measured bonus: the blocked kernel is **2–3.8× faster** than the
+  naive span it replaces at small-M decode/attention shapes, so M-invariance costs
+  nothing. Gated by `linalg.TestMatmulBT_MConsistent` (also pins `blockedFill`'s
+  internal paired-vs-odd-row consistency), and the invariant is documented on
+  `MatmulBT`. The quantized kernels (`MatmulBTW4A8`/`Q8`/`W8A8*`) were already
+  M-consistent and are untouched. The encoder is unaffected (it routes through
+  `MatmulBTInto`, which was always blocked) — golden parity unchanged.
+
 ## [1.7.1] — 2026-06-12
 
 ### Added
@@ -1010,7 +1035,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.7.1...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.7.2...HEAD
+[1.7.2]: https://github.com/townsendmerino/aikit/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/townsendmerino/aikit/compare/v1.7.0...v1.7.1
 [1.7.0]: https://github.com/townsendmerino/aikit/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/townsendmerino/aikit/compare/v1.5.0...v1.6.0

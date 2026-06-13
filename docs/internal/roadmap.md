@@ -96,8 +96,12 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    (`matmul_blocked.go`) as the single shared home; `MatmulBT` (column-parallel) and a new
    Experimental `MatmulBTInto` (serial) both use it, and the encoder delegates
    (bit-identical, golden parity unchanged). Measured **7%→46%** at M=512×4096×4096
-   (~6.3×), **68–75%** at the K=768 transformer tiles; small matmuls keep the naive span
-   (threshold); width stays numerically inert (8-aligned shards).
+   (~6.3×), **68–75%** at the K=768 transformer tiles; width stays numerically inert
+   (8-aligned shards). *(Update, v1.7.2: the naive-span threshold for small matmuls was
+   removed — it switched reduction order at the M=1↔M=K boundary and broke MatmulBT's
+   M-invariance, failing same-model speculative decoding downstream. All M now route
+   through the blocked kernel, which measured faster at small-M decode/attention shapes
+   anyway. Gated by `TestMatmulBT_MConsistent`; see §1b.4.)*
 
    Then the 46% itself was chased and mostly closed: the large-K shortfall wasn't tile
    size but **L1 associativity conflicts** — the 8 b-rows a `Dot2x8` reads are K·4 bytes
@@ -111,6 +115,25 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    (a real large-M f32 prefill that's watched — concretely goinfer's multimodal
    image-prefill). Measured along the way: smaller kBlock and wide n-panels both *hurt* —
    the simple 8-col pack is the sweet spot.
+
+4. **`MatmulBT` M-invariance — fix the speculative-decode parity regression** — ✅
+   **DONE (v1.7.2).** [high / low]. goinfer's `TestSpeculativeGreedyParity` (same-model
+   speculative: draft == target, identical weights) regressed to acceptance 0.893 when
+   it bumped its pin to 1.6.0 — same-model speculative must be **bit-exact** with greedy
+   (the target verifies a batch (M=K) of the tokens the draft proposed one-at-a-time
+   (M=1); identical weights must accept 100%). Root cause was in aikit, not the consumer:
+   §1b.3's blocked-GEMM hoist left a **naive/blocked threshold** in the public `MatmulBT`,
+   so a per-layer projection computed at M=1 (naive dot-per-output) used a *different*
+   f32 reduction order than the same projection at M=K (blocked kernel) — the ~1e-5
+   reassociation flipped the occasional greedy argmax, so draft and verify disagreed.
+   `MatmulBT` is now **M-invariant** (every output bit-identical regardless of M): the
+   threshold is removed, all M route through the one blocked-kernel order, which —
+   measured — is also *faster* at small-M decode/attention shapes (the naive span it
+   replaced was 2–3.8× slower there), so the fix has no perf cost. `blockedFill`'s own
+   internal M-invariance (paired `Dot2x8` rows vs the odd `Dot8x4` row) is pinned too.
+   Gated by `TestMatmulBT_MConsistent`; the invariant is documented on `MatmulBT`.
+   The quantized kernels (`MatmulBTW4A8`/`Q8`/`W8A8*`) were already M-consistent (goinfer
+   gates int4 with its own `TestMatmulInt4_MConsistent`) — untouched.
 
 ## 2. Gated — unchanged triggers, now the only path for engineering
 

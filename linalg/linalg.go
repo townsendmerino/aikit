@@ -115,11 +115,23 @@ func resolveWidth(width int) int {
 // Each output is a Dot of an a-row against a b-row; work is parallelized over
 // the N output columns (always large in the transformer projections, and the
 // only dimension with parallelism on the M=1 single-token decode path).
+//
+// M-INVARIANT: each output dst[i,j] is bit-identical regardless of M — a row
+// computed alone (M=1) equals the same row computed inside a batch (M>1), via
+// the one blocked-kernel reduction order (gated by TestMatmulBT_MConsistent).
+// Consumers depend on this: same-model speculative decoding accepts 100% only
+// if the target's batched-verify logits (M=K) match the draft's one-at-a-time
+// logits (M=1), and batched-prefill must match sequential-decode. The kernel is
+// not M-PARALLEL-dependent either — output columns shard 8-aligned, so the
+// fan-out width is also numerically inert (TestParallelWidth_bitIdentical).
+//
+// (Historically small matmuls below a MAC-count threshold took a naive
+// dot-per-output span; it used a different reduction order than the blocked
+// kernel, so the per-output result flipped at the M=1↔M=K threshold and broke the
+// invariant above. The threshold is gone: all M route through blockedFill, which
+// — measured — is also faster than the naive span at small-M decode/attention
+// shapes, so M-invariance costs nothing here.)
 func MatmulBT(a, b, dst []float32, M, K, N int) {
-	if int64(M)*int64(K)*int64(N) < blockedMACThreshold {
-		parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTSpan(a, b, dst, M, K, N, j0, j1) })
-		return
-	}
 	zeroSpanF32(dst[:M*N])
 	parallelCols(M*N*K, N, func(j0, j1 int) {
 		blockedFill(a, b, dst, M, K, N, j0, j1, mBlockDefault, nBlockDefault, kBlockDefault)
@@ -129,27 +141,12 @@ func MatmulBT(a, b, dst []float32, M, K, N int) {
 // MatmulBT run through a Workspace uses that Workspace's scoped threshold and worker
 // pool (SetThreshold / SetWorkers) instead of the process-wide globals — so an
 // independent decode stream tunes its own parallelism. Same shape and numerics as
-// the package-level MatmulBT.
+// the package-level MatmulBT (including the M-invariance contract documented there).
 func (w *Workspace) MatmulBT(a, b, dst []float32, M, K, N int) {
-	if int64(M)*int64(K)*int64(N) < blockedMACThreshold {
-		w.parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTSpan(a, b, dst, M, K, N, j0, j1) })
-		return
-	}
 	zeroSpanF32(dst[:M*N])
 	w.parallelCols(M*N*K, N, func(j0, j1 int) {
 		blockedFill(a, b, dst, M, K, N, j0, j1, mBlockDefault, nBlockDefault, kBlockDefault)
 	})
-}
-
-// matmulBTSpan computes output columns [j0,j1) of dst[M,N] = a[M,K]·b[N,K]ᵀ.
-func matmulBTSpan(a, b, dst []float32, M, K, N, j0, j1 int) {
-	for i := range M {
-		arow := a[i*K : i*K+K]
-		drow := dst[i*N : i*N+N]
-		for j := j0; j < j1; j++ {
-			drow[j] = dotF32(arow, b[j*K:j*K+K])
-		}
-	}
 }
 
 // MatmulBTAcc64 is MatmulBT (dst[M,N] = a[M,K] · b[N,K]ᵀ) but each output dot is
