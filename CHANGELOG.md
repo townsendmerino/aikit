@@ -12,28 +12,34 @@ it.
 
 ## [1.7.2] — 2026-06-12
 
-### Fixed
+### Changed
 
-- **`linalg.MatmulBT` is now M-invariant — fixes same-model speculative-decoding
-  parity (regressed since 1.6.0).** Each output `dst[i,j]` is bit-identical
-  regardless of `M`: a row computed alone (M=1) equals the same row computed inside
-  a batch (M>1). 1.6.0's blocked-GEMM hoist left a MAC-count threshold in `MatmulBT`
-  that switched a small matmul to a **naive dot-per-output span** (a different f32
-  reduction order than the blocked kernel). So a per-layer projection computed at
-  M=1 (single-token decode) and at M=K (batched verify) differed by the f32
-  reassociation (~1e-5) — enough to flip an occasional greedy argmax. Downstream
-  (goinfer) this broke same-model speculative decoding: the target's batched-verify
-  logits no longer matched the draft's one-at-a-time logits, dropping acceptance
-  from ~1.0 to 0.893 and diverging from plain greedy. The threshold is **removed** —
-  all `M` route through the one blocked-kernel reduction order, so the per-output
-  result no longer depends on `M` (nor on the parallel fan-out width, which already
-  shards 8-aligned). Measured bonus: the blocked kernel is **2–3.8× faster** than the
-  naive span it replaces at small-M decode/attention shapes, so M-invariance costs
-  nothing. Gated by `linalg.TestMatmulBT_MConsistent` (also pins `blockedFill`'s
-  internal paired-vs-odd-row consistency), and the invariant is documented on
-  `MatmulBT`. The quantized kernels (`MatmulBTW4A8`/`Q8`/`W8A8*`) were already
-  M-consistent and are untouched. The encoder is unaffected (it routes through
-  `MatmulBTInto`, which was always blocked) — golden parity unchanged.
+- **`linalg.MatmulBT` is now M-invariant** — its per-output f32 result no longer
+  depends on `M`. Each output `dst[i,j]` is bit-identical whether a row is computed
+  alone (M=1) or inside a batch (M>1). 1.6.0's blocked-GEMM hoist left a MAC-count
+  threshold in `MatmulBT` that routed small matmuls to a **naive dot-per-output
+  span** — a different f32 reduction order than the blocked kernel — so the same
+  projection at M=1 vs M=K differed by the f32 reassociation (~1e-5). The threshold
+  is **removed**: all `M` route through the one blocked-kernel order, so the
+  per-output result is independent of `M` (and of the parallel fan-out width, which
+  already shards 8-aligned). Measured bonus: the blocked kernel is **2–3.8× faster**
+  than the naive span it replaces at small-M decode/attention shapes. Gated by
+  `linalg.TestMatmulBT_MConsistent` (also pins `blockedFill`'s internal
+  paired-vs-odd-row consistency); the invariant is documented on `MatmulBT`. The
+  quantized kernels (`MatmulBTW4A8`/`Q8`/`W8A8*`) and the encoder (which routes
+  through `MatmulBTInto`, always blocked) are untouched.
+
+  **Correction (post-release):** this entry originally claimed the change "fixes
+  same-model speculative-decoding parity (regressed since 1.6.0)" in a downstream
+  consumer (goinfer). That was wrong. The speculative-parity failure was
+  **consumer-side** — goinfer's dense attention computed QKᵀ/AV through two code
+  paths that were not bit-identical — and was fixed there with f64 accumulation
+  (`MatmulBTAcc64`, which aikit never touched). aikit's M-invariance is an
+  independent property; it did **not** fix that bug, and removing the threshold
+  *transiently* shifted goinfer's f32 attention numerics until goinfer moved that
+  path onto the f64 kernel. The lesson, recorded: f32 `MatmulBT` is reassociation-
+  sensitive — consumers needing cross-M / cross-path bit-exactness should use
+  `MatmulBTAcc64` or the integer kernels, which is what goinfer now does.
 
 ## [1.7.1] — 2026-06-12
 
