@@ -2,27 +2,26 @@
 
 package linalg
 
-// dotW4A8GroupsAVX2 fills out[0:nGroups] with the int32 dot of each 32-wide group
-// (int8 activation · centered-int4 weight) via the fused AVX2 kernel in
-// dot_w4a8_amd64.s. Only safe when hasAVX2 (the kernel uses AVX2). group is fixed
-// at 32; nGroups = K/32.
+// dotW4A8FoldAVX2 returns the per-group-scaled f32 dot Σ_g scale[g]·(act·w)_g of
+// one int4 weight row against the int8 activation row, via the fused AVX2 kernel
+// in dot_w4a8_amd64.s. The f32 weight scales are folded IN-REGISTER (convert +
+// FMA into an 8-lane accumulator, one reduce at the end) — no per-group int32
+// scratch and no Go-side fold loop. Only safe when hasAVX2. group is fixed at 32;
+// nGroups = K/32.
 //
 //go:noescape
-func dotW4A8GroupsAVX2(act *int8, packed *byte, out *int32, nGroups int)
+func dotW4A8FoldAVX2(act *int8, packed *byte, scales *float32, nGroups int) float32
 
-// dotW4A8 computes one W4A8 output (before the activation scale). With AVX2 and
-// the group-32 layout the fused kernel emits the per-group int32 dots into sums
-// (caller-owned scratch, len ≥ K/32) and Go folds in the f32 weight scales; a
-// scalar tail mops up any ragged final group. Mirrors the arm64 dispatch
-// (quant_w4a8_arm64.go); everything else falls back to the portable reference.
+// dotW4A8 computes one W4A8 output (before the activation scale). The AVX2 path
+// folds the per-group weight scales inside the kernel and returns the f32 dot
+// directly; only a ragged final group (K % 32 ≠ 0) is mopped up in Go. The sums
+// scratch is unused on amd64 (the kernel keeps the accumulation in registers);
+// it's kept in the signature for the shared call site + the arm64 path.
+// Everything off the fast path falls back to the portable reference.
 func dotW4A8(act []int8, packed []byte, scales []float32, group, K int, sums []int32) float32 {
 	if hasAVX2 && group == 32 && K >= 32 {
 		nFull := K / 32
-		dotW4A8GroupsAVX2(&act[0], &packed[0], &sums[0], nFull)
-		var total float32
-		for g := 0; g < nFull; g++ {
-			total += float32(sums[g]) * scales[g]
-		}
+		total := dotW4A8FoldAVX2(&act[0], &packed[0], &scales[0], nFull)
 		if done := nFull * 32; done < K {
 			// Ragged final group (K not a multiple of 32): scalar, scales[nFull].
 			var acc int32

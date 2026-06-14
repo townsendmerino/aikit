@@ -10,6 +10,16 @@ package linalg
 //go:noescape
 func dotW4A8GroupsSDOT(act *int8, packed *byte, out *int32, nGroups int)
 
+// dotW4A8FoldSDOT is the in-register-scale-fold NEON kernel (returns the folded
+// f32 dot, one reduce per row), the arm64 counterpart of the validated
+// dotW4A8FoldAVX2. DRAFT: cross-compiles + asmdecl-checks on the amd64 dev box but
+// is UNWIRED and UNVALIDATED on hardware — wire dotW4A8 to it and confirm
+// quant_w4a8_test.go + BenchmarkQ4vsQ8 on an arm64 box before relying on it (see
+// dot_w4a8_arm64.s). Kept declared (not called) so it builds and is ready to wire.
+//
+//go:noescape
+func dotW4A8FoldSDOT(act *int8, packed *byte, scales *float32, nGroups int) float32
+
 // dotW4A8 computes one W4A8 output (before the activation scale). On DotProd
 // hardware with the group-32 layout the fused kernel emits the per-group int32
 // dots into sums (caller-owned scratch, len ≥ K/32) and Go folds in the f32
