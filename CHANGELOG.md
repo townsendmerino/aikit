@@ -10,6 +10,39 @@ it.
 
 ## [Unreleased]
 
+## [1.8.0] — 2026-06-14
+
+### Added
+
+- **`vision.QwenVisionEncoder` — Qwen2.5-VL vision tower (second ViT family, dynamic
+  resolution).** A pure-Go fp32 forward of the Qwen2.5-VL `.visual` submodule, added
+  additively alongside the SigLIP `Encoder` (unchanged). Unlike SigLIP (fixed
+  896×896 → 256 tokens, learned absolute pos, LayerNorm, gelu-tanh MLP), this is
+  dynamic-resolution: `LoadQwenVisionEncoder(dir, quant)` +
+  `Forward(pixelValues []float32, gridTHW [][3]int)` take pre-patchified
+  `pixel_values [n_patches, patch_dim]` + per-image `(t,h,w)` grids (preprocessing
+  lives upstream in goinfer) and return the merged image embeddings
+  `[n_merged, out_hidden_size]` in original patch order. Implements the Qwen deltas:
+  Conv3d patch embed (as a matmul), 2D rotary position embedding, RMSNorm,
+  windowed + full attention (`fullatt_block_indexes` + `cu_seqlens`), a gated SiLU
+  MLP, and the spatial-merge patch merger (erf-GELU). Reuses the `qmat` W8A8 wrapper
+  for the projections (the patch-embed matmul stays f32). `ForwardViT` exposes the
+  pre-merge hidden for stage-isolated parity. Gated by `TestQwenVisionEncoder_parity`
+  (cosine ≥ 0.9999 on both the ViT pre-merge hidden and the merged features, fp32 —
+  measured 1.0) vs the HF `Qwen2_5_VisionTransformerPretrainedModel` golden
+  (`scripts/pin_qwen25vl_vision.py`, transformers 5.12). W8A8 quant of this tower and
+  a resident-GPU path are follow-ons.
+
+### Changed
+
+- **arm64 W4A8 NEON now uses the in-register scale-fold kernel (`dotW4A8FoldSDOT`).**
+  `dotW4A8` is wired to the fold path (mirroring the amd64 dispatch) and validated on
+  an M1 Pro; the old per-group `dotW4A8GroupsSDOT` path is removed. The W4A8 matmul
+  itself is ~1.33–1.43× faster on M1 (e.g. K2048×N2048 M=1: 250→175 µs), narrowing
+  the W4A8/W8A8 gap from ~2.25× to ~1.5×. `MatmulBTW4A8` accuracy unchanged (relL2
+  0.007–0.009); `TestW4A8_dotMatchesScalar` passes at 1e-5 vs scalar. amd64, W8A8,
+  and f32 `MatmulBT` untouched.
+
 ## [1.7.3] — 2026-06-13
 
 ### Fixed

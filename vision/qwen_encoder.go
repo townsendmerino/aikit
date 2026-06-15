@@ -1,0 +1,554 @@
+package vision
+
+import (
+	"encoding/json"
+	"fmt"
+	"math"
+	"os"
+	"path/filepath"
+
+	"github.com/townsendmerino/aikit/embed"
+	"github.com/townsendmerino/aikit/linalg"
+)
+
+// Qwen2.5-VL vision tower — aikit's second ViT family (after SigLIP / encoder.go),
+// the Qwen2.5-VL `.visual` submodule as a pure-Go fp32 forward. Where SigLIP is
+// fixed-resolution (896×896 → 256 tokens, learned absolute pos, LayerNorm,
+// gelu-tanh MLP), this is DYNAMIC-resolution: pre-flattened patches + grid_thw,
+// 2D rotary, RMSNorm, windowed + full attention, a gated SiLU MLP, and a
+// spatial-merge patch merger. Parity is cosine vs the HF
+// Qwen2_5_VisionTransformerPretrainedModel golden (scripts/pin_qwen25vl_vision.py),
+// gated in two stages: the ViT pre-merge hidden and the merged image features.
+//
+// Forward takes pre-patchified input (the goinfer P5.3 preprocessor does
+// image→pixel_values+grid_thw via smart-resize upstream), not a CHW image — so the
+// encoder is fed pixel_values [n_patches, patch_dim] + per-image (t,h,w) grids.
+//
+// Added ADDITIVELY: SigLIP's Encoder/LoadEncoder are untouched. The qmat W8A8
+// wrapper is reused for the projections (the patch-embed matmul stays f32); the
+// resident-GPU seam is a follow-on (the fp32 CPU path is the v1 deliverable).
+
+// QwenEncoderConfig mirrors the HF Qwen2_5_VLVisionConfig fields the forward needs.
+type QwenEncoderConfig struct {
+	Depth               int    `json:"depth"`
+	HiddenSize          int    `json:"hidden_size"`
+	IntermediateSize    int    `json:"intermediate_size"`
+	NumHeads            int    `json:"num_heads"`
+	InChans             int    `json:"in_chans"`
+	PatchSize           int    `json:"patch_size"`
+	SpatialMergeSize    int    `json:"spatial_merge_size"`
+	TemporalPatchSize   int    `json:"temporal_patch_size"`
+	OutHiddenSize       int    `json:"out_hidden_size"`
+	WindowSize          int    `json:"window_size"`
+	FullattBlockIndexes []int  `json:"fullatt_block_indexes"`
+	HiddenAct           string `json:"hidden_act"`
+}
+
+type qwenBlock struct {
+	norm1w     []float32 // RMSNorm (weight only)
+	qkvw       qmat      // [3*hidden, hidden] fused
+	qkvb       []float32 // [3*hidden]
+	projw      qmat      // [hidden, hidden]
+	projb      []float32
+	norm2w     []float32 // RMSNorm
+	gatew, upw qmat      // [inter, hidden]
+	gateb, upb []float32
+	downw      qmat // [hidden, inter]
+	downb      []float32
+}
+
+// QwenVisionEncoder is a loaded Qwen2.5-VL vision tower (dynamic resolution).
+type QwenVisionEncoder struct {
+	Cfg        QwenEncoderConfig
+	patchW     []float32 // [hidden, patch_dim] (Conv3d weight flattened, kept f32)
+	blocks     []qwenBlock
+	mergerLNw  []float32 // merger.ln_q RMSNorm weight [hidden]
+	merger0w   qmat      // merger.mlp.0 [hidden*merge², hidden*merge²]
+	merger0b   []float32
+	merger2w   qmat // merger.mlp.2 [out_hidden, hidden*merge²]
+	merger2b   []float32
+	rotInvFreq []float32 // head_dim/4 rotary frequencies
+}
+
+const qwenRotaryTheta = 10000.0 // Qwen2_5_VisionRotaryEmbedding default theta
+
+// LoadQwenVisionEncoder reads a Qwen2.5-VL checkpoint (config.json vision_config +
+// safetensors) and returns a ready encoder. Weights are copied out, so the
+// safetensors file is closed before return (no retained mmap). quant wraps the
+// projections as int8 W8A8 (the patch-embed matmul stays f32); the fp32 parity gate
+// runs quant=false.
+func LoadQwenVisionEncoder(dir string, quant bool) (*QwenVisionEncoder, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		return nil, fmt.Errorf("vision: read config: %w", err)
+	}
+	// The vision config is nested under "vision_config" in a real VL checkpoint; a
+	// stripped tower could carry it flat — prefer the nested one when present.
+	var wrap struct {
+		QwenEncoderConfig
+		VisionConfig *QwenEncoderConfig `json:"vision_config"`
+	}
+	if err := json.Unmarshal(raw, &wrap); err != nil {
+		return nil, fmt.Errorf("vision: parse config: %w", err)
+	}
+	cfg := wrap.QwenEncoderConfig
+	if wrap.VisionConfig != nil {
+		cfg = *wrap.VisionConfig
+	}
+	if cfg.InChans == 0 {
+		cfg.InChans = 3
+	}
+	st, err := openWeights(dir)
+	if err != nil {
+		return nil, fmt.Errorf("vision: open safetensors: %w", err)
+	}
+	defer st.Close()
+
+	e := &QwenVisionEncoder{Cfg: cfg}
+	// "visual." in the tiny checkpoint, "model.visual." inside a full HF VL
+	// checkpoint (where the tower lives alongside the language model shards).
+	pfx := qwenTensorPrefix(st)
+	get := func(name string) []float32 {
+		if err != nil {
+			return nil
+		}
+		var v []float32
+		v, err = st.TensorF32(pfx + name)
+		return append([]float32(nil), v...) // copy out so st can close
+	}
+	hidden, inter := cfg.HiddenSize, cfg.IntermediateSize
+	qm := func(name string, rows, cols int) qmat {
+		w := get(name)
+		if err != nil {
+			return qmat{}
+		}
+		return newQMat(w, rows, cols, quant)
+	}
+	e.patchW = get("patch_embed.proj.weight") // [hidden, in_chans*temporal*patch*patch], f32
+	e.blocks = make([]qwenBlock, cfg.Depth)
+	for i := range e.blocks {
+		p := fmt.Sprintf("blocks.%d.", i)
+		b := &e.blocks[i]
+		b.norm1w = get(p + "norm1.weight")
+		b.qkvw, b.qkvb = qm(p+"attn.qkv.weight", 3*hidden, hidden), get(p+"attn.qkv.bias")
+		b.projw, b.projb = qm(p+"attn.proj.weight", hidden, hidden), get(p+"attn.proj.bias")
+		b.norm2w = get(p + "norm2.weight")
+		b.gatew, b.gateb = qm(p+"mlp.gate_proj.weight", inter, hidden), get(p+"mlp.gate_proj.bias")
+		b.upw, b.upb = qm(p+"mlp.up_proj.weight", inter, hidden), get(p+"mlp.up_proj.bias")
+		b.downw, b.downb = qm(p+"mlp.down_proj.weight", hidden, inter), get(p+"mlp.down_proj.bias")
+	}
+	mh := hidden * cfg.SpatialMergeSize * cfg.SpatialMergeSize
+	e.mergerLNw = get("merger.ln_q.weight")
+	e.merger0w, e.merger0b = qm("merger.mlp.0.weight", mh, mh), get("merger.mlp.0.bias")
+	e.merger2w, e.merger2b = qm("merger.mlp.2.weight", cfg.OutHiddenSize, mh), get("merger.mlp.2.bias")
+	if err != nil {
+		return nil, fmt.Errorf("vision: load weights: %w", err)
+	}
+
+	// Rotary inv_freq over head_dim/2 (the Qwen2_5_VisionRotaryEmbedding dim) —
+	// inv_freq = 1/theta^(arange(0,dim,2)/dim), i.e. head_dim/4 frequencies.
+	headDim := hidden / cfg.NumHeads
+	rdim := headDim / 2
+	e.rotInvFreq = make([]float32, rdim/2)
+	for i := range e.rotInvFreq {
+		e.rotInvFreq[i] = float32(1.0 / math.Pow(qwenRotaryTheta, float64(2*i)/float64(rdim)))
+	}
+	return e, nil
+}
+
+// qwenTensorPrefix reports the namespace the tower is nested under: "visual." for
+// the tiny saved checkpoint, "model.visual." inside a full HF VL safetensors.
+func qwenTensorPrefix(st *embed.SafetensorsFile) string {
+	for _, pfx := range []string{"visual.", "model.visual."} {
+		if _, err := st.Tensor(pfx + "patch_embed.proj.weight"); err == nil {
+			return pfx
+		}
+	}
+	return "visual."
+}
+
+// Forward runs the ViT + merger on pre-patchified pixel_values [n_patches, patch_dim]
+// (patch_dim = in_chans*temporal*patch*patch) with per-image grids (t,h,w in patch
+// units, h/w multiples of spatial_merge_size). It returns the merged image
+// embeddings [n_merged, out_hidden_size] in ORIGINAL patch order — the embeddings
+// that replace the decoder's <image> placeholders. n_merged = Σ t*h*w / merge².
+func (e *QwenVisionEncoder) Forward(pixelValues []float32, gridTHW [][3]int) ([]float32, error) {
+	hid, err := e.forwardViT(pixelValues, gridTHW)
+	if err != nil {
+		return nil, err
+	}
+	return e.merge(hid, gridTHW), nil
+}
+
+// ForwardViT runs only the transformer blocks (no merger), returning the pre-merge
+// hidden state [n_patches, hidden] in ORIGINAL patch order — the stage the parity
+// gate checks against HF's last_hidden_state. (HF returns last_hidden_state in
+// WINDOW order; for a self-contained gate we de-window here so the caller sees
+// original order. The encoder_test compares against an order-matched golden.)
+func (e *QwenVisionEncoder) forwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32, error) {
+	c := e.Cfg
+	merge := c.SpatialMergeSize
+	mergeUnit := merge * merge
+	hidden := c.HiddenSize
+	patchDim := c.InChans * c.TemporalPatchSize * c.PatchSize * c.PatchSize
+
+	nPatches := 0
+	for _, g := range gridTHW {
+		nPatches += g[0] * g[1] * g[2]
+	}
+	if len(pixelValues) != nPatches*patchDim {
+		return nil, fmt.Errorf("vision: pixel_values len %d, want %d (%d patches × %d)", len(pixelValues), nPatches*patchDim, nPatches, patchDim)
+	}
+	if nPatches%mergeUnit != 0 {
+		return nil, fmt.Errorf("vision: n_patches %d not a multiple of merge² %d", nPatches, mergeUnit)
+	}
+
+	// 1. patch embed: h[n,hidden] = pixel_values[n,patch_dim] · patchWᵀ (no bias).
+	h := make([]float32, nPatches*hidden)
+	linalg.MatmulBT(pixelValues, e.patchW, h, nPatches, patchDim, hidden)
+
+	// 2. rotary freqs per patch (head_dim/2 each) from the (h_idx,w_idx) grid coords.
+	freqs := e.rotaryFreqs(gridTHW) // [nPatches][rdim], original patch order
+
+	// 3. window reorder (at merge-unit granularity) + the two cu_seqlens.
+	winIdx, cuWin := e.windowIndex(gridTHW)
+	cuFull := cuSeqlensFull(gridTHW)
+	groups := nPatches / mergeUnit
+
+	// reorder hidden + freqs into window order, grouping merge_unit patches.
+	rdim := len(freqs) / nPatches
+	hWin := make([]float32, nPatches*hidden)
+	fWin := make([]float32, nPatches*rdim)
+	for g := 0; g < groups; g++ {
+		src := winIdx[g]
+		for u := 0; u < mergeUnit; u++ {
+			dp, sp := (g*mergeUnit+u)*hidden, (src*mergeUnit+u)*hidden
+			copy(hWin[dp:dp+hidden], h[sp:sp+hidden])
+			df, sf := (g*mergeUnit+u)*rdim, (src*mergeUnit+u)*rdim
+			copy(fWin[df:df+rdim], freqs[sf:sf+rdim])
+		}
+	}
+
+	// precompute cos/sin per patch over the full head_dim (emb = cat(freqs,freqs)).
+	headDim := hidden / c.NumHeads
+	cos := make([]float32, nPatches*headDim)
+	sin := make([]float32, nPatches*headDim)
+	for i := 0; i < nPatches; i++ {
+		fr := fWin[i*rdim : i*rdim+rdim]
+		for d := 0; d < headDim; d++ {
+			f := float64(fr[d%rdim]) // emb[d]=freqs[d] (d<rdim), freqs[d-rdim] (d≥rdim)
+			cos[i*headDim+d] = float32(math.Cos(f))
+			sin[i*headDim+d] = float32(math.Sin(f))
+		}
+	}
+
+	// 4. blocks (pre-norm residual). fullatt blocks attend per-image; others per-window.
+	for li := range e.blocks {
+		cu := cuWin
+		if e.isFullAtt(li) {
+			cu = cuFull
+		}
+		b := &e.blocks[li]
+		n1 := rmsNorm(hWin, b.norm1w, nPatches, hidden)
+		att := e.attention(n1, b, nPatches, cos, sin, cu)
+		o := make([]float32, nPatches*hidden)
+		b.projw.matmul(att, o, nPatches)
+		addBias(o, b.projb, nPatches, hidden)
+		for i := range hWin {
+			hWin[i] += o[i]
+		}
+		n2 := rmsNorm(hWin, b.norm2w, nPatches, hidden)
+		mlp := e.mlp(n2, b, nPatches)
+		for i := range hWin {
+			hWin[i] += mlp[i]
+		}
+	}
+
+	// de-window back to original patch order (merge-unit granularity).
+	out := make([]float32, nPatches*hidden)
+	for g := 0; g < groups; g++ {
+		dst := winIdx[g]
+		for u := 0; u < mergeUnit; u++ {
+			dp, sp := (dst*mergeUnit+u)*hidden, (g*mergeUnit+u)*hidden
+			copy(out[dp:dp+hidden], hWin[sp:sp+hidden])
+		}
+	}
+	return out, nil
+}
+
+// ForwardViT exposes the pre-merge hidden state for stage-isolated parity tests.
+func (e *QwenVisionEncoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32, error) {
+	return e.forwardViT(pixelValues, gridTHW)
+}
+
+// merge runs the patch merger on the ViT hidden (original patch order):
+// RMSNorm(ln_q) → reshape merge² patches into one hidden*merge² vector → mlp.0 →
+// GELU(erf) → mlp.2. Output [n_merged, out_hidden], one row per merge-unit group.
+func (e *QwenVisionEncoder) merge(hidden []float32, gridTHW [][3]int) []float32 {
+	c := e.Cfg
+	H := c.HiddenSize
+	mergeUnit := c.SpatialMergeSize * c.SpatialMergeSize
+	mh := H * mergeUnit
+	nPatches := len(hidden) / H
+	groups := nPatches / mergeUnit
+
+	// ln_q over hidden, then the [groups, mh] view falls out for free (contiguous).
+	nrm := rmsNorm(hidden, e.mergerLNw, nPatches, H)
+	mid := make([]float32, groups*mh)
+	e.merger0w.matmul(nrm, mid, groups)
+	addBias(mid, e.merger0b, groups, mh)
+	geluErf(mid)
+	out := make([]float32, groups*c.OutHiddenSize)
+	e.merger2w.matmul(mid, out, groups)
+	addBias(out, e.merger2b, groups, c.OutHiddenSize)
+	return out
+}
+
+// attention runs bidirectional MHA within each cu_seqlens segment (window or full
+// image). qkv is fused (reshape seq,3,heads,head_dim); 2D rotary is applied to q,k
+// before attending. Per-head QKᵀ / scores·V run on the f32 SIMD A·Bᵀ kernel.
+func (e *QwenVisionEncoder) attention(x []float32, b *qwenBlock, seq int, cos, sin []float32, cu []int) []float32 {
+	hidden, nH := e.Cfg.HiddenSize, e.Cfg.NumHeads
+	hd := hidden / nH
+	scale := float32(1.0 / math.Sqrt(float64(hd)))
+
+	qkv := make([]float32, seq*3*hidden)
+	b.qkvw.matmul(x, qkv, seq)
+	addBias(qkv, b.qkvb, seq, 3*hidden)
+	// split: row layout is [3, nH, hd], so q/k/v are the three contiguous halves.
+	q := make([]float32, seq*hidden)
+	k := make([]float32, seq*hidden)
+	v := make([]float32, seq*hidden)
+	for i := 0; i < seq; i++ {
+		base := i * 3 * hidden
+		copy(q[i*hidden:(i+1)*hidden], qkv[base:base+hidden])
+		copy(k[i*hidden:(i+1)*hidden], qkv[base+hidden:base+2*hidden])
+		copy(v[i*hidden:(i+1)*hidden], qkv[base+2*hidden:base+3*hidden])
+	}
+	// 2D rotary on q,k (NeoX rotate_half over the full head_dim).
+	for i := 0; i < seq; i++ {
+		co, si := cos[i*hd:i*hd+hd], sin[i*hd:i*hd+hd]
+		for head := 0; head < nH; head++ {
+			off := i*hidden + head*hd
+			applyRotaryVision(q[off:off+hd], co, si)
+			applyRotaryVision(k[off:off+hd], co, si)
+		}
+	}
+
+	out := make([]float32, seq*hidden)
+	maxSeg := 0
+	for s := 1; s < len(cu); s++ {
+		if l := cu[s] - cu[s-1]; l > maxSeg {
+			maxSeg = l
+		}
+	}
+	qh := make([]float32, maxSeg*hd)
+	kh := make([]float32, maxSeg*hd)
+	vt := make([]float32, hd*maxSeg)
+	scores := make([]float32, maxSeg*maxSeg)
+	oh := make([]float32, maxSeg*hd)
+	for head := 0; head < nH; head++ {
+		off := head * hd
+		for s := 1; s < len(cu); s++ {
+			start, n := cu[s-1], cu[s]-cu[s-1]
+			for ii := 0; ii < n; ii++ {
+				gi := start + ii
+				copy(qh[ii*hd:(ii+1)*hd], q[gi*hidden+off:gi*hidden+off+hd])
+				copy(kh[ii*hd:(ii+1)*hd], k[gi*hidden+off:gi*hidden+off+hd])
+				vrow := v[gi*hidden+off : gi*hidden+off+hd]
+				for d := 0; d < hd; d++ {
+					vt[d*n+ii] = vrow[d]
+				}
+			}
+			linalg.MatmulBT(qh, kh, scores[:n*n], n, hd, n)
+			for i := 0; i < n; i++ {
+				row := scores[i*n : (i+1)*n]
+				for j := range row {
+					row[j] *= scale
+				}
+				softmaxRow(row)
+			}
+			linalg.MatmulBT(scores[:n*n], vt[:hd*n], oh[:n*hd], n, n, hd)
+			for ii := 0; ii < n; ii++ {
+				copy(out[(start+ii)*hidden+off:(start+ii)*hidden+off+hd], oh[ii*hd:(ii+1)*hd])
+			}
+		}
+	}
+	return out
+}
+
+// mlp runs the gated SiLU MLP: down(silu(gate(x)) * up(x)).
+func (e *QwenVisionEncoder) mlp(x []float32, b *qwenBlock, seq int) []float32 {
+	hidden, inter := e.Cfg.HiddenSize, e.Cfg.IntermediateSize
+	gate := make([]float32, seq*inter)
+	b.gatew.matmul(x, gate, seq)
+	addBias(gate, b.gateb, seq, inter)
+	up := make([]float32, seq*inter)
+	b.upw.matmul(x, up, seq)
+	addBias(up, b.upb, seq, inter)
+	silu(gate)
+	for i := range gate {
+		gate[i] *= up[i]
+	}
+	down := make([]float32, seq*hidden)
+	b.downw.matmul(gate, down, seq)
+	addBias(down, b.downb, seq, hidden)
+	return down
+}
+
+func (e *QwenVisionEncoder) isFullAtt(layer int) bool {
+	for _, idx := range e.Cfg.FullattBlockIndexes {
+		if idx == layer {
+			return true
+		}
+	}
+	return false
+}
+
+// rotaryFreqs builds per-patch rotary frequencies [nPatches][head_dim/2] in
+// original patch order: per patch, [h_idx*inv_freq..., w_idx*inv_freq...]. The
+// (h_idx,w_idx) coords follow HF get_vision_position_ids — the spatial_merge
+// interleave so each merge-unit group's patches are consecutive.
+func (e *QwenVisionEncoder) rotaryFreqs(gridTHW [][3]int) []float32 {
+	merge := e.Cfg.SpatialMergeSize
+	nf := len(e.rotInvFreq) // head_dim/4
+	rdim := 2 * nf          // head_dim/2
+	var out []float32
+	for _, g := range gridTHW {
+		t, h, w := g[0], g[1], g[2]
+		block := make([]float32, 0, h*w*rdim)
+		for a := 0; a < h/merge; a++ {
+			for c := 0; c < w/merge; c++ {
+				for b := 0; b < merge; b++ {
+					for d := 0; d < merge; d++ {
+						hpos, wpos := float32(a*merge+b), float32(c*merge+d)
+						for _, f := range e.rotInvFreq {
+							block = append(block, hpos*f)
+						}
+						for _, f := range e.rotInvFreq {
+							block = append(block, wpos*f)
+						}
+					}
+				}
+			}
+		}
+		for ti := 0; ti < t; ti++ {
+			out = append(out, block...)
+		}
+	}
+	return out
+}
+
+// windowIndex ports HF get_vision_window_index: groups merge-units into windows of
+// (window_size/patch_size/merge)² merged-units, returning the per-group reorder
+// indices (length n_patches/merge²) and the cumulative window seqlens (in patch
+// units) for the windowed attention blocks.
+func (e *QwenVisionEncoder) windowIndex(gridTHW [][3]int) (winIdx, cuWin []int) {
+	merge := e.Cfg.SpatialMergeSize
+	vmws := e.Cfg.WindowSize / merge / e.Cfg.PatchSize
+	mergeUnit := merge * merge
+	cuWin = []int{0}
+	idOffset := 0
+	for _, g := range gridTHW {
+		t, h, w := g[0], g[1], g[2]
+		llmH, llmW := h/merge, w/merge
+		// HF pads up to a window multiple; when already divisible it adds a full
+		// (all-pad) window that contributes nothing — replicated via count>0 below.
+		padH := vmws - llmH%vmws
+		padW := vmws - llmW%vmws
+		numWinH := (llmH + padH) / vmws
+		numWinW := (llmW + padW) / vmws
+		for ti := 0; ti < t; ti++ {
+			for wh := 0; wh < numWinH; wh++ {
+				for ww := 0; ww < numWinW; ww++ {
+					count := 0
+					for bi := 0; bi < vmws; bi++ {
+						for bj := 0; bj < vmws; bj++ {
+							i, j := wh*vmws+bi, ww*vmws+bj
+							if i < llmH && j < llmW {
+								winIdx = append(winIdx, idOffset+ti*llmH*llmW+i*llmW+j)
+								count++
+							}
+						}
+					}
+					if count > 0 { // skip all-pad windows (HF unique_consecutive)
+						cuWin = append(cuWin, cuWin[len(cuWin)-1]+count*mergeUnit)
+					}
+				}
+			}
+		}
+		idOffset += t * llmH * llmW
+	}
+	return winIdx, cuWin
+}
+
+// cuSeqlensFull builds the full-attention boundaries: per image, t segments of h*w
+// patches each (HF repeat_interleave(h*w, t).cumsum, padded with a leading 0).
+func cuSeqlensFull(gridTHW [][3]int) []int {
+	cu := []int{0}
+	acc := 0
+	for _, g := range gridTHW {
+		t, h, w := g[0], g[1], g[2]
+		for ti := 0; ti < t; ti++ {
+			acc += h * w
+			cu = append(cu, acc)
+		}
+	}
+	return cu
+}
+
+// --- small f32 helpers specific to the Qwen tower (RMSNorm, SiLU, erf-GELU) ---
+
+// rmsNorm is the weight-only RMSNorm (eps 1e-6) HF uses for the Qwen ViT — variance
+// over the last dim, no mean subtraction, no bias. Computed in f64 then cast.
+func rmsNorm(x, w []float32, rows, dim int) []float32 {
+	const eps = 1e-6
+	out := make([]float32, rows*dim)
+	for r := 0; r < rows; r++ {
+		xr := x[r*dim : r*dim+dim]
+		var ss float64
+		for _, v := range xr {
+			ss += float64(v) * float64(v)
+		}
+		inv := 1.0 / math.Sqrt(ss/float64(dim)+eps)
+		dst := out[r*dim : r*dim+dim]
+		for d := 0; d < dim; d++ {
+			dst[d] = float32(float64(xr[d])*inv) * w[d]
+		}
+	}
+	return out
+}
+
+// applyRotaryVision applies NeoX rotate_half rotary to one head_dim vector in place,
+// given precomputed cos/sin of length head_dim.
+func applyRotaryVision(vec, cos, sin []float32) {
+	hd := len(vec)
+	half := hd / 2
+	tmp := make([]float32, hd)
+	for d := 0; d < hd; d++ {
+		var rot float32
+		if d < half {
+			rot = -vec[d+half]
+		} else {
+			rot = vec[d-half]
+		}
+		tmp[d] = vec[d]*cos[d] + rot*sin[d]
+	}
+	copy(vec, tmp)
+}
+
+func silu(x []float32) {
+	for i, v := range x {
+		vv := float64(v)
+		x[i] = float32(vv / (1.0 + math.Exp(-vv)))
+	}
+}
+
+// geluErf is the exact (erf) GELU — nn.GELU() default, what the patch merger uses
+// (distinct from SigLIP's gelu-tanh).
+func geluErf(x []float32) {
+	for i, v := range x {
+		vv := float64(v)
+		x[i] = float32(0.5 * vv * (1.0 + math.Erf(vv/math.Sqrt2)))
+	}
+}
