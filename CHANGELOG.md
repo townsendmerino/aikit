@@ -10,7 +10,29 @@ it.
 
 ## [Unreleased]
 
-## [1.8.0] — 2026-06-14
+## [1.8.1] — 2026-06-15
+
+Supersedes **1.8.0, which is retracted** — it was tagged before the release gate
+passed (a missing CHANGELOG compare link) and before the GGUF parser hardening
+below. 1.8.1 carries the same Qwen2.5-VL vision tower + arm64 W4A8 work as 1.8.0
+plus the fix; pin this instead of 1.8.0.
+
+### Fixed
+
+- **GGUF metadata parser: nested-array allocation blowup (`embed`).** A hostile
+  array-of-arrays where every level claims a count near the remaining input drove
+  `make([]any, 0, n)` at each nesting level; since the nesting depth is itself
+  ~input/12, total preallocation was O(input²) — a ~1 MB file parsed in ~700 ms,
+  surfacing as a `FuzzParseGGUF` "context deadline exceeded" slow path. The eager
+  array capacity is now bounded by a small constant (`append` still grows to the
+  true element count), making allocation linear in the input (same ~1 MB file:
+  ~700 ms → ~100 ms). Gated by `TestParseGGUF_nestedArrayBomb` (asserts bounded
+  allocation). Parse output unchanged for valid files.
+
+## [1.8.0] — 2026-06-14 [RETRACTED]
+
+Retracted (see `retract` in go.mod): superseded by 1.8.1. The Qwen2.5-VL vision
+tower and arm64 W4A8 changes below shipped unchanged in 1.8.1.
 
 ### Added
 
@@ -1097,7 +1119,9 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.7.3...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.8.1...HEAD
+[1.8.1]: https://github.com/townsendmerino/aikit/compare/v1.8.0...v1.8.1
+[1.8.0]: https://github.com/townsendmerino/aikit/compare/v1.7.3...v1.8.0
 [1.7.3]: https://github.com/townsendmerino/aikit/compare/v1.7.2...v1.7.3
 [1.7.2]: https://github.com/townsendmerino/aikit/compare/v1.7.1...v1.7.2
 [1.7.1]: https://github.com/townsendmerino/aikit/compare/v1.7.0...v1.7.1

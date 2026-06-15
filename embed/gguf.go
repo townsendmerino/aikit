@@ -162,6 +162,11 @@ func (c *gcur) str() string {
 	return s
 }
 
+// ggufArrayPrealloc caps the eager capacity of a metadata array's []any. Small so
+// nested arrays can't compound into an O(input²) preallocation (see value); append
+// grows past it for the rare genuinely large flat array (e.g. a tokenizer vocab).
+const ggufArrayPrealloc = 64
+
 // value reads one metadata value of the given type (arrays recurse).
 func (c *gcur) value(vtype uint32) any {
 	switch vtype {
@@ -198,7 +203,14 @@ func (c *gcur) value(vtype uint32) any {
 			c.err = fmt.Errorf("gguf: array length %d exceeds %d remaining bytes", n, c.remaining())
 			return nil
 		}
-		arr := make([]any, 0, n)
+		// Cap the EAGER preallocation: n is bounded by the remaining bytes, but for
+		// an array of arrays that bound recurses — every nesting level can claim a
+		// count near the remaining input, and the nesting depth is itself ~input/12,
+		// so make([]any, 0, n) at each level drives O(input²) allocation (a hostile
+		// nested-array file that parses in seconds — a fuzz "deadline exceeded" slow
+		// path). append grows to the true element count, so a small fixed prealloc
+		// keeps total allocation linear in the bytes actually consumed.
+		arr := make([]any, 0, min(n, ggufArrayPrealloc))
 		for i := uint64(0); i < n && c.err == nil; i++ {
 			arr = append(arr, c.value(et))
 		}
