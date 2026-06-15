@@ -2,37 +2,27 @@
 
 package linalg
 
-// dotW4A8GroupsSDOT fills out[0:nGroups] with the int32 dot of each 32-wide group
-// (int8 activation · centered-int4 weight), via the fused NEON+SDOT kernel in
-// dot_w4a8_arm64.s. Only safe on DotProd-capable cores (gated by hasDotProd, like
-// dotI8SDOT). group is fixed at 32; nGroups = K/32.
-//
-//go:noescape
-func dotW4A8GroupsSDOT(act *int8, packed *byte, out *int32, nGroups int)
-
-// dotW4A8FoldSDOT is the in-register-scale-fold NEON kernel (returns the folded
-// f32 dot, one reduce per row), the arm64 counterpart of the validated
-// dotW4A8FoldAVX2. DRAFT: cross-compiles + asmdecl-checks on the amd64 dev box but
-// is UNWIRED and UNVALIDATED on hardware — wire dotW4A8 to it and confirm
-// quant_w4a8_test.go + BenchmarkQ4vsQ8 on an arm64 box before relying on it (see
-// dot_w4a8_arm64.s). Kept declared (not called) so it builds and is ready to wire.
+// dotW4A8FoldSDOT returns the per-group-scaled f32 dot Σ_g scale[g]·(act·w)_g of
+// one int4 weight row against the int8 activation row, via the fused NEON+SDOT
+// kernel in dot_w4a8_arm64.s. The f32 weight scales are folded IN-REGISTER (SCVTF
+// + FMLA into a 4-lane accumulator, one FADDP reduce at the end) — no per-group
+// int32 scratch and no Go-side fold loop. Only safe on DotProd-capable cores
+// (gated by hasDotProd, like dotI8SDOT). group is fixed at 32; nGroups = K/32.
+// Validated on M1 Pro (quant_w4a8_test.go + BenchmarkQ4vsQ8).
 //
 //go:noescape
 func dotW4A8FoldSDOT(act *int8, packed *byte, scales *float32, nGroups int) float32
 
-// dotW4A8 computes one W4A8 output (before the activation scale). On DotProd
-// hardware with the group-32 layout the fused kernel emits the per-group int32
-// dots into sums (caller-owned scratch, len ≥ K/32) and Go folds in the f32
-// weight scales; a scalar tail mops up any ragged final group. Everything else
-// falls back to the portable reference.
+// dotW4A8 computes one W4A8 output (before the activation scale). The DotProd
+// path folds the per-group weight scales inside the kernel and returns the f32
+// dot directly; only a ragged final group (K % 32 ≠ 0) is mopped up in Go. The
+// sums scratch is unused on arm64 (the kernel keeps the accumulation in
+// registers); it's kept in the signature for the shared call site + the
+// other-arch paths. Everything off the fast path falls back to the reference.
 func dotW4A8(act []int8, packed []byte, scales []float32, group, K int, sums []int32) float32 {
 	if hasDotProd && group == 32 && K >= 32 {
 		nFull := K / 32
-		dotW4A8GroupsSDOT(&act[0], &packed[0], &sums[0], nFull)
-		var total float32
-		for g := range nFull {
-			total += float32(sums[g]) * scales[g]
-		}
+		total := dotW4A8FoldSDOT(&act[0], &packed[0], &scales[0], nFull)
 		if done := nFull * 32; done < K {
 			// Ragged final group (K not a multiple of 32): scalar, scales[nFull].
 			var acc int32

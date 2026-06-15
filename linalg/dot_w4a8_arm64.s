@@ -1,10 +1,11 @@
-// Fused int4(weight)×int8(activation) per-group dot using the ARMv8.2 DotProd
-// extension (SDOT) — the W4A8 decode kernel's hot loop. For ONE output it
-// streams a whole K-wide weight row, emitting one int32 dot per 32-wide group;
-// the Go caller folds in the per-group f32 scales. The ONLY new code over the
-// proven dot_i8dp SDOT kernel is the nibble-unpack prologue: 16 packed bytes →
-// 32 centered int8 weights in-register (low nibble = even k, high = odd k, −8).
-// The SDOT-into-int32 + VADDV reduction below mirror dot_i8dp exactly.
+// Fused int4(weight)×int8(activation) GEMV dot using the ARMv8.2 DotProd
+// extension (SDOT) — the arm64 W4A8 decode kernel's hot loop, counterpart of
+// dot_w4a8_amd64.s. For ONE output it streams a whole K-wide weight row and
+// returns the per-group-scaled f32 dot Σ_g scale[g]·(act·w)_g (the activation
+// scale is applied by the Go caller). The nibble-unpack prologue (16 packed
+// bytes → 32 centered int8 weights: low nibble = even k, high = odd k, −8) feeds
+// the proven dot_i8dp SDOT body; the f32 weight scale is then folded IN-REGISTER
+// (see below), so there is no per-group horizontal reduce and no Go fold loop.
 //
 // Looping the groups INSIDE one call is the whole point: it removes both the
 // per-weight f32 dequant (MatmulBTQ4's M=1 bottleneck) and the ~18ns/call
@@ -21,45 +22,13 @@
 
 #include "textflag.h"
 
-// func dotW4A8GroupsSDOT(act *int8, packed *byte, out *int32, nGroups int)
-TEXT ·dotW4A8GroupsSDOT(SB), NOSPLIT, $0-32
-	MOVD act+0(FP), R0     // &act[0]    (int8, 32 per group)
-	MOVD packed+8(FP), R1  // &packed[0] (16 bytes per group)
-	MOVD out+16(FP), R2    // &out[0]    (int32, one per group)
-	MOVD nGroups+24(FP), R3
-
-	VMOVI $0x0F, V30.B16   // low-nibble mask (hoisted)
-	VMOVI $8, V31.B16      // bias 8 (hoisted)
-
-loop:
-	VLD1.P 16(R1), [V0.B16]         // 16 packed bytes = 32 nibbles
-	VAND   V30.B16, V0.B16, V1.B16  // V1 = low nibbles
-	VUSHR  $4, V0.B16, V2.B16       // V2 = high nibbles
-	VZIP1  V2.B16, V1.B16, V3.B16   // V3 = [lo0,hi0,lo1,hi1,...] nibbles 0..15
-	VZIP2  V2.B16, V1.B16, V4.B16   // V4 = nibbles 16..31
-	VSUB   V31.B16, V3.B16, V3.B16  // centered: nibble − 8
-	VSUB   V31.B16, V4.B16, V4.B16
-	VLD1.P 32(R0), [V6.B16, V7.B16] // 32 int8 activations
-	VMOVI  $0, V16.B16              // int32 group accumulator = 0
-	WORD   $0x4E8394D0              // SDOT V16.4S, V6.16B, V3.16B
-	WORD   $0x4E8494F0              // SDOT V16.4S, V7.16B, V4.16B
-	VADDV  V16.S4, V17             // horizontal int32 sum → V17.S[0]
-	VMOV   V17.S[0], R5           // group integer dot → GP
-	MOVW   R5, (R2)               // out[g] = group dot
-	ADD    $4, R2, R2             // ++out
-	SUBS   $1, R3, R3
-	BNE    loop
-
-	RET
-
 // func dotW4A8FoldSDOT(act *int8, packed *byte, scales *float32, nGroups int) float32
 //
-// DRAFT — written from the validated amd64 fold kernel (dotW4A8FoldAVX2); the
-// algorithm and parity are proven on amd64, but this NEON version is UNVALIDATED
-// (the dev box is amd64; it cross-compiles + asmdecl-checks here, but correctness
-// and perf MUST be confirmed on an arm64 box: quant_w4a8_test.go + BenchmarkQ4vsQ8).
+// Validated on M1 Pro (quant_w4a8_test.go 1e-5 vs scalar + BenchmarkQ4vsQ8);
+// written from the validated amd64 fold kernel (dotW4A8FoldAVX2), same algorithm
+// and parity.
 //
-// Same hot loop as dotW4A8GroupsSDOT, but the per-group f32 weight scale is folded
+// The nibble-unpack + SDOT hot loop, but the per-group f32 weight scale is folded
 // IN-REGISTER instead of via a per-group VADDV + SIMD→GP store + a Go fold loop:
 // keep V16 as 4 UNREDUCED int32 lanes, SCVTF → f32, FMLA into a 4-lane f32
 // accumulator V20 by the broadcast scale[g]. Because every lane of a group carries
