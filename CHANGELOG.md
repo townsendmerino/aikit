@@ -10,6 +10,56 @@ it.
 
 ## [Unreleased]
 
+## [1.9.0] — 2026-06-17
+
+A weight-memory substrate (mmap + `madvise` + a span-residency cache) lifted into a
+new leaf package, plus the payoff it unlocks: an int8 ANN index that can be queried
+larger than RAM. The mechanism is the one goinfer proved demand-paging a 35B-A3B
+MoE's experts; only the generic, model-free core moves here. All new surface is
+**Experimental** (outside the 1.0 guarantee).
+
+### Added
+
+- **`mmap` — new leaf package: read-only mapping + residency control.** The
+  read-only `MAP_PRIVATE` mapping primitive that `ann` and `embed` each kept a
+  private byte-identical copy of (to avoid an `ann→embed` edge) now lives once, in a
+  zero-dependency leaf both import:
+  - `MapReadOnly` / `Unmap` — the mapping itself.
+  - `Advise(span, willNeed)` — `MADV_WILLNEED` / `MADV_DONTNEED` residency hints.
+    Firm cap on Linux; on darwin `WILLNEED` is an advisory prefetch and eviction is
+    an OS-discretion no-op; best-effort no-op on the BSDs/Windows.
+  - `SpanCache[K]` — a demand-signal-agnostic LRU of page-aligned spans bounded by a
+    byte budget: `Add` registers a member's spans, `Touch` faults it in and releases
+    the LRU tail to stay under budget. No model logic — the caller owns the demand
+    signal. Gated by an eviction unit test and a model-free property test that a
+    `MADV_DONTNEED`-released read-only mapping re-faults byte-identical.
+  - `PageAlignedInterior`, `AvailableRAM`, `AutoBudget` helpers.
+
+  Leaf invariant: stdlib-only, except `golang.org/x/sys/unix` on **darwin only**
+  (the stdlib has no `madvise` wrapper there) — so it stays invisible to the core
+  dependency invariant on Linux, and cgo-free everywhere. `!unix` keeps the existing
+  heap-read fallback.
+- **`linalg.WeightMat.MappedSpan(base, end)`.** Returns the page-aligned interior of
+  a weight's int8/int4 backing bytes iff they alias the given mapping, else nil
+  (f32/heap-backed → skip). The bridge from a `WeightMat` to `mmap.SpanCache`.
+- **`ann.LoadFlatI8MmapPaged(path, budget)` — query an int8 index larger than RAM.**
+  The int8 code block is split into blocks that page in and out of the mapping
+  through `mmap.SpanCache` under `budget` (≤ 0 auto-selects ~half of available RAM);
+  cold blocks re-fault from the read-only mapping. Per-block scoring is
+  byte-identical to the resident whole-corpus scan (deterministic query quant +
+  independent row dots), so paging changes residency only, never results — gated by
+  a paged-equals-resident test that also asserts eviction count > 0. The default
+  `LoadFlatI8Mmap` is unchanged (paging is opt-in). `FlatI8.PageStats()` exposes the
+  cache's hit/miss/eviction counts. A paged index serializes concurrent `Query`
+  calls (the pager is stateful) — the cap traded against cross-query parallelism.
+
+### Changed
+
+- **`ann` and `embed` now call the `mmap` leaf** instead of their local
+  `mmapReadOnly`/`munmap` copies, which are deleted. Pure refactor — the existing
+  `OpenSafetensorsMmap` / `OpenGGUFMmap` / `LoadFlatI8Mmap` behavior and tests are
+  unchanged.
+
 ## [1.8.1] — 2026-06-15
 
 Supersedes **1.8.0, which is retracted** — it was tagged before the release gate
@@ -1119,7 +1169,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.8.1...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.9.0...HEAD
+[1.9.0]: https://github.com/townsendmerino/aikit/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/townsendmerino/aikit/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/townsendmerino/aikit/compare/v1.7.3...v1.8.0
 [1.7.3]: https://github.com/townsendmerino/aikit/compare/v1.7.2...v1.7.3
