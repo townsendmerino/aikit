@@ -31,6 +31,8 @@ import (
 	"runtime"
 	"sort"
 	"unsafe"
+
+	"github.com/townsendmerino/aikit/mmap"
 )
 
 // SafetensorsFile is a parsed safetensors file. Tensor payloads are slices
@@ -191,7 +193,7 @@ func OpenSafetensorsShardedMmap(indexPath string) (*SafetensorsFile, error) {
 	agg := &SafetensorsFile{tensors: make(map[string]Tensor)}
 	shards := make([]*SafetensorsFile, 0, len(files))
 	for _, fn := range files {
-		data, err := mmapReadOnly(filepath.Join(dir, fn))
+		data, err := mmap.MapReadOnly(filepath.Join(dir, fn))
 		if err != nil {
 			finalizeMmaps(agg)
 			return nil, err
@@ -262,16 +264,16 @@ func OpenSafetensorsShardedFromFS(fsys fs.FS, indexPath string) (*SafetensorsFil
 //
 // Platform: true memory-mapping on unix (darwin/linux/bsd) via
 // syscall.Mmap; on non-unix targets (Windows) it transparently falls back
-// to a heap read (embed/mmap_other.go) — same API and semantics, just
-// without the OS-page-cache sharing.
+// to a heap read (mmap.MapReadOnly's !unix path) — same API and semantics,
+// just without the OS-page-cache sharing.
 func OpenSafetensorsMmap(path string) (*SafetensorsFile, error) {
-	data, err := mmapReadOnly(path)
+	data, err := mmap.MapReadOnly(path)
 	if err != nil {
 		return nil, err
 	}
 	sf, err := parseSafetensors(data)
 	if err != nil {
-		_ = munmap(data)
+		_ = mmap.Unmap(data)
 		return nil, err
 	}
 	sf.mmapped = [][]byte{data}
@@ -284,7 +286,7 @@ func OpenSafetensorsMmap(path string) (*SafetensorsFile, error) {
 // every region. Close does the same eagerly.
 func finalizeMmaps(s *SafetensorsFile) {
 	for _, m := range s.mmapped {
-		_ = munmap(m)
+		_ = mmap.Unmap(m)
 	}
 	s.mmapped = nil
 }
@@ -305,7 +307,7 @@ func (sf *SafetensorsFile) Close() error {
 	runtime.SetFinalizer(sf, nil)
 	var firstErr error
 	for _, m := range regions {
-		if err := munmap(m); err != nil && firstErr == nil {
+		if err := mmap.Unmap(m); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}

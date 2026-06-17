@@ -2,8 +2,10 @@ package ann
 
 import (
 	"sort"
+	"sync"
 
 	"github.com/townsendmerino/aikit/linalg"
+	"github.com/townsendmerino/aikit/mmap"
 	"github.com/townsendmerino/aikit/topk"
 )
 
@@ -34,6 +36,17 @@ type FlatI8 struct {
 	// nil for an in-memory index (NewFlatI8 / LoadFlatI8). closed is set by Close.
 	mmap   []byte
 	closed bool
+
+	// pager is non-nil only for a LoadFlatI8MmapPaged index: it bounds resident code
+	// bytes to a budget by paging fixed-size blocks of rows in and out of the mapping
+	// (idea lifted from goinfer's expert pager). nil ⇒ the whole code block stays
+	// resident, the default path with full query parallelism. blockRows is the paging
+	// granularity. pagerMu guards the pager, which is stateful (an LRU it mutates per
+	// scan): concurrent Query calls stay correct but serialize through it, so a paged
+	// index keeps the RAM cap at the cost of cross-query parallelism.
+	pager     *mmap.SpanCache[int]
+	blockRows int
+	pagerMu   sync.Mutex
 }
 
 // NewFlatI8 builds an int8 index by quantizing vecs (each assumed L2-normalized,
@@ -85,7 +98,11 @@ func (f *FlatI8) query(q []float32, k int, keep func(int) bool) []Hit {
 	// W8A8 at M=1: dynamically quantize q, int8-dot it against every stored
 	// vector, rescale by the query and per-vector scales. SIMD + parallel.
 	dst := make([]float32, f.n)
-	linalg.MatmulBTW8A8(q, f.bq, f.scales, dst, 1, f.dim, f.n)
+	if f.pager == nil {
+		linalg.MatmulBTW8A8(q, f.bq, f.scales, dst, 1, f.dim, f.n)
+	} else {
+		f.scorePaged(q, dst)
+	}
 
 	if k <= 0 || k >= f.n {
 		hits := make([]Hit, 0, f.n)

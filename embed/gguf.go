@@ -6,6 +6,8 @@ import (
 	"math"
 	"os"
 	"runtime"
+
+	"github.com/townsendmerino/aikit/mmap"
 )
 
 // GGUF reader — the llama.cpp container format that makes
@@ -256,13 +258,13 @@ func OpenGGUFBytes(raw []byte) (*GGUFFile, error) {
 // tensors have been read to munmap. Platform: true mmap on unix; on non-unix
 // targets (Windows) it falls back to a heap read, same as OpenSafetensorsMmap.
 func OpenGGUFMmap(path string) (*GGUFFile, error) {
-	data, err := mmapReadOnly(path)
+	data, err := mmap.MapReadOnly(path)
 	if err != nil {
 		return nil, fmt.Errorf("gguf: %w", err)
 	}
 	g, err := parseGGUF(data)
 	if err != nil {
-		_ = munmap(data)
+		_ = mmap.Unmap(data)
 		return nil, err
 	}
 	g.mmap = data
@@ -277,7 +279,7 @@ func (g *GGUFFile) Close() error {
 	if g.mmap == nil {
 		return nil
 	}
-	err := munmap(g.mmap)
+	err := mmap.Unmap(g.mmap)
 	g.mmap = nil
 	g.data = nil
 	return err

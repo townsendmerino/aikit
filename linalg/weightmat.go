@@ -1,5 +1,11 @@
 package linalg
 
+import (
+	"unsafe"
+
+	"github.com/townsendmerino/aikit/mmap"
+)
+
 // WeightMat is a [rows, cols] = [out, in] weight matrix that hides its storage
 // precision behind a uniform matmul + dequant surface. It consolidates three
 // open-coded wrappers that each held the same thing — an f32 / int8 / int4 weight
@@ -165,3 +171,37 @@ func (w *WeightMat) Int4() (q4 []byte, q4s []float32, group int, ok bool) {
 // F32 returns the dense weights (ok=false unless f32-resident) — e.g. for a GPU
 // backend's f32 matmul.
 func (w *WeightMat) F32() (f32 []float32, ok bool) { return w.f32, w.f32 != nil }
+
+// MappedSpan returns the page-aligned interior of this weight's quantized backing
+// bytes — but ONLY if those bytes lie inside the [base, end) mapping (a region from
+// mmap.MapReadOnly). It returns nil for an f32 weight, an empty weight, or any
+// weight whose bytes are heap-backed rather than aliased from the mapping.
+//
+// This is the bridge between a WeightMat and mmap.SpanCache: the returned span is
+// exactly what Advise (MADV_DONTNEED) can release without disturbing a neighbor's
+// page, so a pager can register it with SpanCache.Add and page the tensor in and out
+// under a RAM budget. Page-rounding the start up and the end down (via
+// mmap.PageAlignedInterior) keeps the span strictly within this weight's bytes; the
+// few boundary bytes it omits are negligible against a multi-MB tensor.
+//
+// Only quantized (int8/int4) storage is pageable here — that is goinfer's expert /
+// layer weight case, and the f32 path stays out because the scales and dense weights
+// it would mix in are small and commonly heap-backed. The caller obtains base/end
+// from the mapping it passed to MapReadOnly (e.g. &mapping[0] and one past its end).
+func (w *WeightMat) MappedSpan(base, end uintptr) []byte {
+	var raw []byte
+	switch {
+	case len(w.q8) > 0:
+		// int8 and byte are both 1 byte wide, so the length is unchanged.
+		raw = unsafe.Slice((*byte)(unsafe.Pointer(&w.q8[0])), len(w.q8))
+	case len(w.q4) > 0:
+		raw = w.q4
+	default:
+		return nil // f32 or empty — not a pageable quantized tensor
+	}
+	start := uintptr(unsafe.Pointer(&raw[0]))
+	if start < base || start+uintptr(len(raw)) > end {
+		return nil // heap-backed, not part of the mapping
+	}
+	return mmap.PageAlignedInterior(raw)
+}

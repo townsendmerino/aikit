@@ -28,6 +28,7 @@ large embedded-grammar payload) — is quarantined in the separate
 | `sparse` | learned-sparse (SPLADE) retrieval — inverted index + sparse-dot scoring over vectors from `encoder.SPLADE` (in-process) or precomputed | `topk` |
 | `bench` | reproducible recall + latency harness for the dense indexes (Flat / HNSW / FlatI8) — Experimental tooling | `ann` |
 | `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | — |
+| `mmap` *(Experimental)* | read-only file mapping + `madvise` residency hints + a demand-signal-agnostic `SpanCache` (LRU spans under a byte budget) — the substrate `ann`/`embed` mmap loaders sit on; cgo-free, `!unix` heap fallback | `golang.org/x/sys` *(darwin only)* |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `golang.org/x/text` |
 | `encoder` | CodeRankEmbed (NomicBert) + MiniLM-class BERT embedder + SPLADE expansion + cross-encoder reranker — transformer inference scored by cosine / sparse dot / relevance logit; pluggable matmul `Backend` | `embed`, `linalg`, `sparse` |
 | `vision` *(Experimental)* | SigLIP / ViT image encoder — decode → preprocess → pure-Go transformer forward → image embeddings (f32 or int8 W8A8), parity-pinned to HF `SiglipVisionModel`; stdlib image codecs, no cgo | `embed`, `linalg` |
@@ -217,6 +218,12 @@ settles.
   (aliases the int8 codes from a read-only mapping for instant startup + page-cache
   sharing); `FlatI8.Close` releases it. Versioned format, settling alongside
   `FlatI8`.
+- `mmap` — new leaf package: `MapReadOnly`/`Unmap` (the read-only mapping `ann` and
+  `embed` previously each kept a private copy of), `Advise` (`madvise` residency
+  hints — firm cap on Linux, best-effort elsewhere), and `SpanCache` (a
+  demand-signal-agnostic LRU of page-aligned spans under a byte budget) for paging a
+  mapping larger than RAM. stdlib-only (plus `golang.org/x/sys` on darwin), cgo-free,
+  with a `!unix` heap fallback. New surface, settling.
 - `Flat`/`HNSW`/`FlatI8` `.QueryFilter(q, k, keep)` — query-time logical-delete /
   live-set filter (the index stays immutable). New surface, settling.
 - `bm25.TokenizePlain` — new general-text (Unicode word) analyzer alongside the
