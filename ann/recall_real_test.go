@@ -21,7 +21,7 @@ func realCorpus(t *testing.T) (m *embed.StaticModel, vecs [][]float32, queries [
 	if _, err := os.Stat(filepath.Join(modelDir, "model.safetensors")); err != nil {
 		t.Skipf("no model at %s — see testdata/README.md", modelDir)
 	}
-	m, err := embed.Load(modelDir)
+	m, err := embed.LoadFromFS(os.DirFS(modelDir), ".")
 	if err != nil {
 		t.Fatal(err)
 	}

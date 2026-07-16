@@ -25,7 +25,7 @@ func TestParseGGUF_nestedArrayBomb(t *testing.T) {
 	b.WriteByte('x')
 	binary.Write(&b, binary.LittleEndian, uint32(9)) // value type = array
 	// ~960 KB of (et=array, n=1000) headers — each a nesting level claiming 1000.
-	for i := 0; i < 80000; i++ {
+	for range 80000 {
 		binary.Write(&b, binary.LittleEndian, uint32(9))
 		binary.Write(&b, binary.LittleEndian, uint64(1000))
 	}
@@ -34,7 +34,7 @@ func TestParseGGUF_nestedArrayBomb(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	OpenGGUFBytes(data) // must error or succeed, never blow up — and stay bounded
+	_, _ = OpenGGUFBytes(data) // must error or succeed, never blow up — and stay bounded
 	runtime.ReadMemStats(&after)
 
 	alloc := after.TotalAlloc - before.TotalAlloc

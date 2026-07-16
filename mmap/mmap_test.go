@@ -70,7 +70,7 @@ func TestMadvise_dontneedRefaultsIntact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MapReadOnly: %v", err)
 	}
-	defer Unmap(b)
+	defer func() { _ = Unmap(b) }()
 
 	span := PageAlignedInterior(b)
 	if len(span) == 0 {
@@ -133,7 +133,7 @@ func TestPageAlignedInterior(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MapReadOnly: %v", err)
 	}
-	defer Unmap(b)
+	defer func() { _ = Unmap(b) }()
 
 	in := PageAlignedInterior(b)
 	if len(in)%pg != 0 {

@@ -315,7 +315,6 @@ func parseGGUF(raw []byte) (*GGUFFile, error) {
 		return nil, c.err
 	}
 
-	names := make([]string, 0, c.hintLen(tensorCount))
 	for i := uint64(0); i < tensorCount && c.err == nil; i++ {
 		name := c.str()
 		nd := int(c.u32())
@@ -332,7 +331,6 @@ func parseGGUF(raw []byte) (*GGUFFile, error) {
 		typ := c.u32()
 		off := c.u64()
 		g.tensors[name] = ggufTensorInfo{dims: dims, typ: typ, offset: off}
-		names = append(names, name)
 	}
 	if c.err != nil {
 		return nil, c.err

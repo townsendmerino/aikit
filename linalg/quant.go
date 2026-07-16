@@ -399,23 +399,6 @@ func MatmulBTW4A8(a []float32, w4 []byte, wScales []float32, dst []float32, M, K
 	})
 }
 
-// unpackInt4Row unpacks n group-int4 nibbles into dst[:n] as centered int8
-// (nibble−8), two nibbles per byte (even k = low, odd k = high — the
-// QuantizeGroupInt4Row layout), branchless in the hot pair loop.
-func unpackInt4Row(packed []byte, n int, dst []int8) {
-	full := n &^ 1
-	di := 0
-	for bi := 0; di < full; bi++ {
-		b := packed[bi]
-		dst[di] = int8(int(b&0x0F) - 8)
-		dst[di+1] = int8(int(b>>4) - 8)
-		di += 2
-	}
-	if di < n { // trailing odd nibble (low)
-		dst[di] = int8(int(packed[di>>1]&0x0F) - 8)
-	}
-}
-
 // MatmulBTQ4 computes dst[M,N] = a[M,K] · bᵀ where b is the [N,K] matrix stored
 // as group-wise int4 (bPacked nibbles + bScales per group; see
 // QuantizeGroupsInt4). Each weight row is dequantized ONCE into a full K-wide

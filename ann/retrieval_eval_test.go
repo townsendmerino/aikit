@@ -56,7 +56,7 @@ func TestGenRetrievalFixture(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(modelDir, "model.safetensors")); err != nil {
 		t.Skipf("no model at %s — see testdata/README.md", modelDir)
 	}
-	m, err := embed.Load(modelDir)
+	m, err := embed.LoadFromFS(os.DirFS(modelDir), ".")
 	if err != nil {
 		t.Fatal(err)
 	}

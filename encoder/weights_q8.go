@@ -1,7 +1,6 @@
 package encoder
 
 import (
-	"github.com/townsendmerino/aikit/embed"
 	"github.com/townsendmerino/aikit/linalg"
 )
 
@@ -48,10 +47,6 @@ type WeightsQ8 struct {
 	EmbLN_B      []float32
 
 	Layers []LayerWeightsQ8
-
-	// Retained for the underlying f32 weights' lifetime (slices alias
-	// into the mmap region or heap buffer — same contract as Weights).
-	st *embed.SafetensorsFile
 }
 
 // HeadDim convenience (mirrors Config.HeadDim).

@@ -16,7 +16,7 @@ import (
 // code-ish strings (shared token pools → near-ties), plus held-out queries.
 func realCorpus(t *testing.T, modelDir string) (m *embed.StaticModel, vecs, queries [][]float32) {
 	t.Helper()
-	m, err := embed.Load(modelDir)
+	m, err := embed.LoadFromFS(os.DirFS(modelDir), ".")
 	if err != nil {
 		t.Fatal(err)
 	}

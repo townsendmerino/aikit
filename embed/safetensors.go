@@ -299,14 +299,14 @@ func finalizeMmaps(s *SafetensorsFile) {
 // After Close, any Tensor() returns alias unmapped memory — accessing
 // them is undefined behavior. Callers MUST stop using the model and any
 // downstream objects that hold tensor data before calling Close.
-func (sf *SafetensorsFile) Close() error {
-	sf.closed = true // make Tensor() error afterward, mmap-backed or not
-	if len(sf.mmapped) == 0 {
+func (f *SafetensorsFile) Close() error {
+	f.closed = true // make Tensor() error afterward, mmap-backed or not
+	if len(f.mmapped) == 0 {
 		return nil
 	}
-	regions := sf.mmapped
-	sf.mmapped = nil
-	runtime.SetFinalizer(sf, nil)
+	regions := f.mmapped
+	f.mmapped = nil
+	runtime.SetFinalizer(f, nil)
 	var firstErr error
 	for _, m := range regions {
 		if err := mmap.Unmap(m); err != nil && firstErr == nil {

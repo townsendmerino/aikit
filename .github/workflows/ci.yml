@@ -28,6 +28,17 @@ jobs:
       - name: vet
         run: go vet ./...
 
+      # golangci-lint with the conservative config at .golangci.yml: errcheck
+      # + govet + ineffassign + staticcheck + unused (no QF* stylistic
+      # quickfix rules, no ST1003 — aikit's underscore names mirror the GGML
+      # and HF-checkpoint spellings on purpose; see the config). Pinned to the
+      # same action major + version ken uses so the two repos report
+      # identically for the packages that moved between them (ADR-034).
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.11.4
+
       # Core-cleanliness guard (migration-plan §7/§9): the root module must
       # stay pure-Go — no cgo WebGPU, no tree-sitter. Those live in the
       # goinfer/gpu and aikit/chunk/treesitter modules respectively.

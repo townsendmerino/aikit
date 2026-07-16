@@ -63,7 +63,7 @@ Without them this just prints guidance; the pipeline code below is the point.`)
 		return
 	}
 
-	em, err := embed.Load(*embedDir)
+	em, err := embed.LoadFromFS(os.DirFS(*embedDir), ".")
 	check(err, "load embed model")
 	enc, err := encoder.Load(*rerankDir)
 	check(err, "load rerank model")

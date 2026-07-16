@@ -1,0 +1,84 @@
+# golangci-lint config for aikit.
+#
+# Mirrors ken's posture (the repo aikit's ann/bm25/chunk packages moved
+# here from, ADR-034) so a contributor moving between the two repos gets
+# the same lint feedback: enable the linters that catch real bugs
+# (errcheck, govet, ineffassign, staticcheck, unused) and disable the
+# cosmetic-only quickfix rules — ken drops QF1001/QF1003 (De Morgan's law,
+# tagged-switch); aikit also drops QF1002 for the same reason.
+#
+# aikit-specific vs ken's copy: no database/sql or MCP-session errcheck
+# exclusions (aikit is a library with neither), plus the ST1003 note below.
+
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+  settings:
+    staticcheck:
+      checks:
+        - "all"
+        # QF* are quickfix-only stylistic suggestions, not bug detectors:
+        #   - QF1001 "could apply De Morgan's law"
+        #   - QF1002 "could use tagged switch"
+        #   - QF1003 "could use tagged switch on <expr>"
+        - "-QF1001"
+        - "-QF1002"
+        - "-QF1003"
+        # ST1003 flags underscores in Go names. aikit's underscore names are
+        # deliberate spec-mirroring, and renaming them would break the
+        # traceability that makes them reviewable against the upstream spec:
+        #   - embed/gguf.go's ggmlTypeQ2_K…Q6_K mirror the GGML quantization
+        #     type names exactly as ggml/llama.cpp spell them (Q4_K_M etc.).
+        #   - encoder's EmbLN_W / EmbLN_B mirror the HF checkpoint tensor
+        #     names they load, so a shape bug is greppable against the dump.
+        - "-ST1003"
+
+    errcheck:
+      # Don't flag these patterns — they're idiomatic-Go-by-design.
+      exclude-functions:
+        # Idiomatic deferred-Close on read-side resources where the close
+        # error genuinely doesn't matter (we're not writing, so there's no
+        # pending data to flush). aikit's loaders open model artifacts
+        # read-only (embed/gguf.go, embed/safetensors.go, embed/mmap_*.go).
+        - (*os.File).Close
+        - (io.Closer).Close
+        # The mmap-backed readers' Close munmaps a read-only region; callers
+        # that defer it are releasing, not flushing. Where the error IS
+        # load-bearing (double-close semantics) it's asserted explicitly —
+        # see encoder/mmap_test.go.
+        - (*github.com/townsendmerino/aikit/embed.SafetensorsFile).Close
+        - (*github.com/townsendmerino/aikit/embed.GGUFFile).Close
+        - (*github.com/townsendmerino/aikit/ann.FlatI8).Close
+        # mmap.Unmap is the same release-don't-flush shape as the Closes
+        # above, just spelled as a free function on the mmap leaf.
+        - github.com/townsendmerino/aikit/mmap.Unmap
+        # Logging writers — the writer's Write error is uninteresting for a
+        # log line.
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - fmt.Fprint
+
+  exclusions:
+    rules:
+      # Fuzz/unit corpus builders write fixture bytes into a bytes.Buffer via
+      # binary.Write. bytes.Buffer.Write never returns a non-nil error (it
+      # panics on OOM instead), so checking it in a table of ~30 field writes
+      # is pure noise. Test-only: a real binary.Write to an io.Writer that can
+      # fail is still flagged in non-test code.
+      - path: _test\.go
+        linters: [errcheck]
+        text: "Error return value of `binary\\.Write` is not checked"
+
+issues:
+  # Show every finding so the cleanup pass can't miss any. Default is 50
+  # (golangci-lint v2).
+  max-issues-per-linter: 0
+  max-same-issues: 0
