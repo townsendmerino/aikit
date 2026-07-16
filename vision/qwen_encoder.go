@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/townsendmerino/aikit/embed"
 	"github.com/townsendmerino/aikit/linalg"
@@ -219,9 +220,9 @@ func (e *QwenVisionEncoder) forwardViT(pixelValues []float32, gridTHW [][3]int) 
 	rdim := len(freqs) / nPatches
 	hWin := make([]float32, nPatches*hidden)
 	fWin := make([]float32, nPatches*rdim)
-	for g := 0; g < groups; g++ {
+	for g := range groups {
 		src := winIdx[g]
-		for u := 0; u < mergeUnit; u++ {
+		for u := range mergeUnit {
 			dp, sp := (g*mergeUnit+u)*hidden, (src*mergeUnit+u)*hidden
 			copy(hWin[dp:dp+hidden], h[sp:sp+hidden])
 			df, sf := (g*mergeUnit+u)*rdim, (src*mergeUnit+u)*rdim
@@ -235,7 +236,7 @@ func (e *QwenVisionEncoder) forwardViT(pixelValues []float32, gridTHW [][3]int) 
 	sin := make([]float32, nPatches*headDim)
 	for i := 0; i < nPatches; i++ {
 		fr := fWin[i*rdim : i*rdim+rdim]
-		for d := 0; d < headDim; d++ {
+		for d := range headDim {
 			f := float64(fr[d%rdim]) // emb[d]=freqs[d] (d<rdim), freqs[d-rdim] (d≥rdim)
 			cos[i*headDim+d] = float32(math.Cos(f))
 			sin[i*headDim+d] = float32(math.Sin(f))
@@ -266,9 +267,9 @@ func (e *QwenVisionEncoder) forwardViT(pixelValues []float32, gridTHW [][3]int) 
 
 	// de-window back to original patch order (merge-unit granularity).
 	out := make([]float32, nPatches*hidden)
-	for g := 0; g < groups; g++ {
+	for g := range groups {
 		dst := winIdx[g]
-		for u := 0; u < mergeUnit; u++ {
+		for u := range mergeUnit {
 			dp, sp := (dst*mergeUnit+u)*hidden, (g*mergeUnit+u)*hidden
 			copy(out[dp:dp+hidden], hWin[sp:sp+hidden])
 		}
@@ -319,16 +320,16 @@ func (e *QwenVisionEncoder) attention(x []float32, b *qwenBlock, seq int, cos, s
 	q := make([]float32, seq*hidden)
 	k := make([]float32, seq*hidden)
 	v := make([]float32, seq*hidden)
-	for i := 0; i < seq; i++ {
+	for i := range seq {
 		base := i * 3 * hidden
 		copy(q[i*hidden:(i+1)*hidden], qkv[base:base+hidden])
 		copy(k[i*hidden:(i+1)*hidden], qkv[base+hidden:base+2*hidden])
 		copy(v[i*hidden:(i+1)*hidden], qkv[base+2*hidden:base+3*hidden])
 	}
 	// 2D rotary on q,k (NeoX rotate_half over the full head_dim).
-	for i := 0; i < seq; i++ {
+	for i := range seq {
 		co, si := cos[i*hd:i*hd+hd], sin[i*hd:i*hd+hd]
-		for head := 0; head < nH; head++ {
+		for head := range nH {
 			off := i*hidden + head*hd
 			applyRotaryVision(q[off:off+hd], co, si)
 			applyRotaryVision(k[off:off+hd], co, si)
@@ -347,21 +348,21 @@ func (e *QwenVisionEncoder) attention(x []float32, b *qwenBlock, seq int, cos, s
 	vt := make([]float32, hd*maxSeg)
 	scores := make([]float32, maxSeg*maxSeg)
 	oh := make([]float32, maxSeg*hd)
-	for head := 0; head < nH; head++ {
+	for head := range nH {
 		off := head * hd
 		for s := 1; s < len(cu); s++ {
 			start, n := cu[s-1], cu[s]-cu[s-1]
-			for ii := 0; ii < n; ii++ {
+			for ii := range n {
 				gi := start + ii
 				copy(qh[ii*hd:(ii+1)*hd], q[gi*hidden+off:gi*hidden+off+hd])
 				copy(kh[ii*hd:(ii+1)*hd], k[gi*hidden+off:gi*hidden+off+hd])
 				vrow := v[gi*hidden+off : gi*hidden+off+hd]
-				for d := 0; d < hd; d++ {
+				for d := range hd {
 					vt[d*n+ii] = vrow[d]
 				}
 			}
 			linalg.MatmulBT(qh, kh, scores[:n*n], n, hd, n)
-			for i := 0; i < n; i++ {
+			for i := range n {
 				row := scores[i*n : (i+1)*n]
 				for j := range row {
 					row[j] *= scale
@@ -369,7 +370,7 @@ func (e *QwenVisionEncoder) attention(x []float32, b *qwenBlock, seq int, cos, s
 				softmaxRow(row)
 			}
 			linalg.MatmulBT(scores[:n*n], vt[:hd*n], oh[:n*hd], n, n, hd)
-			for ii := 0; ii < n; ii++ {
+			for ii := range n {
 				copy(out[(start+ii)*hidden+off:(start+ii)*hidden+off+hd], oh[ii*hd:(ii+1)*hd])
 			}
 		}
@@ -397,12 +398,7 @@ func (e *QwenVisionEncoder) mlp(x []float32, b *qwenBlock, seq int) []float32 {
 }
 
 func (e *QwenVisionEncoder) isFullAtt(layer int) bool {
-	for _, idx := range e.Cfg.FullattBlockIndexes {
-		if idx == layer {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(e.Cfg.FullattBlockIndexes, layer)
 }
 
 // rotaryFreqs builds per-patch rotary frequencies [nPatches][head_dim/2] in
@@ -419,8 +415,8 @@ func (e *QwenVisionEncoder) rotaryFreqs(gridTHW [][3]int) []float32 {
 		block := make([]float32, 0, h*w*rdim)
 		for a := 0; a < h/merge; a++ {
 			for c := 0; c < w/merge; c++ {
-				for b := 0; b < merge; b++ {
-					for d := 0; d < merge; d++ {
+				for b := range merge {
+					for d := range merge {
 						hpos, wpos := float32(a*merge+b), float32(c*merge+d)
 						for _, f := range e.rotInvFreq {
 							block = append(block, hpos*f)
@@ -432,7 +428,7 @@ func (e *QwenVisionEncoder) rotaryFreqs(gridTHW [][3]int) []float32 {
 				}
 			}
 		}
-		for ti := 0; ti < t; ti++ {
+		for range t {
 			out = append(out, block...)
 		}
 	}
@@ -458,12 +454,12 @@ func (e *QwenVisionEncoder) windowIndex(gridTHW [][3]int) (winIdx, cuWin []int) 
 		padW := vmws - llmW%vmws
 		numWinH := (llmH + padH) / vmws
 		numWinW := (llmW + padW) / vmws
-		for ti := 0; ti < t; ti++ {
-			for wh := 0; wh < numWinH; wh++ {
-				for ww := 0; ww < numWinW; ww++ {
+		for ti := range t {
+			for wh := range numWinH {
+				for ww := range numWinW {
 					count := 0
-					for bi := 0; bi < vmws; bi++ {
-						for bj := 0; bj < vmws; bj++ {
+					for bi := range vmws {
+						for bj := range vmws {
 							i, j := wh*vmws+bi, ww*vmws+bj
 							if i < llmH && j < llmW {
 								winIdx = append(winIdx, idOffset+ti*llmH*llmW+i*llmW+j)
@@ -489,7 +485,7 @@ func cuSeqlensFull(gridTHW [][3]int) []int {
 	acc := 0
 	for _, g := range gridTHW {
 		t, h, w := g[0], g[1], g[2]
-		for ti := 0; ti < t; ti++ {
+		for range t {
 			acc += h * w
 			cu = append(cu, acc)
 		}
@@ -504,7 +500,7 @@ func cuSeqlensFull(gridTHW [][3]int) []int {
 func rmsNorm(x, w []float32, rows, dim int) []float32 {
 	const eps = 1e-6
 	out := make([]float32, rows*dim)
-	for r := 0; r < rows; r++ {
+	for r := range rows {
 		xr := x[r*dim : r*dim+dim]
 		var ss float64
 		for _, v := range xr {
@@ -512,7 +508,7 @@ func rmsNorm(x, w []float32, rows, dim int) []float32 {
 		}
 		inv := 1.0 / math.Sqrt(ss/float64(dim)+eps)
 		dst := out[r*dim : r*dim+dim]
-		for d := 0; d < dim; d++ {
+		for d := range dim {
 			dst[d] = float32(float64(xr[d])*inv) * w[d]
 		}
 	}
@@ -525,7 +521,7 @@ func applyRotaryVision(vec, cos, sin []float32) {
 	hd := len(vec)
 	half := hd / 2
 	tmp := make([]float32, hd)
-	for d := 0; d < hd; d++ {
+	for d := range hd {
 		var rot float32
 		if d < half {
 			rot = -vec[d+half]

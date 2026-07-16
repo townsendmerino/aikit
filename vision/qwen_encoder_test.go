@@ -44,7 +44,7 @@ func TestQwenVisionEncoder_parity(t *testing.T) {
 	winIdx, _ := enc.windowIndex(g.GridTHW)
 	goldVit := make([]float32, len(g.VitHidden))
 	for win, orig := range winIdx {
-		for u := 0; u < mergeUnit; u++ {
+		for u := range mergeUnit {
 			d := (orig*mergeUnit + u) * hidden
 			s := (win*mergeUnit + u) * hidden
 			copy(goldVit[d:d+hidden], g.VitHidden[s:s+hidden])

@@ -88,10 +88,10 @@ func blockedFill(a, b, dst []float32, M, K, N, nStart, nEnd, mBlock, nBlock, kBl
 								&b[n*K+k0], &b[(n+1)*K+k0], &b[(n+2)*K+k0], &b[(n+3)*K+k0],
 								&b[(n+4)*K+k0], &b[(n+5)*K+k0], &b[(n+6)*K+k0], &b[(n+7)*K+k0],
 								k4, &s)
-							for r := 0; r < 2; r++ {
+							for r := range 2 {
 								ii := i + r
 								base := r * 32
-								for j := 0; j < 8; j++ {
+								for j := range 8 {
 									sum := s[base+j*4] + s[base+j*4+1] + s[base+j*4+2] + s[base+j*4+3]
 									for k := k4 * 4; k < kSpan; k++ {
 										sum += a[ii*K+k0+k] * b[(n+j)*K+k0+k]
@@ -177,7 +177,7 @@ func accumRowRange(a, b, dst []float32, i, K, N, k0, k4, kSpan, nStart, nEnd int
 	}
 	for ; n < nEnd; n++ {
 		var s float32
-		for k := 0; k < kSpan; k++ {
+		for k := range kSpan {
 			s += a[i*K+k0+k] * b[n*K+k0+k]
 		}
 		dst[i*N+n] += s
@@ -221,7 +221,7 @@ func packedFill(a, b, dst []float32, M, K, N, nStart, nEnd, kBlock int) {
 			kEnd := min(k0+kBlock, K)
 			kSpan := kEnd - k0
 			k4 := kSpan / 4
-			for bi := 0; bi < 8; bi++ {
+			for bi := range 8 {
 				copy(bPack[bi*kSpan:bi*kSpan+kSpan], b[(n0+bi)*K+k0:(n0+bi)*K+kEnd])
 			}
 			p0, p1, p2, p3 := &bPack[0], &bPack[kSpan], &bPack[2*kSpan], &bPack[3*kSpan]
@@ -230,10 +230,10 @@ func packedFill(a, b, dst []float32, M, K, N, nStart, nEnd, kBlock int) {
 			var s [64]float32
 			for ; i+1 < M; i += 2 {
 				Dot2x8(&a[i*K+k0], &a[(i+1)*K+k0], p0, p1, p2, p3, p4, p5, p6, p7, k4, &s)
-				for r := 0; r < 2; r++ {
+				for r := range 2 {
 					ii := i + r
 					base := r * 32
-					for j := 0; j < 8; j++ {
+					for j := range 8 {
 						sum := s[base+j*4] + s[base+j*4+1] + s[base+j*4+2] + s[base+j*4+3]
 						for k := k4 * 4; k < kSpan; k++ {
 							sum += a[ii*K+k0+k] * b[(n0+j)*K+k0+k]
@@ -245,7 +245,7 @@ func packedFill(a, b, dst []float32, M, K, N, nStart, nEnd, kBlock int) {
 			for ; i < M; i++ {
 				var s8 [32]float32
 				Dot8x4(&a[i*K+k0], p0, p1, p2, p3, p4, p5, p6, p7, k4, &s8)
-				for j := 0; j < 8; j++ {
+				for j := range 8 {
 					sum := s8[j*4] + s8[j*4+1] + s8[j*4+2] + s8[j*4+3]
 					for k := k4 * 4; k < kSpan; k++ {
 						sum += a[i*K+k0+k] * b[(n0+j)*K+k0+k]

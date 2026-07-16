@@ -87,8 +87,8 @@ func (e *Encoder) GridPatches(pixels []float32) ([]float32, error) {
 		for gw := 0; gw < e.grid; gw++ {
 			dst := patches[(gh*e.grid+gw)*cpp:]
 			for ch := 0; ch < c.NumChannels; ch++ {
-				for kh := 0; kh < P; kh++ {
-					for kw := 0; kw < P; kw++ {
+				for kh := range P {
+					for kw := range P {
 						dst[(ch*P+kh)*P+kw] = pixels[ch*W*W+(gh*P+kh)*W+(gw*P+kw)]
 					}
 				}
