@@ -1,6 +1,6 @@
 module github.com/townsendmerino/aikit/benchmarks
 
-go 1.26.3
+go 1.26.5
 
 require (
 	github.com/coder/hnsw v0.6.1
