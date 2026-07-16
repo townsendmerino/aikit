@@ -1,7 +1,11 @@
 // Package bm25 is the lexical (sparse) retriever — the bm25s-equivalent
-// scorer plus the identifier-aware tokenizer that feeds it. Stage 1 of
-// docs/DESIGN.md: the boring-but-correct foundation validated against semble's
+// scorer plus the identifier-aware tokenizer that feeds it. Stage 1 of ken's
+// DESIGN.md: the boring-but-correct foundation validated against semble's
 // SearchMode.BM25.
+//
+// This package moved here from ken (ADR-034); "DESIGN.md" and "BENCH.md"
+// refer to https://github.com/townsendmerino/ken/blob/main/docs/DESIGN.md and
+// https://github.com/townsendmerino/ken/blob/main/docs/BENCH.md.
 //
 // Invariants pinned to semble's bm25s defaults (k1=1.5, b=0.75, Lucene
 // IDF: `ln(1 + (N - df + 0.5) / (df + 0.5))`, non-negative-clamped):
@@ -74,7 +78,7 @@ var tokenizerPool = sync.Pool{
 // `validate_user` only gets a strong BM25 hit when the doc index also
 // has the rare `validate_user` compound term — otherwise the score
 // splits across two common parts (`validate`, `user`) and BM25 IDF
-// distributes weight thinly. See docs/BENCH.md for the measured impact
+// distributes weight thinly. See ken's BENCH.md for the measured impact
 // on semble's NDCG benchmark, and ADR-008 for the parity contract.
 //
 // Behavior to keep in lock-step with semble:

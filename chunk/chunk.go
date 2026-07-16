@@ -1,7 +1,10 @@
 // Package chunk splits source files into retrieval units behind a
 // runtime-selectable Chunker interface (see registry.go).
 //
-// The Chunker interface seam supports three options per docs/DESIGN.md §2:
+// This package moved here from ken (ADR-034); "DESIGN.md" refers to
+// https://github.com/townsendmerino/ken/blob/main/docs/DESIGN.md.
+//
+// The Chunker interface seam supports three options per ken's DESIGN.md §2:
 // `regex` (default; per-language regex rules, Stage 2), `treesitter`
 // (opt-in; gotreesitter + cAST, v0.2.0 / ADR-010), and `line` (universal
 // fallback, also used internally by the other two when they can't handle

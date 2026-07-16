@@ -1,8 +1,9 @@
 package bm25
 
-// BM25 defaults. These are the Lucene / bm25s defaults; docs/DESIGN.md Stage 1
-// validates ranking against semble's SearchMode.BM25, so the exact variant
-// is pinned to what bm25s uses by default (the Lucene IDF, see query.go).
+// BM25 defaults. These are the Lucene / bm25s defaults; ken's DESIGN.md
+// Stage 1 validates ranking against semble's SearchMode.BM25, so the exact
+// variant is pinned to what bm25s uses by default (the Lucene IDF, see
+// query.go).
 const (
 	DefaultK1 = 1.5
 	DefaultB  = 0.75

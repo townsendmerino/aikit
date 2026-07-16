@@ -9,8 +9,8 @@ import (
 // language name. It mirrors the spirit of semble's sources.FILE_TYPES.
 //
 // Only the five names python/go/typescript/java/rust are handled by the
-// regex chunker (docs/DESIGN.md v1). JavaScript variants intentionally route to
-// "typescript": the two share one regex ruleset (docs/DESIGN.md §2 groups
+// regex chunker (ken's DESIGN.md v1). JavaScript variants intentionally route to
+// "typescript": the two share one regex ruleset (ken's DESIGN.md §2 groups
 // "TypeScript/JavaScript"). Everything else gets a descriptive name that
 // is simply not in regex.SupportedLanguages(), so ChunkFile falls back to
 // the line chunker for it.

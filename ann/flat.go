@@ -1,6 +1,10 @@
 // Package ann is the dense (semantic) retriever. v1 is a flat brute-force
-// cosine scan — the "vicinity" equivalent in docs/DESIGN.md §1. HNSW lands later
-// behind this same Hit/Query shape; flat is exact and fine at repo scale.
+// cosine scan — the "vicinity" equivalent in ken's DESIGN.md §1. HNSW lands
+// later behind this same Hit/Query shape; flat is exact and fine at repo
+// scale.
+//
+// This package moved here from ken (ADR-034); "DESIGN.md" refers to
+// https://github.com/townsendmerino/ken/blob/main/docs/DESIGN.md.
 //
 // Invariants the rest of the codebase depends on:
 //

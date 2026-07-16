@@ -7,7 +7,7 @@ import "regexp"
 // itself is a depth-0 boundary. Attributes (`#[derive(...)]`, `#[test]`,
 // inner `#![...]`) and `///` / `//!` doc comments attach to the item below.
 //
-// Refines the docs/DESIGN.md §2 sketch: adds `trait`/`union`/`mod`/`type`/`const`/
+// Refines the ken's DESIGN.md §2 sketch: adds `trait`/`union`/`mod`/`type`/`const`/
 // `static`/`macro_rules!`, generic and `where`-clause-friendly `fn`
 // matching, and `unsafe`/`extern`/`async` qualifiers. The scanner does NOT
 // treat `'` as a string delimiter — in Rust `'a` is a lifetime, not a

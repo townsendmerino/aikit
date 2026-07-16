@@ -6,7 +6,7 @@ import "regexp"
 // maxDepth=1 so class methods are boundaries too: a large class splits
 // between methods instead of arbitrary line-splitting.
 //
-// Refines the docs/DESIGN.md §2 sketch in three ways the sketch missed:
+// Refines the ken's DESIGN.md §2 sketch in three ways the sketch missed:
 //   - arrow functions assigned to a const/let/var: `export const f = (a) => {`
 //     and `const f = async () => {` (the sketch's `const \w+ = (async)?\(`
 //     missed the `=>` and the type-annotation case `const f: T = () =>`);

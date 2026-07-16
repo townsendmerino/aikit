@@ -11,7 +11,7 @@ import (
 )
 
 // SigLIP / ViT vision encoder (the Gemma 3 vision tower) as a pure-Go forward —
-// the P2 piece of docs/multimodal.md. It maps preprocessed pixel_values to a
+// the P2 piece of goinfer's multimodal.md. It maps preprocessed pixel_values to a
 // last_hidden_state, the sequence of patch embeddings the projector turns into
 // image tokens. The attention/FFN projections run f32 or int8 W8A8 (LoadEncoder's
 // quant flag; the patch-embed conv stays f32); parity is cosine vs the HF

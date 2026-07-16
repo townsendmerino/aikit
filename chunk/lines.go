@@ -2,7 +2,7 @@ package chunk
 
 // LineChunker is the language-agnostic fallback: fixed-size line windows
 // with a small overlap so a match straddling a window boundary still lands
-// wholly inside at least one chunk. docs/DESIGN.md §1 pins the defaults at a
+// wholly inside at least one chunk. ken's DESIGN.md §1 pins the defaults at a
 // 50-line window with 5 lines of overlap.
 //
 // It is also the seam-validation stand-in until the Chunker interface
@@ -12,7 +12,7 @@ type LineChunker struct {
 	Overlap int // lines shared with the previous chunk (0 <= Overlap < Size)
 }
 
-// NewLineChunker returns the docs/DESIGN.md default 50/5 configuration.
+// NewLineChunker returns the default 50/5 configuration from ken's DESIGN.md.
 func NewLineChunker() *LineChunker {
 	return &LineChunker{Size: 50, Overlap: 5}
 }

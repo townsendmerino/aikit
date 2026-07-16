@@ -7,7 +7,8 @@ import (
 )
 
 // DefaultChunkSize is the target chunk size in bytes (≈characters for the
-// ASCII-heavy code ken indexes). docs/DESIGN.md "Build order" pins Stage 2 at 1500.
+// ASCII-heavy code ken indexes). ken's DESIGN.md "Build order" pins Stage 2
+// at 1500.
 const DefaultChunkSize = 1500
 
 // Chunker turns a source file into retrieval units. Implementations are
@@ -15,8 +16,8 @@ const DefaultChunkSize = 1500
 //
 // The signature is deliberately minimal — no context.Context (regex
 // chunking is synchronous and fast) and no filename (the caller stamps
-// Chunk.File; a chunker only needs the language to pick rules). docs/DESIGN.md §2
-// originally sketched a ctx parameter; it was dropped because nothing in
+// Chunk.File; a chunker only needs the language to pick rules). ken's
+// DESIGN.md §2 originally sketched a ctx parameter; it was dropped because nothing in
 // Option C needs it and Options B/A can adopt this same shape (see §2).
 //
 // STABILITY (ADR-032): this interface — plus Register/Get/Names, ChunkFile,

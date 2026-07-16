@@ -16,7 +16,7 @@
 // byte-for-byte output. Don't pin behavior to a specific boundary; do
 // rely on "it produces valid, contiguous, byte-faithful chunks."
 //
-// Why this exists (docs/DESIGN.md §2 + §10): v0.1.0 measured a 0.012
+// Why this exists (ken's DESIGN.md §2 + §10): v0.1.0 measured a 0.012
 // hybrid NDCG@10 gap vs semble (0.842 vs 0.854) localized to languages
 // where ken's regex chunker draws different boundaries than semble's
 // tree-sitter chunker. Python with hand-tuned regex tracked semble
@@ -98,10 +98,10 @@ type Chunker struct {
 
 	// Per-reason fallback counters. Atomic-incremented at each of the
 	// four silent-fallback sites in Chunk so callers (`ken perf index`,
-	// the OSS-demo build-time validation per outputs/oss-demo-playbook.md)
-	// can quantify how many files actually got AST chunks vs degraded to
-	// the line chunker. Exposed via Stats(); zero allocations on the hot
-	// path. ADR-010 graceful-degradation behavior is unchanged.
+	// the OSS-demo build-time validation) can quantify how many files
+	// actually got AST chunks vs degraded to the line chunker. Exposed
+	// via Stats(); zero allocations on the hot path. ADR-010
+	// graceful-degradation behavior is unchanged.
 	total           atomic.Int64
 	unsupportedLang atomic.Int64
 	parseErr        atomic.Int64

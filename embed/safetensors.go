@@ -14,8 +14,10 @@
 //	v = v / Σ weights[id]
 //	output = v / ‖v‖₂                              (when config.normalize)
 //
-// See ../../../docs/DESIGN.md §4 for the design rationale and the
-// pin_inference.py golden-test script that validated this algorithm.
+// See ken's DESIGN.md §4 for the design rationale and the pin_inference.py
+// golden-test script that validated this algorithm. This package moved here
+// from ken (ADR-034); "DESIGN.md" refers to
+// https://github.com/townsendmerino/ken/blob/main/docs/DESIGN.md.
 package embed
 
 import (

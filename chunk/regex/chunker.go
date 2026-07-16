@@ -1,10 +1,13 @@
-// Package regex is the v1-default chunker (docs/DESIGN.md §2 Option C): one
+// Package regex is the v1-default chunker (ken's DESIGN.md §2 Option C): one
 // generic line-walking engine driven by per-language LanguageRules. It
 // registers itself as "regex" via chunk.Register in init(); import it for
 // side effects (internal/search does) — chunk must not import this package
 // (import cycle), so registration is decoupled the database/sql way.
 //
-// Algorithm (docs/DESIGN.md §2 "Build path"): walk lines, mark the start of each
+// This package moved here from ken (ADR-034); "DESIGN.md" refers to
+// https://github.com/townsendmerino/ken/blob/main/docs/DESIGN.md.
+//
+// Algorithm (ken's DESIGN.md §2 "Build path"): walk lines, mark the start of each
 // top-level (or member-level) definition as a candidate boundary, greedily
 // accumulate lines into a chunk, and when the next line would exceed
 // chunkSize snap the cut back to the latest candidate boundary that still

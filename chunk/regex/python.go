@@ -9,7 +9,7 @@ import "regexp"
 // block attach to the def below them, so the boundary lands on the first
 // decorator/comment line, not the `def`.
 //
-// Refines the docs/DESIGN.md §2 sketch `^\s*(async\s+)?(def|class)\s+\w+`: the
+// Refines the ken's DESIGN.md §2 sketch `^\s*(async\s+)?(def|class)\s+\w+`: the
 // leading `\s*` is dropped because indentStrategy already enforces column
 // 0; keeping it would have wrongly treated indented methods as boundaries.
 //
@@ -20,7 +20,7 @@ import "regexp"
 // turn if Python NDCG lags semble: a class-body-aware mode treating
 // column-N `def` (N == the class body's indent) as a member boundary,
 // mirroring the braceStrategy maxDepth=1 the C-likes already use. Not a
-// Stage-2 reopening — revisit when the benchmark exists. See docs/DESIGN.md §2.
+// Stage-2 reopening — revisit when the benchmark exists. See ken's DESIGN.md §2.
 func pythonRules() LanguageRules {
 	return LanguageRules{
 		lang:  "python",

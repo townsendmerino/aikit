@@ -5,9 +5,13 @@
 // error, never an OOM (the campaign Track-2 posture, extended to image bytes).
 //
 // Parity note: the resize here is bilinear (half-pixel centers). HF/PIL Gemma 3
-// uses BICUBIC, so this is NOT pixel-exact yet — per docs/multimodal.md §2 the
-// end-to-end gate runs on precomputed pixel_values, and a PIL-exact separable
-// resampler is a follow-on. This file is the structure + the security guard.
+// uses BICUBIC, so this is NOT pixel-exact yet — per goinfer's multimodal.md §2
+// the end-to-end gate runs on precomputed pixel_values, and a PIL-exact
+// separable resampler is a follow-on. This file is the structure + the security
+// guard.
+//
+// "multimodal.md" refers to
+// https://github.com/townsendmerino/goinfer/blob/main/docs/multimodal.md.
 package vision
 
 import (

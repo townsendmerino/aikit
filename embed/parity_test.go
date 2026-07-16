@@ -1,6 +1,6 @@
 //go:build parity
 
-// Stage-3 corpus-scale tokenizer parity test (docs/DESIGN.md §3 acceptance bar).
+// Stage-3 corpus-scale tokenizer parity test (ken's DESIGN.md §3 acceptance bar).
 //
 // Excluded from `go test ./...` by the `parity` build tag. Run with:
 //

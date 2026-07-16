@@ -8,7 +8,7 @@ import "regexp"
 // (@Override, @Test, multi-line @SuppressWarnings(...)) and Javadoc attach
 // to the member below.
 //
-// Refines the docs/DESIGN.md §2 sketch ("method signatures", unspecified): the
+// Refines the ken's DESIGN.md §2 sketch ("method signatures", unspecified): the
 // method regex requires a return type token then name then `(...)` then
 // `{`, and `skip` removes control-flow lines (`if (…) {`, `} else {`,
 // `synchronized (…) {`) that the loose pattern would otherwise catch.

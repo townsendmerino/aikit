@@ -9,7 +9,7 @@ import "regexp"
 // rather than being mistaken for an anonymous-func body cut: the closure's
 // braces raise depth, but the `var` line itself is at depth 0.
 //
-// Extends the docs/DESIGN.md §2 sketch (which only listed `^func` and
+// Extends the ken's DESIGN.md §2 sketch (which only listed `^func` and
 // `^type … (struct|interface)`): added `var`/`const`, generic type
 // params, and grouped `type (`/`var (` blocks, all of which are real
 // top-level boundaries.

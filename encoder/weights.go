@@ -1,9 +1,10 @@
 // Package encoder loads and (in subsequent commits) runs the
 // nomic-ai/CodeRankEmbed neural reranker as a pure-Go forward pass.
 //
-// This file implements Milestone 1 of outputs/ken-rerank-plan.md:
+// This file implements Milestone 1 of ken's rerank plan:
 // config + weight loader with strict shape validation against the
-// dumped checkpoint schema. Forward pass arrives in M2.
+// dumped checkpoint schema. Forward pass arrives in M2. The plan lives at
+// https://github.com/townsendmerino/ken/blob/main/docs/internal/results/ken-rerank-plan.md.
 //
 // The package is a sibling of internal/embed (Model2Vec, the first-stage
 // retriever); the two share tokenize.go + safetensors.go but use

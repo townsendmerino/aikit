@@ -39,7 +39,7 @@ func TestNoDefinitions_SizeSplitOnly(t *testing.T) {
 func TestOversizedSingleFunction_LineSplitFallback(t *testing.T) {
 	// One function whose body alone exceeds chunkSize and contains no
 	// nested definitions: there is no boundary to snap to, so it is split
-	// at line boundaries (docs/DESIGN.md §2 / deliverable 4 explicit exception).
+	// at line boundaries (ken's DESIGN.md §2 / deliverable 4 explicit exception).
 	var b strings.Builder
 	b.WriteString("func Big() {\n")
 	for i := range 40 {
