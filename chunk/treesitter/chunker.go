@@ -323,7 +323,7 @@ func (c *Chunker) Chunk(source []byte, language string, chunkSize int) ([]chunk.
 // so linesBefore can binary-search them. O(N) once per Chunk call.
 func newlineOffsets(source []byte) []uint32 {
 	var offs []uint32
-	for i := 0; i < len(source); i++ {
+	for i := range source {
 		if source[i] == '\n' {
 			offs = append(offs, uint32(i))
 		}

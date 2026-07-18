@@ -578,7 +578,7 @@ func applyRotaryVision(vec, cos, sin []float32) {
 	// (~8k patches × 16 heads × 32 blocks). Reads x,y before overwriting either,
 	// and is bit-identical to the tmp version (a+(-b)·s == a-b·s in IEEE).
 	half := len(vec) / 2
-	for d := 0; d < half; d++ {
+	for d := range half {
 		x, y := vec[d], vec[d+half]
 		vec[d] = x*cos[d] - y*sin[d]
 		vec[d+half] = y*cos[d+half] + x*sin[d+half]

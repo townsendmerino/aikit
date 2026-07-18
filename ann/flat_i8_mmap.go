@@ -51,10 +51,7 @@ func pagedBlockRows(dim int) int {
 	if dim <= 0 {
 		return 1
 	}
-	r := pagedBlockTargetBytes / dim
-	if r < 1 {
-		r = 1
-	}
+	r := max(pagedBlockTargetBytes/dim, 1)
 	return r
 }
 
@@ -99,10 +96,7 @@ func loadFlatI8MmapPaged(path string, budget int64, blockRows int) (*FlatI8, err
 	// Register each block's page-aligned span within the mapping. Block b covers
 	// rows [b*blockRows, …); its bytes are data[at+r0*dim : at+r1*dim].
 	for b, r0 := 0, 0; r0 < f.n; b, r0 = b+1, r0+f.blockRows {
-		r1 := r0 + f.blockRows
-		if r1 > f.n {
-			r1 = f.n
-		}
+		r1 := min(r0+f.blockRows, f.n)
 		lo, hi := at+r0*f.dim, at+r1*f.dim
 		f.pager.Add(b, [][]byte{mmap.PageAlignedInterior(f.mmap[lo:hi])})
 	}
@@ -120,10 +114,7 @@ func (f *FlatI8) scorePaged(q []float32, dst []float32) {
 	f.pagerMu.Lock()
 	defer f.pagerMu.Unlock()
 	for b, r0 := 0, 0; r0 < f.n; b, r0 = b+1, r0+f.blockRows {
-		r1 := r0 + f.blockRows
-		if r1 > f.n {
-			r1 = f.n
-		}
+		r1 := min(r0+f.blockRows, f.n)
 		f.pager.Touch(b)
 		linalg.MatmulBTW8A8(q, f.bq[r0*f.dim:r1*f.dim], f.scales[r0:r1], dst[r0:r1], 1, f.dim, r1-r0)
 	}

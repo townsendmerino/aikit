@@ -27,7 +27,7 @@ func TestSpanCache_evictsLRUTailOverBudget(t *testing.T) {
 	// Budget holds 2 of the 4 equal-sized members (100 each, budget 250).
 	c := NewSpanCache[int](250)
 	c.advise = fa.advise
-	for i := 0; i < 4; i++ {
+	for i := range 4 {
 		c.Add(i, [][]byte{span(100)})
 	}
 
@@ -95,7 +95,7 @@ func TestSpanCache_unboundedNeverEvicts(t *testing.T) {
 	fa := &fakeAdvise{}
 	c := NewSpanCache[int](0) // ≤ 0 ⇒ unbounded
 	c.advise = fa.advise
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		c.Add(i, [][]byte{span(100)})
 		c.Touch(i)
 	}
