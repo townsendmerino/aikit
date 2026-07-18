@@ -10,6 +10,158 @@ it.
 
 ## [Unreleased]
 
+## [1.10.0] — 2026-07-18
+
+A hardening + maintenance release. The centerpiece is a security-focused code
+review swept across the untrusted-input boundary — aikit is the parser layer the
+ecosystem routes every hostile GGUF/safetensors byte and every persisted index
+through, and the clamp/validation discipline the GGUF byte cursor already had was
+not uniform across its siblings. Alongside the fixes: two additive API surfaces,
+several allocation/throughput wins, arm64 CI, and a toolchain/dependency refresh.
+No Hard-tier API breakage — everything here is additive or behavioral, and the
+changed kernels stay bit-identical (pinned by the exact-equality parity gates).
+
+### Added
+
+- **`linalg.MatmulBTW4A8Into(ws, …)` — zero-alloc int4 decode matmul.** The
+  W4A8 (int4-weight × int8-activation) decode path had no Workspace variant, so
+  it allocated the quantized-activation scratch (`make([]int8, M*K)` +
+  `make([]float32, M)`) every call — GC pressure per projection per layer per
+  token. The Into form quantizes once into the Workspace's reusable buffers
+  (0 allocs/op in steady state, M=1 K2048×N2048), the int4 equivalent of the
+  existing `MatmulBTW8A8Into`. Bit-identical to `MatmulBTW4A8`.
+- **`Close()` on `Model`, `BERT`, `CrossEncoder`, `SPLADE` (`encoder`).** The
+  f32 text models retained their mmapped safetensors for life — the only
+  deterministic unmap was an internal call the tests reached into, so a
+  long-running server swapping models kept ~547 MB mappings alive until a GC
+  finalizer ran. `Close()` releases eagerly; idempotent, no-op for a heap-loaded
+  model.
+- **arm64 CI job.** The matrix was amd64-only, so the NEON f32/i8/SDOT/W4A8 asm,
+  the `Dot2x8` pair path, `packedFill`, `detectDotProd`, and the exact-equality
+  M-/width-invariance / packed-path bit-identity gates ran only their trivial
+  amd64 legs — an arm64-only regression could ship green on the primary
+  deployment arch. A native `ubuntu-24.04-arm` job now runs build/vet/-race +
+  the `aikit_checks` contract build on real hardware.
+- **staticcheck in CI (golangci-lint).** errcheck + govet + ineffassign +
+  staticcheck + unused, mirroring ken's conservative config (the packages that
+  moved between the repos now report identically). First run: 54 findings → 0.
+
+### Changed
+
+- **BERT attention runs through the pooled scratch arena (`encoder`).** The
+  BERT forward (and SPLADE / CrossEncoder, which route through it) allocated
+  `qH`/`kH`/`vHT` + an L² scores buffer per (layer, head) and Q/K/V/ctx/… per
+  layer via the allocating `matmulBT` — ~432 small mallocs per single-sequence
+  forward, and single-threaded (`matmulBT` never consults `wantParallelMatmul`).
+  Routed through the same per-goroutine scratch arena the f32 Nomic path uses,
+  plus `matmulBTInto` (which parallelizes a lone forward). **432 → 3 allocs/op**;
+  bit-identical (the parity gates stay green).
+- **`MatmulBTQ8` widens each weight row once (`linalg`).** The row-outer nest
+  re-widened every int8 weight row to f32 M times (the O(K) widen dominates the
+  vectorized dot at prefill). Swapped to column-outer, widening once per row and
+  reusing it across the M activation rows — bit-identical, matching
+  `MatmulBTQ4`/`w8a8Span`.
+- **O(N) chunk line numbering (`chunk/treesitter`, `chunk/markdown`).** Both
+  converted a span/chunk byte offset to a line number by counting newlines from
+  byte 0 every call — O(N²/chunkSize), tens of seconds on a multi-MB generated
+  file, dwarfing the 1 s parse timeout. Now a one-time newline index (treesitter)
+  / index arithmetic (markdown); byte-identical line numbers.
+- **`DotI8` rejects unequal lengths.** The exported int8 dot documented
+  `len(a)==len(b)` but enforced nothing — a short `b` read past its allocation on
+  the SIMD path (arch-dependent garbage/fault) and bounds-panicked on the scalar
+  tail. Now panics on mismatch (matching `dotF32`).
+- **Documentation contracts corrected.** The `Dot4x4`/`Dot8x4` godoc described a
+  sums lane layout the arm64 kernel doesn't produce (portable contract is
+  "horizontal-sum each 4-lane block"); the `Chunker` byte-fidelity invariant now
+  carves out the `line` chunker's deliberate overlapping-window exception (used
+  by every fallback); `linalg`'s "bit-identical to the serial scalar reference"
+  was scoped to "a serial run of the same kernel".
+- **Toolchain + dependencies.** Go directive `1.26.3 → 1.26.5` across all
+  modules; `golang.org/x/text 0.37.0 → 0.40.0`, `golang.org/x/sys 0.45.0 →
+  0.47.0`; `go fix` modernizers (range-over-int, `min`/`max` builtins,
+  `strings.SplitSeq`). The quarantined `chunk/treesitter` submodule bumps
+  `gotreesitter 0.20.2 → 0.40.0` — its byte-exact chunk boundaries are
+  best-effort (ADR-010), so some may shift; byte-fidelity + AST-meaningful
+  boundaries are gated and hold. Core stays cgo-free, dependency-light (x/text
+  only on Linux).
+
+### Fixed
+
+- **HNSW `Config{M:1}` panic (`ann`).** `M=1` set `mL = 1/ln(1) = +Inf`, so
+  `randomLevel` overflowed and `Add` panicked on the first insert. Clamp `M ≥ 2`.
+- **regex chunker line-continuation depth bug (`chunk/regex`).** A `\` followed
+  by a newline (a legal JS/TS/Rust continuation) made the byte-skip jump a line
+  start that the `== pos` bookkeeping missed, freezing every later line's depth
+  at 0 for the rest of the file — nested definitions read as top-level
+  boundaries. Byte-fidelity was unaffected; boundary quality degraded. Fixed with
+  `<=`.
+- **Vision loaders panicked on mismatched checkpoints (`vision`).** Both towers
+  read every tensor with no expected shape and had no config validation, so a
+  wrong-shaped projection panicked inside `QuantizeRowsInt8`/`MatmulBT` and an
+  absent `patch_size`/`num_heads` divided by zero. Now shape-checked (like the
+  text encoder) and config-validated at load.
+- **BERT id/seq bounds, OOB-token fallback (`encoder`).** `max_seq_length` is
+  clamped to the position capacity; the embedding gather range-checks id/segment;
+  the OOB-token fallback substitutes row 0 (the old fallback to id 100 panicked
+  on the repo's own `vocab_size:4` fixtures). Q8 forward + batch now honor
+  `Cfg.pooling` (was hardcoded CLS). `ValidateAssumptions` rejects
+  `scale_attn_weights=false` and an odd head dim. Cross-encoder pair truncation
+  uses `longest_first` (a long query no longer starves the document to zero
+  tokens); load rejects a degenerate classifier / a tokenizer without
+  `[CLS]`/`[SEP]`.
+- **Qwen per-image grid divisibility (`vision`).** `forwardViT` validated only
+  the global `n_patches % merge²`, not per-image h/w — a grid like `{1,3,4}` with
+  merge 2 passed but indexed the window reorder out of bounds. Validated per grid
+  entry.
+- **top-K NaN handling (`topk`).** At capacity a NaN score slipped past the
+  `score <= min` guard (every NaN comparison is false), evicting the true minimum
+  and poisoning the ordering. NaN is now rejected in `Push`.
+- **GGUF/safetensors parser robustness (`embed`).** The dim-overflow bound
+  falsely rejected legitimate dense Q2_K/IQ2_S tensors (widened 2×→4× the data
+  section); map-prealloc hints are bounded by the minimum entry size + a cap (a
+  hostile count no longer drives a multi-GB prealloc); `Dims` rejects an
+  overflowing untrusted dim; array-length / unknown-type / tensor-dim / shard-
+  index errors now wrap `ErrFormat` consistently.
+
+### Security
+
+The untrusted-input boundary — hardening reachable from crafted (or, for the
+mmap-lifetime and vision cases, merely mismatched) model files and persisted
+indexes. None fired on well-formed input, which is why the parity/fuzz gates
+stayed green.
+
+- **safetensors sharded load: path traversal (`embed`).** Shard filenames came
+  straight from the (untrusted) index JSON's `weight_map` and were joined to the
+  index directory, so `{"w":"../../../etc/passwd"}` (or an absolute/UNC path)
+  mmap'd and parsed a file outside the bundle — a zip-slip-style arbitrary read.
+  Non-plain filenames are now rejected as `ErrFormat`.
+- **safetensors header: shape × dtype not cross-validated (`embed`).** Only the
+  byte-offset range was checked, so a header pairing a giant shape with a
+  1-element byte range parsed and then panicked at inference when a caller indexed
+  by shape (violating the never-panic parse contract). Now requires
+  overflow-safe `∏shape · dtypeSize == byteRange`.
+- **safetensors typed accessors: no alignment check (`embed`).** The `unsafe`
+  reinterpret cast (`Float32s`/`Float64s`/`Int64s`/`Int32s`) assumed element
+  alignment the format doesn't guarantee — a misaligned conversion is an
+  unrecoverable `-race`/checkptr throw and a SIGBUS on strict-alignment ports. Now
+  takes the zero-copy view only when aligned, else a byte-copy into an aligned
+  slice.
+- **GGUF metadata: unbounded array-of-array recursion (`embed`).** Nesting depth
+  was ~input/12, so a crafted file drove millions of frames past Go's goroutine-
+  stack limit — an unrecoverable abort `recover()` can't catch. Capped at 128.
+- **HNSW load: missing product allocation guard (`ann`).** The f32 vector branch
+  clamped `ndocs`/`dim` individually but not their product (the int8 branch
+  already did), so a ~1 MB header could attempt ~250 GB of allocations. Guarded.
+- **mmap lifetime: use-after-unmap (`embed`, `ann`).** Three zero-copy accessors
+  (GGUF `RowDequantizer`, safetensors `TensorF32` widening, `FlatI8.query`)
+  aliased an mmap region whose finalizer could `munmap` it mid-read → SIGSEGV.
+  Added `runtime.KeepAlive` backstops.
+- **Unrecoverable matmul panics (`linalg`).** Above the parallel threshold a
+  shape-violation panic fired on a worker goroutine — uncatchable even by a
+  caller's `recover()`, so a mismatched checkpoint could hard-kill the process.
+  Shape validation now runs before the fan-out (recoverable, caller-side), and
+  the `Wrap*`/`Quantize*` constructors reject negative dims / overflow.
+
 ## [1.9.0] — 2026-06-17
 
 A weight-memory substrate (mmap + `madvise` + a span-residency cache) lifted into a
@@ -1169,7 +1321,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.9.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.10.0...HEAD
+[1.10.0]: https://github.com/townsendmerino/aikit/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/townsendmerino/aikit/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/townsendmerino/aikit/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/townsendmerino/aikit/compare/v1.7.3...v1.8.0
