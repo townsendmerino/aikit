@@ -136,12 +136,14 @@ func (c *Chunker) chunkMarkdown(source []byte, chunkSize int) []chunk.Chunk {
 		}
 		sectionLines := lines[startIdx:endIdx]
 		sectionBytes := source[sectionLines[0].start:sectionLines[len(sectionLines)-1].end]
-		startLine := lineNumber(source, sectionLines[0].start)
+		// lines are newline-split, so a line's 1-based number IS its index into
+		// `lines` + 1 — no from-byte-0 rescan (M5: lineNumber was O(N²/chunkSize)).
+		startLine := startIdx + 1
 		if len(sectionBytes) <= chunkSize {
 			out = append(out, makeChunk(source, sectionLines[0].start, sectionLines[len(sectionLines)-1].end, startLine))
 			continue
 		}
-		out = append(out, subdivideSection(source, sectionLines, chunkSize)...)
+		out = append(out, subdivideSection(source, sectionLines, chunkSize, startLine)...)
 	}
 	return out
 }
@@ -152,7 +154,10 @@ func (c *Chunker) chunkMarkdown(source []byte, chunkSize int) []chunk.Chunk {
 // chunkSize stay whole (splitting one mid-fence would corrupt the
 // content), which means a single chunk can legitimately exceed
 // chunkSize — the size target is best-effort under that invariant.
-func subdivideSection(source []byte, lines []scannedLine, chunkSize int) []chunk.Chunk {
+// baseLine is the 1-based line number of lines[0] in the full source, so a
+// section-relative index j maps to the absolute line baseLine+j (M5: replaces
+// the per-chunk from-byte-0 lineNumber rescan with O(1) index arithmetic).
+func subdivideSection(source []byte, lines []scannedLine, chunkSize int, baseLine int) []chunk.Chunk {
 	if len(lines) == 0 {
 		return nil
 	}
@@ -185,7 +190,7 @@ func subdivideSection(source []byte, lines []scannedLine, chunkSize int) []chunk
 				out = append(out, makeChunk(source,
 					lines[chunkStartIdx].start,
 					lines[splitIdx].end,
-					lineNumber(source, lines[chunkStartIdx].start)))
+					baseLine+chunkStartIdx))
 				chunkStartIdx = splitIdx + 1
 			}
 			// If no safe split exists in the window, we have to keep
@@ -198,7 +203,7 @@ func subdivideSection(source []byte, lines []scannedLine, chunkSize int) []chunk
 		out = append(out, makeChunk(source,
 			lines[chunkStartIdx].start,
 			lines[len(lines)-1].end,
-			lineNumber(source, lines[chunkStartIdx].start)))
+			baseLine+chunkStartIdx))
 	}
 	return out
 }
@@ -239,20 +244,6 @@ func makeChunk(source []byte, byteStart, byteEnd, startLine int) chunk.Chunk {
 		EndLine:   endLine,
 		Text:      string(text),
 	}
-}
-
-// lineNumber returns the 1-based line number of the byte offset in source.
-func lineNumber(source []byte, offset int) int {
-	n := 1
-	if offset > len(source) {
-		offset = len(source)
-	}
-	for i := 0; i < offset; i++ {
-		if source[i] == '\n' {
-			n++
-		}
-	}
-	return n
 }
 
 // wholeFileChunk is a last-resort fallback if even the line chunker

@@ -68,6 +68,7 @@
 package treesitter
 
 import (
+	"sort"
 	"sync"
 	"sync/atomic"
 
@@ -292,16 +293,42 @@ func (c *Chunker) Chunk(source []byte, language string, chunkSize int) ([]chunk.
 		c.invalidSpans.Add(1)
 		return c.fallback(source, language, chunkSize)
 	}
+	// Index the source's newline offsets ONCE so each span's line number is an
+	// O(log lines) binary search instead of a from-byte-0 rescan. The old
+	// per-span bytesBefore was O(Σ sp.end) ≈ O(N²/chunkSize) — tens of seconds
+	// on a multi-MB file, dwarfing the 1s parse timeout the package added to
+	// bound per-file cost (M5). linesBefore(end) == count of '\n' in
+	// source[:end], byte-identical to bytesBefore; robust to any span order
+	// (spansValid does not guarantee monotonic spans).
+	nlOffsets := newlineOffsets(source)
+	linesBefore := func(end uint32) int {
+		if end > uint32(len(source)) {
+			end = uint32(len(source))
+		}
+		return sort.Search(len(nlOffsets), func(i int) bool { return nlOffsets[i] >= end })
+	}
 	out := make([]chunk.Chunk, len(spans))
 	for i, sp := range spans {
 		text := string(source[sp.start:sp.end])
 		out[i] = chunk.Chunk{
-			StartLine: 1 + bytesBefore('\n', source, sp.start),
-			EndLine:   1 + bytesBefore('\n', source, sp.end) - trailingNewlineCorrection(text),
+			StartLine: 1 + linesBefore(sp.start),
+			EndLine:   1 + linesBefore(sp.end) - trailingNewlineCorrection(text),
 			Text:      text,
 		}
 	}
 	return out, nil
+}
+
+// newlineOffsets returns the byte offsets of every '\n' in source (ascending),
+// so linesBefore can binary-search them. O(N) once per Chunk call.
+func newlineOffsets(source []byte) []uint32 {
+	var offs []uint32
+	for i := 0; i < len(source); i++ {
+		if source[i] == '\n' {
+			offs = append(offs, uint32(i))
+		}
+	}
+	return offs
 }
 
 // fallback delegates to the registered "line" chunker. This is the
