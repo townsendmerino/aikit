@@ -85,6 +85,30 @@ jobs:
           fuzz ann FuzzLoadHNSW
           fuzz ann FuzzLoadFlatI8
 
+  # arm64 is the primary deployment arch (every tuning note references an M1
+  # Pro), yet the core job above runs amd64-only — so the NEON f32/i8/SDOT/W4A8
+  # asm, the Dot2x8 pair path, packedFill, detectDotProd, AND the exact-equality
+  # M-invariance / width-invariance / packed-path bit-identity gates are all
+  # dead in every amd64 CI run. This job executes them on a native arm64 runner
+  # (GitHub-hosted, GA for public repos), so an arm64-only regression — an asm
+  # edit, a reduction-order change — is caught at PR time, not in production.
+  arm64:
+    name: root module (arm64 — NEON asm + bit-identity gates)
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.26.x"
+      - run: go build ./...
+      - run: go vet ./...
+      # The bit-identity + parity gates run their arm64 (NEON) legs here.
+      - name: test (race)
+        run: go test -race ./...
+      # The debug-only quant-kernel contract checks on the arm64 kernels.
+      - name: test (aikit_checks)
+        run: go test -tags aikit_checks ./linalg/
+
   treesitter:
     name: chunk/treesitter submodule
     runs-on: ubuntu-latest
