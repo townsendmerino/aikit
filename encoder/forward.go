@@ -49,10 +49,13 @@ func (w *Weights) forward(ids []int32) []float32 {
 	tte0 := w.TokenTypeEmb[:D] // row 0
 	for i, id := range ids {
 		if int(id) < 0 || int(id) >= w.Cfg.VocabSize {
-			// Defensive — the tokenizer should never emit an OOB id,
-			// but a corrupt fixture or future drop-in checkpoint could.
-			// Substitute the [UNK] id (100) which is always in range.
-			id = 100
+			// Defensive — the tokenizer should never emit an OOB id, but a
+			// corrupt fixture or future drop-in checkpoint could. Substitute row
+			// 0, always in range for any vocab ≥ 1. (The old fallback to 100
+			// assumed both a ≥101-token vocab — the repo's own vocab_size:4
+			// fixtures would index WordEmb[400:404] and panic, the exact crash
+			// this guards — and that 100 is [UNK] for every drop-in checkpoint.)
+			id = 0
 		}
 		src := w.WordEmb[int(id)*D : int(id)*D+D]
 		dst := h[i*D : (i+1)*D]

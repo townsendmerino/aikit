@@ -239,6 +239,17 @@ func (e *QwenVisionEncoder) forwardViT(pixelValues []float32, gridTHW [][3]int) 
 
 	nPatches := 0
 	for _, g := range gridTHW {
+		// Per-image validation: h and w must each be divisible by
+		// spatial_merge_size. The global nPatches%merge² check below is not
+		// sufficient — e.g. {1,3,4} with merge 2 passes it (12%4==0) but h=3
+		// isn't divisible, so windowIndex/rotaryFreqs emit fewer than `groups`
+		// entries and winIdx[g] indexes OOB.
+		if g[0] < 0 || g[1] < 0 || g[2] < 0 {
+			return nil, fmt.Errorf("vision: negative grid dim in %v", g)
+		}
+		if g[1]%merge != 0 || g[2]%merge != 0 {
+			return nil, fmt.Errorf("vision: grid %v h/w not divisible by spatial_merge_size %d", g, merge)
+		}
 		nPatches += g[0] * g[1] * g[2]
 	}
 	if len(pixelValues) != nPatches*patchDim {

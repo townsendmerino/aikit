@@ -45,7 +45,7 @@ func (w *WeightsQ8) forward(ids []int32) []float32 {
 	tte0 := w.TokenTypeEmb[:D]
 	for i, id := range ids {
 		if int(id) < 0 || int(id) >= w.Cfg.VocabSize {
-			id = 100
+			id = 0 // row 0 is always in range; see forward.go's note
 		}
 		src := w.WordEmb[int(id)*D : int(id)*D+D]
 		dst := h[i*D : (i+1)*D]
@@ -63,9 +63,9 @@ func (w *WeightsQ8) forward(ids []int32) []float32 {
 		swigluMLPQ8(h, &l.Fc11, &l.Fc12, &l.Fc2, D, intermediate, L, s)
 		layerNorm(h, l.Norm2W, l.Norm2B, L, D, eps)
 	}
-	cls := make([]float32, D)
-	copy(cls, h[:D])
-	return cls
+	// Route through poolOne(Cfg.pooling) like the f32 forward — the Q8 path used
+	// to hardcode CLS, so a mean-pooling checkpoint would silently return CLS.
+	return poolOne(h[:L*D], L, D, w.Cfg.pooling)
 }
 
 // (*WeightsQ8).forwardBatch is the int8 + batched (M7) combination. Mirrors
@@ -134,8 +134,8 @@ func (w *WeightsQ8) forwardBatch(idsList [][]int32) [][]float32 {
 	}
 	out := make([][]float32, B)
 	for b := range B {
-		out[b] = make([]float32, D)
-		copy(out[b], h[b*Lmax*D:b*Lmax*D+D])
+		seq := h[b*Lmax*D : b*Lmax*D+realLen[b]*D]
+		out[b] = poolOne(seq, realLen[b], D, w.Cfg.pooling)
 	}
 	return out
 }

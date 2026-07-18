@@ -106,6 +106,16 @@ func (c *Config) ValidateAssumptions() error {
 		return fmt.Errorf("encoder: layer_norm_epsilon must be >0, got %v", c.LayerNormEpsilon)
 	case c.RoPEBase <= 0:
 		return fmt.Errorf("encoder: rotary_emb_base must be >0, got %v", c.RoPEBase)
+	case !c.ScaleAttnWeights:
+		// selfAttention unconditionally applies 1/√headDim, i.e. it implements
+		// scale_attn_weights=true; a checkpoint with it false would silently get
+		// scaled anyway (wrong activations). Reject it rather than mislead.
+		return fmt.Errorf("encoder: scale_attn_weights=false unsupported (attention is always 1/√headDim scaled)")
+	case (c.HiddenDim/c.NumHeads)%2 != 0:
+		// RoPE rotates head-dim pairs, so an odd head dim panics in rope.go at
+		// the first Encode. Catch it at load. (NumHeads != 0 and HiddenDim %
+		// NumHeads == 0 are guaranteed by the earlier cases.)
+		return fmt.Errorf("encoder: head dim %d (HiddenDim/NumHeads) must be even for RoPE", c.HiddenDim/c.NumHeads)
 	}
 	return nil
 }

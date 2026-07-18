@@ -140,7 +140,11 @@ func LoadBERT(dir string) (*BERT, error) {
 			MaxSeqLength int `json:"max_seq_length"`
 		}
 		if json.Unmarshal(sb, &v) == nil && v.MaxSeqLength > 0 {
-			b.maxSeq = v.MaxSeqLength
+			// Clamp to the position-embedding capacity: a checkpoint whose
+			// sentence_bert_config claims a longer max_seq_length than
+			// max_position_embeddings would otherwise index posEmb out of range
+			// on the first long input instead of truncating.
+			b.maxSeq = min(v.MaxSeqLength, c.MaxPos)
 		}
 	}
 	tok, terr := embed.LoadTokenizer(filepath.Join(dir, "tokenizer.json"))
@@ -175,10 +179,20 @@ func (b *BERT) hiddenStates(ids, segs []int32) []float32 {
 
 	// Embeddings: word + learned position + token-type[seg], then LayerNorm.
 	h := make([]float32, L*D)
+	vocab, typeVocab := len(b.wordEmb)/D, len(b.typeEmb)/D
 	for i, id := range ids {
 		seg := 0
 		if segs != nil {
 			seg = int(segs[i])
+		}
+		// Defensive: a corrupt tokenizer/checkpoint could emit an OOB id or
+		// segment; substitute row 0 (always in range) rather than panic deep in
+		// the embedding gather. The tokenizer should never produce these.
+		if int(id) < 0 || int(id) >= vocab {
+			id = 0
+		}
+		if seg < 0 || seg >= typeVocab {
+			seg = 0
 		}
 		w := b.wordEmb[int(id)*D : int(id)*D+D]
 		pos := b.posEmb[i*D : i*D+D]
