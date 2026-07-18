@@ -45,6 +45,38 @@ type QwenEncoderConfig struct {
 	HiddenAct           string `json:"hidden_act"`
 }
 
+// validate rejects a config whose dimensions would divide-by-zero or
+// mis-partition at load/Forward (H8): head_dim = hidden/num_heads, the
+// merge-unit groups = n_patches/spatial_merge_size², and the window grid
+// vmws = window_size/spatial_merge_size/patch_size all ÷0 on an absent field.
+// Called after config parse + defaults, before any dimension is used.
+func (c QwenEncoderConfig) validate() error {
+	switch {
+	case c.HiddenSize <= 0:
+		return fmt.Errorf("hidden_size must be > 0, got %d", c.HiddenSize)
+	case c.IntermediateSize <= 0:
+		return fmt.Errorf("intermediate_size must be > 0, got %d", c.IntermediateSize)
+	case c.Depth < 0:
+		return fmt.Errorf("depth must be >= 0, got %d", c.Depth)
+	case c.NumHeads <= 0:
+		return fmt.Errorf("num_heads must be > 0, got %d", c.NumHeads)
+	case c.HiddenSize%c.NumHeads != 0:
+		return fmt.Errorf("hidden_size %d not divisible by num_heads %d", c.HiddenSize, c.NumHeads)
+	case c.InChans <= 0:
+		return fmt.Errorf("in_chans must be > 0, got %d", c.InChans)
+	case c.PatchSize <= 0:
+		return fmt.Errorf("patch_size must be > 0, got %d", c.PatchSize)
+	case c.SpatialMergeSize <= 0:
+		return fmt.Errorf("spatial_merge_size must be > 0, got %d", c.SpatialMergeSize)
+	case c.OutHiddenSize <= 0:
+		return fmt.Errorf("out_hidden_size must be > 0, got %d", c.OutHiddenSize)
+	case c.WindowSize < c.SpatialMergeSize*c.PatchSize:
+		return fmt.Errorf("window_size %d must be >= spatial_merge_size*patch_size = %d (else the window grid divides by zero)",
+			c.WindowSize, c.SpatialMergeSize*c.PatchSize)
+	}
+	return nil
+}
+
 type qwenBlock struct {
 	norm1w     []float32 // RMSNorm (weight only)
 	qkvw       qmat      // [3*hidden, hidden] fused
@@ -99,6 +131,9 @@ func LoadQwenVisionEncoder(dir string, quant bool) (*QwenVisionEncoder, error) {
 	if cfg.InChans == 0 {
 		cfg.InChans = 3
 	}
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("vision: %w", err)
+	}
 	st, err := openWeights(dir)
 	if err != nil {
 		return nil, fmt.Errorf("vision: open safetensors: %w", err)
@@ -109,39 +144,48 @@ func LoadQwenVisionEncoder(dir string, quant bool) (*QwenVisionEncoder, error) {
 	// "visual." in the tiny checkpoint, "model.visual." inside a full HF VL
 	// checkpoint (where the tower lives alongside the language model shards).
 	pfx := qwenTensorPrefix(st)
-	get := func(name string) []float32 {
+	// get reads a tensor and, when want dims are given, shape-checks it (H7):
+	// otherwise a mismatched/hostile checkpoint panics deep in QuantizeRowsInt8 or
+	// MatmulBT at load/Forward instead of returning an error. Shapes follow HF
+	// Qwen2.5-VL (fused-QKV/Linear weights [out,in], RMSNorms [hidden], 1-D
+	// biases); patch_embed.proj is a 5-D Conv3d and is left unchecked. The parity
+	// test (testdata/qwen25vl-vision-tiny) is the gate.
+	get := func(name string, want ...int) []float32 {
 		if err != nil {
 			return nil
 		}
 		var v []float32
-		v, err = st.TensorF32(pfx + name)
+		v, err = st.TensorF32(pfx+name, want...)
+		if err != nil {
+			return nil
+		}
 		return append([]float32(nil), v...) // copy out so st can close
 	}
 	hidden, inter := cfg.HiddenSize, cfg.IntermediateSize
 	qm := func(name string, rows, cols int) qmat {
-		w := get(name)
+		w := get(name, rows, cols)
 		if err != nil {
 			return qmat{}
 		}
 		return newQMat(w, rows, cols, quant)
 	}
-	e.patchW = get("patch_embed.proj.weight") // [hidden, in_chans*temporal*patch*patch], f32
+	e.patchW = get("patch_embed.proj.weight") // [hidden, in_chans*temporal*patch*patch] Conv3d, f32
 	e.blocks = make([]qwenBlock, cfg.Depth)
 	for i := range e.blocks {
 		p := fmt.Sprintf("blocks.%d.", i)
 		b := &e.blocks[i]
-		b.norm1w = get(p + "norm1.weight")
-		b.qkvw, b.qkvb = qm(p+"attn.qkv.weight", 3*hidden, hidden), get(p+"attn.qkv.bias")
-		b.projw, b.projb = qm(p+"attn.proj.weight", hidden, hidden), get(p+"attn.proj.bias")
-		b.norm2w = get(p + "norm2.weight")
-		b.gatew, b.gateb = qm(p+"mlp.gate_proj.weight", inter, hidden), get(p+"mlp.gate_proj.bias")
-		b.upw, b.upb = qm(p+"mlp.up_proj.weight", inter, hidden), get(p+"mlp.up_proj.bias")
-		b.downw, b.downb = qm(p+"mlp.down_proj.weight", hidden, inter), get(p+"mlp.down_proj.bias")
+		b.norm1w = get(p+"norm1.weight", hidden)
+		b.qkvw, b.qkvb = qm(p+"attn.qkv.weight", 3*hidden, hidden), get(p+"attn.qkv.bias", 3*hidden)
+		b.projw, b.projb = qm(p+"attn.proj.weight", hidden, hidden), get(p+"attn.proj.bias", hidden)
+		b.norm2w = get(p+"norm2.weight", hidden)
+		b.gatew, b.gateb = qm(p+"mlp.gate_proj.weight", inter, hidden), get(p+"mlp.gate_proj.bias", inter)
+		b.upw, b.upb = qm(p+"mlp.up_proj.weight", inter, hidden), get(p+"mlp.up_proj.bias", inter)
+		b.downw, b.downb = qm(p+"mlp.down_proj.weight", hidden, inter), get(p+"mlp.down_proj.bias", hidden)
 	}
 	mh := hidden * cfg.SpatialMergeSize * cfg.SpatialMergeSize
-	e.mergerLNw = get("merger.ln_q.weight")
-	e.merger0w, e.merger0b = qm("merger.mlp.0.weight", mh, mh), get("merger.mlp.0.bias")
-	e.merger2w, e.merger2b = qm("merger.mlp.2.weight", cfg.OutHiddenSize, mh), get("merger.mlp.2.bias")
+	e.mergerLNw = get("merger.ln_q.weight", hidden)
+	e.merger0w, e.merger0b = qm("merger.mlp.0.weight", mh, mh), get("merger.mlp.0.bias", mh)
+	e.merger2w, e.merger2b = qm("merger.mlp.2.weight", cfg.OutHiddenSize, mh), get("merger.mlp.2.bias", cfg.OutHiddenSize)
 	if err != nil {
 		return nil, fmt.Errorf("vision: load weights: %w", err)
 	}

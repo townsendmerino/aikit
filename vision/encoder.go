@@ -35,6 +35,36 @@ type EncoderConfig struct {
 	LayerNormEps      float64 `json:"layer_norm_eps"`
 }
 
+// validate rejects a config whose dimensions would divide-by-zero or
+// mis-partition at load/Forward (H8): there is no vision equivalent of the text
+// encoder's ValidateAssumptions, so without this an absent patch_size ÷0s at
+// e.grid, an absent num_attention_heads ÷0s at headDim, and an odd
+// hidden/heads split silently leaves output columns zero. Called after config
+// parse + defaults, before any dimension is used.
+func (c EncoderConfig) validate() error {
+	switch {
+	case c.HiddenSize <= 0:
+		return fmt.Errorf("hidden_size must be > 0, got %d", c.HiddenSize)
+	case c.IntermediateSize <= 0:
+		return fmt.Errorf("intermediate_size must be > 0, got %d", c.IntermediateSize)
+	case c.NumHiddenLayers < 0:
+		return fmt.Errorf("num_hidden_layers must be >= 0, got %d", c.NumHiddenLayers)
+	case c.NumAttentionHeads <= 0:
+		return fmt.Errorf("num_attention_heads must be > 0, got %d", c.NumAttentionHeads)
+	case c.HiddenSize%c.NumAttentionHeads != 0:
+		return fmt.Errorf("hidden_size %d not divisible by num_attention_heads %d", c.HiddenSize, c.NumAttentionHeads)
+	case c.NumChannels <= 0:
+		return fmt.Errorf("num_channels must be > 0, got %d", c.NumChannels)
+	case c.PatchSize <= 0:
+		return fmt.Errorf("patch_size must be > 0, got %d", c.PatchSize)
+	case c.ImageSize <= 0:
+		return fmt.Errorf("image_size must be > 0, got %d", c.ImageSize)
+	case c.ImageSize%c.PatchSize != 0:
+		return fmt.Errorf("image_size %d not divisible by patch_size %d", c.ImageSize, c.PatchSize)
+	}
+	return nil
+}
+
 type encLayer struct {
 	ln1w, ln1b     []float32
 	qw, kw, vw, ow qmat      // [hidden,hidden] matmul weights (f32 or int8)
@@ -83,6 +113,9 @@ func LoadEncoder(dir string, quant bool) (*Encoder, error) {
 	if cfg.NumChannels == 0 {
 		cfg.NumChannels = 3 // SigLIP is RGB; real vision_config omits num_channels
 	}
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("vision: %w", err)
+	}
 	st, err := openWeights(dir)
 	if err != nil {
 		return nil, fmt.Errorf("vision: open safetensors: %w", err)
@@ -95,12 +128,21 @@ func LoadEncoder(dir string, quant bool) (*Encoder, error) {
 	// "" for the tiny stripped tower, "vision_tower.vision_model." inside a real
 	// gemma-3-4b-it (where the SigLIP tower lives in the model shards).
 	pfx := tensorPrefix(st, "embeddings.patch_embedding.weight", "vision_tower.vision_model.")
-	get := func(name string) []float32 {
+	// get reads a tensor and, when want dims are given, shape-checks it (H7):
+	// without this a mismatched/hostile checkpoint panics deep in QuantizeRowsInt8
+	// or MatmulBT at load/Forward instead of returning a clean error. Shapes
+	// follow HF SiglipVisionModel (Linear weights [out,in], the Conv2d
+	// patch-embed [hidden,C,P,P], position_embedding [numPatches,hidden], 1-D
+	// biases/LayerNorms) — the parity test (testdata/siglip-tiny) is the gate.
+	get := func(name string, want ...int) []float32 {
 		if err != nil {
 			return nil
 		}
 		var v []float32
-		v, err = st.TensorF32(pfx + name)
+		v, err = st.TensorF32(pfx+name, want...)
+		if err != nil {
+			return nil
+		}
 		return append([]float32(nil), v...) // copy out so st can close
 	}
 	hidden, inter := cfg.HiddenSize, cfg.IntermediateSize
@@ -108,29 +150,30 @@ func LoadEncoder(dir string, quant bool) (*Encoder, error) {
 	// quantize under -vision-quant; the patch-embed conv stays f32 (input
 	// embedding — quant error there propagates through every layer).
 	qm := func(name string, rows, cols int) qmat {
-		w := get(name)
+		w := get(name, rows, cols)
 		if err != nil {
 			return qmat{}
 		}
 		return newQMat(w, rows, cols, quant)
 	}
-	e.patchW = get("embeddings.patch_embedding.weight") // [hidden, C*P*P], f32
-	e.patchB = get("embeddings.patch_embedding.bias")
-	e.posEmb = get("embeddings.position_embedding.weight")
+	c := cfg.NumChannels
+	e.patchW = get("embeddings.patch_embedding.weight", hidden, c, cfg.PatchSize, cfg.PatchSize) // Conv2d
+	e.patchB = get("embeddings.patch_embedding.bias", hidden)
+	e.posEmb = get("embeddings.position_embedding.weight", e.numPatches, hidden)
 	e.layers = make([]encLayer, cfg.NumHiddenLayers)
 	for l := range e.layers {
 		p := fmt.Sprintf("encoder.layers.%d.", l)
 		lw := &e.layers[l]
-		lw.ln1w, lw.ln1b = get(p+"layer_norm1.weight"), get(p+"layer_norm1.bias")
-		lw.qw, lw.qb = qm(p+"self_attn.q_proj.weight", hidden, hidden), get(p+"self_attn.q_proj.bias")
-		lw.kw, lw.kb = qm(p+"self_attn.k_proj.weight", hidden, hidden), get(p+"self_attn.k_proj.bias")
-		lw.vw, lw.vb = qm(p+"self_attn.v_proj.weight", hidden, hidden), get(p+"self_attn.v_proj.bias")
-		lw.ow, lw.ob = qm(p+"self_attn.out_proj.weight", hidden, hidden), get(p+"self_attn.out_proj.bias")
-		lw.ln2w, lw.ln2b = get(p+"layer_norm2.weight"), get(p+"layer_norm2.bias")
-		lw.fc1w, lw.fc1b = qm(p+"mlp.fc1.weight", inter, hidden), get(p+"mlp.fc1.bias")
-		lw.fc2w, lw.fc2b = qm(p+"mlp.fc2.weight", hidden, inter), get(p+"mlp.fc2.bias")
+		lw.ln1w, lw.ln1b = get(p+"layer_norm1.weight", hidden), get(p+"layer_norm1.bias", hidden)
+		lw.qw, lw.qb = qm(p+"self_attn.q_proj.weight", hidden, hidden), get(p+"self_attn.q_proj.bias", hidden)
+		lw.kw, lw.kb = qm(p+"self_attn.k_proj.weight", hidden, hidden), get(p+"self_attn.k_proj.bias", hidden)
+		lw.vw, lw.vb = qm(p+"self_attn.v_proj.weight", hidden, hidden), get(p+"self_attn.v_proj.bias", hidden)
+		lw.ow, lw.ob = qm(p+"self_attn.out_proj.weight", hidden, hidden), get(p+"self_attn.out_proj.bias", hidden)
+		lw.ln2w, lw.ln2b = get(p+"layer_norm2.weight", hidden), get(p+"layer_norm2.bias", hidden)
+		lw.fc1w, lw.fc1b = qm(p+"mlp.fc1.weight", inter, hidden), get(p+"mlp.fc1.bias", inter)
+		lw.fc2w, lw.fc2b = qm(p+"mlp.fc2.weight", hidden, inter), get(p+"mlp.fc2.bias", hidden)
 	}
-	e.postLNw, e.postLNb = get("post_layernorm.weight"), get("post_layernorm.bias")
+	e.postLNw, e.postLNb = get("post_layernorm.weight", hidden), get("post_layernorm.bias", hidden)
 	if err != nil {
 		return nil, fmt.Errorf("vision: load weights: %w", err)
 	}
