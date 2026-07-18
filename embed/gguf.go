@@ -462,6 +462,12 @@ func (g *GGUFFile) RowDequantizer(name string) (dims []int, into func(start int,
 		return nil, nil, fmt.Errorf("gguf: tensor %q: %w", name, err)
 	}
 	into = func(start int, dst []float32) error {
+		// H6: raw aliases g's mmap region (OpenGGUFMmap installs a finalizer
+		// that munmaps it). The closure captures raw, not g, so g could be
+		// unreachable — and thus finalized/unmapped — while dequantRange still
+		// reads raw, giving a SIGSEGV. Keep g alive across the read. This also
+		// covers Tensor(), which dequantizes through this same closure.
+		defer runtime.KeepAlive(g)
 		if start < 0 || start+len(dst) > n {
 			return fmt.Errorf("gguf: tensor %q range [%d:%d] out of [0:%d]", name, start, start+len(dst), n)
 		}

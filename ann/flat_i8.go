@@ -1,6 +1,7 @@
 package ann
 
 import (
+	"runtime"
 	"sort"
 	"sync"
 
@@ -87,6 +88,11 @@ func (f *FlatI8) QueryFilter(q []float32, k int, keep func(id int) bool) []Hit {
 }
 
 func (f *FlatI8) query(q []float32, k int, keep func(int) bool) []Hit {
+	// H6: f.bq aliases f's mmap region (a finalizer munmaps it when f becomes
+	// unreachable). The scan below reads f.bq; keep f reachable across it so a
+	// mid-query finalize can't unmap the codes under the matmul. Safe today only
+	// because f.n is read afterwards — this makes it not depend on that.
+	defer runtime.KeepAlive(f)
 	if f.closed {
 		// A mmap-backed index whose mapping has been released: querying would read
 		// unmapped memory. Fail loudly (programmer error) rather than segfault.

@@ -443,6 +443,11 @@ func (f *SafetensorsFile) Names() []string {
 //
 // Omit want to read without a shape check.
 func (f *SafetensorsFile) TensorF32(name string, want ...int) ([]float32, error) {
+	// H6: the BF16/F16 widening below reads t.raw, which aliases f's mmap
+	// region; f's finalizer munmaps it. The Tensor value doesn't reference f, so
+	// keep f reachable across the read/widen. (An F32 result is a zero-copy view
+	// whose later use by the caller is governed by the Tensor lifetime contract.)
+	defer runtime.KeepAlive(f)
 	t, err := f.Tensor(name)
 	if err != nil {
 		return nil, err
@@ -487,63 +492,77 @@ func shapeEqual(a, b []int) bool {
 	return true
 }
 
-// Float32s returns the tensor data as []float32. Requires DType "F32".
-// The returned slice aliases the file's []byte; do not mutate.
-// This assumes little-endian host byte order (x86, arm64).
+// reinterpretLE views t.raw as []T. safetensors is little-endian and this
+// assumes a little-endian host (x86, arm64), so the view is exact.
+//
+// H3: the payload offset (8 + headerLen + DataOffsets[0]) is NOT guaranteed to
+// be a multiple of the element size — the format doesn't require it, and honest
+// files pack tensors back-to-back, so e.g. an I64 after a 4-mod-8 F32 lands
+// 4-aligned. A misaligned `(*T)(unsafe.Pointer(...))` conversion is undefined:
+// an unrecoverable checkptr/-race "misaligned pointer conversion" throw, and a
+// SIGBUS on strict-alignment ports. So take the zero-copy view only when the
+// data is T-aligned (the common case — writers pad the header); otherwise copy
+// the bytes into a fresh, properly-aligned []T (the result then does not alias
+// the file, exactly like the BF16/F16 widening paths).
+func reinterpretLE[T any](name string, raw []byte) ([]T, error) {
+	var zero T
+	size := int(unsafe.Sizeof(zero))
+	if len(raw)%size != 0 {
+		return nil, fmt.Errorf("tensor %q: raw size %d not a multiple of %d", name, len(raw), size)
+	}
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	p := unsafe.Pointer(&raw[0])
+	if uintptr(p)%unsafe.Alignof(zero) == 0 {
+		return unsafe.Slice((*T)(p), len(raw)/size), nil // aligned: zero-copy view
+	}
+	// Misaligned: copy the raw bytes into an aligned []T. make() aligns out for
+	// T, and the destination is viewed as []byte (byte alignment always holds),
+	// so no misaligned typed access occurs; the little-endian payload is
+	// preserved verbatim.
+	out := make([]T, len(raw)/size)
+	copy(unsafe.Slice((*byte)(unsafe.Pointer(&out[0])), len(raw)), raw)
+	return out, nil
+}
+
+// Float32s returns the tensor data as []float32. Requires DType "F32". The
+// result aliases the file's bytes when they are element-aligned (the common
+// case); on a misaligned payload it is a decoded copy (see reinterpretLE). Do
+// not mutate. Assumes a little-endian host (x86, arm64).
 func (t Tensor) Float32s() ([]float32, error) {
 	if t.DType != "F32" {
 		return nil, fmt.Errorf("tensor %q: expected F32, got %s", t.Name, t.DType)
 	}
-	if len(t.raw)%4 != 0 {
-		return nil, fmt.Errorf("tensor %q: F32 raw size %d not a multiple of 4", t.Name, len(t.raw))
-	}
-	if len(t.raw) == 0 {
-		return nil, nil
-	}
-	return unsafe.Slice((*float32)(unsafe.Pointer(&t.raw[0])), len(t.raw)/4), nil
+	return reinterpretLE[float32](t.Name, t.raw)
 }
 
-// Float64s returns the tensor data as []float64. Requires DType "F64".
+// Float64s returns the tensor data as []float64. Requires DType "F64". Aliases
+// when aligned, else a copy (see reinterpretLE).
 func (t Tensor) Float64s() ([]float64, error) {
 	if t.DType != "F64" {
 		return nil, fmt.Errorf("tensor %q: expected F64, got %s", t.Name, t.DType)
 	}
-	if len(t.raw)%8 != 0 {
-		return nil, fmt.Errorf("tensor %q: F64 raw size %d not a multiple of 8", t.Name, len(t.raw))
-	}
-	if len(t.raw) == 0 {
-		return nil, nil
-	}
-	return unsafe.Slice((*float64)(unsafe.Pointer(&t.raw[0])), len(t.raw)/8), nil
+	return reinterpretLE[float64](t.Name, t.raw)
 }
 
-// Int64s returns the tensor data as []int64. Requires DType "I64".
+// Int64s returns the tensor data as []int64. Requires DType "I64". Aliases when
+// aligned, else a copy (see reinterpretLE).
 func (t Tensor) Int64s() ([]int64, error) {
 	if t.DType != "I64" {
 		return nil, fmt.Errorf("tensor %q: expected I64, got %s", t.Name, t.DType)
 	}
-	if len(t.raw)%8 != 0 {
-		return nil, fmt.Errorf("tensor %q: I64 raw size %d not a multiple of 8", t.Name, len(t.raw))
-	}
-	if len(t.raw) == 0 {
-		return nil, nil
-	}
-	return unsafe.Slice((*int64)(unsafe.Pointer(&t.raw[0])), len(t.raw)/8), nil
+	return reinterpretLE[int64](t.Name, t.raw)
 }
 
-// Int32s returns the tensor data as []int32 (a zero-copy view into the file's
-// bytes). Requires DType "I32" — used for GPTQ's packed qweight/qzeros/g_idx.
+// Int32s returns the tensor data as []int32. Requires DType "I32" — used for
+// GPTQ's packed qweight/qzeros/g_idx. Aliases when aligned, else a copy (see
+// reinterpretLE).
 func (t Tensor) Int32s() ([]int32, error) {
 	if t.DType != "I32" {
 		return nil, fmt.Errorf("tensor %q: expected I32, got %s", t.Name, t.DType)
 	}
-	if len(t.raw)%4 != 0 {
-		return nil, fmt.Errorf("tensor %q: I32 raw size %d not a multiple of 4", t.Name, len(t.raw))
-	}
-	if len(t.raw) == 0 {
-		return nil, nil
-	}
-	return unsafe.Slice((*int32)(unsafe.Pointer(&t.raw[0])), len(t.raw)/4), nil
+	return reinterpretLE[int32](t.Name, t.raw)
 }
 
 // BFloat16sToF32 decodes a BF16 tensor to a freshly-allocated []float32.

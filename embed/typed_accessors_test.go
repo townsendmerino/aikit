@@ -7,6 +7,7 @@ import (
 	"math"
 	"testing"
 	"testing/fstest"
+	"unsafe"
 )
 
 // stEntry is one tensor for the multi-dtype builder below.
@@ -158,6 +159,55 @@ func TestParseSafetensors_shapeDtypeCrossValidation(t *testing.T) {
 	// Unknown dtype is exempt from the byte-range check (parses; rejected at read).
 	if err := load(stEntry{"BOOL", []int{2, 3}, []byte{1}}); err != nil {
 		t.Errorf("unknown dtype should skip the shape check, got %v", err)
+	}
+}
+
+// TestReinterpretLE_misalignedCopies (H3): a tensor whose bytes are not
+// element-aligned must decode via a copy, not a misaligned unsafe.Pointer
+// conversion (an unrecoverable checkptr/-race throw, SIGBUS on strict-alignment
+// ports). Run under -race to exercise checkptr on the fast path. The copy must
+// be value-correct and independent of the source bytes.
+func TestReinterpretLE_misalignedCopies(t *testing.T) {
+	want := []float32{1, -2, 3.5, 4, 5, 6, 7, 8}
+	enc := make([]byte, 4*len(want))
+	for i, v := range want {
+		binary.LittleEndian.PutUint32(enc[4*i:], math.Float32bits(v))
+	}
+	// Slice a padded buffer at a start that is not 4-aligned.
+	buf := make([]byte, len(enc)+8)
+	off := 0
+	for off < 8 && uintptr(unsafe.Pointer(&buf[off]))%4 == 0 {
+		off++
+	}
+	raw := buf[off : off+len(enc)]
+	if uintptr(unsafe.Pointer(&raw[0]))%4 == 0 {
+		t.Skip("could not obtain a misaligned buffer on this allocator")
+	}
+	copy(raw, enc)
+
+	got, err := reinterpretLE[float32]("t", raw)
+	if err != nil {
+		t.Fatalf("reinterpretLE(misaligned): %v", err)
+	}
+	if !eqF32(got, want) {
+		t.Fatalf("misaligned decode = %v, want %v", got, want)
+	}
+	// It must be a copy: mutating the source doesn't change the result.
+	raw[0] ^= 0xFF
+	if !eqF32(got, want) {
+		t.Errorf("result aliases the misaligned source; want an independent copy")
+	}
+
+	// Aligned input still takes the zero-copy view (and aliases).
+	al, err := reinterpretLE[float32]("t", enc)
+	if err != nil {
+		t.Fatalf("reinterpretLE(aligned): %v", err)
+	}
+	if uintptr(unsafe.Pointer(&enc[0]))%4 == 0 {
+		enc[0] ^= 0xFF
+		if al[0] == want[0] {
+			t.Errorf("aligned path should return a view that aliases the source")
+		}
 	}
 }
 
