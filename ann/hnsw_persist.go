@@ -257,6 +257,13 @@ func Load(data []byte) (*HNSW, error) {
 			scales[i] = c.f32()
 		}
 	} else {
+		// Overflow-safe product guard, mirroring the int8 branch above:
+		// count() clamps ndocs and dim individually but not their product, so
+		// without this a crafted ~1 MB header (dim≈ndocs≈250k) drives ~250 GB
+		// of row allocations. 4 bytes per f32.
+		if int64(ndocs)*int64(dim)*4 > int64(len(c.b)-c.pos) {
+			return nil, errFormatf("ann: HNSW f32 vector block (ndocs=%d dim=%d) exceeds remaining bytes", ndocs, dim)
+		}
 		vecs = make([][]float32, ndocs)
 		for d := range vecs {
 			row := make([]float32, dim)
@@ -264,6 +271,9 @@ func Load(data []byte) (*HNSW, error) {
 				row[j] = c.f32()
 			}
 			vecs[d] = row
+			if c.err != nil { // stop allocating once the input is exhausted
+				return nil, c.err
+			}
 		}
 	}
 	nodes := make([]hnswNode, ndocs)

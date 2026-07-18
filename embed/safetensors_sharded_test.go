@@ -3,6 +3,7 @@ package embed
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -130,6 +131,23 @@ func TestShardedIndexErrors(t *testing.T) {
 	// empty weight_map
 	if _, _, err := parseShardIndex([]byte(`{"weight_map":{}}`)); err == nil {
 		t.Error("expected error for empty weight_map")
+	}
+	// H1: shard names that escape the model directory must be rejected as a
+	// malformed format, not resolved against the filesystem (path traversal).
+	for _, bad := range []string{
+		`{"weight_map":{"w":"../../../etc/passwd"}}`,
+		`{"weight_map":{"w":"/etc/passwd"}}`,
+		`{"weight_map":{"w":"sub/dir/shard.safetensors"}}`,
+		`{"weight_map":{"w":".."}}`,
+	} {
+		_, _, err := parseShardIndex([]byte(bad))
+		if err == nil {
+			t.Errorf("parseShardIndex(%s): expected rejection, got nil", bad)
+			continue
+		}
+		if !errors.Is(err, ErrFormat) {
+			t.Errorf("parseShardIndex(%s): error %v, want ErrFormat", bad, err)
+		}
 	}
 	// a named tensor missing from its shard
 	_, shard1, _, _, _ := twoShardFixture()

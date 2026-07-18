@@ -84,9 +84,10 @@ type GGUFFile struct {
 
 // gcur is a little-endian cursor over a byte slice with bounds checks.
 type gcur struct {
-	b   []byte
-	pos int
-	err error
+	b     []byte
+	pos   int
+	err   error
+	depth int // nested-array recursion depth (see ggufMaxArrayDepth)
 }
 
 func (c *gcur) need(n int) bool {
@@ -169,6 +170,16 @@ func (c *gcur) str() string {
 // grows past it for the rare genuinely large flat array (e.g. a tokenizer vocab).
 const ggufArrayPrealloc = 64
 
+// ggufMaxArrayDepth caps metadata array-of-array nesting. The allocation blowup
+// is bounded by ggufArrayPrealloc, but recursion DEPTH is still ~input/12 (each
+// nesting level is a 4-byte element type + 8-byte count), so a ~50–150 MB file
+// of repeated (et=array, n=…) headers would drive millions of value() frames
+// past Go's ~1 GB goroutine-stack limit and abort the process with "goroutine
+// stack exceeds" — not a recoverable panic, so recover() couldn't uphold the
+// "error or succeed, never crash" parse contract. Real metadata nests 1–2 deep;
+// 128 mirrors encoding/json's nesting cap.
+const ggufMaxArrayDepth = 128
+
 // value reads one metadata value of the given type (arrays recurse).
 func (c *gcur) value(vtype uint32) any {
 	switch vtype {
@@ -197,6 +208,15 @@ func (c *gcur) value(vtype uint32) any {
 	case ggufFloat64:
 		return c.f64()
 	case ggufArray:
+		// Bound recursion depth before descending: an array-of-arrays chain
+		// nests one value() frame per level and would otherwise blow the
+		// goroutine stack (see ggufMaxArrayDepth).
+		if c.depth >= ggufMaxArrayDepth {
+			c.err = fmt.Errorf("gguf: metadata array nesting exceeds %d levels", ggufMaxArrayDepth)
+			return nil
+		}
+		c.depth++
+		defer func() { c.depth-- }()
 		et := c.u32()
 		n := c.u64()
 		// Each array element is ≥1 byte, so a count beyond the remaining input is

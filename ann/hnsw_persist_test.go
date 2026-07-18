@@ -3,6 +3,7 @@ package ann
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"math/rand/v2"
 	"reflect"
 	"testing"
@@ -96,6 +97,26 @@ func TestLoad_rejectsBadInput(t *testing.T) {
 	}
 	if empty.Len() != 0 {
 		t.Fatalf("empty index Len = %d, want 0", empty.Len())
+	}
+}
+
+// TestLoad_f32VectorBlockOverAllocGuard (H5): a crafted header whose dim and
+// ndocs each individually pass count()'s clamp but whose product would drive a
+// giant []float32 allocation must be rejected, not OOM. dim is at byte offset 8,
+// ndocs at 12 (magic:4, version:4, then two count u32s).
+func TestLoad_f32VectorBlockOverAllocGuard(t *testing.T) {
+	good, _ := BuildHNSW(randUnitSet(rand.New(rand.NewPCG(1, 1)), 100, 16), Config{Seed: 1}).MarshalBinary()
+	blob := append([]byte{}, good...)
+	// v passes count() (v < remaining/4) but v*v*4 ≫ len(blob) — the product the
+	// old f32 branch never checked.
+	v := uint32(500)
+	if int(v) > (len(blob)-8)/4 {
+		t.Fatalf("test precondition: v=%d too large for blob of %d bytes", v, len(blob))
+	}
+	binary.LittleEndian.PutUint32(blob[8:], v)  // dim
+	binary.LittleEndian.PutUint32(blob[12:], v) // ndocs
+	if _, err := Load(blob); !errors.Is(err, ErrFormat) {
+		t.Errorf("Load(over-alloc f32 header): want ErrFormat, got %v", err)
 	}
 }
 

@@ -47,3 +47,28 @@ func TestParseGGUF_nestedArrayBomb(t *testing.T) {
 			alloc>>20, len(data)>>10)
 	}
 }
+
+// TestParseGGUF_arrayDepthCap (H4) guards recursion DEPTH (distinct from the
+// allocation blowup above): an array-of-arrays chain deeper than
+// ggufMaxArrayDepth must return a clean error, not recurse until the goroutine
+// stack aborts the process. A few hundred levels can't crash on its own, but it
+// exercises the cap deterministically — the guard must fire regardless of depth.
+func TestParseGGUF_arrayDepthCap(t *testing.T) {
+	var b bytes.Buffer
+	b.WriteString("GGUF")
+	binary.Write(&b, binary.LittleEndian, uint32(3))
+	binary.Write(&b, binary.LittleEndian, uint64(0)) // tensorCount
+	binary.Write(&b, binary.LittleEndian, uint64(1)) // kvCount
+	binary.Write(&b, binary.LittleEndian, uint64(1)) // key len
+	b.WriteByte('x')
+	binary.Write(&b, binary.LittleEndian, uint32(9)) // value type = array
+	// ggufMaxArrayDepth (128) + slack levels of (et=array, n=1): the cap must
+	// fire before the innermost element is ever reached.
+	for range ggufMaxArrayDepth + 64 {
+		binary.Write(&b, binary.LittleEndian, uint32(9)) // element type = array
+		binary.Write(&b, binary.LittleEndian, uint64(1)) // count = 1
+	}
+	if _, err := OpenGGUFBytes(b.Bytes()); err == nil {
+		t.Fatal("deep array nesting: OpenGGUFBytes returned nil, want a depth-cap error")
+	}
+}
