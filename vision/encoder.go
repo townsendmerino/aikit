@@ -183,6 +183,11 @@ func LoadEncoder(dir string, quant bool) (*Encoder, error) {
 // Forward runs the encoder on pixel_values [NumChannels*ImageSize*ImageSize]
 // (a single image, CHW order — the preprocess output) and returns last_hidden_state
 // [numPatches * HiddenSize], row-major over patches in (row, col) grid order.
+//
+// Concurrent Forward calls are safe, but NOT concurrent with EnableResident or
+// Close: those write e.resident without synchronization, so a Forward racing
+// one may read a torn pointer. Enable/close the resident backend before sharing
+// the Encoder across goroutines.
 func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 	c := e.Cfg
 	want := c.NumChannels * c.ImageSize * c.ImageSize
@@ -198,23 +203,15 @@ func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 		}
 		return e.resident.ForwardPatches(patches)
 	}
-	hidden, np, P, W := c.HiddenSize, e.numPatches, c.PatchSize, c.ImageSize
-	cpp := c.NumChannels * P * P
+	hidden, np := c.HiddenSize, e.numPatches
+	cpp := c.NumChannels * c.PatchSize * c.PatchSize
 
 	// 1. im2col patch extraction in the Conv2d weight's (c,kh,kw) order, patches in
-	// (gh,gw) row-major — matching HF's embeddings.flatten(2).transpose.
-	patches := make([]float32, np*cpp)
-	for gh := 0; gh < e.grid; gh++ {
-		for gw := 0; gw < e.grid; gw++ {
-			dst := patches[(gh*e.grid+gw)*cpp:]
-			for ch := 0; ch < c.NumChannels; ch++ {
-				for kh := range P {
-					for kw := range P {
-						dst[(ch*P+kh)*P+kw] = pixels[ch*W*W+(gh*P+kh)*W+(gw*P+kw)]
-					}
-				}
-			}
-		}
+	// (gh,gw) row-major — matching HF's embeddings.flatten(2).transpose. Shared
+	// with the resident path via GridPatches (was duplicated inline here).
+	patches, err := e.GridPatches(pixels)
+	if err != nil {
+		return nil, err
 	}
 	// patch embed: h[np,hidden] = patches[np,cpp] · patchW[hidden,cpp]ᵀ + bias, + posEmb
 	h := make([]float32, np*hidden)
