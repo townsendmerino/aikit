@@ -14,10 +14,17 @@
 //
 // Load-bearing invariants every Chunker must satisfy:
 //
-//   - **Byte-fidelity:** concatenating the returned Chunk.Text fields in
-//     order reproduces the input source exactly. Tests pin this per
-//     language because downstream code (snippet display, embedding,
-//     find_related's resolve-by-line lookup) trusts it.
+//   - **Byte-fidelity (structural chunkers):** for regex and treesitter,
+//     concatenating the returned Chunk.Text fields in order reproduces the
+//     input source exactly; tests pin this per language because downstream
+//     code (snippet display, embedding, find_related's resolve-by-line
+//     lookup) trusts it. The "line" chunker is the intentional exception —
+//     it emits OVERLAPPING windows (Overlap lines shared between neighbors)
+//     for recall, so its concatenation is a superset of the source. Because
+//     ChunkFile falls back to line for unsupported languages (as do
+//     treesitter/markdown on failure), a resolve-by-line consumer must
+//     tolerate that overlap on fallback files rather than assume exact
+//     reconstruction.
 //   - **Stamping:** the chunker leaves Chunk.File empty; ChunkFile
 //     stamps it on the way out so callers can pass any chunker and get
 //     consistent results.

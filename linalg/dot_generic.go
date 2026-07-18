@@ -10,11 +10,12 @@ import "unsafe"
 // AVX2/FMA, and the catch-all path in dot_other.go can alias straight
 // to them. arm64 never sees this file — it has its own NEON asm.
 //
-// The lane-layout convention mirrors the arm64 asm exactly: the
-// multi-row kernels store each row's FULL dot product in the first
-// lane of that row's 4-lane block and leave the other three lanes
-// zero, so the caller's horizontal sum over each 4-lane block yields
-// the correct per-row value on every architecture.
+// The per-row CONTRACT matches the arm64 asm — each row's dot lives in
+// its own 4-lane block of sums, which the caller horizontal-sums — but
+// the per-lane layout WITHIN a block differs: this generic path stores
+// the full dot in lane 0 and zeros the other three, whereas the arm64
+// kernel leaves four raw partial sums. The two agree only AFTER the
+// caller's 4-lane reduction; don't read individual lanes.
 
 // dotGeneric returns the sum over the first n4*4 elements of a and b.
 func dotGeneric(a *float32, b *float32, n4 int) float32 {

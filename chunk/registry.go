@@ -31,10 +31,17 @@ const DefaultChunkSize = 1500
 // shift across versions. Depend on the interface, not on a specific
 // chunker's byte-for-byte output.
 type Chunker interface {
-	// Chunk partitions source into chunks. The returned chunks are
-	// contiguous and non-overlapping so concatenating their Text in order
-	// reproduces source byte-for-byte; Chunk.File is left empty for the
-	// caller to set.
+	// Chunk partitions source into chunks. The structural chunkers (regex,
+	// treesitter) are contiguous and non-overlapping, so concatenating their
+	// Text in order reproduces source byte-for-byte. The built-in "line"
+	// chunker is the deliberate EXCEPTION: it emits overlapping line windows
+	// (a recall feature — a definition split across a window boundary still
+	// appears whole in one chunk), so its concatenation is a superset of the
+	// source, not an exact copy. ChunkFile routes unsupported languages
+	// through it, and treesitter/markdown fall back to it, so a consumer that
+	// reconstructs a file from chunks (resolve-by-line, snippet display) must
+	// not assume exact reconstruction on line-chunked files — check Name() or
+	// tolerate the overlap. Chunk.File is left empty for the caller to set.
 	Chunk(source []byte, language string, chunkSize int) ([]Chunk, error)
 	// SupportedLanguages returns the canonical language names this chunker
 	// handles. An empty slice means "all languages" (the line fallback).

@@ -9,10 +9,14 @@ import (
 func Dot(a, b []float32) float32 { return dotF32(a, b) }
 
 // Dot4x4 / Dot8x4 are the register-blocked micro-kernels: each computes 4 / 8
-// dot products of the shared row `a` against consecutive b-rows, writing every
-// row's full sum into the first lane of its 4-lane block in sums (the rest
-// zero). n4 is len/4 (K is a multiple of 4 in the matmul hot path). Exposed
-// for a cache-blocked matmul; the decoder uses MatmulBT/Dot.
+// dot products of the shared row `a` against consecutive b-rows. Each row's
+// result occupies a 4-lane block of sums; the CALLER horizontal-sums the 4
+// lanes of each block to get that row's dot (same contract as Dot2x8). The
+// per-lane layout WITHIN a block is arch-specific and must not be relied on —
+// arm64 leaves four raw partial sums, the generic/AVX2 path puts the full sum
+// in lane 0 and zeros the rest; both reduce to the same value. n4 is len/4 (K
+// is a multiple of 4 in the matmul hot path). Exposed for a cache-blocked
+// matmul; the decoder uses MatmulBT/Dot.
 func Dot4x4(a, b0, b1, b2, b3 *float32, n4 int, sums *[16]float32) {
 	dotNEON4x4(a, b0, b1, b2, b3, n4, sums)
 }
