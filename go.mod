@@ -3,8 +3,8 @@ module github.com/townsendmerino/aikit
 go 1.26.5
 
 require (
-	golang.org/x/sys v0.45.0
-	golang.org/x/text v0.37.0
+	golang.org/x/sys v0.47.0
+	golang.org/x/text v0.40.0
 )
 
 // v1.8.0 shipped before the release gate passed (missing CHANGELOG compare link)
