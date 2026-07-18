@@ -186,6 +186,16 @@ func (b *BERT) hiddenStates(ids, segs []int32) []float32 {
 	headDim := D / c.Heads
 	eps := c.LNEps
 
+	// Reuse a pooled scratch arena for the per-layer/per-head buffers instead of
+	// allocating qH/kH/vHT + an L² scores per (layer, head) and Q/K/V/ctx/out/
+	// inter/ffn per layer — the ~432 small mallocs per forward the f32 path
+	// already eliminated. Also routes the projections through matmulBTInto, which
+	// (unlike the allocating matmulBT) parallelizes a lone forward — so a bare
+	// SPLADE.Expand / CrossEncoder.Score no longer runs single-threaded.
+	s := getScratch()
+	defer putScratch(s)
+	s.ensureLayer(L, D, c.Intermediate, c.Heads, headDim, L)
+
 	// Embeddings: word + learned position + token-type[seg], then LayerNorm.
 	h := make([]float32, L*D)
 	vocab, typeVocab := len(b.wordEmb)/D, len(b.typeEmb)/D
@@ -217,19 +227,21 @@ func (b *BERT) hiddenStates(ids, segs []int32) []float32 {
 	for li := range b.layers {
 		l := &b.layers[li]
 
-		// Self-attention (no RoPE): Q,K,V = hWᵀ + b.
-		Q := matmulBT(h, l.Wq, L, D, D)
-		K := matmulBT(h, l.Wk, L, D, D)
-		V := matmulBT(h, l.Wv, L, D, D)
+		// Self-attention (no RoPE): Q,K,V = hWᵀ + b, into scratch.
+		Q, K, V := s.Q[:L*D], s.K[:L*D], s.V[:L*D]
+		matmulBTInto(h, l.Wq, Q, L, D, D)
+		matmulBTInto(h, l.Wk, K, L, D, D)
+		matmulBTInto(h, l.Wv, V, L, D, D)
 		addBias(Q, l.Bq, L, D)
 		addBias(K, l.Bk, L, D)
 		addBias(V, l.Bv, L, D)
 
-		ctx := make([]float32, L*D)
+		ctx := s.ctx[:L*D]
+		qH, kH := s.qH[:L*headDim], s.kH[:L*headDim]
+		vHT := s.vH[:headDim*L]
+		ctxHead := s.ctxHead[:L*headDim]
+		scores := s.scores[:L*L]
 		for hd := 0; hd < c.Heads; hd++ {
-			qH := make([]float32, L*headDim)
-			kH := make([]float32, L*headDim)
-			vHT := make([]float32, headDim*L)
 			for i := range L {
 				src := i*D + hd*headDim
 				copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
@@ -238,19 +250,20 @@ func (b *BERT) hiddenStates(ids, segs []int32) []float32 {
 					vHT[d*L+i] = V[src+d]
 				}
 			}
-			scores := matmulBT(qH, kH, L, headDim, L)
+			matmulBTInto(qH, kH, scores, L, headDim, L)
 			for i := range scores {
 				scores[i] *= scale
 			}
 			for i := range L {
 				softmaxRow(scores[i*L : (i+1)*L])
 			}
-			ctxHead := matmulBT(scores, vHT, L, L, headDim)
+			matmulBTInto(scores, vHT, ctxHead, L, L, headDim)
 			for i := range L {
 				copy(ctx[i*D+hd*headDim:i*D+hd*headDim+headDim], ctxHead[i*headDim:(i+1)*headDim])
 			}
 		}
-		attnOut := matmulBT(ctx, l.Wo, L, D, D)
+		attnOut := s.out[:L*D]
+		matmulBTInto(ctx, l.Wo, attnOut, L, D, D)
 		addBias(attnOut, l.Bo, L, D)
 		for i := range h {
 			h[i] += attnOut[i] // residual
@@ -258,10 +271,12 @@ func (b *BERT) hiddenStates(ids, segs []int32) []float32 {
 		layerNorm(h, l.AttnLNW, l.AttnLNB, L, D, eps)
 
 		// GELU FFN: intermediate → gelu → output, residual, LayerNorm.
-		inter := matmulBT(h, l.Wi, L, D, c.Intermediate)
+		inter := s.val[:L*c.Intermediate]
+		matmulBTInto(h, l.Wi, inter, L, D, c.Intermediate)
 		addBias(inter, l.Bi, L, c.Intermediate)
 		gelu(inter)
-		ffn := matmulBT(inter, l.Wd, L, c.Intermediate, D)
+		ffn := s.mid[:L*D]
+		matmulBTInto(inter, l.Wd, ffn, L, c.Intermediate, D)
 		addBias(ffn, l.Bd, L, D)
 		for i := range h {
 			h[i] += ffn[i] // residual
