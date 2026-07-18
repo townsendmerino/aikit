@@ -73,6 +73,15 @@ func (s *Selector[T]) Push(item T, score float64) bool {
 	if s.k == 0 {
 		return false
 	}
+	// Reject NaN: every comparison against NaN is false, so at capacity a NaN
+	// item would slip past the `score <= min` guard and evict the true minimum,
+	// then poison every later sift (all comparisons against it false) — Result
+	// could return NaN entries while genuinely high scorers were dropped. BM25 /
+	// dot scorers can produce NaN from degenerate vectors, and this is the
+	// terminal retrieval stage.
+	if score != score {
+		return false
+	}
 	if len(s.heap) < s.k {
 		s.heap = append(s.heap, scored[T]{item: item, score: score})
 		s.siftUp(len(s.heap) - 1)

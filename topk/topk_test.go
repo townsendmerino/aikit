@@ -1,6 +1,7 @@
 package topk
 
 import (
+	"math"
 	"reflect"
 	"testing"
 )
@@ -103,6 +104,32 @@ func TestPush_AtCapacity_TiedScoreDiscarded(t *testing.T) {
 	wantItems := []string{"c", "b", "a"}
 	if !reflect.DeepEqual(gotItems, wantItems) {
 		t.Errorf("Result items = %v, want %v (older 'a' must stay on tie)", gotItems, wantItems)
+	}
+}
+
+func TestPush_NaN_Rejected(t *testing.T) {
+	// A NaN score must never enter the heap: every comparison against NaN is
+	// false, so at capacity it would evict the true minimum and then poison the
+	// ordering (Result returning NaN while real high-scorers were dropped).
+	s := New[string](2)
+	s.Push("a", 3)
+	s.Push("b", 5)
+	if s.Push("nan", math.NaN()) {
+		t.Error("Push(NaN) at capacity returned true, want false")
+	}
+	// Under capacity too.
+	s2 := New[string](3)
+	if s2.Push("nan", math.NaN()) {
+		t.Error("Push(NaN) under capacity returned true, want false")
+	}
+	r := s.Result()
+	for _, it := range r {
+		if it.Score != it.Score {
+			t.Errorf("Result contains a NaN entry: %+v", it)
+		}
+	}
+	if len(r) != 2 || r[0].Item != "b" || r[1].Item != "a" {
+		t.Errorf("Result = %+v, want [b:5, a:3] undisturbed by the NaN push", r)
 	}
 }
 

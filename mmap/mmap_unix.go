@@ -20,6 +20,11 @@ import (
 // residency control there).
 //
 // The returned slice must be released with Unmap, not left to the GC.
+//
+// Files smaller than 8 bytes are rejected with an error: every format this maps
+// (GGUF, safetensors, the FlatI8 index) begins with an ≥8-byte length/magic
+// prefix, so a shorter file can't be valid and mapping it is pointless. Callers
+// mapping arbitrary tiny files should read them directly.
 func MapReadOnly(path string) ([]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {

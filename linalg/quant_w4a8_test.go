@@ -27,7 +27,7 @@ func TestW4A8_dotMatchesScalar(t *testing.T) {
 		for i := range scales {
 			scales[i] = float32(rng.NormFloat64())
 		}
-		got := dotW4A8(act, packed, scales, group, K, make([]int32, nGroups))
+		got := dotW4A8(act, packed, scales, group, K)
 		want := dotW4A8Scalar(act, packed, scales, group, K)
 		rel := math.Abs(float64(got-want)) / (math.Abs(float64(want)) + 1e-9)
 		if rel > 1e-5 {

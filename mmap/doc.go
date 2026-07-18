@@ -20,8 +20,11 @@
 //
 //   - MapReadOnly / Unmap — a read-only MAP_PRIVATE mapping of a whole file.
 //   - Advise — MADV_WILLNEED / MADV_DONTNEED over a page-aligned span. The RAM cap
-//     is firm on Linux/BSD; on darwin eviction is a no-op (clean file-backed pages
-//     are reclaimed only under pressure) and WILLNEED is an advisory prefetch.
+//     is firm on Linux ONLY; on darwin and the BSDs eviction is a no-op (the BSD
+//     stdlib syscall package has no Madvise wrapper; darwin reclaims clean
+//     file-backed pages only under pressure), and WILLNEED is an advisory
+//     prefetch. Correctness is unaffected everywhere — a read-only file-backed
+//     page the OS reclaims simply re-faults identical bytes.
 //   - SpanCache — an LRU of page-aligned spans within a mapping, bounded by a byte
 //     budget, faulting a member in on Touch and releasing the LRU tail. It is
 //     demand-signal-agnostic: the caller registers each member's spans and decides

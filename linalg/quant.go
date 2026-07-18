@@ -86,15 +86,20 @@ func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, 
 	checkMatmulQ8("MatmulBTQ8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	parallelCols(M*N*K, N, func(j0, j1 int) {
 		deq := make([]float32, K) // per-worker scratch: one widened b-row
-		for i := range M {
-			arow := a[i*K : i*K+K]
-			drow := dst[i*N : i*N+N]
-			for j := j0; j < j1; j++ {
-				bq := bQ[j*K : j*K+K]
-				for k := range K {
-					deq[k] = float32(bq[k])
-				}
-				drow[j] = dotF32(arow, deq) * bScales[j]
+		// Column-outer (j outer, i inner): widen each weight row to f32 ONCE and
+		// reuse it across all M activation rows. The old row-outer nest re-widened
+		// every b-row M times (the O(K) widen dominates the vectorized dot at
+		// prefill) — MatmulBTQ4/w8a8Span are column-outer for exactly this reason.
+		// Bit-identical: each dst[i,j] is the same independent dotF32(arow_i, deq_j)
+		// * scale_j, only the loop order changed.
+		for j := j0; j < j1; j++ {
+			bq := bQ[j*K : j*K+K]
+			for k := range K {
+				deq[k] = float32(bq[k])
+			}
+			s := bScales[j]
+			for i := range M {
+				dst[i*N+j] = dotF32(a[i*K:i*K+K], deq) * s
 			}
 		}
 	})
@@ -398,7 +403,6 @@ func MatmulBTW4A8(a []float32, w4 []byte, wScales []float32, dst []float32, M, K
 		aScales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
 	}
 	parallelCols(M*N*K, N, func(j0, j1 int) {
-		sums := make([]int32, nGroups) // per-worker scratch: asm group dots
 		for j := j0; j < j1; j++ {
 			prow := w4[j*bpr : j*bpr+bpr]
 			srow := wScales[j*nGroups : j*nGroups+nGroups]
@@ -407,7 +411,7 @@ func MatmulBTW4A8(a []float32, w4 []byte, wScales []float32, dst []float32, M, K
 					dst[i*N+j] = 0
 					continue
 				}
-				dst[i*N+j] = dotW4A8(aq[i*K:i*K+K], prow, srow, group, K, sums) * aScales[i]
+				dst[i*N+j] = dotW4A8(aq[i*K:i*K+K], prow, srow, group, K) * aScales[i]
 			}
 		}
 	})

@@ -15,11 +15,9 @@ func dotW4A8FoldSDOT(act *int8, packed *byte, scales *float32, nGroups int) floa
 
 // dotW4A8 computes one W4A8 output (before the activation scale). The DotProd
 // path folds the per-group weight scales inside the kernel and returns the f32
-// dot directly; only a ragged final group (K % 32 ≠ 0) is mopped up in Go. The
-// sums scratch is unused on arm64 (the kernel keeps the accumulation in
-// registers); it's kept in the signature for the shared call site + the
-// other-arch paths. Everything off the fast path falls back to the reference.
-func dotW4A8(act []int8, packed []byte, scales []float32, group, K int, sums []int32) float32 {
+// dot directly; only a ragged final group (K % 32 ≠ 0) is mopped up in Go.
+// Everything off the fast path falls back to the reference.
+func dotW4A8(act []int8, packed []byte, scales []float32, group, K int) float32 {
 	if hasDotProd && group == 32 && K >= 32 {
 		nFull := K / 32
 		total := dotW4A8FoldSDOT(&act[0], &packed[0], &scales[0], nFull)

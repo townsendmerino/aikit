@@ -257,6 +257,18 @@ func TestDotI8_matchesScalar(t *testing.T) {
 	}
 }
 
+// TestDotI8_lengthMismatchPanics: the exported DotI8 must reject unequal
+// lengths (the SIMD dispatch reads len(a) elements of both — a short b would
+// read OOB) rather than silently returning garbage.
+func TestDotI8_lengthMismatchPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Error("DotI8 with mismatched lengths did not panic")
+		}
+	}()
+	DotI8(make([]int8, 8), make([]int8, 4))
+}
+
 // TestMatmulBTW8A8_closeToF32: full int8×int8 (activations also quantized) is
 // lossier than weight-only int8, but on well-behaved (no-outlier) data it should
 // still track f32 closely. This is the best-case signal; real activations have
