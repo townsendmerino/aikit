@@ -243,7 +243,13 @@ func scanDepth(src []byte, lineStart []int, cfg scannerCfg) []int {
 	lc := cfg.lineComment
 
 	atLineStart := func(pos int) {
-		for li < n && lineStart[li] == pos {
+		// `<=`, not `==`: a state handler can advance i past a byte (an escape
+		// `\<c>` in a string, `*/`, `"""`, …). If the skipped byte is a line
+		// start, `== pos` would never match it, li would stall, and every
+		// subsequent line's depth would be frozen at 0 for the rest of the file
+		// (e.g. a `\` followed by a newline — a legal JS/Rust line continuation).
+		// `<=` records any jumped-over line starts at the current depth.
+		for li < n && lineStart[li] <= pos {
 			depth[li] = cur
 			li++
 		}

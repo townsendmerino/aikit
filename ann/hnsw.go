@@ -147,6 +147,13 @@ func NewHNSW(cfg Config) *HNSW {
 	if m <= 0 {
 		m = 16
 	}
+	if m < 2 {
+		// M=1 gives mL = 1/ln(1) = +Inf, so randomLevel's int(-ln(U)·mL)
+		// overflows (MinInt64/MaxInt64) and make([][]int32, level+1) panics on
+		// the first Add. A 1-neighbor graph is degenerate anyway — clamp to the
+		// minimum viable connectivity.
+		m = 2
+	}
 	efc := cfg.EfConstruction
 	if efc <= 0 {
 		efc = 200

@@ -30,6 +30,20 @@ func randUnitSet(rng *rand.Rand, n, dim int) [][]float32 {
 	return out
 }
 
+// TestHNSW_M1DoesNotPanic: Config{M:1} used to set mL = 1/ln(1) = +Inf, so
+// randomLevel overflowed and Add panicked on the first insert. The constructor
+// now clamps M to >= 2; a small index must build and query cleanly.
+func TestHNSW_M1DoesNotPanic(t *testing.T) {
+	rng := rand.New(rand.NewPCG(1, 1))
+	h := NewHNSW(Config{M: 1, Seed: 1})
+	for _, v := range randUnitSet(rng, 50, 16) {
+		h.Add(v) // must not panic
+	}
+	if got := h.Query(randUnit(rng, 16), 5); len(got) == 0 {
+		t.Error("Query on an M=1-configured index returned no hits")
+	}
+}
+
 // TestHNSW_recallVsFlat: HNSW must return nearly the same top-k as the
 // exact Flat scan. This is the headline correctness/quality bar.
 func TestHNSW_recallVsFlat(t *testing.T) {
