@@ -22,7 +22,6 @@ package embed
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -147,10 +146,10 @@ type shardIndex struct {
 func parseShardIndex(indexBytes []byte) (files []string, weightMap map[string]string, err error) {
 	var idx shardIndex
 	if err := json.Unmarshal(indexBytes, &idx); err != nil {
-		return nil, nil, fmt.Errorf("safetensors: parse shard index: %w", err)
+		return nil, nil, fmt.Errorf("safetensors: parse shard index: %w: %w", err, ErrFormat)
 	}
 	if len(idx.WeightMap) == 0 {
-		return nil, nil, errors.New("safetensors: shard index has empty weight_map")
+		return nil, nil, errFormatf("safetensors: shard index has empty weight_map")
 	}
 	seen := make(map[string]bool)
 	for _, f := range idx.WeightMap {

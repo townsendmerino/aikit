@@ -108,13 +108,25 @@ func (c *gcur) need(n int) bool {
 // or length, since every element/byte consumes at least one byte of input.
 func (c *gcur) remaining() int { return len(c.b) - c.pos }
 
-// hintLen clamps an untrusted element count to a safe make() preallocation size:
-// never more than the bytes left. The parse loop stays bounded by the true count
-// and stops at EOF, so this only prevents a hostile count from driving a giant
-// allocation before that EOF is ever reached.
-func (c *gcur) hintLen(n uint64) int {
-	if r := c.remaining(); n > uint64(r) {
-		return r
+// ggufHintCap bounds a map-preallocation hint. No real GGUF has this many KV or
+// tensor entries (a large model has hundreds of KV, thousands of tensors), and
+// each hinted map slot costs ~48–64 bytes of eager bucket allocation, so an
+// unbounded hint from a hostile count is its own amplification vector.
+const ggufHintCap = 1 << 16
+
+// hintLen clamps an untrusted entry count to a safe make() preallocation size.
+// minEntryBytes is the smallest possible encoded size of one entry (a KV pair is
+// ≥13 bytes, a tensor descriptor ≥24), so remaining/minEntryBytes bounds how many
+// could even exist — clamping by raw remaining bytes assumed ≥1 byte/entry and
+// still let a 100 MB file claiming billions of entries drive a multi-GB map
+// prealloc before the loop hit EOF. Also capped by ggufHintCap. The loop stays
+// bounded by the true count and stops at EOF regardless.
+func (c *gcur) hintLen(n uint64, minEntryBytes int) int {
+	if n > ggufHintCap {
+		n = ggufHintCap
+	}
+	if fit := uint64(c.remaining() / minEntryBytes); n > fit {
+		n = fit
 	}
 	return int(n)
 }
@@ -212,7 +224,7 @@ func (c *gcur) value(vtype uint32) any {
 		// nests one value() frame per level and would otherwise blow the
 		// goroutine stack (see ggufMaxArrayDepth).
 		if c.depth >= ggufMaxArrayDepth {
-			c.err = fmt.Errorf("gguf: metadata array nesting exceeds %d levels", ggufMaxArrayDepth)
+			c.err = errFormatf("gguf: metadata array nesting exceeds %d levels", ggufMaxArrayDepth)
 			return nil
 		}
 		c.depth++
@@ -222,7 +234,7 @@ func (c *gcur) value(vtype uint32) any {
 		// Each array element is ≥1 byte, so a count beyond the remaining input is
 		// impossible — reject it rather than pre-allocate (or wrap int and panic).
 		if n > uint64(c.remaining()) {
-			c.err = fmt.Errorf("gguf: array length %d exceeds %d remaining bytes", n, c.remaining())
+			c.err = errFormatf("gguf: array length %d exceeds %d remaining bytes", n, c.remaining())
 			return nil
 		}
 		// Cap the EAGER preallocation: n is bounded by the remaining bytes, but for
@@ -238,7 +250,7 @@ func (c *gcur) value(vtype uint32) any {
 		}
 		return arr
 	default:
-		c.err = fmt.Errorf("gguf: unknown metadata value type %d", vtype)
+		c.err = errFormatf("gguf: unknown metadata value type %d", vtype)
 		return nil
 	}
 }
@@ -325,7 +337,7 @@ func parseGGUF(raw []byte) (*GGUFFile, error) {
 	// kvCount/tensorCount are untrusted: a hostile header can claim billions of
 	// entries. Clamp the make() hints to what the input could hold; the loops
 	// below still run to the true count and stop at EOF.
-	g := &GGUFFile{Metadata: make(map[string]any, c.hintLen(kvCount)), tensors: make(map[string]ggufTensorInfo, c.hintLen(tensorCount))}
+	g := &GGUFFile{Metadata: make(map[string]any, c.hintLen(kvCount, 13)), tensors: make(map[string]ggufTensorInfo, c.hintLen(tensorCount, 24))}
 	for i := uint64(0); i < kvCount && c.err == nil; i++ {
 		key := c.str()
 		vtype := c.u32()
@@ -341,7 +353,7 @@ func parseGGUF(raw []byte) (*GGUFFile, error) {
 		// Each dim is a u64; a count beyond remaining/8 can't be satisfied, so
 		// reject it rather than make([]uint64, huge) and OOM.
 		if nd < 0 || nd > c.remaining()/8 {
-			c.err = fmt.Errorf("gguf: tensor %q dim count %d exceeds remaining input", name, nd)
+			c.err = errFormatf("gguf: tensor %q dim count %d exceeds remaining input", name, nd)
 			break
 		}
 		dims := make([]uint64, nd)
@@ -395,6 +407,14 @@ func (g *GGUFFile) Dims(name string) ([]int, bool) {
 	}
 	dims := make([]int, len(info.dims))
 	for i, d := range info.dims {
+		// info.dims are untrusted uint64. A dim ≥ 2^63 wraps to a negative int,
+		// which a caller feeding the result to make() or a shape product would
+		// mishandle — report the tensor as unusable rather than hand back a
+		// negative dim. (RowDequantizer validates dims against the data section;
+		// Dims is the cheap metadata probe, so it just rejects the overflow.)
+		if d > uint64(math.MaxInt) {
+			return nil, false
+		}
 		dims[i] = int(d)
 	}
 	return dims, true
@@ -436,10 +456,12 @@ func (g *GGUFFile) RowDequantizer(name string) (dims []int, into func(start int,
 	// ∏dims feeds make([]float32, n) and the byte-size arithmetic, and every dim
 	// is an untrusted uint64. A hostile tensor can claim dims whose product
 	// overflows int (wrapping the byte check and OOM-ing the make). Bound it:
-	// even the densest supported type packs ≥ ~0.5 bytes/element, so a tensor's
-	// element count can't exceed 2×|data section|. Check before each multiply so
-	// the product itself can never overflow; tensorBytes does the exact check.
-	maxElems := 2*len(g.data) + qkK
+	// the densest supported type is Q2_K at ~0.33 bytes/element (IQ2_S ~0.32),
+	// so a tensor's element count can't exceed 4×|data section| — using 2× here
+	// falsely rejected a legitimate Q2_K/IQ2_S tensor occupying >~65% of the
+	// data section (tensorBytes would have validated it exactly). Check before
+	// each multiply so the product itself can never overflow.
+	maxElems := 4*len(g.data) + qkK
 	n := 1
 	dims = make([]int, len(info.dims))
 	for i, d := range info.dims {
