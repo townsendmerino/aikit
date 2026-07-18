@@ -1,6 +1,7 @@
 package linalg
 
 import (
+	"fmt"
 	"unsafe"
 
 	"github.com/townsendmerino/aikit/mmap"
@@ -39,7 +40,14 @@ type WeightMat struct {
 // WrapF32 wraps an existing [rows, cols] f32 weight WITHOUT copying — the WeightMat
 // aliases w (the caller keeps it alive, e.g. an mmap'd tensor). A consumer that must
 // release the source after construction should pass a copy.
+//
+// Panics if rows or cols is negative or len(w) != rows*cols (checked
+// overflow-safe, so a wrapped-int shape can't slip a short buffer past).
 func WrapF32(w []float32, rows, cols int) WeightMat {
+	if rows < 0 || cols < 0 {
+		panic(fmt.Sprintf("linalg: WrapF32 negative dim (rows=%d cols=%d)", rows, cols))
+	}
+	requireExactLen("WrapF32", "w", len(w), mul(rows, cols))
 	return WeightMat{f32: w, rows: rows, cols: cols}
 }
 
@@ -64,10 +72,14 @@ func QuantizeInt4(w []float32, rows, cols, group int) WeightMat {
 // the caller keeps them alive. w8a8 selects the matmul (false ⇒ weight-only Q8,
 // true ⇒ full int8×int8). For a loader that reads pre-quantized weights straight
 // off disk and must not pay a dequant→requantize round-trip.
+// Panics if rows or cols is negative, len(q8) != rows*cols, or
+// len(scales) != rows (all checked overflow-safe).
 func WrapInt8(q8 []int8, scales []float32, rows, cols int, w8a8 bool) WeightMat {
-	if len(q8) != rows*cols || len(scales) != rows {
-		panic("linalg: WrapInt8 shape mismatch")
+	if rows < 0 || cols < 0 {
+		panic(fmt.Sprintf("linalg: WrapInt8 negative dim (rows=%d cols=%d)", rows, cols))
 	}
+	requireExactLen("WrapInt8", "q8", len(q8), mul(rows, cols))
+	requireExactLen("WrapInt8", "scales", len(scales), rows)
 	return WeightMat{q8: q8, scales: scales, w8a8: w8a8, rows: rows, cols: cols}
 }
 
@@ -76,15 +88,18 @@ func WrapInt8(q8 []int8, scales []float32, rows, cols int, w8a8 bool) WeightMat 
 // (two per byte, row-major) and q4s is [rows*nGroups] per-group scales, where
 // nGroups = ⌈cols/group⌉. Aliases the caller's slices (e.g. a zero-copy mmap of a
 // quantized checkpoint), so the caller keeps them alive.
+// Panics if rows or cols is negative, group <= 0, len(q4) != rows*⌈cols/2⌉, or
+// len(q4s) != rows*⌈cols/group⌉ (all checked overflow-safe).
 func WrapInt4(q4 []byte, q4s []float32, rows, cols, group int) WeightMat {
+	if rows < 0 || cols < 0 {
+		panic(fmt.Sprintf("linalg: WrapInt4 negative dim (rows=%d cols=%d)", rows, cols))
+	}
 	if group <= 0 {
-		panic("linalg: WrapInt4 needs group > 0")
+		panic(fmt.Sprintf("linalg: WrapInt4 needs group > 0, got %d", group))
 	}
-	bpr := (cols + 1) / 2
-	nGroups := (cols + group - 1) / group
-	if len(q4) != rows*bpr || len(q4s) != rows*nGroups {
-		panic("linalg: WrapInt4 shape mismatch")
-	}
+	nGroups, bpr := groupsFor(cols, group)
+	requireExactLen("WrapInt4", "q4", len(q4), mul(rows, bpr))
+	requireExactLen("WrapInt4", "q4s", len(q4s), mul(rows, nGroups))
 	return WeightMat{q4: q4, q4s: q4s, group: group, rows: rows, cols: cols}
 }
 

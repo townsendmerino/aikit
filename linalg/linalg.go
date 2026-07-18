@@ -132,6 +132,7 @@ func resolveWidth(width int) int {
 // — measured — is also faster than the naive span at small-M decode/attention
 // shapes, so M-invariance costs nothing here.)
 func MatmulBT(a, b, dst []float32, M, K, N int) {
+	checkMatmulBT("MatmulBT", len(a), len(b), len(dst), M, K, N)
 	zeroSpanF32(dst[:M*N])
 	parallelCols(M*N*K, N, func(j0, j1 int) {
 		blockedFill(a, b, dst, M, K, N, j0, j1, mBlockDefault, nBlockDefault, kBlockDefault)
@@ -143,6 +144,7 @@ func MatmulBT(a, b, dst []float32, M, K, N int) {
 // independent decode stream tunes its own parallelism. Same shape and numerics as
 // the package-level MatmulBT (including the M-invariance contract documented there).
 func (w *Workspace) MatmulBT(a, b, dst []float32, M, K, N int) {
+	checkMatmulBT("MatmulBT", len(a), len(b), len(dst), M, K, N)
 	zeroSpanF32(dst[:M*N])
 	w.parallelCols(M*N*K, N, func(j0, j1 int) {
 		blockedFill(a, b, dst, M, K, N, j0, j1, mBlockDefault, nBlockDefault, kBlockDefault)

@@ -116,6 +116,51 @@ func TestSafetensorsFile_typedAccessors(t *testing.T) {
 	}
 }
 
+// TestParseSafetensors_shapeDtypeCrossValidation (H2): the header's declared
+// shape × dtype must match the byte range, so a hostile file can't pair a giant
+// shape with a tiny byte range (which parsed before, then panicked at inference
+// when a caller indexed by shape). Unknown dtypes are exempt (rejected later at
+// read); negative dims and shape-product overflow are rejected too.
+func TestParseSafetensors_shapeDtypeCrossValidation(t *testing.T) {
+	load := func(e stEntry) error {
+		_, err := parseSafetensors(buildSafetensors(map[string]stEntry{"w": e}))
+		return err
+	}
+
+	// The H2 exemplar: shape [4096,4096] F32 but only 4 bytes of payload.
+	if err := load(stEntry{"F32", []int{4096, 4096}, f32raw(1)}); !errors.Is(err, ErrFormat) {
+		t.Errorf("giant shape / tiny bytes: want ErrFormat, got %v", err)
+	}
+	// Off-by-one element count.
+	if err := load(stEntry{"F32", []int{2, 3}, f32raw(1, 2, 3, 4, 5)}); !errors.Is(err, ErrFormat) {
+		t.Errorf("shape 2×3 with 5 elems: want ErrFormat, got %v", err)
+	}
+	// Negative dim.
+	if err := load(stEntry{"F32", []int{-1, 3}, f32raw(1, 2, 3)}); !errors.Is(err, ErrFormat) {
+		t.Errorf("negative dim: want ErrFormat, got %v", err)
+	}
+	// Shape-product overflow (each dim in-range for int, product wraps).
+	if err := load(stEntry{"F32", []int{1 << 40, 1 << 40}, f32raw(1)}); !errors.Is(err, ErrFormat) {
+		t.Errorf("shape overflow: want ErrFormat, got %v", err)
+	}
+	// Valid tensors still parse: exact match, an empty (0-element) tensor, and a
+	// scalar (empty shape → 1 element).
+	for _, ok := range []stEntry{
+		{"F32", []int{2, 3}, f32raw(1, 2, 3, 4, 5, 6)},
+		{"F32", []int{0}, nil},
+		{"F32", []int{}, f32raw(42)},
+		{"I64", []int{2}, make([]byte, 16)},
+	} {
+		if err := load(ok); err != nil {
+			t.Errorf("valid tensor %v/%v: unexpected error %v", ok.dtype, ok.shape, err)
+		}
+	}
+	// Unknown dtype is exempt from the byte-range check (parses; rejected at read).
+	if err := load(stEntry{"BOOL", []int{2, 3}, []byte{1}}); err != nil {
+		t.Errorf("unknown dtype should skip the shape check, got %v", err)
+	}
+}
+
 func eqF32(a, b []float32) bool {
 	if len(a) != len(b) {
 		return false

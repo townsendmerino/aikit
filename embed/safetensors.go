@@ -374,6 +374,31 @@ func parseSafetensors(data []byte) (*SafetensorsFile, error) {
 			return nil, errFormatf("safetensors: tensor %q has invalid offsets %v (payload size %d)",
 				name, t.DataOffsets, len(payload))
 		}
+		// Cross-validate shape × dtype against the declared byte range (H2): the
+		// offset range alone doesn't stop a hostile header from pairing a giant
+		// shape with a 1-element byte range, which would parse here and then
+		// panic at inference when a caller indexes by shape. Reject non-positive
+		// dims and require ∏shape · dtypeSize == byte range, overflow-safe.
+		// Unknown dtypes skip this (the typed accessors reject them at read).
+		rawLen := t.DataOffsets[1] - t.DataOffsets[0]
+		if sz, known := dtypeSize(t.DType); known {
+			n := int64(1)
+			for _, d := range t.Shape {
+				if d < 0 {
+					return nil, errFormatf("safetensors: tensor %q has negative dim in shape %v", name, t.Shape)
+				}
+				// Bound the running product by the payload size before multiplying
+				// (n·d can't fit if n already exceeds payload/d) so it never wraps.
+				if d != 0 && n > int64(len(payload))/int64(d) {
+					return nil, errFormatf("safetensors: tensor %q shape %v exceeds the payload", name, t.Shape)
+				}
+				n *= int64(d)
+			}
+			if n*int64(sz) != int64(rawLen) {
+				return nil, errFormatf("safetensors: tensor %q shape %v × %s (%dB/elem) = %d bytes, but byte range is %d",
+					name, t.Shape, t.DType, sz, n*int64(sz), rawLen)
+			}
+		}
 		tensors[name] = Tensor{
 			Name:  name,
 			DType: t.DType,
@@ -603,6 +628,24 @@ func halfBitsToF32(h uint16) float32 {
 		bits = sign | uint32(exp+(127-15))<<23 | mant<<13
 	}
 	return math.Float32frombits(bits)
+}
+
+// dtypeSize returns the byte width of a safetensors dtype and whether aikit
+// knows it. Only the dtypes the typed accessors decode are sized; anything else
+// (I8/U8/BOOL/F8_*, …) is reported unknown, so parseSafetensors skips the
+// shape×dtype byte-range check for it — the typed accessors reject it at read
+// time exactly as before.
+func dtypeSize(dtype string) (int, bool) {
+	switch dtype {
+	case "F64", "I64":
+		return 8, true
+	case "F32", "I32":
+		return 4, true
+	case "BF16", "F16":
+		return 2, true
+	default:
+		return 0, false
+	}
 }
 
 // Elements returns the total number of elements (product of shape).

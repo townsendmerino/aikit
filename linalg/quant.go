@@ -1,6 +1,9 @@
 package linalg
 
-import "math"
+import (
+	"fmt"
+	"math"
+)
 
 // Per-row symmetric int8 weight quantization.
 // Each output row (channel) of a [rows, cols] weight matrix gets its own f32
@@ -17,9 +20,10 @@ import "math"
 // weights + per-row f32 scales. Reconstruct: W[i,j] ≈ float32(q[i*cols+j]) *
 // scales[i]. An all-zero row gets scale 1 (its codes are all zero anyway).
 func QuantizeRowsInt8(w []float32, rows, cols int) (q []int8, scales []float32) {
-	if rows*cols != len(w) {
-		panic("linalg: QuantizeRowsInt8 shape mismatch")
+	if rows < 0 || cols < 0 {
+		panic(fmt.Sprintf("linalg: QuantizeRowsInt8 negative dim (rows=%d cols=%d)", rows, cols))
 	}
+	requireExactLen("QuantizeRowsInt8", "w", len(w), mul(rows, cols))
 	q = make([]int8, rows*cols)
 	scales = make([]float32, rows)
 	for i := range rows {
@@ -79,6 +83,7 @@ func DequantizeRowInt8(q []int8, scale float32, dst []float32) {
 // int8→f32 widen stays scalar; the multiply-accumulate is vectorized. The scratch
 // is one row wide and allocated once per worker. Parallelized over the N columns.
 func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
+	checkMatmulQ8("MatmulBTQ8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	parallelCols(M*N*K, N, func(j0, j1 int) {
 		deq := make([]float32, K) // per-worker scratch: one widened b-row
 		for i := range M {
@@ -158,6 +163,7 @@ func MatmulBTW8A8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K
 // which was the bulk of decode alloc_space. Output is bit-identical to
 // MatmulBTW8A8 (same quantizeRowInt8 / dotI8 / rescale, just hoisted).
 func MatmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
+	checkMatmulQ8("MatmulBTW8A8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	aq := ws.int8Buf(M * K)
 	aScales := ws.f32Buf(M)
 	for i := range M {
@@ -289,9 +295,13 @@ func groupsFor(cols, group int) (nGroups, bytesPerRow int) {
 // 4-bit codes + per-group f32 scales. Reconstruct: W[i, k] ≈ (nibble(i,k)-8) *
 // scales[i*nGroups + k/group]. An all-zero group gets scale 1 (codes all 8).
 func QuantizeGroupsInt4(w []float32, rows, cols, group int) (packed []byte, scales []float32) {
-	if rows*cols != len(w) {
-		panic("linalg: QuantizeGroupsInt4 shape mismatch")
+	if rows < 0 || cols < 0 {
+		panic(fmt.Sprintf("linalg: QuantizeGroupsInt4 negative dim (rows=%d cols=%d)", rows, cols))
 	}
+	if group <= 0 {
+		panic(fmt.Sprintf("linalg: QuantizeGroupsInt4 group must be > 0, got %d", group))
+	}
+	requireExactLen("QuantizeGroupsInt4", "w", len(w), mul(rows, cols))
 	nGroups, bpr := groupsFor(cols, group)
 	packed = make([]byte, rows*bpr)
 	scales = make([]float32, rows*nGroups)
@@ -376,6 +386,10 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 // — the W8A8 tradeoff — so it's the explicit-opt-in kernel for RAM-constrained
 // int4 CPU decode, not a drop-in for the f32-activation path.
 func MatmulBTW4A8(a []float32, w4 []byte, wScales []float32, dst []float32, M, K, N, group int) {
+	// Always-on O(1) entry guard (M2): the aikit_checks contract below compiles
+	// to a no-op in production, so without this a bad shape would fault inside a
+	// worker goroutine (uncatchable). This panics recoverably, caller-side.
+	checkMatmulW4A8("MatmulBTW4A8", len(a), len(w4), len(wScales), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTW4A8", len(a), w4, wScales, len(dst), M, K, N, group)
 	nGroups, bpr := groupsFor(K, group)
 	aq := make([]int8, M*K)
@@ -417,6 +431,9 @@ func MatmulBTW4A8(a []float32, w4 []byte, wScales []float32, dst []float32, M, K
 // Q4 parity test references); the prior per-group-dot kernel only matched within
 // tolerance, so this is also slightly MORE faithful, not less.
 func MatmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
+	// Always-on entry guard (M2); checkGroupMatmul below is a no-op without
+	// -tags aikit_checks. Same group-int4 shape contract as MatmulBTW4A8.
+	checkMatmulW4A8("MatmulBTQ4", len(a), len(bPacked), len(bScales), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTQ4", len(a), bPacked, bScales, len(dst), M, K, N, group)
 	nGroups, bpr := groupsFor(K, group)
 	parallelCols(M*N*K, N, func(j0, j1 int) {
