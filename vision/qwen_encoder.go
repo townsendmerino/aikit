@@ -573,19 +573,16 @@ func rmsNorm(x, w []float32, rows, dim int) []float32 {
 // applyRotaryVision applies NeoX rotate_half rotary to one head_dim vector in place,
 // given precomputed cos/sin of length head_dim.
 func applyRotaryVision(vec, cos, sin []float32) {
-	hd := len(vec)
-	half := hd / 2
-	tmp := make([]float32, hd)
-	for d := range hd {
-		var rot float32
-		if d < half {
-			rot = -vec[d+half]
-		} else {
-			rot = vec[d-half]
-		}
-		tmp[d] = vec[d]*cos[d] + rot*sin[d]
+	// In-place pairwise: each (vec[d], vec[d+half]) rotates into itself, so no
+	// per-call scratch is needed — this was ~8M tiny allocs on a realistic image
+	// (~8k patches × 16 heads × 32 blocks). Reads x,y before overwriting either,
+	// and is bit-identical to the tmp version (a+(-b)·s == a-b·s in IEEE).
+	half := len(vec) / 2
+	for d := 0; d < half; d++ {
+		x, y := vec[d], vec[d+half]
+		vec[d] = x*cos[d] - y*sin[d]
+		vec[d+half] = y*cos[d+half] + x*sin[d+half]
 	}
-	copy(vec, tmp)
 }
 
 func silu(x []float32) {

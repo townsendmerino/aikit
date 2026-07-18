@@ -69,6 +69,14 @@ func LoadCrossEncoder(dir string) (*CrossEncoder, error) {
 // Score returns the relevance logit for a (query, document) pair — higher is more
 // relevant. Rank a candidate list by descending Score to rerank. (For a model with
 // more than one label, this is label 0; use ScoreAll for the rest.)
+// Close releases the underlying BERT's mmap-backed weights. Idempotent.
+func (ce *CrossEncoder) Close() error {
+	if ce.bert == nil {
+		return nil
+	}
+	return ce.bert.Close()
+}
+
 func (ce *CrossEncoder) Score(query, doc string) (float32, error) {
 	all, err := ce.ScoreAll(query, doc)
 	if err != nil {
@@ -92,11 +100,17 @@ func (ce *CrossEncoder) pairIDs(query, doc string) (ids, segs []int32) {
 	d := ce.bert.tok.Encode(doc)
 
 	avail := max(ce.bert.maxSeq-3, 0) // room for [CLS] + 2×[SEP]
-	if len(q) > avail {
-		q = q[:avail]
-	}
-	if len(q)+len(d) > avail {
-		d = d[:avail-len(q)]
+	// longest_first (the HF CrossEncoder default): trim the currently-longer
+	// sequence one token at a time until the pair fits, ties trimming the doc.
+	// The old scheme gave the query the whole budget first, so a query ≥ avail
+	// starved the document to zero tokens and the score became
+	// document-independent.
+	for len(q)+len(d) > avail {
+		if len(q) > len(d) {
+			q = q[:len(q)-1]
+		} else {
+			d = d[:len(d)-1]
+		}
 	}
 
 	ids = append(ids, cls)

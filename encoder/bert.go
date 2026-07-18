@@ -159,6 +159,15 @@ func LoadBERT(dir string) (*BERT, error) {
 // Encode tokenizes text (WordPiece, wrapped [CLS]…[SEP], right-truncated to the
 // model's max sequence length) and returns the mean-pooled, L2-normalized sentence
 // embedding — the end-to-end MiniLM equivalent of sentence-transformers' .encode().
+// Close releases the mmap-backed weights. Call once after the last Encode;
+// idempotent. See Model.Close.
+func (b *BERT) Close() error {
+	if b.st == nil {
+		return nil
+	}
+	return b.st.Close()
+}
+
 func (b *BERT) Encode(text string) ([]float32, error) {
 	ids, err := b.tok.EncodeWithSpecials(text, b.maxSeq)
 	if err != nil {

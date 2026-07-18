@@ -67,6 +67,17 @@ func (m *Model) SetMaxSeqLength(n int) {
 // HiddenDim is the output embedding dimension (768 for CodeRankEmbed).
 func (m *Model) HiddenDim() int { return m.weights.Cfg.HiddenDim }
 
+// Close releases the mmap-backed weights (the ~547 MB checkpoint lives in the OS
+// page cache until then). Call it once, after the last Encode, when a
+// long-running server swaps models — otherwise the mapping is released only when
+// a GC finalizer runs. Idempotent; a heap-loaded model has nothing to release.
+func (m *Model) Close() error {
+	if m.weights == nil || m.weights.st == nil {
+		return nil
+	}
+	return m.weights.st.Close()
+}
+
 // Encode tokenizes `text` (prepending the mandatory query prefix iff
 // isQuery is true), wraps with [CLS]/[SEP], runs the transformer
 // forward pass, and returns the raw (UN-normalized) CLS hidden state.
