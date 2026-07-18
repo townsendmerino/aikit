@@ -391,30 +391,54 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 // — the W8A8 tradeoff — so it's the explicit-opt-in kernel for RAM-constrained
 // int4 CPU decode, not a drop-in for the f32-activation path.
 func MatmulBTW4A8(a []float32, w4 []byte, wScales []float32, dst []float32, M, K, N, group int) {
+	var ws Workspace
+	MatmulBTW4A8Into(&ws, a, w4, wScales, dst, M, K, N, group)
+}
+
+// MatmulBTW4A8Into is MatmulBTW4A8 with caller-supplied scratch (a Workspace), so
+// a steady-state int4 decode loop allocates nothing: the activation is quantized
+// once into the Workspace's reusable int8/f32 buffers instead of a fresh
+// make([]int8, M*K) + make([]float32, M) per call — the same alloc MatmulBTW8A8
+// was re-engineered to remove, now available for the RAM-constrained int4 path.
+// Output is bit-identical to MatmulBTW4A8.
+func MatmulBTW4A8Into(ws *Workspace, a []float32, w4 []byte, wScales []float32, dst []float32, M, K, N, group int) {
 	// Always-on O(1) entry guard (M2): the aikit_checks contract below compiles
 	// to a no-op in production, so without this a bad shape would fault inside a
 	// worker goroutine (uncatchable). This panics recoverably, caller-side.
 	checkMatmulW4A8("MatmulBTW4A8", len(a), len(w4), len(wScales), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTW4A8", len(a), w4, wScales, len(dst), M, K, N, group)
 	nGroups, bpr := groupsFor(K, group)
-	aq := make([]int8, M*K)
-	aScales := make([]float32, M)
+	aq := ws.int8Buf(M * K)
+	aScales := ws.f32Buf(M)
 	for i := range M {
 		aScales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
 	}
-	parallelCols(M*N*K, N, func(j0, j1 int) {
-		for j := j0; j < j1; j++ {
-			prow := w4[j*bpr : j*bpr+bpr]
-			srow := wScales[j*nGroups : j*nGroups+nGroups]
-			for i := range M {
-				if aScales[i] == 0 {
-					dst[i*N+j] = 0
-					continue
-				}
-				dst[i*N+j] = dotW4A8(aq[i*K:i*K+K], prow, srow, group, K) * aScales[i]
-			}
-		}
+	// Serial fast-path calls the named span directly (no closure → no heap
+	// escape → zero alloc, the steady-state decode case). Only the parallel
+	// branch pays a closure allocation. Mirrors MatmulBTW8A8Into.
+	if M*N*K < ws.thr() || N < 2 {
+		w4a8Span(aq, aScales, w4, wScales, dst, M, K, N, group, nGroups, bpr, 0, N)
+		return
+	}
+	ws.parallel(N, func(j0, j1 int) {
+		w4a8Span(aq, aScales, w4, wScales, dst, M, K, N, group, nGroups, bpr, j0, j1)
 	})
+}
+
+// w4a8Span computes output columns [j0,j1) for every row: dst[i,j] =
+// (Σ_g scale[g]·(aq_i·w4_j)_g) · aScale_i, with a zero-activation-row shortcut.
+func w4a8Span(aq []int8, aScales []float32, w4 []byte, wScales, dst []float32, M, K, N, group, nGroups, bpr, j0, j1 int) {
+	for j := j0; j < j1; j++ {
+		prow := w4[j*bpr : j*bpr+bpr]
+		srow := wScales[j*nGroups : j*nGroups+nGroups]
+		for i := range M {
+			if aScales[i] == 0 {
+				dst[i*N+j] = 0
+				continue
+			}
+			dst[i*N+j] = dotW4A8(aq[i*K:i*K+K], prow, srow, group, K) * aScales[i]
+		}
+	}
 }
 
 // MatmulBTQ4 computes dst[M,N] = a[M,K] · bᵀ where b is the [N,K] matrix stored

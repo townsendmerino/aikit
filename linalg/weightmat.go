@@ -119,11 +119,11 @@ func (w *WeightMat) MatmulBT(a, dst []float32, M int) {
 	}
 }
 
-// MatmulBTInto is MatmulBT through a Workspace: the W8A8 path quantizes the activation
-// once into the Workspace's reusable scratch (zero per-call alloc — the steady-state
-// decode win), and the f32 path runs the Workspace-scoped parallel matmul honoring its
-// SetThreshold/SetWorkers. The weight-only Q8 and int4 paths have no Workspace variant
-// and ignore ws.
+// MatmulBTInto is MatmulBT through a Workspace: the W8A8 and W4A8 paths quantize
+// the activation once into the Workspace's reusable scratch (zero per-call alloc
+// — the steady-state decode win), and the f32 path runs the Workspace-scoped
+// parallel matmul honoring its SetThreshold/SetWorkers. Only the weight-only Q8
+// path has no Workspace variant and ignores ws.
 func (w *WeightMat) MatmulBTInto(ws *Workspace, a, dst []float32, M int) {
 	// Case order kept identical to MatmulBT above: with constructor-built values
 	// the storage kinds are mutually exclusive so order is inert, but a
@@ -131,7 +131,7 @@ func (w *WeightMat) MatmulBTInto(ws *Workspace, a, dst []float32, M int) {
 	// entry points to different kernels.
 	switch {
 	case w.q4 != nil:
-		MatmulBTW4A8(a, w.q4, w.q4s, dst, M, w.cols, w.rows, w.group)
+		MatmulBTW4A8Into(ws, a, w.q4, w.q4s, dst, M, w.cols, w.rows, w.group)
 	case w.q8 != nil && w.w8a8:
 		MatmulBTW8A8Into(ws, a, w.q8, w.scales, dst, M, w.cols, w.rows)
 	case w.q8 != nil:
