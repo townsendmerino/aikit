@@ -65,7 +65,10 @@ func Preprocess(data []byte, cfg Config) (*PixelValues, error) {
 	if ic.Width <= 0 || ic.Height <= 0 {
 		return nil, fmt.Errorf("vision: non-positive image dims %dx%d", ic.Width, ic.Height)
 	}
-	if cfg.MaxPixels > 0 && ic.Width*ic.Height > cfg.MaxPixels {
+	// int64: Width and Height are attacker-controlled header ints, so on a
+	// 32-bit build (386/arm) Width*Height in int can wrap negative and bypass
+	// this decompression-bomb guard.
+	if cfg.MaxPixels > 0 && int64(ic.Width)*int64(ic.Height) > int64(cfg.MaxPixels) {
 		return nil, fmt.Errorf("vision: image %dx%d exceeds %d-pixel limit (decompression bomb?)", ic.Width, ic.Height, cfg.MaxPixels)
 	}
 

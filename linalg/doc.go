@@ -40,6 +40,8 @@
 //
 // Parallelization and re-blocking partition output columns/rows — each output is
 // computed by a single worker over the full K reduction — so the parallel and
-// blocked paths are bit-identical to the serial scalar reference, not merely
-// within tolerance. The differential tests assert exact equality.
+// blocked paths are bit-identical to a SERIAL RUN OF THE SAME KERNEL: the
+// differential tests assert exact equality for parallel==serial and for width-
+// and M-invariance. (Against a naive scalar triple-loop the blocked kernel
+// differs by float reassociation — that comparison is tolerance-checked, ~1e-3.)
 package linalg

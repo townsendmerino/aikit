@@ -125,11 +125,15 @@ func (w *WeightMat) MatmulBT(a, dst []float32, M int) {
 // SetThreshold/SetWorkers. The weight-only Q8 and int4 paths have no Workspace variant
 // and ignore ws.
 func (w *WeightMat) MatmulBTInto(ws *Workspace, a, dst []float32, M int) {
+	// Case order kept identical to MatmulBT above: with constructor-built values
+	// the storage kinds are mutually exclusive so order is inert, but a
+	// hand-built WeightMat with more than one set would otherwise route the two
+	// entry points to different kernels.
 	switch {
-	case w.q8 != nil && w.w8a8:
-		MatmulBTW8A8Into(ws, a, w.q8, w.scales, dst, M, w.cols, w.rows)
 	case w.q4 != nil:
 		MatmulBTW4A8(a, w.q4, w.q4s, dst, M, w.cols, w.rows, w.group)
+	case w.q8 != nil && w.w8a8:
+		MatmulBTW8A8Into(ws, a, w.q8, w.scales, dst, M, w.cols, w.rows)
 	case w.q8 != nil:
 		MatmulBTQ8(a, w.q8, w.scales, dst, M, w.cols, w.rows)
 	default:

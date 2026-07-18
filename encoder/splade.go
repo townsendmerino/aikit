@@ -64,9 +64,6 @@ func LoadSPLADE(dir string) (*SPLADE, error) {
 	return s, nil
 }
 
-// Expand runs the SPLADE expansion for text and returns the sparse term-weight
-// vector over the model vocabulary (only positive weights — the natural SPLADE
-// sparsity). Feed it to sparse.New (documents) or sparse.Index.Query (queries).
 // Close releases the underlying BERT's mmap-backed weights. Idempotent.
 func (s *SPLADE) Close() error {
 	if s.bert == nil {
@@ -74,6 +71,10 @@ func (s *SPLADE) Close() error {
 	}
 	return s.bert.Close()
 }
+
+// Expand runs the SPLADE expansion for text and returns the sparse term-weight
+// vector over the model vocabulary (only positive weights — the natural SPLADE
+// sparsity). Feed it to sparse.New (documents) or sparse.Index.Query (queries).
 
 func (s *SPLADE) Expand(text string) (sparse.SparseVec, error) {
 	ids, err := s.bert.tok.EncodeWithSpecials(text, s.bert.maxSeq)

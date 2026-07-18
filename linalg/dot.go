@@ -5,13 +5,13 @@ package linalg
 //
 // On arm64 the vector body runs in dot_arm64.s (4-lane VFMLA, ~3-5×
 // the throughput of Go's scalar inner loop on Apple Silicon); the
-// n%4 tail runs in Go regardless. For ken's matmul shapes K is
-// always a multiple of 4 (64, 768, 3072) so the tail is empty in
-// the hot path.
+// n%4 tail runs in Go regardless. For the transformer matmul shapes
+// K is always a multiple of 4 (64, 768, 3072) so the tail is empty
+// in the hot path.
 func dotF32(a, b []float32) float32 {
 	n := len(a)
 	if n != len(b) {
-		panic("encoder: dotF32 length mismatch")
+		panic("linalg: dotF32 length mismatch")
 	}
 	if n == 0 {
 		return 0

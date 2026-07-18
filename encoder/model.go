@@ -56,6 +56,10 @@ func LoadFromFS(fsys fs.FS, dir string) (*Model, error) {
 // SetMaxSeqLength overrides the per-call truncation cap. Useful for
 // unit tests (small L = much faster) and for callers who want to trade
 // recall on long inputs for latency. 0 or negative resets to default.
+//
+// Call it before sharing the Model across goroutines: it mutates internal state
+// without synchronization, so a concurrent Encode would race. The Model is
+// otherwise immutable-after-Load and safe for concurrent Encode.
 func (m *Model) SetMaxSeqLength(n int) {
 	if n <= 0 {
 		m.maxSeqLength = DefaultMaxSeqLength

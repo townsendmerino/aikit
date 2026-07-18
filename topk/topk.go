@@ -5,7 +5,7 @@
 //
 // Use in place of "score everything into a slice, sort by score
 // descending, take the first K" — a pattern that's invisible at toy
-// scale but dominates search CPU at production scale (per ADR-025).
+// scale but dominates search CPU at production scale.
 //
 // The implementation hand-rolls heap up/down rather than wrapping
 // container/heap because (a) container/heap takes interface{} via
@@ -13,18 +13,14 @@
 // and (b) the heap-of-fixed-K pattern is small enough that direct
 // implementation is clearer than the heap.Interface dance.
 //
-// Generics over interface{}: ken is on Go 1.26 (go.mod toolchain pin),
-// so generics are fully available. Generic typing avoids the boxing
-// allocations that interface{} would impose and avoids per-callsite
-// concrete-type copies. The two production callers (internal/ann.Flat.Query
-// and internal/bm25.Index.TopK) use different item types, so generics
-// are the right shape.
+// Generic typing (rather than interface{}) avoids the boxing allocations that
+// interface{} would impose and per-callsite concrete-type copies. The
+// production callers (aikit/ann and aikit/bm25) use different item types, so
+// generics are the right shape.
 //
-// Placement decision (ADR-026 alternatives): standalone leaf at
-// internal/topk rather than internal/search/topk. If a future caller
-// (a reranker, a find_related reimplementation, etc.) needs top-K
-// selection, the import path doesn't suggest false coupling to BM25
-// or ANN.
+// It's a standalone leaf package so a future caller (a reranker, a
+// find_related reimplementation, …) that needs top-K selection can import it
+// without the import path suggesting false coupling to BM25 or ANN.
 package topk
 
 // scored is the internal heap element: an item plus its score. Kept

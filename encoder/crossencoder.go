@@ -45,6 +45,21 @@ func LoadCrossEncoder(dir string) (*CrossEncoder, error) {
 		return nil, fmt.Errorf("encoder: cross-encoder classifier.weight shape %v (want [labels,%d])", ct.Shape, D)
 	}
 	ce.labels = ct.Shape[0]
+	if ce.labels < 1 {
+		_ = b.st.Close()
+		return nil, fmt.Errorf("encoder: cross-encoder must have ≥1 label, got %d", ce.labels)
+	}
+	// pairIDs frames [CLS] q [SEP] d [SEP]; without those specials the tokenizer
+	// silently yields id 0 ([PAD]) for them and the pair is malformed. Require
+	// them at load rather than mis-score every pair.
+	if _, ok := b.tok.SpecialID("[CLS]"); !ok {
+		_ = b.st.Close()
+		return nil, fmt.Errorf("encoder: cross-encoder tokenizer has no [CLS] token")
+	}
+	if _, ok := b.tok.SpecialID("[SEP]"); !ok {
+		_ = b.st.Close()
+		return nil, fmt.Errorf("encoder: cross-encoder tokenizer has no [SEP] token")
+	}
 
 	var e error
 	get := func(name string, want ...int) []float32 {
@@ -66,9 +81,6 @@ func LoadCrossEncoder(dir string) (*CrossEncoder, error) {
 	return ce, nil
 }
 
-// Score returns the relevance logit for a (query, document) pair — higher is more
-// relevant. Rank a candidate list by descending Score to rerank. (For a model with
-// more than one label, this is label 0; use ScoreAll for the rest.)
 // Close releases the underlying BERT's mmap-backed weights. Idempotent.
 func (ce *CrossEncoder) Close() error {
 	if ce.bert == nil {
@@ -76,6 +88,10 @@ func (ce *CrossEncoder) Close() error {
 	}
 	return ce.bert.Close()
 }
+
+// Score returns the relevance logit for a (query, document) pair — higher is more
+// relevant. Rank a candidate list by descending Score to rerank. (For a model with
+// more than one label, this is label 0; use ScoreAll for the rest.)
 
 func (ce *CrossEncoder) Score(query, doc string) (float32, error) {
 	all, err := ce.ScoreAll(query, doc)

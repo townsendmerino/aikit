@@ -33,6 +33,11 @@ import "math"
 //
 // Empty rows (all-zero) get scale=1 — the encoded values are all zero
 // so reconstruction is exactly zero; the scale value doesn't matter.
+// NOTE: quantizeRowsInt8/dequantizeRowsInt8 are now used only by this package's
+// quant tests — production quantizes through linalg.QuantizeInt8 (weights_q8.go)
+// and runs matmulBTQ8Into. They mirror linalg's per-row symmetric max/127
+// scheme, kept as the local reference the encoder tests check against; keep the
+// algorithm in lock-step with linalg.QuantizeInt8 to avoid drift.
 func quantizeRowsInt8(w []float32, rows, cols int) (q []int8, scales []float32) {
 	if rows*cols != len(w) {
 		panic("encoder: quantizeRowsInt8 shape mismatch")
