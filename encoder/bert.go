@@ -55,6 +55,7 @@ type BERT struct {
 	layers  []bertLayer
 	tok     *embed.Tokenizer       // WordPiece tokenizer (tokenizer.json)
 	maxSeq  int                    // sentence-transformers max_seq_length (right-truncation)
+	pool    pooling                // reduction read from 1_Pooling/config.json (mean default)
 	st      *embed.SafetensorsFile // retained so the aliased weights stay valid
 }
 
@@ -153,6 +154,13 @@ func LoadBERT(dir string) (*BERT, error) {
 		return nil, fmt.Errorf("encoder: BERT tokenizer: %w", terr)
 	}
 	b.tok = tok
+	// Pooling is a declared per-model property (sentence-transformers
+	// 1_Pooling/config.json), not assumed: MiniLM pools mean, BGE pools CLS.
+	// Absent file → mean, the sentence-transformers BERT default.
+	if b.pool, err = poolingFromConfig(dir, poolMean); err != nil {
+		_ = st.Close()
+		return nil, err
+	}
 	return b, nil
 }
 
@@ -296,11 +304,14 @@ func (b *BERT) hiddenStates(ids, segs []int32) []float32 {
 	return h
 }
 
-// Embed returns the mean-pooled, L2-normalized sentence embedding for token ids.
+// Embed returns the pooled (per the model's 1_Pooling config; mean by default),
+// L2-normalized sentence embedding for token ids.
 func (b *BERT) Embed(ids []int32) []float32 {
 	D := b.cfg.Hidden
 	h := b.hiddenStates(ids, nil)
-	v := poolOne(h, len(ids), D, poolMean) // mean over the L tokens
+	// L = len(h)/D is the token count hiddenStates actually produced — it
+	// truncates ids to maxSeq, so len(ids) can be larger and would over-read.
+	v := poolOne(h, len(h)/D, D, b.pool)
 	return l2norm(v)
 }
 

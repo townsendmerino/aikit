@@ -1,26 +1,61 @@
 package encoder
 
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+)
+
 // pooling selects how a sequence's per-token hidden states reduce to one
-// embedding vector — an internal, config-driven seam toward supporting
-// BERT-family models beyond CodeRankEmbed (which is CLS). cls is the default
-// (and the zero value). Kept unexported until a loader that actually selects it
-// (with a parity-pinned mean-pooled model) lands — see roadmap §2.5.
+// embedding vector — a config-driven property read per model (from a
+// sentence-transformers 1_Pooling/config.json), not assumed. Different embedders
+// disagree: CodeRankEmbed and BGE pool CLS, MiniLM and most others mean.
 //
-// Only the reduction is parameterized here; the rest of the forward (RoPE
-// positions, SwiGLU MLP) is still NomicBert-specific. Learned absolute positions
-// and a GELU FFN — the other axes a MiniLM/bge-class model needs — plus the
-// loader that reads them, remain to be added and parity-pinned against a real
-// model's golden fixture.
+// Only the reduction is parameterized here; the rest of the forward (positions,
+// FFN) is still architecture-specific per loader.
 type pooling string
 
 const (
-	// poolCLS takes the [CLS] token at position 0 — CodeRankEmbed and most
-	// rerankers. The default.
+	// poolCLS takes the [CLS] token at position 0 — CodeRankEmbed, BGE, most
+	// rerankers.
 	poolCLS pooling = "cls"
 	// poolMean averages the sequence's real tokens — the sentence-transformers
 	// default (MiniLM, many embedders).
 	poolMean pooling = "mean"
 )
+
+// poolingFromConfig reads the sentence-transformers pooling declaration at
+// <dir>/1_Pooling/config.json and returns the reduction mode. A missing file
+// falls back to fallback (the loader's family default) — many bare BERT exports
+// omit it. An unsupported mode (max / mean-sqrt-len) is a hard error rather than
+// a silent mispool: an embedder that pools the wrong way still returns
+// plausible-looking vectors, exactly the failure the parity gates exist to catch.
+func poolingFromConfig(dir string, fallback pooling) (pooling, error) {
+	raw, err := os.ReadFile(filepath.Join(dir, "1_Pooling", "config.json"))
+	if err != nil {
+		return fallback, nil // no ST pooling module — use the family default
+	}
+	var pc struct {
+		CLS      bool `json:"pooling_mode_cls_token"`
+		Mean     bool `json:"pooling_mode_mean_tokens"`
+		Max      bool `json:"pooling_mode_max_tokens"`
+		MeanSqrt bool `json:"pooling_mode_mean_sqrt_len_tokens"`
+	}
+	if err := json.Unmarshal(raw, &pc); err != nil {
+		return "", fmt.Errorf("encoder: parse 1_Pooling/config.json: %w", err)
+	}
+	switch {
+	case pc.Max || pc.MeanSqrt:
+		return "", fmt.Errorf("encoder: unsupported pooling mode (max/mean_sqrt_len) in 1_Pooling/config.json")
+	case pc.CLS:
+		return poolCLS, nil
+	case pc.Mean:
+		return poolMean, nil
+	default:
+		return fallback, nil
+	}
+}
 
 // poolOne reduces ONE sequence's [L, D] hidden states (L real tokens, no padding)
 // to a single D-vector per mode. The caller passes only the real tokens — for the
