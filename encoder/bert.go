@@ -31,6 +31,8 @@ type bertConfig struct {
 	LNEps        float64 `json:"layer_norm_eps"`
 	Act          string  `json:"hidden_act"`
 	PosType      string  `json:"position_embedding_type"`
+	ModelType    string  `json:"model_type"`   // "bert" | "roberta" | "xlm-roberta"
+	PadTokenID   int     `json:"pad_token_id"` // RoBERTa/XLM-R offset positions by this + 1
 }
 
 type bertLayer struct {
@@ -56,7 +58,26 @@ type BERT struct {
 	tok     *embed.Tokenizer       // WordPiece tokenizer (tokenizer.json)
 	maxSeq  int                    // sentence-transformers max_seq_length (right-truncation)
 	pool    pooling                // reduction read from 1_Pooling/config.json (mean default)
+	posOff  int                    // position-id offset (0 for BERT; pad_token_id+1 for RoBERTa/XLM-R)
 	st      *embed.SafetensorsFile // retained so the aliased weights stay valid
+}
+
+// positionOffset returns the learned-position-id offset for a BERT-family model.
+// RoBERTa/XLM-R number positions from padding_idx+1
+// (create_position_ids_from_input_ids), so posEmb[0..padding_idx] are reserved
+// and real tokens start at padding_idx+1; BERT starts at 0. Applying the offset
+// to BERT (a common config that also carries pad_token_id) is a classic
+// silent-wrong, so it is gated on model_type, not just pad_token_id.
+func positionOffset(modelType string, padTokenID int) int {
+	switch modelType {
+	case "roberta", "xlm-roberta":
+		if padTokenID < 0 {
+			return 0
+		}
+		return padTokenID + 1
+	default:
+		return 0
+	}
 }
 
 // LoadBERT loads a sentence-transformers BERT model (config.json +
@@ -111,9 +132,14 @@ func LoadBERT(dir string) (*BERT, error) {
 		v, err = loadF32(st, name, want)
 		return v
 	}
+	b.posOff = positionOffset(c.ModelType, c.PadTokenID)
 	b.wordEmb = get(prefix+"embeddings.word_embeddings.weight", c.VocabSize, D)
 	b.posEmb = get(prefix+"embeddings.position_embeddings.weight", c.MaxPos, D)
-	b.typeEmb = get(prefix+"embeddings.token_type_embeddings.weight", c.TypeVocab, D)
+	// token_type_embeddings is optional — some BERT-family exports (type_vocab_size
+	// 0) omit it. When absent, the embedding sum simply skips the segment term.
+	if c.TypeVocab > 0 {
+		b.typeEmb = get(prefix+"embeddings.token_type_embeddings.weight", c.TypeVocab, D)
+	}
 	b.embLNW = get(prefix+"embeddings.LayerNorm.weight", D)
 	b.embLNB = get(prefix+"embeddings.LayerNorm.bias", D)
 	for i := range b.layers {
@@ -133,19 +159,21 @@ func LoadBERT(dir string) (*BERT, error) {
 		return nil, err
 	}
 
-	// max sequence length: sentence-transformers right-truncates here (the position
-	// table is the hard ceiling). Falls back to the position capacity.
-	b.maxSeq = c.MaxPos
+	// max sequence length: sentence-transformers right-truncates here. The hard
+	// ceiling is the usable position count — MaxPos minus the offset, since a
+	// token at index i reads posEmb[i+posOff].
+	usablePos := c.MaxPos - b.posOff
+	b.maxSeq = usablePos
 	if sb, e := os.ReadFile(filepath.Join(dir, "sentence_bert_config.json")); e == nil {
 		var v struct {
 			MaxSeqLength int `json:"max_seq_length"`
 		}
 		if json.Unmarshal(sb, &v) == nil && v.MaxSeqLength > 0 {
-			// Clamp to the position-embedding capacity: a checkpoint whose
-			// sentence_bert_config claims a longer max_seq_length than
-			// max_position_embeddings would otherwise index posEmb out of range
-			// on the first long input instead of truncating.
-			b.maxSeq = min(v.MaxSeqLength, c.MaxPos)
+			// Clamp to the usable position capacity: a checkpoint whose
+			// sentence_bert_config claims a longer max_seq_length than the
+			// position table would otherwise index posEmb out of range on the
+			// first long input instead of truncating.
+			b.maxSeq = min(v.MaxSeqLength, usablePos)
 		}
 	}
 	tok, terr := embed.LoadTokenizer(filepath.Join(dir, "tokenizer.json"))
@@ -214,29 +242,35 @@ func (b *BERT) hiddenStates(ids, segs []int32) []float32 {
 	defer putScratch(s)
 	s.ensureLayer(L, D, c.Intermediate, c.Heads, headDim, L)
 
-	// Embeddings: word + learned position + token-type[seg], then LayerNorm.
+	// Embeddings: word + learned position (offset for RoBERTa/XLM-R) + optional
+	// token-type[seg], then LayerNorm.
 	h := make([]float32, L*D)
 	vocab, typeVocab := len(b.wordEmb)/D, len(b.typeEmb)/D
 	for i, id := range ids {
-		seg := 0
-		if segs != nil {
-			seg = int(segs[i])
-		}
-		// Defensive: a corrupt tokenizer/checkpoint could emit an OOB id or
-		// segment; substitute row 0 (always in range) rather than panic deep in
-		// the embedding gather. The tokenizer should never produce these.
+		// Defensive: a corrupt tokenizer/checkpoint could emit an OOB id;
+		// substitute row 0 (always in range) rather than panic in the gather.
 		if int(id) < 0 || int(id) >= vocab {
 			id = 0
 		}
-		if seg < 0 || seg >= typeVocab {
-			seg = 0
-		}
 		w := b.wordEmb[int(id)*D : int(id)*D+D]
-		pos := b.posEmb[i*D : i*D+D]
-		typ := b.typeEmb[seg*D : seg*D+D]
+		pos := b.posEmb[(i+b.posOff)*D : (i+b.posOff)*D+D]
 		row := h[i*D : i*D+D]
 		for j := range D {
-			row[j] = w[j] + pos[j] + typ[j]
+			row[j] = w[j] + pos[j]
+		}
+		// token-type is optional (absent when type_vocab_size == 0).
+		if typeVocab > 0 {
+			seg := 0
+			if segs != nil {
+				seg = int(segs[i])
+			}
+			if seg < 0 || seg >= typeVocab {
+				seg = 0
+			}
+			typ := b.typeEmb[seg*D : seg*D+D]
+			for j := range D {
+				row[j] += typ[j]
+			}
 		}
 	}
 	layerNorm(h, b.embLNW, b.embLNB, L, D, eps)
