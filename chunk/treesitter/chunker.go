@@ -208,8 +208,9 @@ func (c *Chunker) poolFor(kenLang string) *gotreesitter.ParserPool {
 	// at v0.2.0 indexing was the discovery case — 36+ minutes on one
 	// file in the bash grammar). gotreesitter's published per-parse
 	// time is ~2ms; parseTimeoutSeconds gives ~5000× slack for genuinely
-	// large real files, and any parse exceeding it falls through to a
-	// whole-file chunk via the err return from pool.Parse.
+	// large real files, and any parse exceeding it returns a truncated tree that
+	// Chunk detects via tree.ParseStoppedEarly() and routes to the line-chunker
+	// fallback (gotreesitter >=0.40 no longer surfaces the timeout as an error).
 	pool := gotreesitter.NewParserPool(lang,
 		gotreesitter.WithParserPoolTimeoutMicros(parseTimeoutMicros),
 	)
@@ -270,9 +271,18 @@ func (c *Chunker) Chunk(source []byte, language string, chunkSize int) ([]chunk.
 
 	tree, err := pool.Parse(source)
 	if err != nil {
-		// Parse errors here are tree-sitter's "I gave up" — typically
-		// a timeout firing on a pathological input. Fall back to the
-		// line chunker so the file still produces useful BM25 docs.
+		// A hard parse error. Fall back to the line chunker so the file still
+		// produces useful BM25 docs.
+		c.parseErr.Add(1)
+		return c.fallback(source, language, chunkSize)
+	}
+	// gotreesitter ≥ 0.40 preserves tree-sitter's native partial-tree behavior on
+	// timeout: it returns a TRUNCATED tree with a nil error (0.20 returned an
+	// error here). Chunking that partial tree would give degraded boundaries for
+	// the unparsed tail, and the runaway-parse guard — the whole reason the
+	// per-parse timeout exists — would silently never trip. Detect the early stop
+	// (timeout/cancellation) and fall back, restoring the pre-bump contract.
+	if tree.ParseStoppedEarly() {
 		c.parseErr.Add(1)
 		return c.fallback(source, language, chunkSize)
 	}
