@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"math"
 	"math/rand/v2"
 	"reflect"
 	"testing"
@@ -97,6 +98,26 @@ func TestLoad_rejectsBadInput(t *testing.T) {
 	}
 	if empty.Len() != 0 {
 		t.Fatalf("empty index Len = %d, want 0", empty.Len())
+	}
+}
+
+// TestLoad_craftedMLDoesNotPanicOnAdd (§2.6): mL is recomputed from m on Load,
+// not trusted from the blob, so a crafted mL = +Inf can't make Add-after-load
+// overflow randomLevel and panic. mL sits at byte offset 40 (magic/version/dim/
+// ndocs/m/m0/efc/efs/entry/maxLayer = 10×4 bytes precede it).
+func TestLoad_craftedMLDoesNotPanicOnAdd(t *testing.T) {
+	good, _ := BuildHNSW(randUnitSet(rand.New(rand.NewPCG(1, 1)), 60, 16), Config{Seed: 1}).MarshalBinary()
+	blob := append([]byte{}, good...)
+	binary.LittleEndian.PutUint64(blob[40:], math.Float64bits(math.Inf(1))) // mL = +Inf
+	h, err := Load(blob)
+	if err != nil {
+		t.Fatalf("Load(mL=+Inf blob): unexpected error %v", err)
+	}
+	for _, v := range randUnitSet(rand.New(rand.NewPCG(2, 2)), 20, 16) {
+		h.Add(v) // must not panic — mL was recomputed as 1/ln(m), not +Inf
+	}
+	if got := h.Query(randUnit(rand.New(rand.NewPCG(3, 3)), 16), 5); len(got) == 0 {
+		t.Error("Query after Add-on-loaded returned no hits")
 	}
 }
 

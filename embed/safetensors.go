@@ -24,7 +24,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
-	"maps"
 	"math"
 	"os"
 	"path"
@@ -92,6 +91,11 @@ type Tensor struct {
 	DType string // "F32", "F64", "I64", ...
 	Shape []int
 	raw   []byte // little-endian bytes; slice into the owning file's []byte
+	// owner is the SafetensorsFile whose data/mmap backs raw. The byte-reading
+	// accessors runtime.KeepAlive(owner) across a read so an mmap-backed file's
+	// finalizer can't munmap the region mid-decode (§2.5 — the Tensor value alone
+	// doesn't otherwise keep the file reachable).
+	owner *SafetensorsFile
 }
 
 // safetensors header JSON shape:
@@ -176,7 +180,13 @@ func parseShardIndex(indexBytes []byte) (files []string, weightMap map[string]st
 // files; this is the format-level logic shared by the mmap and fs paths.
 func mergeShards(agg *SafetensorsFile, shards []*SafetensorsFile, weightMap map[string]string) error {
 	for _, shard := range shards {
-		maps.Copy(agg.tensors, shard.tensors)
+		for name, t := range shard.tensors {
+			// Repoint owner to agg: after the merge it's agg that holds every
+			// shard's mmap region (agg.mmapped) and carries the finalizer, so a
+			// tensor's KeepAlive must keep AGG reachable, not its parse-time shard.
+			t.owner = agg
+			agg.tensors[name] = t
+		}
 	}
 	for name := range weightMap {
 		if _, ok := agg.tensors[name]; !ok {
@@ -360,7 +370,8 @@ func parseSafetensors(data []byte) (*SafetensorsFile, error) {
 		return nil, fmt.Errorf("safetensors: parse header JSON: %w: %w", err, ErrFormat)
 	}
 
-	tensors := make(map[string]Tensor, len(raw))
+	sf := &SafetensorsFile{data: data, tensors: make(map[string]Tensor, len(raw))}
+	tensors := sf.tensors
 	for name, rawJSON := range raw {
 		if name == "__metadata__" {
 			continue
@@ -403,10 +414,11 @@ func parseSafetensors(data []byte) (*SafetensorsFile, error) {
 			DType: t.DType,
 			Shape: t.Shape,
 			raw:   payload[t.DataOffsets[0]:t.DataOffsets[1]],
+			owner: sf,
 		}
 	}
 
-	return &SafetensorsFile{data: data, tensors: tensors}, nil
+	return sf, nil
 }
 
 // Tensor returns the named tensor or an error if not present. After Close it
@@ -530,6 +542,7 @@ func reinterpretLE[T any](name string, raw []byte) ([]T, error) {
 // case); on a misaligned payload it is a decoded copy (see reinterpretLE). Do
 // not mutate. Assumes a little-endian host (x86, arm64).
 func (t Tensor) Float32s() ([]float32, error) {
+	defer runtime.KeepAlive(t.owner) // §2.5: guard the read against a mid-decode munmap
 	if t.DType != "F32" {
 		return nil, fmt.Errorf("tensor %q: expected F32, got %s", t.Name, t.DType)
 	}
@@ -539,6 +552,7 @@ func (t Tensor) Float32s() ([]float32, error) {
 // Float64s returns the tensor data as []float64. Requires DType "F64". Aliases
 // when aligned, else a copy (see reinterpretLE).
 func (t Tensor) Float64s() ([]float64, error) {
+	defer runtime.KeepAlive(t.owner) // §2.5
 	if t.DType != "F64" {
 		return nil, fmt.Errorf("tensor %q: expected F64, got %s", t.Name, t.DType)
 	}
@@ -548,6 +562,7 @@ func (t Tensor) Float64s() ([]float64, error) {
 // Int64s returns the tensor data as []int64. Requires DType "I64". Aliases when
 // aligned, else a copy (see reinterpretLE).
 func (t Tensor) Int64s() ([]int64, error) {
+	defer runtime.KeepAlive(t.owner) // §2.5
 	if t.DType != "I64" {
 		return nil, fmt.Errorf("tensor %q: expected I64, got %s", t.Name, t.DType)
 	}
@@ -558,6 +573,7 @@ func (t Tensor) Int64s() ([]int64, error) {
 // GPTQ's packed qweight/qzeros/g_idx. Aliases when aligned, else a copy (see
 // reinterpretLE).
 func (t Tensor) Int32s() ([]int32, error) {
+	defer runtime.KeepAlive(t.owner) // §2.5
 	if t.DType != "I32" {
 		return nil, fmt.Errorf("tensor %q: expected I32, got %s", t.Name, t.DType)
 	}
@@ -574,6 +590,7 @@ func (t Tensor) Int32s() ([]int32, error) {
 // bytes and not a view into the file), so the result does not alias the
 // SafetensorsFile and is safe to keep past Close().
 func (t Tensor) BFloat16sToF32() ([]float32, error) {
+	defer runtime.KeepAlive(t.owner) // §2.5
 	if t.DType != "BF16" {
 		return nil, fmt.Errorf("tensor %q: expected BF16, got %s", t.Name, t.DType)
 	}
@@ -596,6 +613,7 @@ func (t Tensor) BFloat16sToF32() ([]float32, error) {
 // explicit handling of zeros/subnormals (exp==0) and Inf/NaN (exp==0x1f).
 // Requires DType "F16". Allocates (see BFloat16sToF32 on aliasing).
 func (t Tensor) Float16sToF32() ([]float32, error) {
+	defer runtime.KeepAlive(t.owner) // §2.5
 	if t.DType != "F16" {
 		return nil, fmt.Errorf("tensor %q: expected F16, got %s", t.Name, t.DType)
 	}

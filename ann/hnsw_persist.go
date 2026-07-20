@@ -228,18 +228,28 @@ func Load(data []byte) (*HNSW, error) {
 	dim := c.count()
 	ndocs := c.count()
 	m := c.cfg("m")
+	if m < 2 {
+		m = 2 // match NewHNSW's clamp; a well-formed blob already has m ≥ 2
+	}
 	m0 := c.cfg("m0")
 	efc := c.cfg("efConstruction")
 	efs := c.cfg("efSearch")
 	entry := c.asInt()
 	maxLayer := c.cfg("maxLayer")
-	mL := math.Float64frombits(c.u64())
+	mL := math.Float64frombits(c.u64()) // read to advance the cursor; recomputed below
 	seed := c.u64()
 	heuristic := c.u8() != 0
 	int8mode := c.u8() != 0 // v3
 	if c.err != nil {
 		return nil, c.err
 	}
+	// Recompute mL from m rather than trust the serialized value: a crafted blob
+	// could carry mL = +Inf/NaN/≤0, which randomLevel turns into an overflowing
+	// level on Add-after-load (Load then Add is a documented capability) →
+	// make([][]int32, level+1) panics. 1/ln(m) is deterministic and
+	// round-trip-stable (NewHNSW stored exactly this), so a valid blob is
+	// unaffected; Query never touches mL, so a load-only workflow was already safe.
+	mL = 1.0 / math.Log(float64(m))
 
 	var vecs [][]float32
 	var bq []int8
