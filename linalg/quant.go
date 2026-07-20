@@ -235,14 +235,19 @@ func MatmulBTW8A8Batch(ws *Workspace, a []float32, M, K int, ops []W8A8Op) {
 	if len(ops) == 0 {
 		return
 	}
+	// Validate every op BEFORE the fan-out: w8a8BatchSpan indexes op.BQ/Scales/Dst
+	// inside ws.parallel goroutines, where an out-of-range access is an
+	// unrecoverable panic (the M2 hazard). Checking here makes it a recoverable,
+	// caller-side panic — same as the non-batch W8A8 path.
+	totalN := 0
+	for _, op := range ops {
+		checkMatmulQ8("MatmulBTW8A8Batch", len(a), len(op.BQ), len(op.Scales), len(op.Dst), M, K, op.N)
+		totalN += op.N
+	}
 	aq := ws.int8Buf(M * K)
 	aScales := ws.f32Buf(M)
 	for i := range M {
 		aScales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
-	}
-	totalN := 0
-	for _, op := range ops {
-		totalN += op.N
 	}
 	if M*totalN*K < ws.thr() || totalN < 2 {
 		w8a8BatchSpan(aq, aScales, ops, M, K, 0, totalN)

@@ -168,11 +168,13 @@ func (w *Workspace) MatmulBT(a, b, dst []float32, M, K, N int) {
 // while keeping the parallelism over N. For dense models MatmulBT's f32 accumulate
 // is fine — prefer it (this is slower).
 func MatmulBTAcc64(a, b, dst []float32, M, K, N int) {
+	checkMatmulBT("MatmulBTAcc64", len(a), len(b), len(dst), M, K, N)
 	parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTAcc64Span(a, b, dst, M, K, N, j0, j1) })
 }
 
 // MatmulBTAcc64 run through a Workspace uses its scoped threshold + worker pool.
 func (w *Workspace) MatmulBTAcc64(a, b, dst []float32, M, K, N int) {
+	checkMatmulBT("MatmulBTAcc64", len(a), len(b), len(dst), M, K, N)
 	w.parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTAcc64Span(a, b, dst, M, K, N, j0, j1) })
 }
 

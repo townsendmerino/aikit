@@ -52,6 +52,15 @@ func TestMatmulShapeChecks_recoverableAcrossFanout(t *testing.T) {
 		{"MatmulBTW4A8 group 0", func() {
 			MatmulBTW4A8(a, make([]byte, N*((K+1)/2)), make([]float32, N), good, M, K, N, 0)
 		}},
+		// §2.2: the f64-accumulate twin was missing the guard.
+		{"MatmulBTAcc64 short dst", func() { MatmulBTAcc64(a, bF, short, M, K, N) }},
+		// §2.1: the batch variant checks each op before the fan-out.
+		{"MatmulBTW8A8Batch short op.Dst", func() {
+			MatmulBTW8A8Batch(&Workspace{}, a, M, K, []W8A8Op{{BQ: bQ, Scales: scales, Dst: short, N: N}})
+		}},
+		{"MatmulBTW8A8Batch short op.BQ", func() {
+			MatmulBTW8A8Batch(&Workspace{}, a, M, K, []W8A8Op{{BQ: bQ[:N*K-1], Scales: scales, Dst: good, N: N}})
+		}},
 	}
 	for _, c := range cases {
 		msg, panicked := recoverPanic(c.call)

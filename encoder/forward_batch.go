@@ -91,10 +91,7 @@ func (w *Weights) forwardBatch(idsList [][]int32) [][]float32 {
 	for b, ids := range idsList {
 		base := b * Lmax * D
 		for i, id := range ids {
-			if int(id) < 0 || int(id) >= w.Cfg.VocabSize {
-				id = 100 // [UNK] — defensive (same as forward())
-			}
-			src := w.WordEmb[int(id)*D : int(id)*D+D]
+			src := w.WordEmb[clampTokenID(id, w.Cfg.VocabSize)*D:][:D]
 			dst := h[base+i*D : base+(i+1)*D]
 			for j := range D {
 				dst[j] = src[j] + tte0[j]

@@ -1,5 +1,21 @@
 package encoder
 
+// clampTokenID maps a token id to a valid row index into a [vocab, D] embedding
+// table: id if in range, else 0 (always valid for vocab ≥ 1). The tokenizer
+// should never emit an out-of-range id, but a corrupt fixture or a drop-in
+// checkpoint could; substituting row 0 avoids an index-out-of-range panic in the
+// embedding gather. (The old fallback to id 100 assumed a ≥101-token vocab — the
+// repo's own vocab_size:4 fixtures would index WordEmb[400:404] and panic, the
+// exact crash this guards — and that 100 is [UNK] for every drop-in checkpoint.)
+// Shared by all embed-gather sites (single/batched, f32/Q8, MaxSim probe) so the
+// fallback can't drift between them again.
+func clampTokenID(id int32, vocab int) int {
+	if int(id) < 0 || int(id) >= vocab {
+		return 0
+	}
+	return int(id)
+}
+
 // forward runs the full CodeRankEmbed transformer on a single token
 // sequence and returns the raw (UN-normalized) CLS hidden state.
 //
@@ -48,16 +64,7 @@ func (w *Weights) forward(ids []int32) []float32 {
 	h := make([]float32, L*D)
 	tte0 := w.TokenTypeEmb[:D] // row 0
 	for i, id := range ids {
-		if int(id) < 0 || int(id) >= w.Cfg.VocabSize {
-			// Defensive — the tokenizer should never emit an OOB id, but a
-			// corrupt fixture or future drop-in checkpoint could. Substitute row
-			// 0, always in range for any vocab ≥ 1. (The old fallback to 100
-			// assumed both a ≥101-token vocab — the repo's own vocab_size:4
-			// fixtures would index WordEmb[400:404] and panic, the exact crash
-			// this guards — and that 100 is [UNK] for every drop-in checkpoint.)
-			id = 0
-		}
-		src := w.WordEmb[int(id)*D : int(id)*D+D]
+		src := w.WordEmb[clampTokenID(id, w.Cfg.VocabSize)*D:][:D]
 		dst := h[i*D : (i+1)*D]
 		for j := range D {
 			dst[j] = src[j] + tte0[j]

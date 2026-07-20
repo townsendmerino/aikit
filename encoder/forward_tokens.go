@@ -35,10 +35,7 @@ func (w *Weights) forwardTokens(ids []int32) []float32 {
 	h := make([]float32, L*D)
 	tte0 := w.TokenTypeEmb[:D]
 	for i, id := range ids {
-		if int(id) < 0 || int(id) >= w.Cfg.VocabSize {
-			id = 100
-		}
-		src := w.WordEmb[int(id)*D : int(id)*D+D]
+		src := w.WordEmb[clampTokenID(id, w.Cfg.VocabSize)*D:][:D]
 		dst := h[i*D : (i+1)*D]
 		for j := range D {
 			dst[j] = src[j] + tte0[j]

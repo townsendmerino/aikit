@@ -44,10 +44,7 @@ func (w *WeightsQ8) forward(ids []int32) []float32 {
 	h := make([]float32, L*D)
 	tte0 := w.TokenTypeEmb[:D]
 	for i, id := range ids {
-		if int(id) < 0 || int(id) >= w.Cfg.VocabSize {
-			id = 0 // row 0 is always in range; see forward.go's note
-		}
-		src := w.WordEmb[int(id)*D : int(id)*D+D]
+		src := w.WordEmb[clampTokenID(id, w.Cfg.VocabSize)*D:][:D]
 		dst := h[i*D : (i+1)*D]
 		for j := range D {
 			dst[j] = src[j] + tte0[j]
@@ -112,10 +109,7 @@ func (w *WeightsQ8) forwardBatch(idsList [][]int32) [][]float32 {
 	for b, ids := range idsList {
 		base := b * Lmax * D
 		for i, id := range ids {
-			if int(id) < 0 || int(id) >= w.Cfg.VocabSize {
-				id = 100
-			}
-			src := w.WordEmb[int(id)*D : int(id)*D+D]
+			src := w.WordEmb[clampTokenID(id, w.Cfg.VocabSize)*D:][:D]
 			dst := h[base+i*D : base+(i+1)*D]
 			for j := range D {
 				dst[j] = src[j] + tte0[j]
