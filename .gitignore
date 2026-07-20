@@ -156,3 +156,4 @@ go.work
 go.work.sum
 
 # Python parity toolchain (§2.1) — recreate from scripts/requirements.txt
+testdata/bge-small
