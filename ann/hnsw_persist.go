@@ -178,11 +178,11 @@ func (c *hcur) u8() uint8 {
 // asInt reads a signed int32 (used for entry, which is -1 for an empty index).
 func (c *hcur) asInt() int { return int(int32(c.u32())) }
 
-// count reads an allocation-driving LENGTH (ndocs, dim, neighbor count) and
+// readLen reads an allocation-driving LENGTH (ndocs, dim, neighbor count) and
 // rejects it if it can't fit the bytes that remain (every subsequent element is
 // ≥4 bytes), so a hostile count can't drive a giant make() before the reads hit
 // EOF.
-func (c *hcur) count() int {
+func (c *hcur) readLen() int {
 	v := int32(c.u32())
 	if c.err != nil {
 		return 0
@@ -195,7 +195,7 @@ func (c *hcur) count() int {
 }
 
 // cfgMax bounds the config scalars (m, m0, efConstruction, efSearch). Unlike
-// count() these aren't byte-sized lengths — they're tuning knobs — but efSearch
+// readLen() these aren't byte-sized lengths — they're tuning knobs — but efSearch
 // sizes Query's candidate map, so an absurd value must not slip through and OOM.
 const cfgMax = 1 << 20
 
@@ -225,8 +225,8 @@ func Load(data []byte) (*HNSW, error) {
 	if v := c.u32(); v != hnswVersion {
 		return nil, errFormatf("ann: unsupported HNSW format version %d (want %d)", v, hnswVersion)
 	}
-	dim := c.count()
-	ndocs := c.count()
+	dim := c.readLen()
+	ndocs := c.readLen()
 	m := c.cfg("m")
 	if m < 2 {
 		m = 2 // match NewHNSW's clamp; a well-formed blob already has m ≥ 2
@@ -288,10 +288,10 @@ func Load(data []byte) (*HNSW, error) {
 	}
 	nodes := make([]hnswNode, ndocs)
 	for d := range nodes {
-		layer := c.count()
+		layer := c.readLen()
 		nbrs := make([][]int32, layer+1)
 		for l := 0; l <= layer; l++ {
-			cnt := c.count()
+			cnt := c.readLen()
 			ids := make([]int32, cnt)
 			for i := range ids {
 				ids[i] = int32(c.u32())

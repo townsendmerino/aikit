@@ -201,13 +201,13 @@ func MatmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, 
 func w8a8Span(aq []int8, aScales []float32, bQ []int8, bScales, dst []float32, M, K, N, j0, j1 int) {
 	for j := j0; j < j1; j++ {
 		bj := bQ[j*K : j*K+K]
-		bs := bScales[j]
+		bScale := bScales[j]
 		for i := range M {
 			if aScales[i] == 0 {
 				dst[i*N+j] = 0
 				continue
 			}
-			dst[i*N+j] = float32(dotI8(aq[i*K:i*K+K], bj)) * aScales[i] * bs
+			dst[i*N+j] = float32(dotI8(aq[i*K:i*K+K], bj)) * aScales[i] * bScale
 		}
 	}
 }
@@ -270,13 +270,13 @@ func w8a8BatchSpan(aq []int8, aScales []float32, ops []W8A8Op, M, K, g0, g1 int)
 			for j := lo; j < hi; j++ {
 				jj := j - base
 				bj := op.BQ[jj*K : jj*K+K]
-				bs := op.Scales[jj]
+				bScale := op.Scales[jj]
 				for i := range M {
 					if aScales[i] == 0 {
 						op.Dst[i*op.N+jj] = 0
 						continue
 					}
-					op.Dst[i*op.N+jj] = float32(dotI8(aq[i*K:i*K+K], bj)) * aScales[i] * bs
+					op.Dst[i*op.N+jj] = float32(dotI8(aq[i*K:i*K+K], bj)) * aScales[i] * bScale
 				}
 			}
 		}

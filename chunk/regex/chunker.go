@@ -225,7 +225,7 @@ func scanDepth(src []byte, lineStart []int, cfg scannerCfg) []int {
 	n := len(lineStart)
 	depth := make([]int, n)
 	cur := 0
-	li := 0 // next line whose start we still need to record
+	nextLineIdx := 0 // next line whose start we still need to record
 
 	type st int
 	const (
@@ -240,18 +240,18 @@ func scanDepth(src []byte, lineStart []int, cfg scannerCfg) []int {
 	)
 	state := normal
 	rawHashes := 0
-	lc := cfg.lineComment
+	cmtMark := cfg.lineComment
 
 	atLineStart := func(pos int) {
 		// `<=`, not `==`: a state handler can advance i past a byte (an escape
 		// `\<c>` in a string, `*/`, `"""`, …). If the skipped byte is a line
-		// start, `== pos` would never match it, li would stall, and every
+		// start, `== pos` would never match it, nextLineIdx would stall, and every
 		// subsequent line's depth would be frozen at 0 for the rest of the file
 		// (e.g. a `\` followed by a newline — a legal JS/Rust line continuation).
 		// `<=` records any jumped-over line starts at the current depth.
-		for li < n && lineStart[li] <= pos {
-			depth[li] = cur
-			li++
+		for nextLineIdx < n && lineStart[nextLineIdx] <= pos {
+			depth[nextLineIdx] = cur
+			nextLineIdx++
 		}
 	}
 
@@ -261,9 +261,9 @@ func scanDepth(src []byte, lineStart []int, cfg scannerCfg) []int {
 		switch state {
 		case normal:
 			switch {
-			case lc != "" && hasPrefixAt(src, i, lc):
+			case cmtMark != "" && hasPrefixAt(src, i, cmtMark):
 				state = lineCmt
-				i += len(lc) - 1
+				i += len(cmtMark) - 1
 			case hasPrefixAt(src, i, "/*"):
 				state = blockCmt
 				i++

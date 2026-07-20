@@ -156,19 +156,19 @@ func parseShardIndex(indexBytes []byte) (files []string, weightMap map[string]st
 		return nil, nil, errFormatf("safetensors: shard index has empty weight_map")
 	}
 	seen := make(map[string]bool)
-	for _, f := range idx.WeightMap {
+	for _, fn := range idx.WeightMap {
 		// Shard names come from the (untrusted) index JSON and are joined to
 		// the index's directory. Require a plain filename so a crafted bundle
 		// (`"w": "../../etc/passwd"`, an absolute path, or a Windows drive/UNC
 		// path) cannot escape the model directory — a zip-slip-style arbitrary
 		// read. The fs.FS variant is already safe via fs.ValidPath; this guards
 		// the Mmap path that resolves against the real filesystem.
-		if f == "" || f == "." || f == ".." || filepath.IsAbs(f) || strings.ContainsAny(f, `/\`) {
-			return nil, nil, fmt.Errorf("%w: shard index names unsafe shard path %q", ErrFormat, f)
+		if fn == "" || fn == "." || fn == ".." || filepath.IsAbs(fn) || strings.ContainsAny(fn, `/\`) {
+			return nil, nil, fmt.Errorf("%w: shard index names unsafe shard path %q", ErrFormat, fn)
 		}
-		if !seen[f] {
-			seen[f] = true
-			files = append(files, f)
+		if !seen[fn] {
+			seen[fn] = true
+			files = append(files, fn)
 		}
 	}
 	sort.Strings(files)

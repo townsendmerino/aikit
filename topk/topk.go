@@ -122,11 +122,11 @@ func (s *Selector[T]) Result() []ItemWithScore[T] {
 	tmp := make([]scored[T], n)
 	copy(tmp, s.heap)
 	for i := n - 1; i >= 0; i-- {
-		min := tmp[0]
+		minEl := tmp[0]
 		tmp[0] = tmp[len(tmp)-1]
 		tmp = tmp[:len(tmp)-1]
 		siftDownSlice(tmp, 0)
-		out[i] = ItemWithScore[T]{Item: min.item, Score: min.score}
+		out[i] = ItemWithScore[T]{Item: minEl.item, Score: minEl.score}
 	}
 	return out
 }

@@ -483,13 +483,16 @@ func (e *QwenVisionEncoder) rotaryFreqs(gridTHW [][3]int) []float32 {
 	rdim := 2 * nf          // head_dim/2
 	var out []float32
 	for _, g := range gridTHW {
-		t, h, w := g[0], g[1], g[2]
-		block := make([]float32, 0, h*w*rdim)
-		for a := 0; a < h/merge; a++ {
-			for c := 0; c < w/merge; c++ {
-				for b := range merge {
-					for d := range merge {
-						hpos, wpos := float32(a*merge+b), float32(c*merge+d)
+		t, gridH, gridW := g[0], g[1], g[2]
+		block := make([]float32, 0, gridH*gridW*rdim)
+		// Spatial-merge interleave: (mbRow,mbCol) index the merge-unit block,
+		// (inRow,inCol) the patch within it, so a merge-unit's patches are
+		// consecutive (HF get_vision_position_ids order).
+		for mbRow := 0; mbRow < gridH/merge; mbRow++ {
+			for mbCol := 0; mbCol < gridW/merge; mbCol++ {
+				for inRow := range merge {
+					for inCol := range merge {
+						hpos, wpos := float32(mbRow*merge+inRow), float32(mbCol*merge+inCol)
 						for _, f := range e.rotInvFreq {
 							block = append(block, hpos*f)
 						}
@@ -518,8 +521,8 @@ func (e *QwenVisionEncoder) windowIndex(gridTHW [][3]int) (winIdx, cuWin []int) 
 	cuWin = []int{0}
 	idOffset := 0
 	for _, g := range gridTHW {
-		t, h, w := g[0], g[1], g[2]
-		llmH, llmW := h/merge, w/merge
+		t, gridH, gridW := g[0], g[1], g[2]
+		llmH, llmW := gridH/merge, gridW/merge
 		// HF pads up to a window multiple; when already divisible it adds a full
 		// (all-pad) window that contributes nothing — replicated via count>0 below.
 		padH := vmws - llmH%vmws
@@ -556,9 +559,9 @@ func cuSeqlensFull(gridTHW [][3]int) []int {
 	cu := []int{0}
 	acc := 0
 	for _, g := range gridTHW {
-		t, h, w := g[0], g[1], g[2]
+		t, gridH, gridW := g[0], g[1], g[2]
 		for range t {
-			acc += h * w
+			acc += gridH * gridW
 			cu = append(cu, acc)
 		}
 	}

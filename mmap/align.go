@@ -23,13 +23,13 @@ func PageAlignedInterior(raw []byte) []byte {
 	}
 	pg := uintptr(os.Getpagesize())
 	start := uintptr(unsafe.Pointer(&raw[0]))
-	as := (start + pg - 1) &^ (pg - 1)            // round start up to a page
-	ae := (start + uintptr(len(raw))) &^ (pg - 1) // round end down to a page
-	if ae <= as {
+	alignedStart := (start + pg - 1) &^ (pg - 1)          // round start up to a page
+	alignedEnd := (start + uintptr(len(raw))) &^ (pg - 1) // round end down to a page
+	if alignedEnd <= alignedStart {
 		return nil
 	}
-	off := int(as - start)
-	return raw[off : off+int(ae-as)]
+	off := int(alignedStart - start)
+	return raw[off : off+int(alignedEnd-alignedStart)]
 }
 
 // AutoBudget picks a default span-cache budget: about half of available RAM,

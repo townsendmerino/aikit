@@ -156,8 +156,8 @@ func LoadEncoder(dir string, quant bool) (*Encoder, error) {
 		}
 		return newQMat(w, rows, cols, quant)
 	}
-	c := cfg.NumChannels
-	e.patchW = get("embeddings.patch_embedding.weight", hidden, c, cfg.PatchSize, cfg.PatchSize) // Conv2d
+	numChan := cfg.NumChannels
+	e.patchW = get("embeddings.patch_embedding.weight", hidden, numChan, cfg.PatchSize, cfg.PatchSize) // Conv2d
 	e.patchB = get("embeddings.patch_embedding.bias", hidden)
 	e.posEmb = get("embeddings.position_embedding.weight", e.numPatches, hidden)
 	e.layers = make([]encLayer, cfg.NumHiddenLayers)

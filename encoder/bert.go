@@ -251,9 +251,9 @@ func (b *BERT) hiddenStates(ids, segs []int32) []float32 {
 		vHT := s.vH[:headDim*L]
 		ctxHead := s.ctxHead[:L*headDim]
 		scores := s.scores[:L*L]
-		for hd := 0; hd < c.Heads; hd++ {
+		for headIdx := 0; headIdx < c.Heads; headIdx++ {
 			for i := range L {
-				src := i*D + hd*headDim
+				src := i*D + headIdx*headDim
 				copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
 				copy(kH[i*headDim:(i+1)*headDim], K[src:src+headDim])
 				for d := range headDim {
@@ -269,7 +269,7 @@ func (b *BERT) hiddenStates(ids, segs []int32) []float32 {
 			}
 			matmulBTInto(scores, vHT, ctxHead, L, L, headDim)
 			for i := range L {
-				copy(ctx[i*D+hd*headDim:i*D+hd*headDim+headDim], ctxHead[i*headDim:(i+1)*headDim])
+				copy(ctx[i*D+headIdx*headDim:i*D+headIdx*headDim+headDim], ctxHead[i*headDim:(i+1)*headDim])
 			}
 		}
 		attnOut := s.out[:L*D]
