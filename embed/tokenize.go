@@ -140,7 +140,9 @@ func parseTokenizer(data []byte) (*Tokenizer, error) {
 		prefix = "##"
 	}
 	maxChars := raw.Model.MaxInputCharsPerWord
-	if maxChars == 0 {
+	if maxChars <= 0 {
+		// 0 = unset → the WordPiece default; a negative value would make every
+		// word exceed the cap and emit [UNK], silently zeroing the tokenizer.
 		maxChars = 100
 	}
 

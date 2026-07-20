@@ -134,7 +134,7 @@ type HNSW struct {
 	entry          int     // entry-point node id (top of the graph)
 	maxLayer       int
 	seed           uint64 // Config.Seed, retained so a loaded index re-seeds rng
-	heuristic      bool   // Config.Heuristic — Alg-4 diversity neighbor selection
+	heuristic      bool   // !Config.SimpleNeighbors — Alg-4 diversity neighbor selection
 	rng            *rand.Rand
 	buildVis       visitTracker // reused across searchLayer calls during Add (single-writer)
 	queryVis       sync.Pool    // *visitTracker per concurrent Query
@@ -464,7 +464,7 @@ func (h *HNSW) queryEf(q []float32, k, ef int, keep func(int) bool) []Hit {
 // (which searchLayer already returns sorted desc, but prune passes an
 // unsorted slice, so re-rank via a K-selector for O(N log m)).
 // selectNeighbors picks up to m edges from the candidate set w, dispatching to
-// the diversity heuristic (Algorithm 4) when Config.Heuristic is set, else the
+// the diversity heuristic (Algorithm 4) unless Config.SimpleNeighbors is set, else the
 // plain M-nearest (Algorithm 3). Both return the result descending by sim, so the
 // caller's ep = result[0] handoff is unaffected.
 func (h *HNSW) selectNeighbors(w []cand, m int) []cand {

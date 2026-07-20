@@ -22,7 +22,8 @@ import "golang.org/x/sys/unix"
 // So on darwin SpanCache's bookkeeping still runs and WILLNEED prefetch works; the
 // resident pages are clean and freely evictable by the OS when RAM is tight (no
 // writeback, no OOM risk), but there is NO firm, self-enforced cap here — that
-// guarantee is Linux/BSD-only. Correctness is unaffected regardless: the mapping is
+// guarantee is Linux-only (the BSDs route through madvise_other.go's no-op Advise,
+// so they have no firm cap either). Correctness is unaffected regardless: the mapping is
 // read-only and file-backed, so any page the OS reclaims simply re-faults identical
 // bytes. span must be page-aligned (use PageAlignedInterior).
 func Advise(span []byte, willNeed bool) error {

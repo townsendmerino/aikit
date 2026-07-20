@@ -61,7 +61,10 @@ func cAST(root *gotreesitter.Node, srcLen uint32, chunkSize uint32) []span {
 	// Pass 1 produces named-node spans; the trailing gap (anything after
 	// the last named child of the root) gets folded into the last span.
 	// Same with the head: a leading gap (e.g. shebang, license comment)
-	// becomes the prefix of the first chunk. Sort + sweep to fix:
+	// becomes the prefix of the first chunk. Extend the ends + sweep the
+	// interior boundaries so the spans cover [0, srcLen) contiguously
+	// (spansValid + the caller's line-chunker fallback are the safety net if
+	// gotreesitter ever emits non-monotonic siblings):
 	raw[len(raw)-1].end = srcLen
 	raw[0].start = 0
 	// Re-derive end-of-chunk-i = start-of-chunk-(i+1).

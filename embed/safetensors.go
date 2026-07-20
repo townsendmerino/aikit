@@ -685,9 +685,18 @@ func dtypeSize(dtype string) (int, bool) {
 }
 
 // Elements returns the total number of elements (product of shape).
+// Elements returns the total number of elements (product of Shape), or -1 if
+// the product overflows int or any dim is negative. For a known dtype the H2
+// parse check already guarantees a sane shape, but parseSafetensors stores an
+// unknown-dtype tensor without that check, so a hostile shape like [1<<40,1<<40]
+// could reach here — hence the overflow guard rather than a silently wrapped
+// value.
 func (t Tensor) Elements() int {
 	n := 1
 	for _, d := range t.Shape {
+		if d < 0 || (d != 0 && n > math.MaxInt/d) {
+			return -1
+		}
 		n *= d
 	}
 	return n

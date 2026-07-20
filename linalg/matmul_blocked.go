@@ -35,9 +35,7 @@ func zeroSpanF32(s []float32) {
 // cores and wants each matmul serial; goinfer's batch/vision paths likewise. For
 // process-level column parallelism use MatmulBT. Experimental surface.
 func MatmulBTInto(dst, a, b []float32, M, K, N int) {
-	if len(dst) < M*N {
-		panic("linalg: MatmulBTInto dst too small")
-	}
+	checkMatmulBT("MatmulBTInto", len(a), len(b), len(dst), M, K, N)
 	zeroSpanF32(dst[:M*N])
 	blockedFill(a, b, dst, M, K, N, 0, N, mBlockDefault, nBlockDefault, kBlockDefault)
 }

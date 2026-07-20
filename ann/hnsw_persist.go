@@ -236,7 +236,7 @@ func Load(data []byte) (*HNSW, error) {
 	efs := c.cfg("efSearch")
 	entry := c.asInt()
 	maxLayer := c.cfg("maxLayer")
-	mL := math.Float64frombits(c.u64()) // read to advance the cursor; recomputed below
+	_ = c.u64() // consume the serialized mL to advance the cursor; recomputed below
 	seed := c.u64()
 	heuristic := c.u8() != 0
 	int8mode := c.u8() != 0 // v3
@@ -249,7 +249,7 @@ func Load(data []byte) (*HNSW, error) {
 	// make([][]int32, level+1) panics. 1/ln(m) is deterministic and
 	// round-trip-stable (NewHNSW stored exactly this), so a valid blob is
 	// unaffected; Query never touches mL, so a load-only workflow was already safe.
-	mL = 1.0 / math.Log(float64(m))
+	mL := 1.0 / math.Log(float64(m))
 
 	var vecs [][]float32
 	var bq []int8

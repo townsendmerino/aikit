@@ -211,6 +211,24 @@ func TestReinterpretLE_misalignedCopies(t *testing.T) {
 	}
 }
 
+// TestTensor_ElementsOverflow (F2): Elements() returns -1 on a shape whose
+// product overflows int (reachable for an unknown-dtype tensor that skips the H2
+// check), not a silently wrapped value.
+func TestTensor_ElementsOverflow(t *testing.T) {
+	if got := (Tensor{Shape: []int{1 << 40, 1 << 40}}).Elements(); got != -1 {
+		t.Errorf("overflow shape: Elements() = %d, want -1", got)
+	}
+	if got := (Tensor{Shape: []int{-1, 4}}).Elements(); got != -1 {
+		t.Errorf("negative dim: Elements() = %d, want -1", got)
+	}
+	if got := (Tensor{Shape: []int{2, 3, 4}}).Elements(); got != 24 {
+		t.Errorf("valid shape: Elements() = %d, want 24", got)
+	}
+	if got := (Tensor{Shape: []int{5, 0}}).Elements(); got != 0 {
+		t.Errorf("zero dim: Elements() = %d, want 0", got)
+	}
+}
+
 func eqF32(a, b []float32) bool {
 	if len(a) != len(b) {
 		return false

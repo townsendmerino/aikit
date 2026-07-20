@@ -182,6 +182,16 @@ func (b *BERT) Encode(text string) ([]float32, error) {
 // embedder uses — a cross-encoder passes two segments for the query/document pair.
 func (b *BERT) hiddenStates(ids, segs []int32) []float32 {
 	c := b.cfg
+	// Bound to the learned-position table: posEmb has only maxSeq (≤ MaxPos) rows,
+	// so gathering posEmb[i*D] for i beyond it panics. Encode already truncates
+	// upstream, but the exported Embed takes raw ids with no documented limit —
+	// truncate here so every entry point is safe (segs, if present, in lockstep).
+	if len(ids) > b.maxSeq {
+		ids = ids[:b.maxSeq]
+		if segs != nil {
+			segs = segs[:b.maxSeq]
+		}
+	}
 	L, D := len(ids), c.Hidden
 	headDim := D / c.Heads
 	eps := c.LNEps
