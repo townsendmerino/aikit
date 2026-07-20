@@ -10,6 +10,67 @@ it.
 
 ## [Unreleased]
 
+## [1.10.1] — 2026-07-20
+
+A follow-up to 1.10.0's security review: a second pass verified each applied fix
+for completeness and found that several had landed at the site the first review
+named but not at its structurally identical siblings — reintroducing the exact
+classes they closed — plus one genuine regression the 1.10.0 dependency bump
+carried in silently. **Pin this over 1.10.0.** All fixes; no API change.
+
+### Fixed
+
+- **treesitter parse-timeout guard, broken by the 1.10.0 `gotreesitter`
+  0.20→0.40 bump (`chunk/treesitter`).** 0.20's `pool.Parse` returned an ERROR on
+  timeout; 0.40 preserves tree-sitter's native partial-tree behavior — it returns
+  a TRUNCATED tree with a NIL error and `tree.ParseStoppedEarly() == true`. The
+  chunker only checked `if err != nil`, so on a pathological/slow file the
+  runaway-parse guard silently stopped firing: instead of falling back to the
+  line chunker it chunked a partial AST (degraded boundaries for the unparsed
+  tail; the `parseErr` stat never incremented, so the degradation was invisible).
+  Now also checks `ParseStoppedEarly()` and falls back, restoring the pre-bump
+  contract. Regression-tested against the 0.40 timeout semantics.
+- **Uncatchable worker-goroutine panics reintroduced in two matmul entries
+  (`linalg`).** The 1.10.0 M2 fix moved shape validation before the parallel
+  fan-out so a bad shape panics recoverably on the caller's goroutine — but
+  `MatmulBTW8A8Batch` and `MatmulBTAcc64` (+ its Workspace twin) were left
+  without it, so a short operand still faulted inside a worker (uncatchable even
+  with `recover()`). Both now validate before the fan-out; a grep-checklist
+  confirms all nine fan-out matmul entries are covered.
+- **OOB-token crash still live in the batched embed-gather paths (`encoder`).**
+  1.10.0 replaced the `id = 100` out-of-range fallback with `id = 0` (100 panics
+  on any vocab ≤ 100, e.g. the repo's own `vocab_size:4` fixtures) — but only in
+  the two single-sequence gathers; `forwardBatch` (the primary EncodeBatch path),
+  the Q8 batch, and the token-probe path still used 100. All five now route
+  through one shared `clampTokenID` helper so the fallback can't drift again.
+- **Qwen2.5-VL tower didn't reach the H7/H8 parity bar (`vision`).**
+  `patch_embed.proj.weight` is now shape-checked (5-D Conv3d) like every other
+  tensor; `validate()` now rejects a head_dim not divisible by 4 (rotary ÷0), an
+  unsupported `hidden_act` (the tower hardcodes SiLU), and a non-positive
+  `temporal_patch_size` (→ zero-wide patch embedding).
+- **safetensors mmap use-after-unmap on the bare `Tensor` accessors (`embed`).**
+  The 1.10.0 H6 KeepAlive fix covered `TensorF32`/`RowDequantizer` but not the
+  direct per-`Tensor` decoders (`Float32s`/…/`BFloat16sToF32`/`Float16sToF32`),
+  which could be `munmap`'d mid-read → SIGSEGV. `Tensor` now carries an `owner`
+  back-pointer and each accessor `runtime.KeepAlive`s it across the read.
+- **HNSW `Load` trusted the serialized `mL` (`ann`).** A crafted blob with
+  `mL = +Inf` (or `m = 1`) passed every check, then `Add`-after-load overflowed
+  `randomLevel` and panicked. `Load` now clamps `m ≥ 2` and recomputes
+  `mL = 1/ln(m)` (round-trip-stable), ignoring the stored value.
+- **Robustness minors.** `BERT.Embed` truncates `len(ids)` to the position table
+  (an unbounded id gather panicked); `Tensor.Elements()` overflow-guards its
+  shape product; `MatmulBTInto` validates `a`/`b` (not just `dst`); the WordPiece
+  `max_input_chars_per_word` guards a negative value (would emit all-`[UNK]`); and
+  a handful of stale doc comments (`madvise_darwin` "Linux/BSD" → "Linux-only",
+  a non-existent `Config.Heuristic`, a stale cAST comment) were corrected.
+
+### Changed
+
+- A dozen local, unexported variable renames for clarity (e.g. bert.go's `hd`
+  head-index → `headIdx`, matching the head-dim convention everywhere else;
+  `gguf` block-size-vs-index vocabulary; the Qwen spatial-merge interleave
+  coords). Purely syntactic — no behavior change.
+
 ## [1.10.0] — 2026-07-18
 
 A hardening + maintenance release. The centerpiece is a security-focused code
@@ -1321,7 +1382,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.10.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.10.1...HEAD
+[1.10.1]: https://github.com/townsendmerino/aikit/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/townsendmerino/aikit/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/townsendmerino/aikit/compare/v1.8.1...v1.9.0
 [1.8.1]: https://github.com/townsendmerino/aikit/compare/v1.8.0...v1.8.1
