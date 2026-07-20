@@ -57,6 +57,9 @@ func TestQwenEncoderConfig_validate(t *testing.T) {
 		"patch 0":          func(c *QwenEncoderConfig) { c.PatchSize = 0 },
 		"out 0":            func(c *QwenEncoderConfig) { c.OutHiddenSize = 0 },
 		"window too small": func(c *QwenEncoderConfig) { c.WindowSize = 10 }, // < merge*patch=28 → vmws 0
+		"headDim%4":        func(c *QwenEncoderConfig) { c.NumHeads = 16 },   // 32/16=2, 2%4≠0 (rotary ÷0)
+		"temporal 0":       func(c *QwenEncoderConfig) { c.TemporalPatchSize = 0 },
+		"bad act":          func(c *QwenEncoderConfig) { c.HiddenAct = "gelu" }, // mlp hardcodes silu
 	}
 	for name, mutate := range bad {
 		c := good

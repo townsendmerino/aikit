@@ -62,10 +62,20 @@ func (c QwenEncoderConfig) validate() error {
 		return fmt.Errorf("num_heads must be > 0, got %d", c.NumHeads)
 	case c.HiddenSize%c.NumHeads != 0:
 		return fmt.Errorf("hidden_size %d not divisible by num_heads %d", c.HiddenSize, c.NumHeads)
+	case (c.HiddenSize/c.NumHeads)%4 != 0:
+		// The rotary path derives rdim = head_dim/2 and len(inv_freq) =
+		// head_dim/4; a head_dim not divisible by 4 makes rdim/inv_freq degenerate
+		// and forwardViT divides by zero at first Forward. (num_heads > 0 and
+		// hidden%num_heads == 0 are guaranteed above.)
+		return fmt.Errorf("head_dim %d (hidden_size/num_heads) must be divisible by 4 for rotary", c.HiddenSize/c.NumHeads)
 	case c.InChans <= 0:
 		return fmt.Errorf("in_chans must be > 0, got %d", c.InChans)
 	case c.PatchSize <= 0:
 		return fmt.Errorf("patch_size must be > 0, got %d", c.PatchSize)
+	case c.TemporalPatchSize <= 0:
+		// patch_dim = in_chans·temporal·patch² feeds the patch-embed matmul; a 0
+		// makes it zero-wide → an all-zero embedding, silently.
+		return fmt.Errorf("temporal_patch_size must be > 0, got %d", c.TemporalPatchSize)
 	case c.SpatialMergeSize <= 0:
 		return fmt.Errorf("spatial_merge_size must be > 0, got %d", c.SpatialMergeSize)
 	case c.OutHiddenSize <= 0:
@@ -73,6 +83,10 @@ func (c QwenEncoderConfig) validate() error {
 	case c.WindowSize < c.SpatialMergeSize*c.PatchSize:
 		return fmt.Errorf("window_size %d must be >= spatial_merge_size*patch_size = %d (else the window grid divides by zero)",
 			c.WindowSize, c.SpatialMergeSize*c.PatchSize)
+	case c.HiddenAct != "" && c.HiddenAct != "silu":
+		// mlp() hardcodes SiLU; a checkpoint declaring gelu/quick_gelu would
+		// silently run the wrong activation (the H8 "known activation" check).
+		return fmt.Errorf("hidden_act %q unsupported (silu only)", c.HiddenAct)
 	}
 	return nil
 }
@@ -169,7 +183,10 @@ func LoadQwenVisionEncoder(dir string, quant bool) (*QwenVisionEncoder, error) {
 		}
 		return newQMat(w, rows, cols, quant)
 	}
-	e.patchW = get("patch_embed.proj.weight") // [hidden, in_chans*temporal*patch*patch] Conv3d, f32
+	// Conv3d weight [hidden, in_chans, temporal, patch, patch] — shape-checked
+	// like every other tensor (H7), so a mismatch is a clean load-time error, not
+	// a later matmul panic / silent prefix.
+	e.patchW = get("patch_embed.proj.weight", hidden, cfg.InChans, cfg.TemporalPatchSize, cfg.PatchSize, cfg.PatchSize)
 	e.blocks = make([]qwenBlock, cfg.Depth)
 	for i := range e.blocks {
 		p := fmt.Sprintf("blocks.%d.", i)
