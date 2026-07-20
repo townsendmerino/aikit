@@ -58,9 +58,9 @@ type Config struct {
 	Causal              bool    `json:"causal"`
 	ParallelBlock       bool    `json:"parallel_block"`
 	// pooling reduces the per-token hidden states to one vector. Not in
-	// NomicBert's config.json (it's a sentence-transformers module setting); the
-	// loader leaves it the zero value, which poolOne treats as CLS — CodeRankEmbed's
-	// behavior. A future BERT-family loader sets it (e.g. mean for MiniLM).
+	// NomicBert's config.json (it's a sentence-transformers module setting), so
+	// LoadWeightsFromFS reads it from 1_Pooling/config.json — mean for
+	// nomic-embed-text, CLS for CodeRankEmbed — defaulting to CLS when absent.
 	pooling pooling
 }
 
@@ -196,6 +196,12 @@ func LoadWeightsFromFS(fsys fs.FS, dir string) (*Weights, error) {
 		return nil, err
 	}
 	if err := cfg.ValidateAssumptions(); err != nil {
+		return nil, err
+	}
+	// Pooling is a sentence-transformers module setting, not in NomicBert's
+	// config.json. Read it (mean for nomic-embed-text, CLS for CodeRankEmbed);
+	// fall back to CLS — CodeRankEmbed's mode and this loader's prior default.
+	if cfg.pooling, err = poolingFromFS(fsys, dir, poolCLS); err != nil {
 		return nil, err
 	}
 	st, err := embed.OpenSafetensorsFromFS(fsys, path.Join(dir, "model.safetensors"))

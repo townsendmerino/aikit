@@ -3,7 +3,9 @@ package encoder
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 )
 
@@ -26,16 +28,33 @@ const (
 )
 
 // poolingFromConfig reads the sentence-transformers pooling declaration at
-// <dir>/1_Pooling/config.json and returns the reduction mode. A missing file
-// falls back to fallback (the loader's family default) — many bare BERT exports
-// omit it. An unsupported mode (max / mean-sqrt-len) is a hard error rather than
-// a silent mispool: an embedder that pools the wrong way still returns
-// plausible-looking vectors, exactly the failure the parity gates exist to catch.
+// <dir>/1_Pooling/config.json (disk path) and returns the reduction mode — the
+// BERT loader's entry point. See poolingFromBytes for the semantics.
 func poolingFromConfig(dir string, fallback pooling) (pooling, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "1_Pooling", "config.json"))
 	if err != nil {
 		return fallback, nil // no ST pooling module — use the family default
 	}
+	return poolingFromBytes(raw, fallback)
+}
+
+// poolingFromFS is poolingFromConfig over an fs.FS — the Nomic/CodeRankEmbed
+// loader's entry point (it reads via fs.FS so it can serve from an embed.FS).
+func poolingFromFS(fsys fs.FS, dir string, fallback pooling) (pooling, error) {
+	raw, err := fs.ReadFile(fsys, path.Join(dir, "1_Pooling", "config.json"))
+	if err != nil {
+		return fallback, nil
+	}
+	return poolingFromBytes(raw, fallback)
+}
+
+// poolingFromBytes parses a sentence-transformers 1_Pooling/config.json body.
+// cls/mean map to the mode; an unsupported mode (max / mean-sqrt-len) is a hard
+// error rather than a silent mispool — an embedder that pools the wrong way
+// still returns plausible-looking vectors, exactly the failure the parity gates
+// exist to catch. A file that sets none falls back to the loader's family
+// default. (A missing file also falls back — handled by the callers above.)
+func poolingFromBytes(raw []byte, fallback pooling) (pooling, error) {
 	var pc struct {
 		CLS      bool `json:"pooling_mode_cls_token"`
 		Mean     bool `json:"pooling_mode_mean_tokens"`
