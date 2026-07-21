@@ -343,3 +343,44 @@ func TestEmbedderCoverage_matryoshka(t *testing.T) {
 		})
 	}
 }
+
+// TestMatryoshkaFloors_matchCoverage is the drift guard for the EXPORTED MRL registry
+// (matryoshka.go). The coverage rows above generate docs/embedder-coverage.md's Truncatable column
+// and are themselves measured by TestEmbedderCoverage_matryoshka; MatryoshkaFloor is what a serve
+// layer actually calls. If those two ever disagree, a serve layer either refuses a legitimate
+// truncation or — far worse — permits one that silently degrades retrieval. So they are asserted
+// equal here rather than kept in sync by hand.
+func TestMatryoshkaFloors_matchCoverage(t *testing.T) {
+	for _, r := range coverageRows {
+		gotMin, gotOK := MatryoshkaFloor(r.Model)
+		wantOK := r.MRLMin > 0
+		if gotOK != wantOK || (wantOK && gotMin != r.MRLMin) {
+			t.Errorf("MatryoshkaFloor(%q) = (%d, %v), coverage says MRLMin=%d (truncatable=%v)",
+				r.Model, gotMin, gotOK, r.MRLMin, wantOK)
+		}
+		// A serve layer usually holds a local directory, not the org-qualified id, so the bare
+		// name must resolve identically.
+		if bareMin, bareOK := MatryoshkaFloor("/models/" + bareModelName(r.Model)); bareOK != gotOK || bareMin != gotMin {
+			t.Errorf("bare-name lookup for %q gave (%d, %v), org-qualified gave (%d, %v)",
+				r.Model, bareMin, bareOK, gotMin, gotOK)
+		}
+	}
+	// Every exported row must correspond to a certified coverage row — no floors for models the
+	// table does not cover (that would be an unmeasured claim).
+	for id := range matryoshkaFloors {
+		found := false
+		for _, r := range coverageRows {
+			if strings.EqualFold(r.Model, id) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("matryoshkaFloors has %q, which is not a certified coverage row", id)
+		}
+	}
+	// Bare names must be unambiguous, or the path-based lookup silently picks one.
+	if len(matryoshkaBare) != len(matryoshkaFloors) {
+		t.Errorf("bare-name collision: %d ids collapsed to %d bare names", len(matryoshkaFloors), len(matryoshkaBare))
+	}
+}
