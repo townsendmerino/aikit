@@ -98,8 +98,13 @@ green.**
   id-exact `encode` over a broad multilingual/emoji/code set, with break-it-first
   (`embed/tokenize_unigram_test.go`, `scripts/pin_xlmr_tokenizer.py`); (b) the **position-id
   offset** forward holds at `posOff=2`, hidden-state maxΔ 1.7e-05, offset-zeroing break-it-first
-  (`encoder/xlmr_test.go`). `LoadBERT` wires the tokenizer, so `Encode(text)→hidden` is
-  certified. Remaining Phase-2 models (`bge-m3`, `multilingual-e5`) reuse this exact path.
+  (`encoder/xlmr_test.go`). `LoadBERT` wires the tokenizer, so `Encode(text)→hidden` is certified.
+- **Phase 2 — first multilingual embedder certified full-stack.** `intfloat/multilingual-e5-base`
+  (genuine XLM-R + SentencePiece + mean-pool + a real sentence-transformers head) is certified
+  end-to-end at **cosine 1.000000** over 11 cases (Latin, CJK, Cyrillic, Arabic, German ß/umlaut):
+  hidden-state parity AND `Encode(text)` — tokenizer + `posOff=2` + mean pooling + forward in one
+  gate — with CLS-vs-mean and offset break-it-first (`encoder/e5_test.go`, `scripts/pin_e5.py`).
+  `bge-m3` reuses this exact path (larger XLM-R, CLS/dense head) — pin a golden to certify.
 
 ## Coverage claim, generated not hand-maintained
 

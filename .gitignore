@@ -159,3 +159,4 @@ go.work.sum
 testdata/bge-small
 testdata/nomic-embed
 testdata/xlm-roberta-base
+testdata/multilingual-e5-base
