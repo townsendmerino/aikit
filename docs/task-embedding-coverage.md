@@ -117,6 +117,17 @@ green.**
   id-exact against the raw HF tokenizer including trailing-▁ / multi-space edge cases
   (`embed/tokenize_unigram_bgem3_test.go`). Note: bge-m3 ships only `pytorch_model.bin`; convert
   to safetensors for aikit's loader. With this, every same-repo Phase-1/2 model is certified.
+- **Phase 3 (Bucket B) — done, in goinfer.** Decoder-as-embedder landed and is certified there
+  (`goinfer` commit `9168f82`): Qwen3-Embedding-0.6B at **cosine 1.0000000**, last-token pooling
+  over a new `decoder.HiddenLast` seam, behind a `decoderEmbedder` implementing aikit's
+  `encoder.Encoder`. No aikit change was required, as predicted. `embeddinggemma` is deferred
+  with the reason recorded (HF repo still gated, HTTP 401). See
+  `goinfer/docs/task-decoder-as-embedder.md`.
+- **Phase 4 (Bucket C, MoE) — precondition now met, still not started.** C was deferred "until A
+  and B land"; both have. `nomic-embed-text-v2-moe` needs an MoE FFN path the `encoder` doesn't
+  have. Per the caveat below, read its `config.json` before scoping — the bucket was formed by
+  reputation, and that assumption has already been wrong once (`multilingual-e5-small` is
+  `model_type: bert`, not XLM-R).
 
 ## Coverage claim, generated not hand-maintained
 
