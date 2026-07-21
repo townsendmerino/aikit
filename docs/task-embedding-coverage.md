@@ -152,6 +152,18 @@ Once models land, emit a generated embedder-coverage table (model → validated 
 pooling, tokenizer, dims), freshness-gated the same way `hardware-matrix.md` is. The
 stale-cell lesson applies here too — a hand-maintained support list rots.
 
+**Done — see [`embedder-coverage.md`](embedder-coverage.md)**, generated from the registry in
+`encoder/coverage_test.go` (`go test ./encoder -run EmbedderCoverage -update`). Because a table
+is only as good as its resistance to rot, it is defended three ways rather than one:
+
+1. **Freshness** — the doc is rendered from the registry and diffed against the committed file;
+   a hand edit or an unregenerated row turns the build red. Model-free, so it runs in CI.
+2. **Gate existence** — every row names the parity test that certifies it, and that function
+   must exist in the package. You cannot claim a model is validated without a gate.
+3. **Property truth** — when the checkpoint is present, the declared pooling and dims are read
+   back from the real loader. All 8 rows currently verify against local weights; CI skips
+   (weights are gitignored) but a developer with the models gets the claims checked, not trusted.
+
 ## Honest caveats
 
 - These were bucketed **by name and reputation, not by reading each `config.json`.** The
