@@ -115,12 +115,16 @@ func LoadBERT(dir string) (*BERT, error) {
 	b := &BERT{cfg: c, st: st, layers: make([]bertLayer, c.Layers)}
 
 	// Encoder tensors are bare in sentence-transformers exports (embeddings.*,
-	// encoder.layer.N.*) but carry a "bert." prefix in a raw BertModel /
-	// BertForMaskedLM (e.g. SPLADE). Detect which.
+	// encoder.layer.N.*) but carry a model-name prefix in a raw *Model /
+	// *ForMaskedLM: "bert." (BERT, e.g. SPLADE) or "roberta." (XLM-R/RoBERTa —
+	// same tensor layout, different top-level name). Detect which.
 	prefix := ""
 	if _, e := st.Tensor("embeddings.word_embeddings.weight"); e != nil {
-		if _, e2 := st.Tensor("bert.embeddings.word_embeddings.weight"); e2 == nil {
-			prefix = "bert."
+		for _, p := range []string{"bert.", "roberta."} {
+			if _, e2 := st.Tensor(p + "embeddings.word_embeddings.weight"); e2 == nil {
+				prefix = p
+				break
+			}
 		}
 	}
 
@@ -176,12 +180,13 @@ func LoadBERT(dir string) (*BERT, error) {
 			b.maxSeq = min(v.MaxSeqLength, usablePos)
 		}
 	}
-	tok, terr := embed.LoadTokenizer(filepath.Join(dir, "tokenizer.json"))
-	if terr != nil {
-		_ = st.Close()
-		return nil, fmt.Errorf("encoder: BERT tokenizer: %w", terr)
+	// Tokenizer is best-effort: a model whose tokenizer.json aikit can't parse
+	// yet (e.g. the SentencePiece/Unigram tokenizers XLM-R and the multilingual
+	// embedders use) can still run the forward on PRE-TOKENIZED ids via Embed.
+	// Encode(text), which needs the tokenizer, errors when it's absent.
+	if tok, terr := embed.LoadTokenizer(filepath.Join(dir, "tokenizer.json")); terr == nil {
+		b.tok = tok
 	}
-	b.tok = tok
 	// Pooling is a declared per-model property (sentence-transformers
 	// 1_Pooling/config.json), not assumed: MiniLM pools mean, BGE pools CLS.
 	// Absent file → mean, the sentence-transformers BERT default.
@@ -205,6 +210,9 @@ func (b *BERT) Close() error {
 // model's max sequence length) and returns the mean-pooled, L2-normalized sentence
 // embedding — the end-to-end MiniLM equivalent of sentence-transformers' .encode().
 func (b *BERT) Encode(text string) ([]float32, error) {
+	if b.tok == nil {
+		return nil, fmt.Errorf("encoder: BERT has no usable tokenizer (unsupported tokenizer.json); use Embed with pre-tokenized ids")
+	}
 	ids, err := b.tok.EncodeWithSpecials(text, b.maxSeq)
 	if err != nil {
 		return nil, err
