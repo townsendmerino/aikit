@@ -12,16 +12,21 @@ checked against the real checkpoints (declared pooling and dimensions are read
 back from the loader when the weights are present). Regenerate with
 `go test ./encoder -run EmbedderCoverage -update`.
 
-| Model | Architecture | Loader | Pooling | Tokenizer | Dims | Gate |
-|---|---|---|---|---|---|---|
-| `sentence-transformers/all-MiniLM-L6-v2` | BERT | `LoadBERT` | mean | WordPiece | 384 | `TestBERT_parity` |
-| `nomic-ai/CodeRankEmbed` | nomic-bert (RoPE, SwiGLU) | `Load` | cls | WordPiece | 768 | `TestGoldenFixture_cosine` |
-| `BAAI/bge-small-en-v1.5` | BERT | `LoadBERT` | cls | WordPiece | 384 | `TestBGE_parity` |
-| `nomic-ai/nomic-embed-text-v1.5` | nomic-bert (RoPE, SwiGLU) | `Load` | mean | WordPiece | 768 | `TestNomicEmbed_parity` |
-| `FacebookAI/xlm-roberta-base` | XLM-R | `LoadBERT` | — | Unigram | 768 | `TestXLMR_forwardParity` |
-| `intfloat/multilingual-e5-base` | XLM-R | `LoadBERT` | mean | Unigram | 768 | `TestMultilingualE5_parity` |
-| `BAAI/bge-m3` | XLM-R | `LoadBERT` | cls | Unigram | 1024 | `TestBGEM3_parity` |
-| `nomic-ai/nomic-embed-text-v2-moe` | nomic-bert + MoE (top-2 of 8) | `Load` | mean | Unigram | 768 | `TestNomicMoE_parity` |
+| Model | Architecture | Loader | Pooling | Tokenizer | Dims | Truncatable | Gate |
+|---|---|---|---|---|---|---|---|
+| `sentence-transformers/all-MiniLM-L6-v2` | BERT | `LoadBERT` | mean | WordPiece | 384 | — | `TestBERT_parity` |
+| `nomic-ai/CodeRankEmbed` | nomic-bert (RoPE, SwiGLU) | `Load` | cls | WordPiece | 768 | — | `TestGoldenFixture_cosine` |
+| `BAAI/bge-small-en-v1.5` | BERT | `LoadBERT` | cls | WordPiece | 384 | — | `TestBGE_parity` |
+| `nomic-ai/nomic-embed-text-v1.5` | nomic-bert (RoPE, SwiGLU) | `Load` | mean | WordPiece | 768 | 768→64 | `TestNomicEmbed_parity` |
+| `FacebookAI/xlm-roberta-base` | XLM-R | `LoadBERT` | — | Unigram | 768 | — | `TestXLMR_forwardParity` |
+| `intfloat/multilingual-e5-base` | XLM-R | `LoadBERT` | mean | Unigram | 768 | — | `TestMultilingualE5_parity` |
+| `BAAI/bge-m3` | XLM-R | `LoadBERT` | cls | Unigram | 1024 | — | `TestBGEM3_parity` |
+| `nomic-ai/nomic-embed-text-v2-moe` | nomic-bert + MoE (top-2 of 8) | `Load` | mean | Unigram | 768 | 768→256 | `TestNomicMoE_parity` |
+
+**Truncatable** is the Matryoshka range: only models trained with Matryoshka
+Representation Learning may have their vectors shortened. Slicing any other row
+returns a unit-length vector that looks fine and retrieves worse, so a serve
+layer must not honor a `dimensions` request blindly — check this column.
 
 ## Why each row is here
 

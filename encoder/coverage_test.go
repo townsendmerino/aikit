@@ -57,36 +57,49 @@ type covRow struct {
 	Pooling   string     // "mean" | "cls" | "—" (no pooling head)
 	Tokenizer string     // "WordPiece" | "Unigram"
 	Dims      int        //
+	MRLMin    int        // smallest documented Matryoshka dim; 0 = NOT truncatable
 	Gate      string     // the test function that certifies it
 	Note      string     // what makes this row worth having
+}
+
+// Truncatable renders the Matryoshka column: the documented dimension range a
+// caller may truncate to, or "—" when the model was not trained for it. Slicing a
+// non-MRL embedding returns a unit-length vector that looks fine and retrieves
+// worse, so this column exists to stop a serve layer honoring `dimensions`
+// blindly. Verified by TestEmbedderCoverage_matryoshka.
+func (r covRow) Truncatable() string {
+	if r.MRLMin == 0 {
+		return "—"
+	}
+	return fmt.Sprintf("%d→%d", r.Dims, r.MRLMin)
 }
 
 // coverageRows is the single source of truth for the published table. Keep it in
 // certification order — each row was landed by the gate named in it.
 var coverageRows = []covRow{
 	{"sentence-transformers/all-MiniLM-L6-v2", "../testdata/minilm-model", loaderBERT,
-		"BERT", "mean", "WordPiece", 384, "TestBERT_parity",
+		"BERT", "mean", "WordPiece", 384, 0, "TestBERT_parity",
 		"the baseline BERT embedder"},
 	{"nomic-ai/CodeRankEmbed", "../testdata/encoder-model", loaderNomic,
-		"nomic-bert (RoPE, SwiGLU)", "cls", "WordPiece", 768, "TestGoldenFixture_cosine",
+		"nomic-bert (RoPE, SwiGLU)", "cls", "WordPiece", 768, 0, "TestGoldenFixture_cosine",
 		"the original rotary/SwiGLU path"},
 	{"BAAI/bge-small-en-v1.5", "../testdata/bge-small", loaderBERT,
-		"BERT", "cls", "WordPiece", 384, "TestBGE_parity",
+		"BERT", "cls", "WordPiece", 384, 0, "TestBGE_parity",
 		"CLS pooling read from 1_Pooling, not assumed"},
 	{"nomic-ai/nomic-embed-text-v1.5", "../testdata/nomic-embed", loaderNomic,
-		"nomic-bert (RoPE, SwiGLU)", "mean", "WordPiece", 768, "TestNomicEmbed_parity",
+		"nomic-bert (RoPE, SwiGLU)", "mean", "WordPiece", 768, 64, "TestNomicEmbed_parity",
 		"declared mean pooling on the rotary path"},
 	{"FacebookAI/xlm-roberta-base", "../testdata/xlm-roberta-base", loaderBERT,
-		"XLM-R", "—", "Unigram", 768, "TestXLMR_forwardParity",
+		"XLM-R", "—", "Unigram", 768, 0, "TestXLMR_forwardParity",
 		"position-id offset (pad+1); bare LM, so forward-only"},
 	{"intfloat/multilingual-e5-base", "../testdata/multilingual-e5-base", loaderBERT,
-		"XLM-R", "mean", "Unigram", 768, "TestMultilingualE5_parity",
+		"XLM-R", "mean", "Unigram", 768, 0, "TestMultilingualE5_parity",
 		"first multilingual embedder certified full-stack"},
 	{"BAAI/bge-m3", "../testdata/bge-m3", loaderBERT,
-		"XLM-R", "cls", "Unigram", 1024, "TestBGEM3_parity",
+		"XLM-R", "cls", "Unigram", 1024, 0, "TestBGEM3_parity",
 		"CLS multilingual; bare-Metaspace tokenizer variant"},
 	{"nomic-ai/nomic-embed-text-v2-moe", "../testdata/nomic-moe", loaderNomic,
-		"nomic-bert + MoE (top-2 of 8)", "mean", "Unigram", 768, "TestNomicMoE_parity",
+		"nomic-bert + MoE (top-2 of 8)", "mean", "Unigram", 768, 256, "TestNomicMoE_parity",
 		"mixture-of-experts FFN on odd layers"},
 }
 
@@ -102,12 +115,16 @@ func buildCoverageMarkdown() []byte {
 	b.WriteString("checked against the real checkpoints (declared pooling and dimensions are read\n")
 	b.WriteString("back from the loader when the weights are present). Regenerate with\n")
 	b.WriteString("`go test ./encoder -run EmbedderCoverage -update`.\n\n")
-	b.WriteString("| Model | Architecture | Loader | Pooling | Tokenizer | Dims | Gate |\n")
-	b.WriteString("|---|---|---|---|---|---|---|\n")
+	b.WriteString("| Model | Architecture | Loader | Pooling | Tokenizer | Dims | Truncatable | Gate |\n")
+	b.WriteString("|---|---|---|---|---|---|---|---|\n")
 	for _, r := range coverageRows {
-		fmt.Fprintf(&b, "| `%s` | %s | `%s` | %s | %s | %d | `%s` |\n",
-			r.Model, r.Family, r.Loader, r.Pooling, r.Tokenizer, r.Dims, r.Gate)
+		fmt.Fprintf(&b, "| `%s` | %s | `%s` | %s | %s | %d | %s | `%s` |\n",
+			r.Model, r.Family, r.Loader, r.Pooling, r.Tokenizer, r.Dims, r.Truncatable(), r.Gate)
 	}
+	b.WriteString("\n**Truncatable** is the Matryoshka range: only models trained with Matryoshka\n")
+	b.WriteString("Representation Learning may have their vectors shortened. Slicing any other row\n")
+	b.WriteString("returns a unit-length vector that looks fine and retrieves worse, so a serve\n")
+	b.WriteString("layer must not honor a `dimensions` request blindly — check this column.\n")
 	b.WriteString("\n## Why each row is here\n\n")
 	for _, r := range coverageRows {
 		fmt.Fprintf(&b, "- **`%s`** — %s\n", r.Model, r.Note)
@@ -207,4 +224,122 @@ func TestEmbedderCoverage_propertiesMatchCheckpoints(t *testing.T) {
 		})
 	}
 	t.Logf("verified %d/%d rows against local checkpoints", checked, len(coverageRows))
+}
+
+// TestEmbedderCoverage_matryoshka verifies the Truncatable column by MEASUREMENT
+// rather than trusting the model card — but it measures against GROUND TRUTH, not
+// against the model's own full-dimensional ranking.
+//
+// The first cut of this test compared truncated vs full-dim neighbour ordering and
+// asserted MRL rows kept ≥0.9 agreement. That was wrong twice over: it probed MRL
+// models at their extreme floor (64 of 768 = 8% of the width) while probing
+// non-MRL models at 50%, so the comparison was not like-for-like; and "agrees with
+// its own full-dim ranking" is not the property anyone cares about. A model may
+// reshuffle mid-list and still retrieve correctly.
+//
+// So: the corpus is five paraphrase PAIRS. The measure is pair recall — does each
+// sentence still retrieve its partner as nearest neighbour? That is the property
+// truncation must preserve, and it is measured identically at every width.
+func TestEmbedderCoverage_matryoshka(t *testing.T) {
+	// Index 2i and 2i+1 are paraphrases of each other.
+	corpus := []string{
+		"how do i parse json in go", "decoding json into a go struct",
+		"the cat sat on the mat", "a feline resting on a rug",
+		"compute the sha256 hash of a file", "checksum a file on disk",
+		"trains depart from the north platform", "railway timetable for the morning service",
+		"quantization reduces model memory", "int8 weights shrink the checkpoint",
+	}
+	partner := func(i int) int {
+		if i%2 == 0 {
+			return i + 1
+		}
+		return i - 1
+	}
+
+	embedAll := func(t *testing.T, r covRow) [][]float32 {
+		t.Helper()
+		out := make([][]float32, len(corpus))
+		switch r.Loader {
+		case loaderBERT:
+			b, err := LoadBERT(r.Dir)
+			if err != nil {
+				t.Fatalf("LoadBERT: %v", err)
+			}
+			for i, s := range corpus {
+				v, err := b.Encode(s)
+				if err != nil {
+					t.Fatalf("Encode: %v", err)
+				}
+				out[i] = v
+			}
+		default:
+			m, err := Load(r.Dir)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			for i, s := range corpus {
+				v, err := m.Encode(s, false)
+				if err != nil {
+					t.Fatalf("Encode: %v", err)
+				}
+				out[i] = v
+			}
+		}
+		return out
+	}
+
+	// pairRecall: fraction of sentences whose nearest neighbour (over the first
+	// `dim` components) is their paraphrase. cos32 normalizes, so slicing
+	// renormalizes implicitly.
+	pairRecall := func(vecs [][]float32, dim int) float64 {
+		hits := 0
+		for i := range vecs {
+			best, bestJ := float64(-2), -1
+			for j := range vecs {
+				if i == j {
+					continue
+				}
+				if s := float64(cos32(vecs[i][:dim], vecs[j][:dim])); s > best {
+					best, bestJ = s, j
+				}
+			}
+			if bestJ == partner(i) {
+				hits++
+			}
+		}
+		return float64(hits) / float64(len(vecs))
+	}
+
+	for _, r := range coverageRows {
+		if r.Pooling == "—" { // bare LM: no sentence embedding to speak of
+			continue
+		}
+		if _, err := os.Stat(r.Dir + "/model.safetensors"); err != nil {
+			continue
+		}
+		t.Run(r.Model, func(t *testing.T) {
+			vecs := embedAll(t, r)
+			fullR := pairRecall(vecs, r.Dims)
+
+			probe := r.MRLMin
+			if probe == 0 {
+				probe = r.Dims / 4 // report-only: what an aggressive slice would cost
+			}
+			cutR := pairRecall(vecs, probe)
+			t.Logf("pair recall: %d dims %.2f → %d dims %.2f (MRL=%v)", r.Dims, fullR, probe, cutR, r.MRLMin > 0)
+
+			if r.MRLMin == 0 {
+				return // reported, not asserted — see the doc comment
+			}
+			// The Matryoshka promise: truncating to the documented floor keeps
+			// retrieval essentially intact.
+			if fullR < 1.0 {
+				t.Logf("note: full-dim recall is only %.2f; the corpus may be too hard to judge truncation", fullR)
+			}
+			if cutR < fullR-0.1 {
+				t.Errorf("declared Matryoshka to %d, but pair recall falls %.2f → %.2f — the Truncatable column is wrong",
+					r.MRLMin, fullR, cutR)
+			}
+		})
+	}
 }

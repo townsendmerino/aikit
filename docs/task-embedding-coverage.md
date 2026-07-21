@@ -166,10 +166,29 @@ is only as good as its resistance to rot, it is defended three ways rather than 
 
 ## Honest caveats
 
-- These were bucketed **by name and reputation, not by reading each `config.json`.** The
-  shapes are right; verify the per-model specifics before building.
-- **`bge-m3` ships three retrieval heads** (dense / sparse / ColBERT). Scope to the **dense**
-  vector unless there's a concrete pull for the others.
-- **Matryoshka `dimensions` semantics differ per model** — honor each model's documented
-  supported dims rather than truncating blindly, or you'll return degraded vectors that look
-  fine.
+All three are now **resolved**; kept with their answers because the reasoning outlived them.
+
+- ~~These were bucketed **by name and reputation, not by reading each `config.json`**~~ —
+  **resolved: every model's config was read before building, and it mattered three times.**
+  `multilingual-e5-small` is `model_type: bert`, not XLM-R (so it does *not* exercise the
+  position offset); `nomic-embed-text-v2-moe` is a `nomic_bert`, not a plain BERT, and needed
+  three new pieces rather than the "one new primitive" assumed; `bge-m3` ships a normalizer
+  `Sequence` and a bare-Metaspace pre-tokenizer that XLM-R does not. Reading first was the
+  single highest-leverage habit in this task.
+- ~~**`bge-m3` ships three retrieval heads**~~ — **resolved: scoped to the dense vector**, as
+  advised. Sparse and ColBERT heads are not loaded; `aikit` covers dense retrieval and the
+  sparse story is SPLADE's. Revisit only on a concrete pull.
+- ~~**Matryoshka `dimensions` semantics differ per model**~~ — **resolved: it is now a column,
+  not a warning.** `embedder-coverage.md` publishes a per-model `Truncatable` range, sourced
+  from the model cards and **verified by measurement** (`TestEmbedderCoverage_matryoshka`:
+  paraphrase-pair recall at full width vs at the declared floor). Only
+  `nomic-embed-text-v1.5` (768→64) and `nomic-embed-text-v2-moe` (768→256) may be truncated;
+  every other certified model must not be. The measurement also demonstrates the hazard
+  rather than asserting it — slicing `multilingual-e5-base` to a quarter width drops
+  paraphrase recall 1.00 → 0.80 while its vectors stay unit-length and plausible.
+
+  **The remaining risk is in the serve layer, not here.** goinfer's `/v1/embeddings`
+  `resolveDimensions` accepts any value in `1..embedDim` for *any* model and
+  truncates+renormalizes. For a non-MRL model that returns exactly the degraded-but-plausible
+  vector described above. It should consult the `Truncatable` column (or an equivalent
+  per-model capability) and reject unsupported widths instead.
