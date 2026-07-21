@@ -54,6 +54,11 @@ Reuses the decoder, its tokenizer, and the serve surface. The only new pieces ar
 pooling head and the instruction-prefix convention — mirror `encoder`'s existing
 query/document asymmetry (`input_type`).
 
+**This bucket is tracked in goinfer, not here** — see goinfer
+`docs/task-decoder-as-embedder.md` for the spec (the seam is aikit's `encoder.Encoder`
+interface, which a decoder-backed embedder implements) and its live status. Nothing in
+aikit needs to change for it.
+
 ## Bucket C — One new primitive (1), deferred
 
 `nomic-embed-text-v2-moe` is a BERT encoder with an **MoE FFN**; `encoder` has no MoE path.
