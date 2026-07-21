@@ -1,6 +1,8 @@
 package encoder
 
 import (
+	"fmt"
+
 	"github.com/townsendmerino/aikit/linalg"
 )
 
@@ -65,6 +67,12 @@ func LoadWeightsQ8(dir string) (*WeightsQ8, error) {
 	w, err := LoadWeights(dir)
 	if err != nil {
 		return nil, err
+	}
+	// The q8 forward quantizes the SwiGLU trio directly; a mixture-of-experts or
+	// dense-GELU checkpoint has no fc11/fc12 to quantize. Refuse rather than
+	// quantize nil tensors into a plausible-looking wrong model.
+	if w.hasMoE() || !w.Cfg.gatedMLP() {
+		return nil, fmt.Errorf("encoder: q8 unsupported for this checkpoint (mixture-of-experts / non-gated MLP); use the f32 path")
 	}
 	// Build the q8 bundle by quantizing each big projection.
 	q := &WeightsQ8{

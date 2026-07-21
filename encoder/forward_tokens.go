@@ -46,9 +46,9 @@ func (w *Weights) forwardTokens(ids []int32) []float32 {
 	rope := newRopeTable(L, headDim, w.Cfg.RoPEBase)
 	for i := 0; i < w.Cfg.NumLayers; i++ {
 		l := &w.Layers[i]
-		selfAttention(h, l.Wqkv, l.OutProj, heads, headDim, D, L, rope, s)
+		selfAttention(h, l.Wqkv, l.WqkvB, l.OutProj, l.OutProjB, heads, headDim, D, L, rope, s)
 		layerNorm(h, l.Norm1W, l.Norm1B, L, D, eps)
-		swigluMLP(h, l.Fc11, l.Fc12, l.Fc2, D, intermediate, L, s)
+		applyMLP(w, l, h, D, intermediate, L, s)
 		layerNorm(h, l.Norm2W, l.Norm2B, L, D, eps)
 	}
 

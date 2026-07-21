@@ -57,6 +57,16 @@ type Config struct {
 	ScaleAttnWeights    bool    `json:"scale_attn_weights"`
 	Causal              bool    `json:"causal"`
 	ParallelBlock       bool    `json:"parallel_block"`
+
+	// Mixture-of-experts (nomic-embed-text-v2-moe). MoEEveryNLayers > 0 turns on
+	// the MoE FFN for layers where i%MoEEveryNLayers == 1 (the reference's rule);
+	// the remaining layers stay dense. Zero across the board for the non-MoE
+	// Nomic checkpoints, which keeps their loader/forward path unchanged.
+	NumExperts       int  `json:"num_experts"`
+	MoETopK          int  `json:"moe_top_k"`
+	MoEEveryNLayers  int  `json:"moe_every_n_layers"`
+	NumSharedExperts int  `json:"num_shared_experts"`
+	ExpertChoice     bool `json:"expert_choice_router"`
 	// pooling reduces the per-token hidden states to one vector. Not in
 	// NomicBert's config.json (it's a sentence-transformers module setting), so
 	// LoadWeightsFromFS reads it from 1_Pooling/config.json — mean for
@@ -79,14 +89,21 @@ func (c *Config) ValidateAssumptions() error {
 		return fmt.Errorf("encoder: prenorm=true unsupported (post-norm only)")
 	case c.UseRMSNorm:
 		return fmt.Errorf("encoder: use_rms_norm=true unsupported (LayerNorm only)")
-	case c.ActivationFunction != "swiglu":
-		return fmt.Errorf("encoder: activation_function=%q unsupported (swiglu only)", c.ActivationFunction)
-	case c.QKVProjBias:
-		return fmt.Errorf("encoder: qkv_proj_bias=true unsupported")
-	case c.MLPFc1Bias:
-		return fmt.Errorf("encoder: mlp_fc1_bias=true unsupported")
-	case c.MLPFc2Bias:
-		return fmt.Errorf("encoder: mlp_fc2_bias=true unsupported")
+	case c.ActivationFunction != "swiglu" && c.gatedMLP():
+		// Gated activations other than swiglu (glu/geglu) would need a different
+		// gate function than swigluMLP's SiLU.
+		return fmt.Errorf("encoder: activation_function=%q unsupported (swiglu or gelu)", c.ActivationFunction)
+	case c.gatedMLP() && (c.MLPFc1Bias || c.MLPFc2Bias):
+		// swigluMLP has no bias terms; only the dense GELU MLP carries them.
+		return fmt.Errorf("encoder: mlp_fc1_bias/mlp_fc2_bias unsupported with a gated MLP")
+	case c.NumSharedExperts > 0:
+		return fmt.Errorf("encoder: num_shared_experts=%d unsupported (0 only)", c.NumSharedExperts)
+	case c.ExpertChoice:
+		return fmt.Errorf("encoder: expert_choice_router=true unsupported (token-choice top-k only)")
+	case c.MoEEveryNLayers > 0 && c.NumExperts <= 0:
+		return fmt.Errorf("encoder: moe_every_n_layers=%d with num_experts=%d", c.MoEEveryNLayers, c.NumExperts)
+	case c.MoEEveryNLayers > 0 && (c.MoETopK <= 0 || c.MoETopK > c.NumExperts):
+		return fmt.Errorf("encoder: moe_top_k=%d out of range for %d experts", c.MoETopK, c.NumExperts)
 	case c.Causal:
 		return fmt.Errorf("encoder: causal=true unsupported (bidirectional only)")
 	case c.ParallelBlock:
@@ -137,6 +154,26 @@ type LayerWeights struct {
 	Fc2     []float32 // [HiddenDim, IntermediateDim] output projection, no bias
 	Norm2W  []float32 // [HiddenDim] post-MLP LayerNorm weight
 	Norm2B  []float32 // [HiddenDim] post-MLP LayerNorm bias
+
+	// Optional attention biases (nil for the bias-free v1.5/CodeRankEmbed
+	// checkpoints; set when config qkv_proj_bias is true, as in v2-moe).
+	WqkvB    []float32 // [3*HiddenDim]
+	OutProjB []float32 // [HiddenDim]
+
+	// Dense GELU MLP (nomic-embed-text-v2-moe's non-MoE layers). Mutually
+	// exclusive with the SwiGLU trio above: Fc1 != nil selects this path.
+	Fc1  []float32 // [IntermediateDim, HiddenDim]
+	Fc1B []float32 // [IntermediateDim]
+	Fc2B []float32 // [HiddenDim]
+
+	// Mixture-of-experts FFN (set when IsMoE). Router is [NumExperts, HiddenDim];
+	// ExpW1/ExpW2 are the experts stacked as [NumExperts*IntermediateDim, HiddenDim];
+	// ExpBias is a single shared [HiddenDim] row added after combining experts.
+	IsMoE   bool
+	Router  []float32
+	ExpW1   []float32
+	ExpW2   []float32
+	ExpBias []float32
 }
 
 // Weights is the immutable per-checkpoint bundle returned by Load*.
@@ -250,14 +287,61 @@ func buildWeightsFromSafetensors(cfg *Config, st *embed.SafetensorsFile) (*Weigh
 		if l.Norm1B, err = loadF32(st, pfx+"norm1.bias", []int{cfg.HiddenDim}); err != nil {
 			return nil, err
 		}
-		if l.Fc11, err = loadF32(st, pfx+"mlp.fc11.weight", []int{cfg.IntermediateDim, cfg.HiddenDim}); err != nil {
-			return nil, err
+		// Optional attention biases (present iff the checkpoint has them).
+		if cfg.QKVProjBias {
+			if l.WqkvB, err = loadF32(st, pfx+"attn.Wqkv.bias", []int{3 * cfg.HiddenDim}); err != nil {
+				return nil, err
+			}
+			if l.OutProjB, err = loadF32(st, pfx+"attn.out_proj.bias", []int{cfg.HiddenDim}); err != nil {
+				return nil, err
+			}
 		}
-		if l.Fc12, err = loadF32(st, pfx+"mlp.fc12.weight", []int{cfg.IntermediateDim, cfg.HiddenDim}); err != nil {
-			return nil, err
-		}
-		if l.Fc2, err = loadF32(st, pfx+"mlp.fc2.weight", []int{cfg.HiddenDim, cfg.IntermediateDim}); err != nil {
-			return nil, err
+
+		switch {
+		case cfg.isMoELayer(i):
+			// MoE FFN: router + experts stacked into two [E*I, D] tensors.
+			l.IsMoE = true
+			E, I, D := cfg.NumExperts, cfg.IntermediateDim, cfg.HiddenDim
+			if l.Router, err = loadF32(st, pfx+"mlp.router.layer.weight", []int{E, D}); err != nil {
+				return nil, err
+			}
+			if l.ExpW1, err = loadF32(st, pfx+"mlp.experts.mlp.w1", []int{E * I, D}); err != nil {
+				return nil, err
+			}
+			if l.ExpW2, err = loadF32(st, pfx+"mlp.experts.mlp.w2", []int{E * I, D}); err != nil {
+				return nil, err
+			}
+			if l.ExpBias, err = loadF32(st, pfx+"mlp.experts.bias", []int{D}); err != nil {
+				return nil, err
+			}
+		case cfg.gatedMLP():
+			if l.Fc11, err = loadF32(st, pfx+"mlp.fc11.weight", []int{cfg.IntermediateDim, cfg.HiddenDim}); err != nil {
+				return nil, err
+			}
+			if l.Fc12, err = loadF32(st, pfx+"mlp.fc12.weight", []int{cfg.IntermediateDim, cfg.HiddenDim}); err != nil {
+				return nil, err
+			}
+			if l.Fc2, err = loadF32(st, pfx+"mlp.fc2.weight", []int{cfg.HiddenDim, cfg.IntermediateDim}); err != nil {
+				return nil, err
+			}
+		default:
+			// Dense two-matrix GELU MLP.
+			if l.Fc1, err = loadF32(st, pfx+"mlp.fc1.weight", []int{cfg.IntermediateDim, cfg.HiddenDim}); err != nil {
+				return nil, err
+			}
+			if l.Fc2, err = loadF32(st, pfx+"mlp.fc2.weight", []int{cfg.HiddenDim, cfg.IntermediateDim}); err != nil {
+				return nil, err
+			}
+			if cfg.MLPFc1Bias {
+				if l.Fc1B, err = loadF32(st, pfx+"mlp.fc1.bias", []int{cfg.IntermediateDim}); err != nil {
+					return nil, err
+				}
+			}
+			if cfg.MLPFc2Bias {
+				if l.Fc2B, err = loadF32(st, pfx+"mlp.fc2.bias", []int{cfg.HiddenDim}); err != nil {
+					return nil, err
+				}
+			}
 		}
 		if l.Norm2W, err = loadF32(st, pfx+"norm2.weight", []int{cfg.HiddenDim}); err != nil {
 			return nil, err
@@ -267,6 +351,28 @@ func buildWeightsFromSafetensors(cfg *Config, st *embed.SafetensorsFile) (*Weigh
 		}
 	}
 	return w, nil
+}
+
+// isMoELayer reports whether layer i uses the MoE FFN. Mirrors the reference
+// NomicBertEncoder: with moe_every_n_layers = n > 0, layer i is MoE iff
+// i%n == 1 — so for n=2 the ODD layers (1,3,5,…) are MoE and the even ones stay
+// dense. Always false when the checkpoint declares no experts.
+func (c *Config) isMoELayer(i int) bool {
+	return c.MoEEveryNLayers > 0 && c.NumExperts > 0 && i%c.MoEEveryNLayers == 1
+}
+
+// gatedMLP reports whether the dense layers use the gated (SwiGLU/GLU) MLP —
+// two input projections plus a gate — rather than the plain two-matrix GELU MLP.
+// CodeRankEmbed and nomic-embed-text-v1.5 are "swiglu"; v2-moe is "gelu".
+// Defaults to the gated form for an empty/unknown value: every Nomic checkpoint
+// aikit supported before v2-moe was SwiGLU and the loader read fc11/fc12
+// unconditionally, so only an explicit plain-GELU activation switches paths.
+func (c *Config) gatedMLP() bool {
+	switch c.ActivationFunction {
+	case "gelu", "gelu_new", "gelu_fast", "gelu_pytorch_tanh":
+		return false
+	}
+	return true
 }
 
 func loadConfig(fsys fs.FS, p string) (*Config, error) {

@@ -64,6 +64,10 @@ aikit needs to change for it.
 `nomic-embed-text-v2-moe` is a BERT encoder with an **MoE FFN**; `encoder` has no MoE path.
 Bounded but real, and it's a single entry — **defer until A and B land**.
 
+> **Landed — and the sketch above was wrong in two ways.** It is a `nomic_bert`, not a plain
+> BERT, so the RoPE/post-norm base was already supported; and it needed **three** new pieces,
+> not one (MoE FFN, dense GELU MLP with biases, attention biases). See the Phase 4 status entry.
+
 ## Parity discipline (per family, non-negotiable)
 
 An embedder that silently pools the wrong token still returns *plausible-looking* vectors.
@@ -123,11 +127,24 @@ green.**
   `encoder.Encoder`. No aikit change was required, as predicted. `embeddinggemma` is deferred
   with the reason recorded (HF repo still gated, HTTP 401). See
   `goinfer/docs/task-decoder-as-embedder.md`.
-- **Phase 4 (Bucket C, MoE) — precondition now met, still not started.** C was deferred "until A
-  and B land"; both have. `nomic-embed-text-v2-moe` needs an MoE FFN path the `encoder` doesn't
-  have. Per the caveat below, read its `config.json` before scoping — the bucket was formed by
-  reputation, and that assumption has already been wrong once (`multilingual-e5-small` is
-  `model_type: bert`, not XLM-R).
+- **Phase 4 (Bucket C, MoE) — done, certified.** `nomic-embed-text-v2-moe` is certified full-stack
+  at **cosine 1.000000** over 9 cases, worst hidden maxΔ 3.2e-05 (`encoder/nomic_moe_test.go`,
+  `scripts/pin_nomic_moe.py`), with break-it-first on the routing itself (top-1 instead of top-2,
+  and forcing every token to one expert — both diverge by ~2–7 vs 2e-05).
+
+  Reading the config first paid off again: the bucket called this "one new primitive," but it is
+  **three**, and the base architecture was already supported. It is a `nomic_bert` (not a plain
+  BERT), so RoPE/post-norm came free from the certified v1.5 path, and its XLM-R SentencePiece
+  tokenizer came free from Phase 2 — but it needed (a) the **top-2-of-8 MoE FFN** on odd layers
+  (`i%moe_every_n_layers == 1`), (b) a **dense GELU `fc1`/`fc2` MLP with biases** on even layers
+  (v1.5 is SwiGLU, bias-free), and (c) **attention qkv/out_proj biases**. Two MoE details are
+  load-bearing and easy to get subtly wrong: `W2` is applied **untransposed**, and the router
+  softmax runs over **all** experts with the top-k weights taken as-is (`moe_normalize_expert_weights=false`),
+  so they do not sum to 1.
+
+  The padded-batch and q8 kernels are SwiGLU-only: batch falls back to the per-sequence forward
+  for these checkpoints, and `LoadWeightsQ8` refuses them outright rather than quantize absent
+  tensors into a plausible-looking wrong model.
 
 ## Coverage claim, generated not hand-maintained
 

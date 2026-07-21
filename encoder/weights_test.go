@@ -125,9 +125,18 @@ func TestValidateAssumptions_rejects(t *testing.T) {
 	mutate("prenorm", func(c *Config) { c.Prenorm = true })
 	mutate("rms_norm", func(c *Config) { c.UseRMSNorm = true })
 	mutate("activation_relu", func(c *Config) { c.ActivationFunction = "relu" })
-	mutate("qkv_bias", func(c *Config) { c.QKVProjBias = true })
-	mutate("fc1_bias", func(c *Config) { c.MLPFc1Bias = true })
-	mutate("fc2_bias", func(c *Config) { c.MLPFc2Bias = true })
+	// qkv_proj_bias is now SUPPORTED (nomic-embed-text-v2-moe sets it), so it is
+	// deliberately absent here — see TestValidateAssumptions_acceptsMoE.
+	// fc1/fc2 bias stay rejected on the GATED path: swigluMLP has no bias terms.
+	// (The dense-GELU MLP does carry them, which the MoE config test covers.)
+	mutate("fc1_bias_gated", func(c *Config) { c.MLPFc1Bias = true })
+	mutate("fc2_bias_gated", func(c *Config) { c.MLPFc2Bias = true })
+	mutate("shared_experts", func(c *Config) { c.NumSharedExperts = 1 })
+	mutate("expert_choice", func(c *Config) { c.ExpertChoice = true })
+	mutate("moe_without_experts", func(c *Config) { c.MoEEveryNLayers = 2 })
+	mutate("moe_topk_too_big", func(c *Config) {
+		c.MoEEveryNLayers, c.NumExperts, c.MoETopK = 2, 8, 9
+	})
 	mutate("causal", func(c *Config) { c.Causal = true })
 	mutate("parallel_block", func(c *Config) { c.ParallelBlock = true })
 	mutate("rope_interleaved", func(c *Config) { c.RoPEInterleaved = true })
@@ -181,3 +190,38 @@ func contains(s, sub string) bool {
 
 // (shapeEqual moved to embed.SafetensorsFile's TensorF32/I32 shape check; its
 // behavior is covered by embed's TestSafetensorsFile_typedAccessors.)
+
+// TestValidateAssumptions_acceptsMoE pins the config shape of
+// nomic-embed-text-v2-moe (Bucket C): a gelu, MoE, bias-carrying nomic-bert must
+// now load, and the MoE layer-selection rule must match the reference
+// (NomicBertEncoder: layer i is MoE iff i%moe_every_n_layers == 1).
+func TestValidateAssumptions_acceptsMoE(t *testing.T) {
+	c := &Config{
+		VocabSize: 250048, HiddenDim: 768, NumLayers: 12, NumHeads: 12,
+		IntermediateDim: 3072, MaxPositions: 2048, TypeVocabSize: 1,
+		RoPEBase: 10000, RoPEFraction: 1.0, LayerNormEpsilon: 1e-5,
+		ActivationFunction: "gelu", ScaleAttnWeights: true,
+		QKVProjBias: true, MLPFc1Bias: true, MLPFc2Bias: true,
+		NumExperts: 8, MoETopK: 2, MoEEveryNLayers: 2,
+	}
+	if err := c.ValidateAssumptions(); err != nil {
+		t.Fatalf("v2-moe config rejected: %v", err)
+	}
+	if c.gatedMLP() {
+		t.Error("activation_function=gelu should select the dense MLP, not the gated one")
+	}
+	// Reference rule: odd layers are MoE, even layers dense.
+	for i := range 12 {
+		want := i%2 == 1
+		if got := c.isMoELayer(i); got != want {
+			t.Errorf("isMoELayer(%d) = %v, want %v", i, got, want)
+		}
+	}
+	// A checkpoint with no MoE config must never report MoE layers.
+	plain := &Config{NumLayers: 12}
+	for i := range 12 {
+		if plain.isMoELayer(i) {
+			t.Fatalf("non-MoE config reported layer %d as MoE", i)
+		}
+	}
+}

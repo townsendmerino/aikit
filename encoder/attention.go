@@ -20,13 +20,19 @@ import "math"
 // across forwards on the same worker via sync.Pool). Caller must have
 // run s.ensureLayer(L, D, intermediate, heads, headDim) at the top of
 // the forward.
-func selfAttention(h []float32, Wqkv, OutProj []float32, heads, headDim, D, L int, rope *ropeTable, s *scratch) {
+//
+// WqkvB / OutProjB are the optional projection biases: Nomic's original
+// checkpoints (CodeRankEmbed, nomic-embed-text-v1.5) carry none, so they pass nil
+// and the arithmetic is unchanged; nomic-embed-text-v2-moe sets qkv_proj_bias and
+// an out_proj bias, and those rows are broadcast over the sequence.
+func selfAttention(h []float32, Wqkv, WqkvB, OutProj, OutProjB []float32, heads, headDim, D, L int, rope *ropeTable, s *scratch) {
 	if heads*headDim != D {
 		panic("encoder: heads*headDim != D")
 	}
-	// 1) Project: QKV = h · Wqkvᵀ   -> [L, 3D] into scratch.
+	// 1) Project: QKV = h · Wqkvᵀ (+ bias) -> [L, 3D] into scratch.
 	qkv := s.qkv[:L*3*D]
 	matmulBTInto(h, Wqkv, qkv, L, D, 3*D)
+	addRowBias(qkv, WqkvB, L, 3*D)
 
 	// 2) Split QKV into Q, K, V — each [L, D]. Reuse scratch buffers.
 	Q := s.Q[:L*D]
@@ -82,9 +88,10 @@ func selfAttention(h []float32, Wqkv, OutProj []float32, heads, headDim, D, L in
 		}
 	}
 
-	// 5) Output projection into scratch.
+	// 5) Output projection into scratch (+ bias).
 	out := s.out[:L*D]
 	matmulBTInto(ctx, OutProj, out, L, D, D)
+	addRowBias(out, OutProjB, L, D)
 
 	// 6) Residual: h += out (in place).
 	for i := range h {

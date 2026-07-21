@@ -47,6 +47,17 @@ func (w *Weights) forwardBatch(idsList [][]int32) [][]float32 {
 	if B == 0 {
 		return nil
 	}
+	// The padded-batch kernel below is SwiGLU-only (it calls swigluMLP directly on
+	// the [B*Lmax] block). Mixture-of-experts routes per token and the dense GELU
+	// MLP has bias terms, so for those checkpoints fall back to the per-sequence
+	// forward — correct, just without the batch kernel's packing win.
+	if w.hasMoE() || !w.Cfg.gatedMLP() {
+		out := make([][]float32, B)
+		for i, ids := range idsList {
+			out[i] = w.forward(ids)
+		}
+		return out
+	}
 	if B == 1 {
 		// Fast path: no batching benefit, skip the padding overhead.
 		return [][]float32{w.forward(idsList[0])}
