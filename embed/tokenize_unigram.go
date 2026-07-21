@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -292,13 +293,52 @@ func (u *unigram) viterbiIDs(sentence string) []int32 {
 
 const metaspace = '▁' // ▁ — SentencePiece's space marker
 
-// metaspaceSplit reproduces the XLM-R pre_tokenizer Sequence[WhitespaceSplit,
+// metaspaceSplit reproduces the XLM-R / e5 pre_tokenizer Sequence[WhitespaceSplit,
 // Metaspace(add_prefix_space=true)]: split the normalized text on Unicode
 // whitespace (dropping it), then prepend ▁ to each resulting piece.
 func metaspaceSplit(text string) []string {
 	var out []string
 	for _, field := range strings.FieldsFunc(text, unicode.IsSpace) {
 		out = append(out, string(metaspace)+field)
+	}
+	return out
+}
+
+// metaspaceBare reproduces a BARE Metaspace(add_prefix_space=true) pre_tokenizer
+// (bge-m3): replace every ASCII space with ▁, prepend a leading ▁ unless the text
+// already begins with one, then split so each piece begins with ▁ (SentencePiece's
+// MergedWithNext). Unlike metaspaceSplit it does NOT drop whitespace, so a lone ▁
+// survives (e.g. a trailing space) — matching HF exactly (bge-m3 collapses runs of
+// spaces in a preceding Replace normalizer, not here). Empty input yields nothing.
+func metaspaceBare(text string) []string {
+	if text == "" {
+		return nil
+	}
+	var b strings.Builder
+	b.Grow(len(text) + 3)
+	for _, r := range text {
+		if r == ' ' {
+			b.WriteRune(metaspace)
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	s := b.String()
+	if !strings.HasPrefix(s, string(metaspace)) {
+		s = string(metaspace) + s
+	}
+	var out []string
+	start := 0
+	for i := 0; i < len(s); {
+		r, sz := utf8.DecodeRuneInString(s[i:])
+		if r == metaspace && i > start {
+			out = append(out, s[start:i])
+			start = i
+		}
+		i += sz
+	}
+	if start < len(s) {
+		out = append(out, s[start:])
 	}
 	return out
 }
@@ -312,14 +352,41 @@ func metaspaceSplit(text string) []string {
 // added-token carve-out, and the TemplateProcessing specials. It plugs into the
 // public embed.Tokenizer, which dispatches to it when tokenizer.json is Unigram.
 type unigramBackend struct {
-	norm        *precompiled
-	model       *unigram
-	addedTokens map[string]int32
-	addedKeys   []string // longest-first carve-out scan order
-	unkID       int32
-	vocabSize   int
-	prefixIDs   []int32 // TemplateProcessing single: specials before the sequence (<s>)
-	suffixIDs   []int32 // ... and after (</s>)
+	norm            *precompiled
+	replaces        []replaceRule // Replace normalizers applied after the charsmap (Sequence tail)
+	whitespaceSplit bool          // pre_tokenizer splits on whitespace before Metaspace (XLM-R/e5) vs bare Metaspace (bge-m3)
+	model           *unigram
+	addedTokens     map[string]int32
+	addedKeys       []string // longest-first carve-out scan order
+	unkID           int32
+	vocabSize       int
+	prefixIDs       []int32 // TemplateProcessing single: specials before the sequence (<s>)
+	suffixIDs       []int32 // ... and after (</s>)
+}
+
+// replaceRule is a Replace normalizer (regex pattern → literal content), e.g.
+// bge-m3's " {2,}" → " " that collapses runs of spaces.
+type replaceRule struct {
+	re      *regexp.Regexp
+	content string
+}
+
+// normalizeText runs the normalizer pipeline: the Precompiled charsmap, then any
+// Replace rules, in Sequence order.
+func (u *unigramBackend) normalizeText(text string) string {
+	s := u.norm.normalize(text)
+	for _, r := range u.replaces {
+		s = r.re.ReplaceAllString(s, r.content)
+	}
+	return s
+}
+
+// preTokenize dispatches to the configured Metaspace variant.
+func (u *unigramBackend) preTokenize(text string) []string {
+	if u.whitespaceSplit {
+		return metaspaceSplit(text)
+	}
+	return metaspaceBare(text)
 }
 
 // encode runs normalize → metaspace pre-tokenize → Unigram over the added-token
@@ -362,9 +429,9 @@ func (u *unigramBackend) encode(text string) []int32 {
 }
 
 func (u *unigramBackend) encodeSegment(text string) []int32 {
-	normalized := u.norm.normalize(text)
+	normalized := u.normalizeText(text)
 	var ids []int32
-	for _, piece := range metaspaceSplit(normalized) {
+	for _, piece := range u.preTokenize(normalized) {
 		ids = append(ids, u.model.viterbiIDs(piece)...)
 	}
 	return ids
@@ -402,11 +469,9 @@ type unigramJSON struct {
 		Content string `json:"content"`
 		Special bool   `json:"special"`
 	} `json:"added_tokens"`
-	Normalizer struct {
-		Type                string `json:"type"`
-		PrecompiledCharsmap string `json:"precompiled_charsmap"`
-	} `json:"normalizer"`
-	Model struct {
+	Normalizer   json.RawMessage `json:"normalizer"`
+	PreTokenizer json.RawMessage `json:"pre_tokenizer"`
+	Model        struct {
 		Type  string            `json:"type"`
 		UnkID *int32            `json:"unk_id"`
 		Vocab []json.RawMessage `json:"vocab"`
@@ -438,13 +503,18 @@ func parseUnigramTokenizer(data []byte) (*unigramBackend, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse tokenizer.json (unigram): %w", err)
 	}
-	if raw.Normalizer.Type != "Precompiled" {
-		return nil, fmt.Errorf("unigram: unsupported normalizer.type %q (expected Precompiled)", raw.Normalizer.Type)
-	}
 	if raw.Model.UnkID == nil {
 		return nil, fmt.Errorf("unigram: model.unk_id missing")
 	}
-	norm, err := newPrecompiled(raw.Normalizer.PrecompiledCharsmap)
+	charsmap, replaces, err := buildNormalizer(raw.Normalizer)
+	if err != nil {
+		return nil, err
+	}
+	norm, err := newPrecompiled(charsmap)
+	if err != nil {
+		return nil, err
+	}
+	whitespaceSplit, err := preTokWhitespaceSplit(raw.PreTokenizer)
 	if err != nil {
 		return nil, err
 	}
@@ -496,7 +566,9 @@ func parseUnigramTokenizer(data []byte) (*unigramBackend, error) {
 	prefixIDs, suffixIDs := templateSpecials(raw.PostProcessor.Single, raw.PostProcessor.SpecialTokens)
 
 	return &unigramBackend{
-		norm: norm,
+		norm:            norm,
+		replaces:        replaces,
+		whitespaceSplit: whitespaceSplit,
 		model: &unigram{
 			piece2id: piece2id,
 			scores:   scores,
@@ -512,6 +584,99 @@ func parseUnigramTokenizer(data []byte) (*unigramBackend, error) {
 		prefixIDs:   prefixIDs,
 		suffixIDs:   suffixIDs,
 	}, nil
+}
+
+// buildNormalizer walks a tokenizer.json normalizer (a bare Precompiled, or a
+// Sequence of them) and returns the single charsmap plus any Replace rules to run
+// after it. It supports exactly the SentencePiece normalizers the multilingual
+// embedders use — Precompiled and Replace (regex → literal) — and errors on any
+// other type so an unsupported normalizer fails loudly (→ best-effort nil in the
+// loader) rather than silently mis-normalizing.
+func buildNormalizer(raw json.RawMessage) (charsmap string, replaces []replaceRule, err error) {
+	var n struct {
+		Type                string            `json:"type"`
+		PrecompiledCharsmap string            `json:"precompiled_charsmap"`
+		Normalizers         []json.RawMessage `json:"normalizers"`
+		Pattern             struct {
+			Regex  string `json:"Regex"`
+			String string `json:"String"`
+		} `json:"pattern"`
+		Content string `json:"content"`
+	}
+	if err = json.Unmarshal(raw, &n); err != nil {
+		return "", nil, fmt.Errorf("unigram: normalizer: %w", err)
+	}
+	switch n.Type {
+	case "Precompiled":
+		return n.PrecompiledCharsmap, nil, nil
+	case "Replace":
+		pat := n.Pattern.Regex
+		if pat == "" { // a literal-string Replace: match it verbatim
+			pat = regexp.QuoteMeta(n.Pattern.String)
+		}
+		re, cerr := regexp.Compile(pat)
+		if cerr != nil {
+			return "", nil, fmt.Errorf("unigram: Replace pattern %q: %w", pat, cerr)
+		}
+		return "", []replaceRule{{re: re, content: n.Content}}, nil
+	case "Sequence":
+		for _, sub := range n.Normalizers {
+			cm, rs, serr := buildNormalizer(sub)
+			if serr != nil {
+				return "", nil, serr
+			}
+			if cm != "" {
+				if charsmap != "" {
+					return "", nil, fmt.Errorf("unigram: multiple Precompiled normalizers")
+				}
+				charsmap = cm
+			}
+			replaces = append(replaces, rs...)
+		}
+		if charsmap == "" {
+			return "", nil, fmt.Errorf("unigram: no Precompiled normalizer in Sequence")
+		}
+		return charsmap, replaces, nil
+	default:
+		return "", nil, fmt.Errorf("unigram: unsupported normalizer.type %q", n.Type)
+	}
+}
+
+// preTokWhitespaceSplit reports whether the pre_tokenizer splits on whitespace
+// before Metaspace (XLM-R/e5 Sequence[WhitespaceSplit, Metaspace]) vs a bare
+// Metaspace (bge-m3). Errors on any other shape.
+func preTokWhitespaceSplit(raw json.RawMessage) (bool, error) {
+	var p struct {
+		Type          string `json:"type"`
+		Pretokenizers []struct {
+			Type string `json:"type"`
+		} `json:"pretokenizers"`
+	}
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return false, fmt.Errorf("unigram: pre_tokenizer: %w", err)
+	}
+	switch p.Type {
+	case "Metaspace":
+		return false, nil
+	case "Sequence":
+		hasWS, hasMeta := false, false
+		for _, pt := range p.Pretokenizers {
+			switch pt.Type {
+			case "WhitespaceSplit":
+				hasWS = true
+			case "Metaspace":
+				hasMeta = true
+			default:
+				return false, fmt.Errorf("unigram: unsupported pre_tokenizer %q in sequence", pt.Type)
+			}
+		}
+		if !hasMeta {
+			return false, fmt.Errorf("unigram: pre_tokenizer sequence lacks Metaspace")
+		}
+		return hasWS, nil
+	default:
+		return false, fmt.Errorf("unigram: unsupported pre_tokenizer.type %q", p.Type)
+	}
 }
 
 // templateSpecials reads a TemplateProcessing "single" template into the special

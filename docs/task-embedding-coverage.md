@@ -104,7 +104,14 @@ green.**
   end-to-end at **cosine 1.000000** over 11 cases (Latin, CJK, Cyrillic, Arabic, German ß/umlaut):
   hidden-state parity AND `Encode(text)` — tokenizer + `posOff=2` + mean pooling + forward in one
   gate — with CLS-vs-mean and offset break-it-first (`encoder/e5_test.go`, `scripts/pin_e5.py`).
-  `bge-m3` reuses this exact path (larger XLM-R, CLS/dense head) — pin a golden to certify.
+- **Phase 2 — `bge-m3` certified full-stack (CLS).** The flagship multilingual retriever (24-layer
+  XLM-R, 1024-dim, CLS pooling) is certified at **cosine 1.000000** over 13 cases
+  (`encoder/bge_m3_test.go`, `scripts/pin_bge_m3.py`). It exercises two config-driven tokenizer
+  variations the parser now handles generically: a normalizer `Sequence[Precompiled,
+  Replace(" {2,}"→" ")]` and a **bare Metaspace** pre-tokenizer (no WhitespaceSplit) — validated
+  id-exact against the raw HF tokenizer including trailing-▁ / multi-space edge cases
+  (`embed/tokenize_unigram_bgem3_test.go`). Note: bge-m3 ships only `pytorch_model.bin`; convert
+  to safetensors for aikit's loader. With this, every same-repo Phase-1/2 model is certified.
 
 ## Coverage claim, generated not hand-maintained
 
