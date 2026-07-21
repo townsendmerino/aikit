@@ -180,10 +180,10 @@ func LoadBERT(dir string) (*BERT, error) {
 			b.maxSeq = min(v.MaxSeqLength, usablePos)
 		}
 	}
-	// Tokenizer is best-effort: a model whose tokenizer.json aikit can't parse
-	// yet (e.g. the SentencePiece/Unigram tokenizers XLM-R and the multilingual
-	// embedders use) can still run the forward on PRE-TOKENIZED ids via Embed.
-	// Encode(text), which needs the tokenizer, errors when it's absent.
+	// Tokenizer is best-effort: aikit parses WordPiece and Unigram/SentencePiece
+	// (XLM-R family), but a model with some other tokenizer.json can still run the
+	// forward on PRE-TOKENIZED ids via Embed. Encode(text), which needs the
+	// tokenizer, errors when it's absent.
 	if tok, terr := embed.LoadTokenizer(filepath.Join(dir, "tokenizer.json")); terr == nil {
 		b.tok = tok
 	}

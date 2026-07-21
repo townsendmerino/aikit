@@ -101,12 +101,12 @@ func TestXLMR_forwardParity(t *testing.T) {
 	t.Logf("xlm-roberta-base forward parity over %d cases (posOff=2): worst hidden maxΔ %.2e", len(g.Cases), worst)
 }
 
-// TestXLMR_tokenizerGap pins the current boundary: xlm-roberta-base uses a
-// SentencePiece/Unigram tokenizer, which aikit's WordPiece-only tokenizer can't
-// parse. LoadBERT tolerates that (tokenizer best-effort), so the model loads and
-// runs forward on pre-tokenized ids, but Encode(text) reports the gap rather than
-// silently mis-tokenizing. Delete this test when a Unigram tokenizer lands.
-func TestXLMR_tokenizerGap(t *testing.T) {
+// TestXLMR_encodeTokenizer closes the loop now that aikit has a Unigram
+// tokenizer: LoadBERT wires it (b.tok non-nil for XLM-R), and the encoder's
+// tokenizer produces HF-exact input_ids for the golden texts. Combined with
+// TestXLMR_forwardParity (same ids → matching hidden states), the full
+// text→hidden pipeline is certified end-to-end.
+func TestXLMR_encodeTokenizer(t *testing.T) {
 	const dir = "../testdata/xlm-roberta-base"
 	if _, err := os.Stat(dir + "/model.safetensors"); err != nil {
 		t.Skipf("no xlm-roberta-base model at %s", dir)
@@ -115,10 +115,37 @@ func TestXLMR_tokenizerGap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.tok != nil {
-		t.Fatal("expected no usable tokenizer for XLM-R (Unigram) — did aikit gain Unigram support? update this test")
+	if b.tok == nil {
+		t.Fatal("expected a usable Unigram tokenizer for XLM-R now that aikit supports SentencePiece")
 	}
-	if _, err := b.Encode("hello world"); err == nil {
-		t.Error("Encode should error when the tokenizer is unavailable, not silently proceed")
+
+	raw, err := os.ReadFile("../testdata/xlmr_golden.json")
+	if err != nil {
+		t.Skip("no golden")
+	}
+	var g struct {
+		Cases []struct {
+			Text     string  `json:"text"`
+			InputIDs []int32 `json:"input_ids"`
+		} `json:"cases"`
+	}
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range g.Cases {
+		ids, err := b.tok.EncodeWithSpecials(c.Text, b.maxSeq)
+		if err != nil {
+			t.Fatalf("%q: %v", c.Text, err)
+		}
+		if len(ids) != len(c.InputIDs) {
+			t.Errorf("%q: %d ids, want %d\n got  %v\n want %v", c.Text, len(ids), len(c.InputIDs), ids, c.InputIDs)
+			continue
+		}
+		for i := range ids {
+			if ids[i] != c.InputIDs[i] {
+				t.Errorf("%q: id[%d]=%d, want %d\n got  %v\n want %v", c.Text, i, ids[i], c.InputIDs[i], ids, c.InputIDs)
+				break
+			}
+		}
 	}
 }

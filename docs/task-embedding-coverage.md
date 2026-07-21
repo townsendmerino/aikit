@@ -29,13 +29,14 @@ layout). All in `aikit/encoder`:
    fields rather than assuming one shape.
 2. **Pooling as a declared property.** CLS vs mean vs last-token is currently implicit. Add
    a `Pooling` enum on the model, set from config, and assert it in the parity test.
-3. **Tokenizer coverage.** aikit's tokenizer is **WordPiece-only** today
-   (`embed/tokenize.go` rejects any `model.type != "WordPiece"`). WordPiece (BERT / MiniLM /
-   BGE / arctic) is covered; the multilingual set (XLM-R, bge-m3, multilingual-e5) is
-   **SentencePiece/Unigram, which does NOT yet exist** — this is the real Phase 2 blocker,
-   not the byte-fallback that was assumed here. Hold the same **HF-exact id-parity** bar the
-   decoder tokenizers already meet. Until it lands, XLM-R models load **forward-only** (run on
-   pre-tokenized ids; `Encode(text)` errors — see the loader's best-effort tokenizer).
+3. **Tokenizer coverage.** aikit now covers **both** WordPiece (BERT / MiniLM / BGE / arctic)
+   and **SentencePiece/Unigram** (XLM-R / bge-m3 / multilingual-e5). The Unigram path
+   (`embed/tokenize_unigram.go`) is a pure-Go port of HF's pipeline — Precompiled charsmap
+   normalizer (darts-clone double-array trie), Metaspace pre-tokenizer, Unigram Viterbi
+   (`fuse_unk`, `unk_score = min_score - 10`), and TemplateProcessing — dispatched from
+   `LoadTokenizer` by tokenizer.json shape (no public API change). It holds the **HF-exact
+   id-parity** bar: byte-exact normalization over a per-codepoint sweep (U+0000..U+2FFFF) and
+   id-exact `encode` over Latin/CJK/RTL/Devanagari/fullwidth/emoji/code, with break-it-first.
 4. **Normalization + dims.** L2-normalize and `dimensions` truncate+renormalize already ship
    in the serve layer — confirm they compose per-model (see Matryoshka caveat below).
 
@@ -91,12 +92,14 @@ green.**
   `1_Pooling/config.json`). Certified against real HF references at cosine 1.000000 with
   break-it-first: `all-MiniLM-L6-v2` (mean BERT), `bge-small-en-v1.5` (CLS BERT),
   `nomic-embed-text-v1.5` (mean nomic-bert/RoPE). See `encoder/{bge,nomic_embed}_test.go`.
-- **Phase 2 — position offset certified, tokenizer blocked.** The XLM-R **position-id-offset
-  forward** is certified against `xlm-roberta-base` (`posOff=2`), hidden-state maxΔ 1.7e-05
-  over 6 cases incl. non-Latin, with break-it-first zeroing the offset (`encoder/xlmr_test.go`,
-  `scripts/pin_xlmr.py`). What remains for end-to-end XLM-R is the **Unigram/SentencePiece
-  tokenizer** (item 3 above) — the single missing component. `LoadBERT` is now best-effort on
-  the tokenizer, so these models load and run forward on pre-tokenized ids today.
+- **Phase 2 — XLM-R certified end-to-end.** Both halves now green against `xlm-roberta-base`:
+  (a) the **Unigram/SentencePiece tokenizer** (`embed/tokenize_unigram.go`) reproduces HF
+  id-for-id — byte-exact Precompiled normalization over the full U+0000..U+2FFFF sweep and
+  id-exact `encode` over a broad multilingual/emoji/code set, with break-it-first
+  (`embed/tokenize_unigram_test.go`, `scripts/pin_xlmr_tokenizer.py`); (b) the **position-id
+  offset** forward holds at `posOff=2`, hidden-state maxΔ 1.7e-05, offset-zeroing break-it-first
+  (`encoder/xlmr_test.go`). `LoadBERT` wires the tokenizer, so `Encode(text)→hidden` is
+  certified. Remaining Phase-2 models (`bge-m3`, `multilingual-e5`) reuse this exact path.
 
 ## Coverage claim, generated not hand-maintained
 

@@ -35,6 +35,11 @@ type Tokenizer struct {
 	handleCJK    bool
 	stripAccents bool
 	lowercase    bool
+
+	// uni is set for Unigram/SentencePiece tokenizers (XLM-R family); when
+	// non-nil, the public methods dispatch to it instead of the WordPiece path.
+	// See tokenize_unigram.go.
+	uni *unigramBackend
 }
 
 // tokenizer.json shape — we only parse the fields we need.
@@ -86,6 +91,26 @@ func LoadTokenizerFromFS(fsys fs.FS, name string) (*Tokenizer, error) {
 // parseTokenizer is the shared tokenizer.json parser used by LoadTokenizer
 // and LoadTokenizerFromFS.
 func parseTokenizer(data []byte) (*Tokenizer, error) {
+	// Probe model.type / normalizer.type first — the Unigram vocab is an array of
+	// [piece,score] pairs, which won't unmarshal into the WordPiece map below, so
+	// dispatch must happen before the full WordPiece parse.
+	var probe struct {
+		Model      struct{ Type string } `json:"model"`
+		Normalizer struct{ Type string } `json:"normalizer"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return nil, fmt.Errorf("parse tokenizer.json: %w", err)
+	}
+	// Unigram/SentencePiece tokenizers (XLM-R family) take a separate path; the
+	// WordPiece parse below stays byte-identical for the BERT family.
+	if isUnigramTokenizer(probe.Model.Type, probe.Normalizer.Type) {
+		uni, err := parseUnigramTokenizer(data)
+		if err != nil {
+			return nil, err
+		}
+		return &Tokenizer{uni: uni, unkID: uni.unkID}, nil
+	}
+
 	var raw tokenizerJSON
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, fmt.Errorf("parse tokenizer.json: %w", err)
@@ -173,6 +198,9 @@ func parseTokenizer(data []byte) (*Tokenizer, error) {
 // per-word-only check missing it. Skip the carve loop when there are no
 // added tokens for the small but real speedup on long inputs.
 func (t *Tokenizer) Encode(text string) []int32 {
+	if t.uni != nil {
+		return t.uni.encode(text)
+	}
 	if len(t.addedKeys) == 0 {
 		return t.encodeSegment(text)
 	}
@@ -228,8 +256,13 @@ func (t *Tokenizer) encodeSegment(text string) []int32 {
 	return ids
 }
 
-// VocabSize reports the number of WordPiece vocabulary entries (excluding added_tokens).
-func (t *Tokenizer) VocabSize() int { return len(t.vocab) }
+// VocabSize reports the number of vocabulary entries.
+func (t *Tokenizer) VocabSize() int {
+	if t.uni != nil {
+		return t.uni.vocabSize
+	}
+	return len(t.vocab)
+}
 
 // UnkID is the integer ID of the [UNK] token.
 func (t *Tokenizer) UnkID() int32 { return t.unkID }
@@ -239,6 +272,10 @@ func (t *Tokenizer) UnkID() int32 { return t.unkID }
 // tokenizer's added_tokens table. Used by EncodeWithSpecials and by
 // downstream models that need to wrap inputs with BERT-style specials.
 func (t *Tokenizer) SpecialID(literal string) (int32, bool) {
+	if t.uni != nil {
+		id, ok := t.uni.addedTokens[literal]
+		return id, ok
+	}
 	id, ok := t.addedTokens[literal]
 	return id, ok
 }
@@ -260,6 +297,9 @@ func (t *Tokenizer) SpecialID(literal string) (int32, bool) {
 // added_tokens. For tokenizers without those specials (potion), call
 // Encode directly.
 func (t *Tokenizer) EncodeWithSpecials(text string, maxLen int) ([]int32, error) {
+	if t.uni != nil {
+		return t.uni.encodeWithSpecials(text, maxLen), nil
+	}
 	cls, ok := t.addedTokens["[CLS]"]
 	if !ok {
 		return nil, fmt.Errorf("tokenizer: [CLS] missing from added_tokens")
