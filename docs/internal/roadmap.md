@@ -185,7 +185,7 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    flips only when the goinfer `decoder.weightMat` f32 path migrates onto
    `MatmulBTInto`; re-evaluate then.
 8. **`linalg.WeightMat` — unify the quantized-weight abstraction** —
-   🟡 **IN PROGRESS (type + 1 of 3 consumers).** The precision-hiding
+   ✅ **DONE (type + 3 of 3 consumers).** The precision-hiding
    weight-matrix wrapper was implemented **three times** — aikit
    `encoder.LayerWeightsQ8`, goinfer `decoder.weightMat`
    (f32/int8/int4-group/W8A8, the richest), goinfer `vision.qmat`
@@ -199,11 +199,23 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    clean, no in-flight `weightMat` change. This proceeded as **Francis's
    owner override**, and was scoped to land the type + in-repo consumer
    without disturbing goinfer's fastest-moving internal type.
-   *Remaining:* migrate goinfer `vision.qmat` (now an in-aikit refactor
-   after §2.9's move; validates the GPU-export accessors) then
-   `decoder.weightMat` (richest, keep goinfer's `quantMode.embedding()`
-   policy as a thin shim) against the released aikit minor — `go.work
-   replace` for dev, goinfer pins on release.
+   *Completed since:* goinfer's `decoder.weightMat` migrated (the type is
+   gone; `decoder` now holds `linalg.WeightMat` directly — see `eagle.go`
+   fields and `gguf.go`'s `streamMat`), and `vision.qmat` migrated as the
+   in-aikit refactor §2.9's move made it. The open-coded wrapper is deleted
+   in all three places; `vision` keeps only `newQMat`, which is storage
+   *policy* (which weights quantize, and that f32 is copied because the
+   source is a released mmap) rather than a second abstraction.
+   *Bit-identity is gated, not assumed:* the tower's own parity tests need
+   checkpoints and skip without them, so `vision.TestQMat_migrationIsBitIdentical`
+   reconstructs the old kernel calls and asserts exact float-bit equality
+   against the WeightMat path (plus the no-alias and int8-export contracts).
+   Break-it-first: flipping the `w8a8` flag moves the result and turns it red.
+   *Still unconsumed (cf. §2.7):* nothing routes through
+   `WeightMat.MatmulBTInto` yet — the decoder migration landed on
+   `MatmulBT`, so the `Workspace`-scoped f32/W8A8 paths remain without an
+   in-repo consumer. That re-evaluation is still pending, contrary to what
+   §2.7's note anticipated.
 9. **`vision` (SigLIP/ViT encoder) → aikit** — ✅ **DONE (aikit side).**
    The vision tower moved into `aikit/vision` (Experimental), verbatim and
    parity-preserving — decode/preprocess/forward/qmat/resident + the

@@ -67,10 +67,10 @@ func (c EncoderConfig) validate() error {
 
 type encLayer struct {
 	ln1w, ln1b     []float32
-	qw, kw, vw, ow qmat      // [hidden,hidden] matmul weights (f32 or int8)
-	qb, kb, vb, ob []float32 // biases stay f32
+	qw, kw, vw, ow linalg.WeightMat // [hidden,hidden] matmul weights (f32 or int8)
+	qb, kb, vb, ob []float32        // biases stay f32
 	ln2w, ln2b     []float32
-	fc1w, fc2w     qmat // [inter,hidden] / [hidden,inter] matmul weights
+	fc1w, fc2w     linalg.WeightMat // [inter,hidden] / [hidden,inter] matmul weights
 	fc1b, fc2b     []float32
 }
 
@@ -149,10 +149,10 @@ func LoadEncoder(dir string, quant bool) (*Encoder, error) {
 	// qm wraps a matmul weight as f32 or int8 (W8A8). Attention/FFN projections
 	// quantize under -vision-quant; the patch-embed conv stays f32 (input
 	// embedding — quant error there propagates through every layer).
-	qm := func(name string, rows, cols int) qmat {
+	qm := func(name string, rows, cols int) linalg.WeightMat {
 		w := get(name, rows, cols)
 		if err != nil {
-			return qmat{}
+			return linalg.WeightMat{}
 		}
 		return newQMat(w, rows, cols, quant)
 	}
@@ -227,7 +227,7 @@ func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 		n1 := layerNorm(h, lw.ln1w, lw.ln1b, np, hidden, c.LayerNormEps)
 		att := e.attention(n1, lw, np)
 		o := make([]float32, np*hidden)
-		lw.ow.matmul(att, o, np)
+		lw.ow.MatmulBT(att, o, np)
 		addBias(o, lw.ob, np, hidden)
 		for i := range h {
 			h[i] += o[i]
@@ -236,11 +236,11 @@ func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 		n2 := layerNorm(h, lw.ln2w, lw.ln2b, np, hidden, c.LayerNormEps)
 		inter := c.IntermediateSize
 		mid := make([]float32, np*inter)
-		lw.fc1w.matmul(n2, mid, np)
+		lw.fc1w.MatmulBT(n2, mid, np)
 		addBias(mid, lw.fc1b, np, inter)
 		geluTanh(mid)
 		mlp := make([]float32, np*hidden)
-		lw.fc2w.matmul(mid, mlp, np)
+		lw.fc2w.MatmulBT(mid, mlp, np)
 		addBias(mlp, lw.fc2b, np, hidden)
 		for i := range h {
 			h[i] += mlp[i]
@@ -263,11 +263,11 @@ func (e *Encoder) attention(x []float32, lw *encLayer, np int) []float32 {
 	q := make([]float32, np*hidden)
 	k := make([]float32, np*hidden)
 	v := make([]float32, np*hidden)
-	lw.qw.matmul(x, q, np)
+	lw.qw.MatmulBT(x, q, np)
 	addBias(q, lw.qb, np, hidden)
-	lw.kw.matmul(x, k, np)
+	lw.kw.MatmulBT(x, k, np)
 	addBias(k, lw.kb, np, hidden)
-	lw.vw.matmul(x, v, np)
+	lw.vw.MatmulBT(x, v, np)
 	addBias(v, lw.vb, np, hidden)
 
 	out := make([]float32, np*hidden)

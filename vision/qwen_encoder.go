@@ -25,7 +25,7 @@ import (
 // image→pixel_values+grid_thw via smart-resize upstream), not a CHW image — so the
 // encoder is fed pixel_values [n_patches, patch_dim] + per-image (t,h,w) grids.
 //
-// Added ADDITIVELY: SigLIP's Encoder/LoadEncoder are untouched. The qmat W8A8
+// Added ADDITIVELY: SigLIP's Encoder/LoadEncoder are untouched. The linalg.WeightMat W8A8
 // wrapper is reused for the projections (the patch-embed matmul stays f32); the
 // resident-GPU seam is a follow-on (the fp32 CPU path is the v1 deliverable).
 
@@ -92,15 +92,15 @@ func (c QwenEncoderConfig) validate() error {
 }
 
 type qwenBlock struct {
-	norm1w     []float32 // RMSNorm (weight only)
-	qkvw       qmat      // [3*hidden, hidden] fused
-	qkvb       []float32 // [3*hidden]
-	projw      qmat      // [hidden, hidden]
+	norm1w     []float32        // RMSNorm (weight only)
+	qkvw       linalg.WeightMat // [3*hidden, hidden] fused
+	qkvb       []float32        // [3*hidden]
+	projw      linalg.WeightMat // [hidden, hidden]
 	projb      []float32
-	norm2w     []float32 // RMSNorm
-	gatew, upw qmat      // [inter, hidden]
+	norm2w     []float32        // RMSNorm
+	gatew, upw linalg.WeightMat // [inter, hidden]
 	gateb, upb []float32
-	downw      qmat // [hidden, inter]
+	downw      linalg.WeightMat // [hidden, inter]
 	downb      []float32
 }
 
@@ -109,10 +109,10 @@ type QwenVisionEncoder struct {
 	Cfg        QwenEncoderConfig
 	patchW     []float32 // [hidden, patch_dim] (Conv3d weight flattened, kept f32)
 	blocks     []qwenBlock
-	mergerLNw  []float32 // merger.ln_q RMSNorm weight [hidden]
-	merger0w   qmat      // merger.mlp.0 [hidden*merge², hidden*merge²]
+	mergerLNw  []float32        // merger.ln_q RMSNorm weight [hidden]
+	merger0w   linalg.WeightMat // merger.mlp.0 [hidden*merge², hidden*merge²]
 	merger0b   []float32
-	merger2w   qmat // merger.mlp.2 [out_hidden, hidden*merge²]
+	merger2w   linalg.WeightMat // merger.mlp.2 [out_hidden, hidden*merge²]
 	merger2b   []float32
 	rotInvFreq []float32 // head_dim/4 rotary frequencies
 }
@@ -176,10 +176,10 @@ func LoadQwenVisionEncoder(dir string, quant bool) (*QwenVisionEncoder, error) {
 		return append([]float32(nil), v...) // copy out so st can close
 	}
 	hidden, inter := cfg.HiddenSize, cfg.IntermediateSize
-	qm := func(name string, rows, cols int) qmat {
+	qm := func(name string, rows, cols int) linalg.WeightMat {
 		w := get(name, rows, cols)
 		if err != nil {
-			return qmat{}
+			return linalg.WeightMat{}
 		}
 		return newQMat(w, rows, cols, quant)
 	}
@@ -325,7 +325,7 @@ func (e *QwenVisionEncoder) forwardViT(pixelValues []float32, gridTHW [][3]int) 
 		n1 := rmsNorm(hWin, b.norm1w, nPatches, hidden)
 		att := e.attention(n1, b, nPatches, cos, sin, cu)
 		o := make([]float32, nPatches*hidden)
-		b.projw.matmul(att, o, nPatches)
+		b.projw.MatmulBT(att, o, nPatches)
 		addBias(o, b.projb, nPatches, hidden)
 		for i := range hWin {
 			hWin[i] += o[i]
@@ -368,11 +368,11 @@ func (e *QwenVisionEncoder) merge(hidden []float32, gridTHW [][3]int) []float32 
 	// ln_q over hidden, then the [groups, mh] view falls out for free (contiguous).
 	nrm := rmsNorm(hidden, e.mergerLNw, nPatches, H)
 	mid := make([]float32, groups*mh)
-	e.merger0w.matmul(nrm, mid, groups)
+	e.merger0w.MatmulBT(nrm, mid, groups)
 	addBias(mid, e.merger0b, groups, mh)
 	geluErf(mid)
 	out := make([]float32, groups*c.OutHiddenSize)
-	e.merger2w.matmul(mid, out, groups)
+	e.merger2w.MatmulBT(mid, out, groups)
 	addBias(out, e.merger2b, groups, c.OutHiddenSize)
 	return out
 }
@@ -386,7 +386,7 @@ func (e *QwenVisionEncoder) attention(x []float32, b *qwenBlock, seq int, cos, s
 	scale := float32(1.0 / math.Sqrt(float64(hd)))
 
 	qkv := make([]float32, seq*3*hidden)
-	b.qkvw.matmul(x, qkv, seq)
+	b.qkvw.MatmulBT(x, qkv, seq)
 	addBias(qkv, b.qkvb, seq, 3*hidden)
 	// split: row layout is [3, nH, hd], so q/k/v are the three contiguous halves.
 	q := make([]float32, seq*hidden)
@@ -454,17 +454,17 @@ func (e *QwenVisionEncoder) attention(x []float32, b *qwenBlock, seq int, cos, s
 func (e *QwenVisionEncoder) mlp(x []float32, b *qwenBlock, seq int) []float32 {
 	hidden, inter := e.Cfg.HiddenSize, e.Cfg.IntermediateSize
 	gate := make([]float32, seq*inter)
-	b.gatew.matmul(x, gate, seq)
+	b.gatew.MatmulBT(x, gate, seq)
 	addBias(gate, b.gateb, seq, inter)
 	up := make([]float32, seq*inter)
-	b.upw.matmul(x, up, seq)
+	b.upw.MatmulBT(x, up, seq)
 	addBias(up, b.upb, seq, inter)
 	silu(gate)
 	for i := range gate {
 		gate[i] *= up[i]
 	}
 	down := make([]float32, seq*hidden)
-	b.downw.matmul(gate, down, seq)
+	b.downw.MatmulBT(gate, down, seq)
 	addBias(down, b.downb, seq, hidden)
 	return down
 }

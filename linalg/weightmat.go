@@ -10,14 +10,18 @@ import (
 // WeightMat is a [rows, cols] = [out, in] weight matrix that hides its storage
 // precision behind a uniform matmul + dequant surface. It consolidates three
 // open-coded wrappers that each held the same thing — an f32 / int8 / int4 weight
-// plus its scales plus a precision-dispatched MatmulBT:
+// plus its scales plus a precision-dispatched MatmulBT. All three are now migrated
+// onto it (roadmap §2.8), each bit-identically:
 //
 //   - aikit encoder.LayerWeightsQ8 — per-row int8 projection weights (storage only;
 //     the encoder keeps its own baked-scale blocked matmul for large-M prefill, fed
 //     from Int8()/Scales(), since that path is numerically distinct from MatmulBTQ8).
 //   - goinfer decoder.weightMat — the richest: f32 / per-row int8 / group int4 / W8A8,
 //     with the matmul dispatch and tied-embedding Row lookup.
-//   - goinfer vision.qmat — f32 / W8A8 for the SigLIP tower.
+//   - aikit vision.qmat (was goinfer's, before §2.9 moved the tower) — f32 / W8A8
+//     for the SigLIP / Qwen-ViT towers. Now only vision.newQMat remains, holding the
+//     storage POLICY (which weights quantize; f32 copies because the source mmap is
+//     released after load) rather than a second abstraction.
 //
 // Experimental tier. It hides STORAGE only — model policy stays with the consumer:
 // which precision a table gets (e.g. goinfer keeping logit-critical embeddings at

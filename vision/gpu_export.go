@@ -1,6 +1,10 @@
 package vision
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/linalg"
+)
 
 // GPU export: the resident GPU encoder lives in the goinfer/gpu module (cgo,
 // -tags gpu). It reads the loaded tower through these exported types so vision
@@ -38,11 +42,12 @@ type GPUWeights struct {
 // matmul weights (LoadEncoder quant=true) — errors otherwise.
 func (e *Encoder) GPUWeights() (GPUWeights, error) {
 	c := e.Cfg
-	gm := func(m qmat) (GPUMat, error) {
-		if m.q == nil {
+	gm := func(m linalg.WeightMat) (GPUMat, error) {
+		q, scales, _, ok := m.Int8()
+		if !ok {
 			return GPUMat{}, fmt.Errorf("vision: GPU encoder needs int8 weights — load with quant=true")
 		}
-		return GPUMat{Q: m.q, Scales: m.scales, Rows: m.rows, Cols: m.cols}, nil
+		return GPUMat{Q: q, Scales: scales, Rows: m.Rows(), Cols: m.Cols()}, nil
 	}
 	w := GPUWeights{
 		Hidden: c.HiddenSize, Inter: c.IntermediateSize, NumLayers: c.NumHiddenLayers,
@@ -62,7 +67,7 @@ func (e *Encoder) GPUWeights() (GPUWeights, error) {
 		}
 		for _, p := range []struct {
 			dst *GPUMat
-			src qmat
+			src linalg.WeightMat
 		}{{&gl.Qw, l.qw}, {&gl.Kw, l.kw}, {&gl.Vw, l.vw}, {&gl.Ow, l.ow}, {&gl.FC1w, l.fc1w}, {&gl.FC2w, l.fc2w}} {
 			if *p.dst, err = gm(p.src); err != nil {
 				return GPUWeights{}, err
