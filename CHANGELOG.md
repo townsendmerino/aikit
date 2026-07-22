@@ -10,6 +10,72 @@ it.
 
 ## [Unreleased]
 
+## [1.11.0] — 2026-07-21
+
+The embedder-coverage release. 1.10.x hardened what was already here; this adds
+capability: a pure-Go SentencePiece/Unigram tokenizer, a mixture-of-experts FFN,
+declared pooling and explicit BERT loader variants — and on top of those, **six
+newly certified embedders**, taking the certified set from two to eight. Coverage
+is now a generated table checked against the real checkpoints rather than a
+claim, and the one property a serve layer cannot safely guess — whether a model's
+vectors may be truncated — is exported rather than documented.
+
+Minor, not patch: new exported API and new capabilities, no breaking changes. The
+behavior changes below all **widen** acceptance (things that used to fail now
+succeed), so they are additive from a caller's perspective.
+
+### Added
+
+- **Pure-Go SentencePiece/Unigram tokenizer (`embed`).** The Viterbi-decoded
+  Unigram path plus its normalizer/pre-tokenizer, which is what unlocks the
+  XLM-RoBERTa family end-to-end (`embed/tokenize_unigram.go`). No cgo, no
+  sentencepiece dependency.
+- **Mixture-of-experts FFN (`encoder`).** Top-2-of-8 routing on alternating
+  layers, certifying `nomic-ai/nomic-embed-text-v2-moe`.
+- **`encoder.MatryoshkaFloor(model) (min int, ok bool)`.** The smallest width a
+  model's embeddings may be truncated to, `ok=false` when it was not trained with
+  Matryoshka Representation Learning — and for unknown models, deliberately.
+  Slicing a non-MRL embedding returns a unit-length, entirely plausible vector
+  that simply retrieves worse; `TestEmbedderCoverage_matryoshka` measures it
+  (multilingual-e5-base 1.00 → 0.80 pair recall at a quarter width, while genuine
+  MRL models hold their floor). Only two of the eight certified models qualify.
+  Existed as documentation and a test-only registry before; nothing downstream
+  could consult it.
+- **Six newly certified embedders**, each with a hidden-state gate and a
+  break-it-first check: `BAAI/bge-small-en-v1.5`, `nomic-ai/nomic-embed-text-v1.5`,
+  `FacebookAI/xlm-roberta-base` (forward-only; bare LM),
+  `intfloat/multilingual-e5-base`, `BAAI/bge-m3`,
+  `nomic-ai/nomic-embed-text-v2-moe`.
+- **Generated `docs/embedder-coverage.md`.** Built from the registry in
+  `encoder/coverage_test.go`, whose pooling/dimension claims are read back from
+  the real checkpoints when present, with a freshness gate so the table cannot
+  drift from the code.
+- **Declared pooling as a per-model property** (BERT and Nomic loaders), read
+  from `1_Pooling/config.json` instead of assumed — the difference between CLS
+  and mean pooling is silent and total.
+- **Explicit BERT loader variants:** position-id offset (XLM-R's pad+1) and
+  optional `token_type` embeddings.
+
+### Changed
+
+Each of these accepts input that previously failed; none removes or narrows
+behavior:
+
+- **`LoadBERT` no longer hard-fails on an unparseable tokenizer.** A model whose
+  weights load fine but whose tokenizer this build cannot read is now usable
+  forward-only (best-effort), which is what certifying bare `xlm-roberta-base`
+  requires.
+- **`embed.LoadTokenizer` accepts Unigram**, not only WordPiece.
+- **`(*encoder.Config).ValidateAssumptions` accepts configs it used to reject**,
+  as the loader variants above made those configurations legitimate.
+- **`(*embed.Tokenizer).EncodeWithSpecials` reads the tokenizer's post-processor
+  template** instead of hardcoding `[CLS]`/`[SEP]`, so models with different
+  special-token conventions wrap correctly.
+
+### Removed
+
+- `CODE_REVIEW.md` — every second-pass item shipped in 1.10.1.
+
 ## [1.10.1] — 2026-07-20
 
 A follow-up to 1.10.0's security review: a second pass verified each applied fix
@@ -1382,7 +1448,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.10.1...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.11.0...HEAD
+[1.11.0]: https://github.com/townsendmerino/aikit/compare/v1.10.1...v1.11.0
 [1.10.1]: https://github.com/townsendmerino/aikit/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/townsendmerino/aikit/compare/v1.9.0...v1.10.0
 [1.9.0]: https://github.com/townsendmerino/aikit/compare/v1.8.1...v1.9.0
