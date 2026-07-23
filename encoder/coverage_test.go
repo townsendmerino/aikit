@@ -138,6 +138,11 @@ func buildCoverageMarkdown() []byte {
 	return b.Bytes()
 }
 
+// stripCR removes carriage returns so the freshness comparison is line-ending
+// agnostic — the generated markdown is always LF, but a Windows checkout may hold
+// the committed doc as CRLF.
+func stripCR(b []byte) []byte { return bytes.ReplaceAll(b, []byte{'\r'}, nil) }
+
 // TestEmbedderCoverage_fresh is the staleness gate: adding, removing, or editing a
 // row must regenerate docs/embedder-coverage.md or the build goes red. `-update`
 // rewrites it. Model-free, so this runs in CI.
@@ -154,7 +159,10 @@ func TestEmbedderCoverage_fresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read %s: %v (regenerate: go test ./encoder -run EmbedderCoverage -update)", coveragePath, err)
 	}
-	if !bytes.Equal(bytes.TrimSpace(got), bytes.TrimSpace(md)) {
+	// Compare content, not line-ending representation: a Windows checkout without
+	// a normalizing .gitattributes yields CRLF, which TrimSpace does not touch. The
+	// gate is about whether the table is stale, not how git stored the newlines.
+	if !bytes.Equal(stripCR(bytes.TrimSpace(got)), bytes.TrimSpace(md)) {
 		t.Fatalf("%s is stale — regenerate: go test ./encoder -run EmbedderCoverage -update", coveragePath)
 	}
 }

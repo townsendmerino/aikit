@@ -1,0 +1,4 @@
+# Generated docs live under a byte-exact freshness gate (encoder/coverage_test.go),
+# so pin them to LF — otherwise a Windows checkout stores CRLF and the gate, or a
+# `-update` regeneration, fights git's autocrlf. The test also strips CR defensively.
+docs/embedder-coverage.md text eol=lf
