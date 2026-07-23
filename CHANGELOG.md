@@ -10,7 +10,7 @@ it.
 
 ## [Unreleased]
 
-## [1.11.0] — 2026-07-21
+## [1.11.0] — 2026-07-22
 
 The embedder-coverage release. 1.10.x hardened what was already here; this adds
 capability: a pure-Go SentencePiece/Unigram tokenizer, a mixture-of-experts FFN,
