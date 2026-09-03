@@ -3,7 +3,7 @@ module github.com/townsendmerino/aikit/gpu/qwenmetal
 go 1.27.0
 
 require (
-	github.com/townsendmerino/aikit v1.32.0
+	github.com/townsendmerino/aikit v1.33.0
 	github.com/townsendmerino/aikit/gpu v0.32.0
 )
 
