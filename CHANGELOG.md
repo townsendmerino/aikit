@@ -9,6 +9,93 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.33.0] — 2026-09-03
+
+### Changed
+
+**Three NEON kernels from the SIMD audit, all bit-identical to what they replace.** No API
+changes; every gain is behind existing entry points, so consumers get them on a dependency bump.
+
+**S-03 — the activation quantiser is no longer scalar.** `quantizeRowInt8Core` runs `FABS`/`FMAXNM`
+for the abs-max and `FMUL`/`FCVTAS`/`SMIN`/`SMAX`/`SQXTN` for the quantise, with the original body
+kept verbatim as `quantizeRowInt8CoreScalar` and used as the test oracle. Measured on an M1 Pro,
+interleaved, median of 3: **12.99× at K=1536** (288 ns vs 3741) and **19.23× at K=8960** (1.51 µs vs
+28.96). It runs before every W8A8/W4A8 matmul on the calling goroutine — 509k elements per token on
+a 1.5B model — so it was 2–6% of a token spent in a scalar loop between parallel matmuls. Corner
+cases are pinned against the scalar (NaN, ±Inf, −0, denormals, exact ties, saturation, all-zero).
+
+**S-04 step 2 — the f64 attention kernels get NEON lane-per-output ports.** `MatmulAVAcc64` gains a
+32-dim-block kernel (16 lane-pair accumulators, `FMLA` by element, `FCVTN` narrow) and
+`MatmulQKAcc64` a 16-key kernel (lane = key, `ZIP1`/`ZIP2`, d ascending); the Go paths resume from
+the index the kernels return and finish the tails, so a `K%4≠0` shape stays entirely in Go. Against
+the Go accumulator-block form shipped previously:
+
+| depth | AV | QK |
+|--:|--:|--:|
+| 130 | 2.32× | 1.68× |
+| 2048 | 2.49× | 2.01× |
+| 8192 | 2.46× | 1.82× |
+
+The depth-8192 attention component — QK+AV, which is ~75% of a token at that depth — goes
+**486.6 µs → 227.7 µs, 2.14×**. The audit's estimate for a NEON port was "~300 µs per head-call at
+depth 8192"; the port beat its own bound.
+
+Bit-identity here is structural rather than incidental: both operands are f32 widened to f64, so
+every product is exact, and a lane running the same ascending-order chain is identical to the
+scalar `FMADDD` one. `MatmulAVAcc64`/`MatmulQKAcc64` are checked against an independent strided
+oracle at production shapes including nKeys=8192.
+
+**S-07 — weight-only `int8` mode stops running one FMLA chain.** `q8Span` dequantises eight weight
+rows into a scratch and uses the eight-column kernel, whose per-row lane partials and left-to-right
+fold are the identical sequence `dotNEON4` produced. Measured 3.34× / 3.30× / 3.22× at M=1 across
+K1536_N1536, K1536_N8960 and K2048_N152064, and **4.99× at M=4**. The parallel path's per-worker
+`make([]float32, K)` is replaced by a pooled scratch on every architecture — that allocation was
+~16 MB per token in `int8`/`int4Mix` modes.
+
+### Fixed
+
+**The row4 entry points now reject `K < group` by name.** `K=0` satisfies the `K%group==0` check
+that guarded them, so it reached the span with `nGroups=0` and failed as an index-out-of-range on a
+kernel internal instead of naming the caller's shape. Both `MatmulBTW4A8Row4Into` and
+`MatmulBTW4A8Row4TileInto` now report it; the gate asserts the message rather than merely that a
+panic occurs, because what changed is *which* panic.
+
+
+### Release gates
+
+`vulncheck`, run on `nobara` (linux) at `ffacb84`:
+
+```
+STATEMENT: no reachable vulnerabilities in 15/15 modules at ffacb84 (2026-09-03T20:09:30Z)
+```
+
+`perfgate`, `nobara` (Ryzen 7 3700X, linux/amd64, load 0.02), working tree vs v1.32.0 interleaved:
+
+```
+VERDICT: PASS — no regression vs v1.32.0 above each shape's floor — 5/10 shapes resolve the 5.0% class
+  BLIND on 5 shape(s): K2048_N2048(±14.4%) K4096_N4096(±7.2%) K1536_N8960(±11.6%)
+                       K2048_N2048(±19.6%) K3584_N4096(±12.8%)
+```
+
+**Operational note for the next release: perfgate picks its baseline from the tags the box can
+see, and it does not say which tag it wanted.** The first run of this release compared against
+**v1.31.0**, silently, because the benchmark box had `main` pulled but had never fetched the
+`v1.32.0` tag — the header line `working tree vs v1.31.0` was the only tell. It was re-run against
+the right baseline after `git fetch --tags`. A gate that quietly measures against the wrong
+reference reads exactly like a green one, so `git fetch --tags` on the perf box belongs in step 2b.
+
+`releasegate`:
+
+```
+VERDICT: PASS — v1.33.0 — 4/4 checks passed
+```
+
+The kernel measurements quoted above were taken on the M1 Pro rather than this box — they are
+arm64 assembly and amd64 keeps its existing paths — and that machine was carrying roughly 1.3
+cores of ordinary desktop load, not idle. Single-threaded arms on a 6 P-core part, interleaved
+A/B and median-of-3 absorb that; the ratios are the trustworthy part, not the absolute ns.
+
+
 ## [1.32.0] — 2026-09-03
 
 ### Added
@@ -2742,6 +2829,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.31.0...HEAD
+[1.33.0]: https://github.com/townsendmerino/aikit/compare/v1.32.0...v1.33.0
 [1.32.0]: https://github.com/townsendmerino/aikit/compare/v1.31.0...v1.32.0
 [1.31.0]: https://github.com/townsendmerino/aikit/compare/v1.30.0...v1.31.0
 [1.30.0]: https://github.com/townsendmerino/aikit/compare/v1.29.0...v1.30.0
