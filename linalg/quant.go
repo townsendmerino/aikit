@@ -3,6 +3,7 @@ package linalg
 import (
 	"fmt"
 	"math"
+	"sync"
 )
 
 // Per-row symmetric int8 weight quantization.
@@ -40,16 +41,16 @@ func QuantizeRowsInt8(w []float32, rows, cols int) (q []int8, scales []float32) 
 // their all-zero-row scale conventions are NOT interchangeable (see each
 // wrapper's doc), not because the quantization itself differs. zeroScale is
 // what an all-zero row reports; the row's codes are all zero either way.
+//
+// The two passes are arch-dispatched (maxAbsF32 / quantizeRowScaled): NEON on
+// arm64, the scalar reference elsewhere. The scale arithmetic between them —
+// s = maxAbs/127 and inv = 1/s, both f32 — stays here so every arch derives the
+// same inv from the same maxAbs, and the vector path multiplies by exactly the
+// inv the scalar path would. quantizeRowInt8CoreScalar below is the unchanged
+// original and the oracle TestQuantizeRowInt8_bitIdenticalToScalar holds the
+// dispatched path to.
 func quantizeRowInt8Core(row []float32, q []int8, zeroScale float32) (scale float32) {
-	var maxAbs float32
-	for _, v := range row {
-		if v < 0 {
-			v = -v
-		}
-		if v > maxAbs {
-			maxAbs = v
-		}
-	}
+	maxAbs := maxAbsF32(row)
 	if maxAbs == 0 {
 		for j := range q {
 			q[j] = 0
@@ -58,6 +59,58 @@ func quantizeRowInt8Core(row []float32, q []int8, zeroScale float32) (scale floa
 	}
 	s := maxAbs / 127.0
 	inv := 1.0 / s
+	quantizeRowScaled(row, q, inv)
+	return s
+}
+
+// quantizeRowInt8CoreScalar is the portable reference for quantizeRowInt8Core:
+// the pre-vectorization body, kept verbatim as the bit-identity oracle. Its two
+// loops define the semantics the SIMD paths must reproduce exactly, including
+// the corners: a NaN element is skipped by the abs/max (both comparisons are
+// false) and quantizes to 0 (math.Round(NaN) is NaN, neither clamp fires, and
+// the float→int8 conversion of NaN is 0 on arm64 and amd64 — FCVTZS and
+// CVTTSD2SI both yield a value whose low byte is 0); -0.0 contributes +0 to the
+// max; ±Inf elements make maxAbs = +Inf, inv = 0, and every finite element
+// quantizes to 0 while the Inf itself is Inf·0 = NaN → 0.
+func quantizeRowInt8CoreScalar(row []float32, q []int8, zeroScale float32) (scale float32) {
+	maxAbs := maxAbsF32Scalar(row, 0)
+	if maxAbs == 0 {
+		for j := range q {
+			q[j] = 0
+		}
+		return zeroScale
+	}
+	s := maxAbs / 127.0
+	inv := 1.0 / s
+	quantizeRowScaledScalar(row, q, inv)
+	return s
+}
+
+// maxAbsF32Scalar continues a running max of |v| over row from maxAbs, exactly
+// as the original abs/max pass did: `if v < 0 { v = -v }; if v > maxAbs {...}`.
+// NaN never wins either comparison and so is skipped; -0.0 is not < 0 and not
+// > maxAbs, so it never becomes the max. Max is exact and order-independent, so
+// the NEON reduction (which folds the row in a different order) returns the same
+// float32 for any input — the only case that needs care is NaN, and FMAXNM skips
+// quiet NaNs the same way these comparisons do.
+func maxAbsF32Scalar(row []float32, maxAbs float32) float32 {
+	for _, v := range row {
+		if v < 0 {
+			v = -v
+		}
+		if v > maxAbs {
+			maxAbs = v
+		}
+	}
+	return maxAbs
+}
+
+// quantizeRowScaledScalar is the original round-and-clamp pass:
+// q[j] = int8(clamp(round(float64(v*inv)), -127, 127)). v*inv is ONE f32 multiply
+// (both operands float32); the widening to f64 is exact, so math.Round here is
+// round-to-nearest-ties-away applied to the f32 product — which is exactly what
+// FCVTAS computes on the f32 value directly.
+func quantizeRowScaledScalar(row []float32, q []int8, inv float32) {
 	for j, v := range row {
 		x := math.Round(float64(v * inv))
 		if x > 127 {
@@ -67,7 +120,6 @@ func quantizeRowInt8Core(row []float32, q []int8, zeroScale float32) (scale floa
 		}
 		q[j] = int8(x)
 	}
-	return s
 }
 
 // QuantizeRowInt8 quantizes one f32 row into q (len cols) and returns its scale —
@@ -100,8 +152,9 @@ func DequantizeRowInt8(q []int8, scale float32, dst []float32) {
 // dotF32 kernel (AVX2/NEON — the primitive MatmulBT uses) runs over the whole row
 // and the per-row scale is applied at write-back. Both the widen and the
 // multiply-accumulate are vectorized; only the O(1)-per-row scale-and-store stays
-// scalar. The scratch is one row wide and allocated once per worker. Parallelized
-// over the N columns.
+// scalar. The scratch is one widened row wide — eight on arm64, where q8Span runs
+// eight columns through dotNEON8x4 at once (q8span_arm64.go) — and pooled across
+// calls on the parallel path. Parallelized over the N columns.
 func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	var ws Workspace
 	MatmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
@@ -109,37 +162,61 @@ func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, 
 
 // MatmulBTQ8Into is MatmulBTQ8 through a Workspace: the SERIAL path (the decode
 // case, M=1 below the parallel threshold — ~168 such calls per token) takes its
-// widened-weight-row scratch from ws.f32Buf(K) and allocates nothing after warm-up,
-// instead of the K-wide make per call the wrapper did. The parallel path still
-// allocates one scratch per worker (noise next to the goroutines — the workers
-// can't share ws's single buffer). Output is byte-identical (audit #14).
+// widened-weight-row scratch from ws.f32Buf and allocates nothing after warm-up,
+// instead of the K-wide make per call the wrapper did. The parallel path takes a
+// per-worker scratch from a sync.Pool (the workers can't share ws's single
+// buffer), so it too stops allocating once warm. Output is byte-identical
+// (audit #14; TestQ8Span8Cols_bitIdenticalToColumnForm for the arm64 span).
 func MatmulBTQ8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	checkMatmulQ8("MatmulBTQ8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	if M*N*K < ws.thr() || N < 2 {
-		q8Span(a, bQ, bScales, dst, M, K, N, 0, N, ws.f32Buf(K))
+		q8Span(a, bQ, bScales, dst, M, K, N, 0, N, ws.f32Buf(q8SpanScratchRows*K))
 		return
 	}
 	ws.parallel(N, func(j0, j1 int) {
-		q8Span(a, bQ, bScales, dst, M, K, N, j0, j1, make([]float32, K))
+		// Per-worker widened-row scratch from a pool rather than a make per call:
+		// the parallel path used to allocate K floats per worker per matmul (~16
+		// MB/token on the 1.5B in int8 mode), and the arm64 span now wants eight
+		// rows of it (task-simd-audit.md S-07).
+		deq := q8SpanScratchGet(q8SpanScratchRows * K)
+		q8Span(a, bQ, bScales, dst, M, K, N, j0, j1, *deq)
+		q8SpanScratchPut(deq)
 	})
 }
 
-// q8Span widens each weight row [j0,j1) to f32 ONCE into deq and reuses it across
-// all M activation rows (column-outer; the O(K) widen dominates the vectorized dot
-// at prefill). Each dst[i,j] is an independent dotF32(arow_i, deq_j)·scale_j.
-func q8Span(a []float32, bQ []int8, bScales, dst []float32, M, K, N, j0, j1 int, deq []float32) {
-	for j := j0; j < j1; j++ {
-		bq := bQ[j*K : j*K+K]
-		// SIMD int8→f32 widen (was a scalar convert loop the compiler does not vectorize; at
-		// M=1 on the LM head it is ~68% of this function — P2). BIT-IDENTICAL by construction:
-		// dequantRowInt8 is a per-element widen×scale with no reassociation, and scale 1.0 is
-		// an exact IEEE-754 multiply, so deq matches float32(bq[k]) byte-for-byte. The row
-		// scale s stays applied AFTER the dot, unchanged — nothing reassociates.
-		dequantRowInt8(deq, bq, 1.0)
-		s := bScales[j]
-		for i := range M {
-			dst[i*N+j] = dotF32(a[i*K:i*K+K], deq) * s
-		}
+// q8SpanScratchPool recycles the parallel path's per-worker widened-row scratch.
+var q8SpanScratchPool sync.Pool
+
+func q8SpanScratchGet(n int) *[]float32 {
+	p, _ := q8SpanScratchPool.Get().(*[]float32)
+	if p == nil || cap(*p) < n {
+		s := make([]float32, n)
+		p = &s
+	}
+	*p = (*p)[:n]
+	return p
+}
+
+func q8SpanScratchPut(p *[]float32) { q8SpanScratchPool.Put(p) }
+
+// q8SpanColumn is the single-column form of q8Span — the definition of MatmulBTQ8's
+// arithmetic, and what every arch ran for every column before the arm64 8-column
+// span (q8span_arm64.go) — kept as the remainder path there and the whole path
+// elsewhere (q8span_other.go). It widens weight row j to f32 ONCE into deq and
+// reuses it across all M activation rows (column-outer; the O(K) widen dominates
+// the vectorized dot at prefill). Each dst[i,j] is an independent
+// dotF32(arow_i, deq_j)·scale_j.
+func q8SpanColumn(a []float32, bQ []int8, bScales, dst []float32, M, K, N, j int, deq []float32) {
+	bq := bQ[j*K : j*K+K]
+	// SIMD int8→f32 widen (was a scalar convert loop the compiler does not vectorize; at
+	// M=1 on the LM head it is ~68% of this function — P2). BIT-IDENTICAL by construction:
+	// dequantRowInt8 is a per-element widen×scale with no reassociation, and scale 1.0 is
+	// an exact IEEE-754 multiply, so deq matches float32(bq[k]) byte-for-byte. The row
+	// scale s stays applied AFTER the dot, unchanged — nothing reassociates.
+	dequantRowInt8(deq, bq, 1.0)
+	s := bScales[j]
+	for i := range M {
+		dst[i*N+j] = dotF32(a[i*K:i*K+K], deq) * s
 	}
 }
 

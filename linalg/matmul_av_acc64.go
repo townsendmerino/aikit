@@ -63,7 +63,15 @@ func MatmulAVAcc64(scores, vals, dst []float32, acc []float64, M, nKeys, hd, hea
 		// Whether 16 is the right block here is a measurement, not an argument, and
 		// it has not been made: see the note in the test file.
 		drow := dst[i*hd : i*hd+hd]
-		d0 := 0
+		// STEP 2 (arm64): whole 32-dim blocks go through the NEON lane-per-dim
+		// kernel (attn_acc64_arm64.s) — 16 f64 lane-pair accumulators in
+		// registers, the V row widened with FCVTL instead of a scalar convert
+		// per element, the score widened once per key. Same adds, same
+		// key-ascending order per dim; the argument below covers it unchanged,
+		// and TestMatmulAVAcc64_neonMatchesGo pins the kernel against this Go
+		// code block for block. Elsewhere avAcc64Blocks returns 0 and the Go
+		// blocks below do everything.
+		d0 := avAcc64Blocks(srow, vals, drow, nKeys, hd, headOff, rowStride)
 		for ; d0+16 <= hd; d0 += 16 {
 			var a0, a1, a2, a3, a4, a5, a6, a7 float64
 			var a8, a9, a10, a11, a12, a13, a14, a15 float64

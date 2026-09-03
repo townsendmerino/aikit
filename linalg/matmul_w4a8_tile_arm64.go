@@ -38,6 +38,13 @@ func MatmulBTW4A8Row4TileInto(ws *Workspace, a []float32, w4Row4 []byte, wScales
 	if K%group != 0 {
 		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4TileInto requires K a multiple of group=%d, got %d", group, K))
 	}
+	// K=0 satisfies K%group==0, so without this it reaches the span with
+	// nGroups=0 and fails as an index-out-of-range on &blk[0] — a panic that
+	// names a kernel internal instead of the caller's shape. Every other bad
+	// shape here reports itself; this one did not.
+	if K < group {
+		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4TileInto requires K >= group=%d, got %d", group, K))
+	}
 	nGroups, bpr := groupsFor(K, group)
 	aq := ws.int8Buf(M * K)
 	aScales := ws.f32Buf(M)

@@ -23,7 +23,13 @@ func MatmulQKAcc64(a, bMat, dst []float32, M, K, N, bOff, rowStride int) {
 	for i := range M {
 		arow := a[i*K : i*K+K]
 		drow := dst[i*N : i*N+N]
-		j := 0
+		// arm64: whole 16-key blocks go through the NEON lane-per-key kernel
+		// (attn_acc64_arm64.s) — one key per f64 lane, 8 accumulator registers,
+		// the same d-ascending chain per key as the 8-chain loop below, which
+		// finishes the N%16 tail. qkAcc64Keys returns 0 elsewhere, and for a K
+		// that is not a multiple of 4. TestMatmulQKAcc64_neonMatchesGo pins the
+		// kernel against this loop key for key.
+		j := qkAcc64Keys(arow, bMat, drow, K, N, bOff, rowStride)
 		for ; j+8 <= N; j += 8 {
 			base := bOff + j*rowStride
 			r0 := bMat[base : base+K]

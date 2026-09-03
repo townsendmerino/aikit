@@ -4,6 +4,7 @@ package linalg
 
 import (
 	"math/rand/v2"
+	"strings"
 	"testing"
 )
 
@@ -144,5 +145,54 @@ func TestMatmulBTW4A8Row4TileInto_zeroActivationRow(t *testing.T) {
 				t.Fatalf("zeroRow=%d col %d: got %v, want a literal 0", zeroRow, j, v)
 			}
 		}
+	}
+}
+
+// TestMatmulBTW4A8Row4_rejectsTooSmallKAtEntry pins the shape error for K < group
+// on both row4 entry points. K=0 satisfies the K%group==0 check that guards them,
+// so before this it reached the span with nGroups=0 and died as an
+// index-out-of-range on &blk[0] — a panic naming a kernel internal rather than
+// the caller's mistake, which is the same distinction
+// TestWrapInt4Row4_rejectsBadShapeAtWrap was written to hold elsewhere.
+//
+// The assertion is on the MESSAGE, not merely that a panic happens, because
+// "it panics either way" is exactly the failure mode: what changed is WHICH
+// panic, and only a message check can tell the two apart.
+func TestMatmulBTW4A8Row4_rejectsTooSmallKAtEntry(t *testing.T) {
+	if !hasDotProd {
+		t.Skip("no FEAT_DotProd on this core; the row4 kernels do not dispatch")
+	}
+	const group, N = 32, 4
+	for _, tc := range []struct {
+		name string
+		call func(ws *Workspace)
+		want string
+	}{
+		{"tile_M4", func(ws *Workspace) {
+			MatmulBTW4A8Row4TileInto(ws, nil, nil, nil, make([]float32, 4*N), 4, 0, N, group)
+		}, "MatmulBTW4A8Row4TileInto requires K >= group=32"},
+		{"row4_M1", func(ws *Workspace) {
+			MatmulBTW4A8Row4Into(ws, nil, nil, nil, make([]float32, N), 1, 0, N, group)
+		}, "MatmulBTW4A8Row4Into requires K >= group=32"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatalf("K=0 did not panic at all")
+				}
+				msg, _ := r.(string)
+				if msg == "" {
+					if e, ok := r.(error); ok {
+						msg = e.Error()
+					}
+				}
+				if !strings.Contains(msg, tc.want) {
+					t.Fatalf("panic names the wrong thing:\n got: %v\nwant it to contain: %s", r, tc.want)
+				}
+			}()
+			var ws Workspace
+			tc.call(&ws)
+		})
 	}
 }

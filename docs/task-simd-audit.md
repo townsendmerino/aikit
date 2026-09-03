@@ -37,6 +37,15 @@
 > leaves ~2.7× on the table that bandwidth does not explain. **Step 0 is now one item: S-02's
 > per-shard timestamp harness.**
 >
+> **UPDATE 2026-09-03, later (Cowork): S-03, S-04 step 2 and S-07 are BUILT and gate-checked,
+> unmeasured.** The NEON activation quantiser (`quant_act_arm64.s`), the NEON f64 ports of both
+> attention kernels (`attn_acc64_arm64.s`) and the eight-column `q8Span` (`q8span_arm64.go`) are
+> in the tree, each bit-identical to what it replaces by construction and by a raw-bit gate run on
+> arm64 under qemu-user with DotProd on — see the annotation on each. The Mac benches are the next
+> step (§5). The S-01 tiles were read back against their claims in the same pass: no defect, at
+> 99% of a four-pipe issue ceiling, and the S-05 fold is the one lever left in them — 1.33×
+> counted; see the S-01 read-back.
+>
 > **Original status: nothing started.** Static read of aikit `v1.31.0-5-gca817a4`
 > (`linalg/`, 16 assembly files, the Go dispatch, the docs and bench records) and goinfer
 > `30b168e` (the callers). Three independent reviewers (arm64 assembly, amd64 assembly, Go
@@ -425,6 +434,50 @@ prefill == speculative verify` guarantees rest on.
 > tile up at M>1 on its own. The amd64 tiles hook `w4a8Span`/`w8a8Span` directly and need no
 > opt-in at all. A dependency bump is the whole adoption.
 
+> **READ-BACK 2026-09-03 (Cowork): the tile kernels audited against their own claims.** Both
+> `dot_w4a8_tile_arm64.s` and `dot_i8_tile_arm64.s` were read instruction by instruction, every
+> raw `WORD` recomputed (SDOT 0x4E809400, SCVTF 0x4E21D800, FADDP 0x6E20D400 — all correct), and
+> the dispatch (`w4a8Row4TileSpan`, `w8a8TileRect`, the amd64 twins) checked for the seams where a
+> tile goes wrong: the M%4 remainder rows, the N%4 / K%16 strips, the `aScale == 0` shortcut, the
+> row-pointer setup, the quad-outer/block-inner loop order. **No defect found.** The W4A8 identity
+> argument holds as written — per output, `MOVI, SDOT, SDOT, SCVTF, FMLA` in ascending group into
+> its own accumulator, the same FADDP tree — and the W8A8 one is exact integer arithmetic. Two
+> cosmetic notes only: `nGroups == 0` (K = 0) reaches `&blk[0]` on an empty slice and fails as an
+> index panic rather than a shape error; and the "scripted WORD encodings" the header mentions have
+> no script in the tree, so the next kernel in this family re-derives them (the ones below were
+> checked by assembling for arm64 and running the `==` gates under qemu-user with DotProd on, which
+> is the check that matters).
+>
+> **Where the headroom is, counted against the measurement.** The W4A8 tile issues 96 SIMD µops per
+> 32-k group — 4 × {AND, USHR, SUB, SUB} for the unpack and 16 × {MOVI, SDOT, SDOT, SCVTF, FMLA} for
+> the outputs — and the measured 69.5 GMAC/s is 21.5 MACs/cycle at 3.23 GHz, i.e. **23.8 cycles per
+> group against 24 counted: the kernel is at 99% of a four-pipe issue ceiling, and `MOVI #0` is NOT
+> a rename-time zero idiom** (if it were, 80 µops would have measured 25.6 MACs/cycle). So the only
+> lever left inside the kernel is µops, and S-05 is exactly that lever, larger here than in the M=1
+> kernel it was written for: fold the −8 centering into the SDOT accumulator's initial value. Per
+> (activation row, group) precompute `corr = −8·laneSum(act)` once — two SDOTs of the activation
+> halves against a vector of −8, K/32 × 16 bytes per row, shared by every quad — and in the tile
+> replace `MOVI #0` with a load of `corr` and drop both `SUB` from the unpack. The int32 that
+> reaches `SCVTF` is bit-for-bit today's (`Σ(nib−8)·act = Σ nib·act − 8·Σ act`, exact), so the f32
+> fold and the identity gates are untouched. Count: **96 → 72 SIMD µops per group, 28 loads at
+> ~1.6/cycle against 3 ports — 1.33× on the tile (69.5 → ~92 GMAC/s counted)**, and the same change
+> takes the M=1 kernel from 9 to 6 µops per row-group. Pre-registered rule: `TestW4A8TileVsCanonicalAB`'s
+> shape, ship at ≥ 1.2× single-core with every `==` gate green, park below 1.1×. Second, smaller:
+> the four `LD1R` + `ADD` scale broadcasts per group can be one `LD1 .4S` + `FMLA` by element
+> (scales are already interleaved `[s_r0 s_r1 s_r2 s_r3]`), off the load/ALU side — noise at four
+> pipes, worth taking while the loop is open. Third, for verify widths: M=7 runs 4 rows through the
+> tile and 3 through the single-activation kernel at 0.28 µops/MAC against the tile's 0.19; a 3×4
+> remainder tile (12 accumulators, fits) is ~1.1× on the M=7 matmul term and no more — file, take
+> only if verify is measured compute-bound at that width. Last, large-M: the activation panel is
+> re-streamed per quad from L2 (4.6 MB at K=8960, M=512); an M-block outer loop is the textbook
+> GEMM move and probably explains most of the 2.88× → 2.42–2.62× gap on the parallel dispatch, but
+> measure the panel traffic before building it.
+>
+> **W8A8 tile:** 8 loads + 16 SDOT per 16-byte chunk, measured 163.5 of a 203.6 GMAC/s SDOT-issue
+> ceiling (80%). Nothing structural to change — the accumulators clear latency, the loads clear the
+> ports. A two-chunk unroll (V24–V31 are free in the loop) halves the loop and address-increment
+> overhead per SDOT and is the one cheap experiment; expect ≤ 1.1× and do not chase further.
+
 - **Where:** `quant.go:585-597` (`w4a8Span`), `quant.go:280-330` (`w8a8Span`);
   `weightmat_splithalf_amd64.go:67-73` and `weightmat_row4_arm64.go:48-54` route every M≠1 call
   to the canonical span; goinfer `decoder/weightmat.go` ("int4 weights run the W4A8 kernel at
@@ -514,6 +567,19 @@ prefill == speculative verify` guarantees rest on.
 
 ### S-03 · Perf-minor (2–6% of a token) — the activation quantiser is scalar, serial, and run seven times per layer where four would do
 
+> **DONE 2026-09-03 (Cowork) — the NEON quantiser, bit-identical, gate-checked.** `quant_act_arm64.s`:
+> `FABS`/`FMAXNM` into four accumulators + `FMAXNMV` for the abs/max, then `FMUL` by the broadcast
+> inv, `FCVTAS` (ties-away, math.Round's rule on the exact f64 widening of the f32 product),
+> `SMIN`/`SMAX` ±127, `SQXTN`/`SQXTN2` narrow, one 16-byte store — 22 SIMD µops per 16 elements.
+> `quantizeRowInt8Core` now dispatches through `maxAbsF32` / `quantizeRowScaled` (arm64 NEON, scalar
+> elsewhere) with the scale arithmetic unchanged between them; the original body is kept verbatim as
+> `quantizeRowInt8CoreScalar`, the oracle. `TestQuantizeRowInt8_bitIdenticalToScalar` (24 lengths ×
+> 6 distributions, scale bits and every code) and `TestQuantizeRowInt8_corners` (NaN in body/tail/all,
+> ±Inf, −0.0, denormals, exact .5 ties, saturating magnitudes, all-zero) pass on arm64 under
+> qemu-user and natively on amd64. Not measured yet: `BenchmarkQuantizeRowInt8` (dispatched vs
+> scalar, K=1536/8960) is in the tree for the Mac. The redundant three quantisations per layer are
+> still S-02's batch entry. amd64 stays scalar (the `VMULPS` + `x+copysign(0.5,x)` form is open).
+
 - **Where:** `quant.go:43-71` (`quantizeRowInt8Core`: an abs/max pass, then
   `int8(math.Round(float64(v*inv)))` with clamps), called on the calling goroutine before every
   fan-out from `MatmulBTW4A8Into:568-570`, `MatmulBTW4A8Row4Into` (`matmul_w4a8_row4_arm64.go:109`),
@@ -568,8 +634,28 @@ prefill == speculative verify` guarantees rest on.
 > The win transfers — it is pure Go — but is roughly 0.6× of arm64's, so the register pressure it
 > relieves matters more on NEON. Both arches clear the ≥1.3× ship gate.
 >
-> **Still open in S-04:** the NEON AV port (~3× bound), the NEON QK port (~1.7–2.1×), and the
-> GQA-group V-widen sharing. The block size 16 is a guess the audit named, not a measured
+> **STEP 2 DONE 2026-09-03 (Cowork) — both NEON ports, bit-identical, gate-checked.**
+> `attn_acc64_arm64.s`: `avAcc64NEON32` (32 dims per call, 16 f64 lane-pair accumulators, the score
+> widened once per key with `FCVTSD`, the V row widened with `FCVTL`/`FCVTL2`, `FMLA` by element,
+> `FCVTN` narrow at the end — ~1.1 SIMD µops/MAC against the Go block's ~3 instructions/MAC) and
+> `qkAcc64NEON16` (16 keys per block, lane = key, `ZIP1`/`ZIP2` to pair keys per dim, four
+> `FMLA`-by-element per d-quad in ascending d; ~1.3 FP µops/MAC against the 8-chain loop's ~2.1 and
+> its 8-way latency bound). `MatmulAVAcc64` takes whole 32-dim blocks through the kernel and the
+> Go 16-block/tail code finishes hd%32; `MatmulQKAcc64` takes N/16 blocks and the 8-chain loop
+> finishes N%16 (K%4≠0 stays Go). Identity checked three ways: the existing
+> `TestMatmulAVAcc64_exactMatchesStrided` / `TestMatmulQKAcc64_exactMatchesStrided` against the
+> independent strided kernel (both green, including nKeys=8192); `TestAVAcc64NEON32_matchesGo` /
+> `TestQKAcc64NEON16_matchesGo` calling the kernels directly on adversarial data (60 binades,
+> random signs, raw-bit compare) over every residue; and `TestAttnAcc64NEON_mutationDetected`, which
+> proves the oracle can fail. Counted: AV ~2.8× over the step-1 Go blocks (issue-bound at ~3.8
+> MACs/cycle: 2 loads, 1 scalar widen, 16 converts, 16 FMLAs per key per 32 dims), QK ~1.7–2× over
+> the 8-chain loop; both unmeasured until the Mac runs `BenchmarkMatmulAVAcc64` and the QK bench,
+> depth 130/2048/8192, order-alternated, per this section's rule.
+>
+> **Still open in S-04:** the GQA-group V-widen sharing (a multi-query-row AV kernel: at M=2 with
+> 24-dim blocks the register budget closes — 2×12 accumulators + 6 V + 2 score — and halves the
+> convert cost; needs the goinfer caller to hand a KV group's query rows to one call), and the
+> amd64 ports. The block size 16 is a guess the audit named, not a measured
 > optimum — hd/16 = 8 passes over V, where the assembly form's 24 registers would give 3.
 
 - **Where:** `matmul_qk_acc64.go:21-67` (8 keys as 8 named f64 accumulators; per d-step the
@@ -668,6 +754,21 @@ prefill == speculative verify` guarantees rest on.
 - **Confidence:** high on mechanism; medium on magnitude until the stub runs.
 
 ### S-07 · Perf-major for weight-only `int8` mode — `dotNEON4` has one FMLA chain: 1 MAC per cycle
+
+> **DONE 2026-09-03 (Cowork) — the eight-column span, bit-identical, gate-checked.**
+> `q8span_arm64.go`: `q8Span` widens eight weight rows into an 8×K scratch (`dequantRowInt8`, as
+> before) and runs each activation row through `dot8ColsInto` → `dotNEON8x4`, whose per-row
+> accumulator receives exactly `dotNEON4`'s lane sequence and whose fold is the same left-to-right
+> `s0+s1+s2+s3`; the K%4 tail is the same `s += a[k]*b[k]` after the fold; the row scale multiplies
+> last. Fewer than eight remaining columns, and K<4, take `q8SpanColumn`, which is the old body and
+> the definition. The parallel path's per-worker `make([]float32, K)` is gone on every arch —
+> `q8SpanScratchPool` (a `sync.Pool`) hands out the scratch, and
+> `TestMatmulBTQ8Into_parallelScratchPooled` bounds allocations per call at workers+3.
+> `TestQ8Span8Cols_bitIdenticalToColumnForm` (K%4 and K%16 tails, N<8, N%8, split column ranges,
+> serial and forced-parallel `MatmulBTQ8Into`) and the older `TestQ8Span_bitIdenticalToScalarWiden`
+> both pass on arm64 under qemu-user; amd64 keeps the column form (`dot8ColsInto` reduces
+> differently there, so the identity argument does not transfer). `BenchmarkMatmulBTQ8_span` is in
+> the tree for the Mac.
 
 - **Where:** `dot_arm64.s:36-41`, `quant.go:130-144` (`q8Span`: per weight row `dequantRowInt8`
   then `dotF32` per activation row).
@@ -824,10 +925,10 @@ items; G4/G5 (f32 silu/gelu) were parity-gated; G10 (RoPE table) bit-identical. 
 |---|---|---|---|---|
 | 0 | S-09.1 re-run the A/B correctly ✅ **DONE — 1.70×, the old result refuted**; S-08.1 STREAM the 3700X ✅ **DONE**; the per-shard timestamp harness for S-02 — still open | decides where the decode gap is | none | none |
 | 1 | S-01 W4A8 M-invariance gate ✅ **DONE**, the 4×4 tile on row4 (arm64) ✅ **DONE 2026-09-03, 2.88×**; the unpack-once span (amd64) still open | CPU prefill 2–2.7× at the kernel; the int4/int8int8 inversion; verify rounds cheaper on every spec path | bit-identical | the gate |
-| 2 | S-02 remedy that step 0 selects (dynamic chunking and/or `MatmulBTW4A8Batch`) + S-03 NEON quantiser | decode 1.15–1.7× on the fan-out term; −3 barriers, −3 quantisations per layer | bit-identical | step 0 |
-| 3 | S-04 AV pure-Go accumulator blocks → NEON AV → NEON QK | ~1.9× token at depth 8k; ~1.1× at 128 | bit-identical (exact products) | none |
+| 2 | S-02 remedy that step 0 selects (dynamic chunking and/or `MatmulBTW4A8Batch`) + ~~S-03 NEON quantiser~~ (**S-03 built 2026-09-03, unmeasured**) | decode 1.15–1.7× on the fan-out term; −3 barriers, −3 quantisations per layer | bit-identical | step 0 |
+| 3 | ~~S-04 AV pure-Go accumulator blocks → NEON AV → NEON QK~~ (**all three built 2026-09-03; the NEON ports unmeasured**) | ~1.9× token at depth 8k; ~1.1× at 128 | bit-identical (exact products) | none |
 | 4 | S-06 step 1 (parallelise the elementwise loops) | prefill 7–25% at the 3700X rate, less on M1 | bit-identical | the stub measurement |
-| 5 | S-05 centering fold + the scale-vector load; S-07 `q8Span` 8-column form | single-core kernel up to 1.29×; weight-only int8 ~4× per row | bit-identical | S-02 (to be visible) |
+| 5 | S-05 centering fold + the scale-vector load — **now in BOTH W4A8 kernels, 1.33× counted on the tile (see the S-01 read-back)**; ~~S-07 `q8Span` 8-column form~~ (**built 2026-09-03, unmeasured**) | single-core kernel up to 1.29×; weight-only int8 ~4× per row | bit-identical | S-02 (to be visible) |
 | 6 | S-06 step 2 (f32 transcendentals), S-08.3 VNNI redesign, S-08.2 GOAMD64 pin | parity-class / hardware-gated | not bit-identical / n/a | product decision / a VNNI host |
 | 7 | I8MM detection + `SMMLA` GEMM | 2× on step 1's prefill kernel | bit-identity needs its own argument (different lane grouping) | an M2+/Graviton3 box |
 

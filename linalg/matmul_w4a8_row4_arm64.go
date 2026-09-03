@@ -104,6 +104,11 @@ func MatmulBTW4A8Row4Into(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []
 	if K%group != 0 {
 		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires K a multiple of group=%d, got %d", group, K))
 	}
+	// Same K=0 hole as MatmulBTW4A8Row4TileInto: K%group==0 admits it, and the
+	// span then indexes an empty block.
+	if K < group {
+		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires K >= group=%d, got %d", group, K))
+	}
 	nGroups, bpr := groupsFor(K, group)
 	aq := ws.int8Buf(K)
 	aScale := quantizeRowInt8(a[:K], aq)
