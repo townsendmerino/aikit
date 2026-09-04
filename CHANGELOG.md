@@ -9,6 +9,94 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.34.0] — 2026-09-03
+
+### Added
+
+**`MatmulBTW4A8Batch` — several int4 matmuls sharing one activation, under one fork/join.** The
+W8A8 path has had `MatmulBTW8A8Batch` for a while; this is its int4 counterpart, for the same two
+fusions a transformer layer offers: q‖k‖v and gate‖up. The activation is quantized once and the
+goroutine fan-out is amortized across every op's columns (the concatenated `[0, ΣN)` column space
+is split across workers) instead of one quantize and one barrier per matmul. Weights stay in
+place, so a caller aliasing int4 weights zero-copy gets the dispatch reduction with no concat
+copy. Numerically identical to calling `MatmulBTW4A8Into` once per op.
+
+**It was measured before it was written, and the measurement changed the design twice.**
+
+*First*, which remedy. `docs/task-simd-audit.md` §S-02 names two — this batch form and dynamic
+chunking (workers pulling blocks from an atomic counter, which needs no API at all) — and says to
+find out which dominates before building either. Per-shard timestamps across one fan-out show a
+**start spread of 92.6 µs against a median shard duration of 57.7 µs**, with durations uniform to
+1.07×: goroutine-wake stagger, not P/E-core shard skew, which would look the opposite. Putting
+more work under one barrier therefore amortizes it, and does — at six workers, GB/s by matrices
+per fork/join: 1 → 58.8, 2 → 68.8, 3 → 74.0, 8 → 87.4. The control that makes those numbers
+readable is the single-worker sweep, **flat to within 1%**, because with one worker there is no
+stagger to amortize; without it the six-worker climb could have been cache residency. Dynamic
+chunking, measured in the same harness, reaches 1.135× — about half of what three matrices per
+barrier gives, so it is complementary rather than a substitute, and still worth taking separately.
+
+*Second*, the signature. Mirroring `W8A8Op` exactly — canonical packed weights only — would have
+been a **regression** for the caller this exists to serve: on arm64 an int4 tensor that has been
+through `RepackInt4Row4` runs the split-half 4-row kernel at ~42 GB/s against the canonical
+kernel's ~24, so a canonical-only batch would have traded a 1.75× kernel loss for a ~1.2× fan-out
+gain. `W4A8Op` therefore carries optional `Row4`/`Row4Scales` and the batch keeps the fast layout.
+Column edges that are not quad-aligned fall back to canonical, which is a dispatch choice and
+never a numeric one — the two layouts are bit-identical for the same logical weights.
+
+Measured against what actually ships (N separate `MatmulBTW4A8Row4Into` calls, not the canonical
+kernel, which would have credited the batch with a layout win it did not earn): **q‖k‖v 1.118×,
+gate‖up 1.209×** at six workers on an M1 Pro.
+
+**What this release does NOT establish is the end-to-end decode win**, and that is stated plainly
+because the number is not ours to produce. S-02's ship gate is the paired 1.5B decode cell at
+≥1.15× (park below 1.05×), which lives in the consumer. The per-layer saving projects to roughly
+1.5 ms of a ~25 ms token — about **1.06×**, between park and ship. This is tagged so that
+projection can be replaced with a measurement against a real version rather than a pseudo-version;
+if it lands short, the honest follow-up is dynamic chunking on top of it, not a looser reading of
+the gate.
+
+Bit-identity is inherited rather than re-argued: the batch span hands each op's column slice to
+the same `w4a8Span` the single-matrix entry point uses, so amd64's M≥4 row tiling keeps working on
+the batched shape instead of being bypassed (verified by canary, not assumed). Gates cover row4
+and canonical ops, M>1 where row4 declines, an `N%4≠0` op inside a batch whose others qualify, a
+ragged K, the serial fast path, a forced fan-out, and width-inertness across six worker counts.
+
+
+### Release gates
+
+`vulncheck`, run on `nobara` (linux) at `daeeff9` — the prep commit above it changes only
+`CHANGELOG.md`:
+
+```
+STATEMENT: no reachable vulnerabilities in 15/15 modules at daeeff9 (2026-09-04T04:28:15Z)
+```
+
+`perfgate`, `nobara` (Ryzen 7 3700X, linux/amd64, load 0.00), working tree vs v1.33.0 interleaved:
+
+```
+VERDICT: PASS — no regression vs v1.33.0 above each shape's floor — 5/10 shapes resolve the 5.0% class
+  BLIND on 5 shape(s): K2048_N2048(±11.3%) K4096_N4096(±8.3%) K1536_N8960(±11.3%)
+                       K2048_N2048(±13.6%) K3584_N4096(±29.0%)
+```
+
+The v1.33.0 notes recorded that perfgate had silently measured against the wrong baseline because
+the benchmark box had never fetched the new tag. `git fetch --tags` was run on that box first this
+time, and the header line confirms the intended reference (`daeeff9 vs v1.33.0`) rather than
+leaving it to be inferred from a green.
+
+`releasegate`:
+
+```
+VERDICT: PASS — v1.34.0 — 4/4 checks passed
+```
+
+Note what perfgate does and does not cover here. Its instrument is the W8A8 span and GEMV
+benchmarks at M=1, where `MatmulBTW4A8Batch` is not on the path at all — so this green is evidence
+that the new API disturbed nothing, NOT evidence about the API's own speed. The numbers for that
+are in the Added section above, measured separately on an M1 Pro, and the end-to-end decode figure
+remains unmeasured by design.
+
+
 ## [1.33.0] — 2026-09-03
 
 ### Changed
@@ -2829,6 +2917,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.31.0...HEAD
+[1.34.0]: https://github.com/townsendmerino/aikit/compare/v1.33.0...v1.34.0
 [1.33.0]: https://github.com/townsendmerino/aikit/compare/v1.32.0...v1.33.0
 [1.32.0]: https://github.com/townsendmerino/aikit/compare/v1.31.0...v1.32.0
 [1.31.0]: https://github.com/townsendmerino/aikit/compare/v1.30.0...v1.31.0
