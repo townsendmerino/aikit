@@ -81,3 +81,11 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 // RepackInt4Row4's own gate never covered, since before WrapInt4Row4 existed
 // the only way q4Row4 got populated was RepackInt4Row4 itself.
 func row4Usable() bool { return hasDotProd }
+
+// w4a8BatchRow4Span is w4a8Row4Span reached from the portable batch span. It
+// exists only so MatmulBTW4A8Batch can name the row4 kernel from quant.go,
+// which is compiled on every architecture; the non-arm64 twin is unreachable
+// behind row4Usable().
+func w4a8BatchRow4Span(aq []int8, aScale float32, row4 []byte, row4Scales, dst []float32, nGroups, bpr, q0, q1 int) {
+	w4a8Row4Span(aq, aScale, row4, row4Scales, dst, nGroups, bpr, q0, q1)
+}

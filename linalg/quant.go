@@ -723,6 +723,129 @@ func w4a8SpanRows(aq []int8, aScales []float32, w4 []byte, wScales, dst []float3
 	}
 }
 
+// W4A8Op is one weight matrix in a batched W4A8 matmul. W4 is the [N,K] packed
+// int4 weights in QuantizeGroupsInt4's layout (used in place — NOT copied),
+// Scales the per-group f32 scales, Dst the [M,N] output, N the column count.
+//
+// Row4/Row4Scales are OPTIONAL and are the reason this struct is not simply
+// W8A8Op with different field names. On arm64 an int4 tensor that has been
+// through RepackInt4Row4/WrapInt4Row4 runs the split-half 4-row kernel, which
+// measures ~42 GB/s against the canonical kernel's ~24. A batch form that
+// accepted only the canonical layout would hand a row4-resident caller a 1.75×
+// KERNEL regression in exchange for a ~1.26× fan-out gain — a net loss, and
+// precisely for the decode path this exists to speed up. Supply them when the
+// tensor has them and the batch keeps using them; leave them nil and the op runs
+// canonical. W4/Scales are required either way, because a column sub-range that
+// is not quad-aligned falls back to them (the two layouts are bit-identical, so
+// the fallback is a dispatch detail, not a numeric one).
+type W4A8Op struct {
+	W4         []byte
+	Scales     []float32
+	Row4       []byte
+	Row4Scales []float32
+	Dst        []float32
+	N          int
+}
+
+// MatmulBTW4A8Batch runs several W4A8 matmuls that share the SAME activation
+// a[M,K] — fused q/k/v or gate/up — in ONE parallel region: the activation is
+// quantized once and the goroutine fork/join is amortized across every op's
+// columns (the concatenated [0, ΣN) column space is split across workers),
+// instead of one quantize + one fork/join per matmul. The weights stay in place,
+// so a caller that aliases int4 weights zero-copy gets the dispatch reduction
+// with no concat copy. Mirrors MatmulBTW8A8Batch.
+//
+// group is one scalar for the whole batch, matching MatmulBTW4A8Into's own
+// signature: q/k/v share a group size within a layer, and so do gate/up.
+//
+// WHY THIS EXISTS, measured before it was written (docs/task-simd-audit.md
+// S-02's "measure first"). Per-shard timestamps across one fan-out show a START
+// spread of 92.6 µs against a median shard duration of 57.7 µs, with durations
+// uniform to 1.07× — goroutine-wake stagger, not P/E-core shard skew. Putting
+// more work under one barrier therefore amortizes the stagger, and it does:
+// 1 matrix per barrier 58.8 GB/s, 2 (gate‖up) 68.8, 3 (q‖k‖v) 74.0, 8 87.4, at
+// six workers. The control that makes those numbers mean something is the
+// single-worker row, which is FLAT at ~25 GB/s across the same sweep — with one
+// worker there is no stagger to amortize, so the effect is the barrier and not
+// cache residency.
+//
+// Numerically identical to calling MatmulBTW4A8Into once per op.
+func MatmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []W4A8Op) {
+	if len(ops) == 0 {
+		return
+	}
+	// Validate every op BEFORE the fan-out: the span indexes op slices inside
+	// ws.parallel goroutines, where an out-of-range access is an unrecoverable
+	// panic. Checking here makes it recoverable and caller-side, exactly as the
+	// non-batch path does.
+	totalN := 0
+	for _, op := range ops {
+		checkMatmulW4A8("MatmulBTW4A8Batch", len(a), len(op.W4), len(op.Scales), len(op.Dst), M, K, op.N, group)
+		checkGroupMatmul("MatmulBTW4A8Batch", len(a), op.W4, op.Scales, len(op.Dst), M, K, op.N, group)
+		totalN += op.N
+	}
+	nGroups, bpr := groupsFor(K, group)
+	aq := ws.int8Buf(M * K)
+	aScales := ws.f32Buf(M)
+	for i := range M {
+		aScales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
+	}
+	if M*totalN*K < ws.thr() || totalN < 2 {
+		w4a8BatchSpan(aq, aScales, ops, M, K, group, nGroups, bpr, 0, totalN)
+		return
+	}
+	ws.parallel(totalN, func(g0, g1 int) {
+		w4a8BatchSpan(aq, aScales, ops, M, K, group, nGroups, bpr, g0, g1)
+	})
+}
+
+// w4a8BatchSpan computes the [g0,g1) slice of the ops' concatenated column
+// space, mapping each global column back to its op and local column. Named (not
+// a closure) so the serial caller pays no allocation.
+//
+// Each op's slice is handed to w4a8Span unchanged, which is what keeps this
+// bit-identical for free and keeps amd64's M>=4 row tiling (w4a8TileRows, called
+// inside w4a8Span) working on the batched shape rather than being bypassed.
+func w4a8BatchSpan(aq []int8, aScales []float32, ops []W4A8Op, M, K, group, nGroups, bpr, g0, g1 int) {
+	base := 0
+	for _, op := range ops {
+		lo, hi := max(g0, base), min(g1, base+op.N)
+		if lo < hi {
+			w4a8BatchOp(aq, aScales, op, M, K, group, nGroups, bpr, lo-base, hi-base)
+		}
+		base += op.N
+	}
+}
+
+// w4a8BatchOp computes one op's local column range [j0,j1), preferring the row4
+// kernel over the quad-aligned interior when the op carries that layout.
+//
+// The edges are the only fiddly part and they are rarely non-empty: fan-out
+// shard boundaries are multiples of 8 columns and real N values are multiples of
+// 4, so the interior usually covers everything. When it does not, the unaligned
+// columns run canonical — legitimate because the two layouts are bit-identical
+// for the same logical weights, which is what TestDotW4A8SplitHalf4Row_bitIdenticalToCanonical
+// pins, so this is a dispatch choice and never a numeric one.
+func w4a8BatchOp(aq []int8, aScales []float32, op W4A8Op, M, K, group, nGroups, bpr, j0, j1 int) {
+	canonical := func(c0, c1 int) {
+		if c0 < c1 {
+			w4a8Span(aq, aScales, op.W4, op.Scales, op.Dst, M, K, op.N, group, nGroups, bpr, c0, c1)
+		}
+	}
+	if op.Row4 == nil || !row4Usable() || M != 1 || group != 32 || op.N%4 != 0 || K%group != 0 {
+		canonical(j0, j1)
+		return
+	}
+	q0, q1 := (j0+3)/4, j1/4 // the quad-aligned interior of [j0,j1)
+	if q0 >= q1 {
+		canonical(j0, j1)
+		return
+	}
+	canonical(j0, q0*4)
+	w4a8BatchRow4Span(aq, aScales[0], op.Row4, op.Row4Scales, op.Dst, nGroups, bpr, q0, q1)
+	canonical(q1*4, j1)
+}
+
 // MatmulBTQ4 computes dst[M,N] = a[M,K] · bᵀ where b is the [N,K] matrix stored
 // as group-wise int4 (bPacked nibbles + bScales per group; see
 // QuantizeGroupsInt4). Each weight row is dequantized ONCE into a full K-wide

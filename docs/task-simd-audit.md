@@ -546,6 +546,74 @@ prefill == speculative verify` guarantees rest on.
   **measured negative** (`perf-dead-ends.md` §8.1; goinfer Phase 3b: pool 64.1 vs spawn 67.6
   tok/s) and is not re-proposed; that negative does not cover shard skew, which the same entry
   leaves open ("dynamic work-stealing over column chunks").
+> **MEASURED 2026-09-03 — step 0's last item is closed, hypothesis (a) wins, and BOTH remedies
+> were compared before either was built.** `TestW4A8ForkJoinShardTiming` and
+> `TestW4A8WorkPerBarrier` (`w4a8_forkjoin_probe_arm64_test.go`), M1 Pro, row4 kernel, K=1536
+> N=8960, 8 distinct 8.2 MB matrices so nothing is cache-resident.
+>
+> **The mechanism is goroutine-wake stagger, not P/E-core shard skew.** Per-shard timestamps
+> across one fan-out:
+>
+> | workers | start spread (max−min) | median shard duration | duration spread |
+> |--:|--:|--:|--:|
+> | 6 | **92.6 µs** | 57.7 µs | **1.07×** |
+> | 8 | **98.3 µs** | 48.5 µs | 1.39× |
+>
+> The spread in START times is 1.6–2× a shard's entire duration while the durations themselves are
+> nearly uniform. That is signature (a). Signature (b) would be the opposite — bunched starts,
+> bimodal durations — and it is not what the machine shows. So the last worker spends more time
+> waiting to be woken than it spends working, which is why the six-worker aggregate has been
+> sitting at ~26–35% of six cores.
+>
+> **Work per barrier, which is a direct simulation of `MatmulBTW4A8Batch` rather than an analogy:**
+>
+> | matrices per fork/join | 1 worker | 6 workers | 8 workers |
+> |--:|--:|--:|--:|
+> | 1 (today) | 24.9 | 58.8 | 58.2 |
+> | 2 (gate‖up) | 25.1 | 68.8 | 71.5 |
+> | 3 (q‖k‖v) | 25.1 | 74.0 | 74.3 |
+> | 8 | 25.1 | **87.4** | 75.7 |
+>
+> GB/s. **The single-worker column is the control that makes this readable: it is FLAT to within
+> 1%** across the whole sweep, because with one worker there is no stagger to amortize. Without
+> that row the six-worker climb could have been cache residency; with it, the effect is the
+> barrier. Against this section's own pre-registered reading — "if GB/s climbs toward 100+ the
+> barrier is the limiter, if it stays ~60 the memory system is" — it climbs.
+>
+> **Remedy (1), dynamic chunking, does NOT subsume remedy (2).** Measured in the same harness,
+> workers taking quad blocks from an atomic counter, at ONE matrix per barrier (i.e. no API change
+> and no batched caller): chunk=8 → 59.6 GB/s (1.013×), **chunk=32 → 66.8 (1.135×)**, chunk=128 →
+> 64.4 (1.096×). So it captures roughly half of what three matrices per barrier gives (1.258×) and
+> a third of what eight gives. Worth having — it is free and needs no caller cooperation — but it
+> is complementary to the batch form, not a substitute for it. That question is why this section
+> says measure first, and the answer would not have been guessable.
+>
+> **`MatmulBTW4A8Batch` therefore built, and measured against what actually ships** — N separate
+> `MatmulBTW4A8Row4Into` calls, NOT the canonical kernel, because comparing against canonical would
+> credit the batch with a layout win it did not earn:
+>
+> | workers | fusion | per-op (row4) | batch | |
+> |--:|---|--:|--:|--:|
+> | 6 | q‖k‖v | 56.1 µs | 50.2 µs | **1.118×** |
+> | 6 | gate‖up | 287.3 µs | 237.7 µs | **1.209×** |
+> | 8 | q‖k‖v | 56.1 µs | 49.3 µs | 1.137× |
+> | 8 | gate‖up | 264.3 µs | 225.3 µs | 1.173× |
+>
+> **A design consequence worth recording, because the obvious API would have been a regression.**
+> The natural signature — mirror `W8A8Op`, carry canonical `W4`/`Scales` only — would have taken
+> goinfer's decode OFF the row4 kernel (~42 GB/s) and onto canonical (~24), a 1.75× kernel loss
+> against a ~1.2× fan-out gain. Net worse, for exactly the caller the batch exists to serve. So
+> `W4A8Op` carries optional `Row4`/`Row4Scales` and the span keeps the fast layout; unaligned
+> column edges fall to canonical, which is a dispatch choice and never a numeric one because the
+> two layouts are bit-identical.
+>
+> **What this does NOT establish: the end-to-end decode cell**, which is this section's actual
+> ship gate (≥1.15×, park below 1.05×) and is goinfer's to measure. Arithmetically the per-layer
+> saving is ~6 µs on q‖k‖v plus ~49 µs on gate‖up, so ~55 µs × 28 layers ≈ 1.5 ms of a ~25 ms
+> token ≈ **1.06×** — which lands BETWEEN park and ship. That projection is a projection; the
+> paired `bench_peer` cell decides, and if it lands short the honest move is dynamic chunking on
+> top (independent, free) rather than reading the gate loosely.
+
 - **Measure first (cheap, decisive):** per-shard `(start, end)` timestamps in
   `TestW4A8Item3ParallelAggregate` (`w4a8_item3_parallel_arm64_test.go:99-112`) — a stagger
   pattern is (a), a bimodal duration is (b); then the same harness with 8 matrices per fork/join
@@ -923,7 +991,7 @@ items; G4/G5 (f32 silu/gelu) were parity-gated; G10 (RoPE table) bit-identical. 
 
 | step | item | prize (counted, not measured) | numerics | prerequisite |
 |---|---|---|---|---|
-| 0 | S-09.1 re-run the A/B correctly ✅ **DONE — 1.70×, the old result refuted**; S-08.1 STREAM the 3700X ✅ **DONE**; the per-shard timestamp harness for S-02 — still open | decides where the decode gap is | none | none |
+| 0 | ✅ **STEP 0 COMPLETE 2026-09-03.** S-09.1 re-run (1.70×, old result refuted); S-08.1 STREAM the 3700X; and the per-shard timestamp harness — wake stagger confirmed, dynamic chunking measured against batching | decided where the decode gap is: the barrier | none | none |
 | 1 | S-01 W4A8 M-invariance gate ✅ **DONE**, the 4×4 tile on row4 (arm64) ✅ **DONE 2026-09-03, 2.88×**; the unpack-once span (amd64) still open | CPU prefill 2–2.7× at the kernel; the int4/int8int8 inversion; verify rounds cheaper on every spec path | bit-identical | the gate |
 | 2 | S-02 remedy that step 0 selects (dynamic chunking and/or `MatmulBTW4A8Batch`) + ~~S-03 NEON quantiser~~ (**S-03 built 2026-09-03, unmeasured**) | decode 1.15–1.7× on the fan-out term; −3 barriers, −3 quantisations per layer | bit-identical | step 0 |
 | 3 | ~~S-04 AV pure-Go accumulator blocks → NEON AV → NEON QK~~ (**all three built 2026-09-03; the NEON ports unmeasured**) | ~1.9× token at depth 8k; ~1.1× at 128 | bit-identical (exact products) | none |
