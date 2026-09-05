@@ -380,6 +380,56 @@ prefill == speculative verify` guarantees rest on.
 > one ULP fails `TestMatmulBTW4A8_MConsistent` / `TestMatmulBTW8A8_MConsistent` at every shape,
 > including the N-tail and ragged-K ones, so both remainder strips are genuinely exercised.
 >
+> **SIZED AT LARGE M, AND STEP 2 (M-BLOCKING) IS DEAD — 2026-09-05.** The read-back left open
+> whether the activation panel is re-streamed from L2 per quad at large M, which is the only thing
+> that would justify blocking the outer loop. `TestW4A8TilePanelTraffic` answers it with per-MAC
+> cost against M, which is the discriminator (throughput against M is not — it rises for unrelated
+> reasons). M1 Pro, `MatmulBTW4A8Row4TileInto`, best of 3:
+>
+> | shape | workers | M=8 | M=64 | M=128 | M=512 | panel at M=512 |
+> |---|--:|--:|--:|--:|--:|--:|
+> | K1536 N8960 | 1 | 14.01 | 13.83 | 13.79 | **13.75** | 0.75 MB |
+> | K8960 N1536 | 1 | 13.80 | 13.62 | 13.56 | **13.63** | 4.38 MB |
+>
+> picoseconds per MAC. **Per-MAC cost does not rise with M — it falls slightly and flattens**, even
+> at a 4.38 MB panel on the wide-K shape. So the panel is not being re-streamed at any cost worth
+> paying, and M-blocking has nothing to collect. Dead, not deferred.
+>
+> **Throughput at large M, for the record:** single core 72.7 GMAC/s (K1536 N8960) and 73.4
+> (K8960 N1536) at M=512 — consistent with the 69.5 measured at M=4. Six workers reach **394.7 and
+> 380.3 GMAC/s, i.e. 5.4× and 5.2× the single core.** Prefill fan-out scales far better than
+> decode's ~1.7×, which is S-02 seen from the other side: at M=512 each shard carries enough work
+> that the ~92 µs wake stagger is amortised to nothing.
+>
+> **END-TO-END, AND THE OLD PEER ROW IS NOW SUPERSEDED BY A MEASUREMENT RATHER THAN A PREDICTION.**
+> Both arms run on one box in one session against the same Ollama 0.32.5, 1.5B q4_K_M, n=4 fresh
+> prefixes per cell, engines interleaved with a server restart, `--backend cpu`:
+>
+> | K | pre-tile (aikit v1.31.0) | post-tile (v1.34.0) | tile gain | vs Ollama, pre | vs Ollama, post |
+> |--:|--:|--:|--:|--:|--:|
+> | 512 | 67.6 tok/s | 141.7 | **2.10×** | 3.10× behind | 1.54× behind |
+> | 1024 | 67.2 | 137.0 | 2.04× | 2.70× | 1.30× |
+> | 2048 | 67.7 | 133.6 | 1.97× | 2.32× | 1.13× |
+> | 3900 | 63.3 | 118.8 | 1.88× | 1.81× | **0.91× — AHEAD** |
+>
+> **The pre-tile arm reproduces the recorded stale row to within 4%** (measured 3.10× at K=512 and
+> 1.81× at K=3900, against `cpu-peer-prefill-2026-09-01.md`'s 2.98× and 1.80×), which is what makes
+> the two arms comparable: this is a same-box before/after, not a cross-session subtraction.
+>
+> **Kernel-to-end-to-end compression and what eats it.** The tile measures 2.88× single-core and
+> delivers 1.88–2.10× end to end. S-02's fork/join is NOT the eater here — prefill fan-out scales
+> 5.4× on six workers, per the panel probe above. What remains is the non-matmul prefill
+> remainder, chiefly S-06's serial f32 transcendentals (this document estimates 7–25% of a prefill
+> at the 3700X rate, less on the M1) plus attention, norms and the sampler. That is the residue,
+> and it is goinfer-side.
+>
+> Caveat stated rather than buried: the two arms are STACK-level builds — a Sep-1 goinfer binary on
+> aikit v1.31.0 against goinfer `3b20f74` on v1.34.0 — so they conflate the tile with whatever else
+> changed in goinfer over those four days. The tile is the dominant known change and the kernel
+> number is consistent with the end-to-end one, but this is not an aikit-isolated A/B. The box also
+> carried ordinary desktop load (loadavg 3.3–3.8, recorded); both engines saw the same load, which
+> is why the RATIO is the trustworthy quantity and the absolute tok/s is not.
+>
 > **S-01 IS CLOSED — goinfer measured the end-to-end prefill cell 2026-09-03 and BOTH pre-registered
 > gates pass.** 1.5B q4_k_m, M1 Pro, quiet box, paired and interleaved with ROTATING ARM ORDER,
 > n=5, spreads 0.9–5.6%:
@@ -767,6 +817,36 @@ prefill == speculative verify` guarantees rest on.
   the same external table as the rest of §2).
 
 ### S-05 · Perf-minor (decode kernel, arm64) — fold the −8 centering into the SDOT accumulator's initial value: 9 → 7 SIMD µops per row-group, bit-identical
+
+> **NOT STARTED, 2026-09-05, and deliberately so — the pre-registered decision rule said stop.**
+> The CPU-prefill-remainder brief (goinfer `task-prefill-gap.md` §4 L4) gated S-05 in the tile on a
+> peer measurement: *marginal ≤1.15× behind Ollama → CLOSE, no kernel work; ≥1.5× → build it.*
+>
+> Measured on the M1 Pro, 1.5B q4_K_M, both engines interleaved with a server restart, n=4 fresh
+> prefixes per cell: the fit is `LINEAR_FIT_INVALID` on CPU exactly as the brief predicted (TTFT is
+> superlinear in K, fitted overhead reads negative), so the local slopes are the number.
+>
+> | segment | goinfer | Ollama |
+> |---|--:|--:|
+> | 519 → 1031 | 132.7 tok/s | 148.1 |
+> | 1031 → 2067 | 130.3 | 131.9 |
+> | 2067 → 3919 | **105.8** | **82.3** |
+>
+> **Whole-curve marginal ratio 0.86× — goinfer is AHEAD of Ollama on the marginal, not behind.**
+> That is not "within 1.15×", it is past parity, so the rule fires at its stopping end and S-05
+> stays unbuilt. Before the tile the same measurement read 1.69× behind, which is what the gate was
+> written to catch.
+>
+> **What is still true, for whoever picks this up later.** Nothing here refutes the mechanism: the
+> counted 96 → 72 SIMD µops per group (1.33× on the tile) and 9 → 6 on the M=1 kernel stand
+> unmeasured, the int32 identity argument stands, and the free scale-broadcast saving
+> (four `LD1R + ADD` → one `LD1 .4S` + FMLA by element) is still sitting there. What changed is
+> that there is no longer a prefill deficit to spend them on. If a decode-side need appears —
+> S-02's remedies land and the kernel becomes the limiter again, or a slower arm64 part shows up —
+> this is the first lever to reach for, and it is bit-identical so it carries no numerics risk.
+>
+> The one-ULP canary discipline and the raw-WORD cross-check the brief specifies were not exercised,
+> because no assembly was written.
 
 - **Where:** `dot_w4a8_arm64.s:462-473` (per row per group: `VSUB`, `VSUB`, `VMOVI $0`).
 - **Mechanism:** per lane l the two SDOTs produce Σ over k ∈ {4l..4l+3} ∪ {16+4l..} of
