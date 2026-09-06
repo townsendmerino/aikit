@@ -607,7 +607,7 @@ func topkKernelsAgreeAt(t *testing.T, dev *gpu.Device, lib gpu.Library, q gpu.Qu
 	for i := range scores[0:N] { // row 0: clustered into thread 0's stride
 		scores[i] = float32(rng.Intn(50))
 	}
-	for j := 0; j < 96; j++ {
+	for j := range 96 {
 		if j*tkBlockThreads < N {
 			scores[j*tkBlockThreads] = float32(10_000 - j) // strictly above the rest
 		}

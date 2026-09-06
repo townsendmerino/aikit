@@ -143,10 +143,7 @@ func (e *encoder) ensure(n int) {
 	e.qkv = f32(n * 3 * H)
 	e.att, e.projOut = f32(n*H), f32(n*H)
 	e.gate, e.up = f32(n*I), f32(n*I)
-	wide := H
-	if I > wide {
-		wide = I
-	}
+	wide := max(I, H)
 	e.scratchWide = wide
 	e.qi8 = gpu.NewBufferLenOf[int8](e.dev, n*wide)
 	e.qs = f32(n)
