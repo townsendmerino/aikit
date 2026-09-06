@@ -227,10 +227,9 @@ func (f *FlatI8) EnableGPUShardSplit(gpuShare float64) error {
 	if f.n < 2 || !(gpuShare > 0 && gpuShare < 1) {
 		return errShardRange
 	}
-	rows := max(int(gpuShare*float64(f.n)), 1)
-	if rows > f.n-1 {
-		rows = f.n - 1
-	}
+	// Clamp to [1, f.n-1] — at least one row each side of the split. The bounds
+	// cannot invert: the guard above already rejects f.n < 2, so f.n-1 >= 1.
+	rows := min(max(int(gpuShare*float64(f.n)), 1), f.n-1)
 	idx, err := backend.NewI8Index(f.bq[:rows*f.dim], f.scales[:rows], rows, f.dim)
 	if err != nil {
 		return err
