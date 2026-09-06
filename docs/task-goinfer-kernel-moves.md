@@ -12,7 +12,7 @@ against an untagged aikit.
 | move | aikit tag | goinfer commit | before/after cell | gate |
 |---|---|---|---|---|
 | **M5** duplicate inventory | *(none — no aikit change)* | *(see below)* | n/a — not a kernel swap | `TestZZM5_*` probes, mutation-checked |
-| M1 fusedattn | *pending* | — | — | — |
+| **M1** fusedattn | **v1.35.0** ⚠️ *perfgate skipped — see CHANGELOG* | *pending* | *not measured* | `TestAttendTileFused_bitIdenticalToGoinferRef`, mutation-checked ×2 |
 | M2 MXFP4 | *pending* | — | — | — |
 | M3 W4A8 device kernels | *pending* | — | — | — |
 | M4 sequence mixers | *Phase 0 only, no move* | — | — | — |

@@ -9,6 +9,46 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.35.0] — 2026-09-06
+
+> **RELEASE-RITUAL EXCEPTION: `perfgate` was NOT run for this tag.** RELEASING.md step 2b calls
+> for an interleaved working-tree-vs-previous-tag benchmark on a real box; it was skipped by
+> operator decision because the box was needed elsewhere. **This tag therefore carries no
+> performance evidence.** The argument for it being safe is that the change is purely additive —
+> a new file, and nothing that already existed calls it — so no existing benchmark's code path
+> moved. That is an argument, not a measurement, and it is exactly the shape of reasoning
+> v1.17.0 was shipped on: a kernel that was numerically identical, passed every correctness
+> test, and cost a consumer ~3% at a streamed shape.
+>
+> To close it retroactively: `git checkout v1.35.0 && go run -C tools ./perfgate` (it compares
+> the tree against the previous tag, so it must be run FROM this tag to mean anything). If it
+> comes back red, the remedy is a v1.35.1, not a silent edit.
+
+### Added
+
+- **`linalg.AttendTileFused` — a FlashAttention-style single-tile attention schedule**
+  (Experimental), with `FusedAttnScratch`/`NewFusedAttnScratch`/`Fits`, `FusedAttnKeyBlock` and
+  `GatherVBlockMajor`. It blocks over KEYS and folds each block into the output accumulator with a
+  running max and a running sum, so the `kt × nKeys` score matrix never exists — the materialized
+  schedule makes three trips through a block that is megabytes at a production tile budget.
+
+  **It is deliberately NOT bit-identical to a materialized QK→softmax→AV**: the running-max rescale
+  re-associates both the softmax denominator and the AV fold. A caller that needs bit-identity must
+  not use it. That is why it is Experimental in the strong sense, and why the gate compares it
+  against a frozen copy of *itself* — "the fused schedule computes what it computed yesterday" is
+  the property that actually travels — with a separate cosine ≥ 0.9982 bound against
+  `MatmulQKAcc64`+softmax+`MatmulAVAcc64` recorded as a sanity check and explicitly not a bit gate.
+
+  Scratch is an explicit argument, never an internal pool: a caller running one per worker owns the
+  lifetime, and a hidden pool would either allocate per call or serialise them.
+
+  Moved from goinfer (`decoder/fusedattn.go`, P19) **body verbatim** — including two `f64 math.Exp`
+  calls inside an `f32` path, which are part of the bits rather than an oversight to tidy. The gate
+  proves it: substituting `linalg.ExpF32` turns the raw-bit test red. Gated over wide binades
+  (2^-60..2^60, so the running max moves and the rescale path is exercised), denormals, head dims
+  64/128/256, and `nKeys` either side of the 512 block boundary (511/512/513/1024/1025) plus
+  K%4/K%8/K%32 tails; mutation-checked twice.
+
 ## [1.34.0] — 2026-09-03
 
 ### Added
@@ -2917,6 +2957,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.31.0...HEAD
+[1.35.0]: https://github.com/townsendmerino/aikit/compare/v1.34.0...v1.35.0
 [1.34.0]: https://github.com/townsendmerino/aikit/compare/v1.33.0...v1.34.0
 [1.33.0]: https://github.com/townsendmerino/aikit/compare/v1.32.0...v1.33.0
 [1.32.0]: https://github.com/townsendmerino/aikit/compare/v1.31.0...v1.32.0
