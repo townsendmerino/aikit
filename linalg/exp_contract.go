@@ -244,3 +244,72 @@ func geluTanhF32Contract(x float32) float32 {
 	inner := mulRound32(c, fma32(0.044715, x3, x))
 	return mulRound32(mulRound32(0.5, x), 1+tanhF32Contract(inner))
 }
+
+// erfSeriesCoeffs is the Maclaurin branch's 1/(n!(2n+1)) coefficients at full
+// precision, in Horner order. They are a named table rather than literals
+// because the assembly walks the same values with a post-incrementing load, and
+// two copies of sixteen long constants is exactly the kind of duplication that
+// drifts.
+var erfSeriesCoeffs = [11]float32{
+	1.3122532963802806e-08, -1.4503852223150468e-07, 1.4589169000933706e-06,
+	-1.3227513227513228e-05, 1.0683760683760684e-04, -7.5757575757575758e-04,
+	4.6296296296296294e-03, -2.3809523809523808e-02, 1.0000000000000001e-01,
+	-3.3333333333333331e-01, 1,
+}
+
+// erfASCoeffs is Abramowitz & Stegun 7.1.26's tail polynomial, Horner order.
+var erfASCoeffs = [5]float32{
+	1.061405429, -1.453152027, 1.421413741, -0.284496736, 0.254829592,
+}
+
+// erfF32Contract is ErfF32 under the contract. Same two branches, same
+// coefficients, same order; every multiply-add pinned, and each site's
+// fused-or-not decision made to match what the kernel writes rather than left to
+// the compiler:
+//
+//   - both Horner chains are FUSED (FMLA)
+//   - 1 + 0.3275911·a is FUSED, because VFMLA is the natural spelling
+//   - 1 − (q·t)·e is FUSED as one FMLS, so the product is not rounded separately
+//   - (2/√π · a) · p is two plain multiplies with nothing to fuse into
+//
+// ErfF32's explicit `x > 4 → sign` saturation is NOT reproduced, for the same
+// reason as tanh's: the tail branch reaches it on its own, because e^(−x²)
+// underflows and 1 − 0 is exactly 1. The exponent argument is clamped so that a
+// large |x| cannot drive the kernel's exponent construction out of range.
+func erfF32Contract(x float32) float32 {
+	a := x
+	neg := false
+	if a < 0 {
+		neg, a = true, -a
+	}
+	var r float32
+	if a < 1 {
+		z := mulRound32(a, a)
+		p := erfSeriesCoeffs[0]
+		for _, c := range erfSeriesCoeffs[1:] {
+			p = fma32(p, z, c)
+		}
+		r = mulRound32(mulRound32(1.1283791670955126, a), p) // 2/√π
+	} else {
+		t := 1 / fma32(0.3275911, a, 1)
+		q := erfASCoeffs[0]
+		for _, c := range erfASCoeffs[1:] {
+			q = fma32(q, t, c)
+		}
+		e := -mulRound32(a, a)
+		if e < expClampLoF32 {
+			e = expClampLoF32
+		}
+		r = fma32(-mulRound32(q, t), expF32Contract(e), 1) // 1 − q·t·e
+	}
+	if neg {
+		return -r
+	}
+	return r
+}
+
+// geluF32Contract is the exact GELU — x·Φ(x) — built on erfF32Contract.
+func geluF32Contract(x float32) float32 {
+	const invSqrt2 = 0.7071067811865476
+	return mulRound32(mulRound32(0.5, x), 1+erfF32Contract(mulRound32(invSqrt2, x)))
+}

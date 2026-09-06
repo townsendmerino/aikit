@@ -28,3 +28,9 @@ func siluF32ContractNEON(dst, src *float32, n int)
 //
 //go:noescape
 func tanhF32ContractNEON(dst, src *float32, n int)
+
+// erfF32ContractNEON computes dst[i] = erf(src[i]) for n elements (n a multiple
+// of 4), bit-identical to erfF32Contract.
+//
+//go:noescape
+func erfF32ContractNEON(dst, src *float32, n int)

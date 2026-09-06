@@ -164,3 +164,35 @@ func BenchmarkGELUTanhKernels(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkGELUErfKernels compares the dispatched exact GELU against the scalar
+// contract and the shipped GELUF32.
+func BenchmarkGELUErfKernels(b *testing.B) {
+	const n = 8960
+	rng := rand.New(rand.NewPCG(12, 12))
+	src := make([]float32, n)
+	for i := range src {
+		src[i] = float32(rng.NormFloat64() * 3)
+	}
+	dst := make([]float32, n)
+	b.Run("dispatched", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			GELUContractInto(dst, src)
+		}
+	})
+	b.Run("scalar_contract", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			geluScalarInto(dst, src)
+		}
+	})
+	b.Run("shipped_GELUF32", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			for i, v := range src {
+				dst[i] = GELUF32(v)
+			}
+		}
+	})
+}

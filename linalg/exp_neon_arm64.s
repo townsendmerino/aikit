@@ -131,6 +131,83 @@ DATA c0625<>+8(SB)/4, $0x3f200000
 DATA c0625<>+12(SB)/4, $0x3f200000
 GLOBL c0625<>(SB), RODATA|NOPTR, $16
 
+DATA cErfSeries<>+0(SB)/4, $0x32617183
+DATA cErfSeries<>+4(SB)/4, $0x32617183
+DATA cErfSeries<>+8(SB)/4, $0x32617183
+DATA cErfSeries<>+12(SB)/4, $0x32617183
+DATA cErfSeries<>+16(SB)/4, $0xb41bbbe3
+DATA cErfSeries<>+20(SB)/4, $0xb41bbbe3
+DATA cErfSeries<>+24(SB)/4, $0xb41bbbe3
+DATA cErfSeries<>+28(SB)/4, $0xb41bbbe3
+DATA cErfSeries<>+32(SB)/4, $0x35c3d001
+DATA cErfSeries<>+36(SB)/4, $0x35c3d001
+DATA cErfSeries<>+40(SB)/4, $0x35c3d001
+DATA cErfSeries<>+44(SB)/4, $0x35c3d001
+DATA cErfSeries<>+48(SB)/4, $0xb75debbd
+DATA cErfSeries<>+52(SB)/4, $0xb75debbd
+DATA cErfSeries<>+56(SB)/4, $0xb75debbd
+DATA cErfSeries<>+60(SB)/4, $0xb75debbd
+DATA cErfSeries<>+64(SB)/4, $0x38e00e01
+DATA cErfSeries<>+68(SB)/4, $0x38e00e01
+DATA cErfSeries<>+72(SB)/4, $0x38e00e01
+DATA cErfSeries<>+76(SB)/4, $0x38e00e01
+DATA cErfSeries<>+80(SB)/4, $0xba46980c
+DATA cErfSeries<>+84(SB)/4, $0xba46980c
+DATA cErfSeries<>+88(SB)/4, $0xba46980c
+DATA cErfSeries<>+92(SB)/4, $0xba46980c
+DATA cErfSeries<>+96(SB)/4, $0x3b97b426
+DATA cErfSeries<>+100(SB)/4, $0x3b97b426
+DATA cErfSeries<>+104(SB)/4, $0x3b97b426
+DATA cErfSeries<>+108(SB)/4, $0x3b97b426
+DATA cErfSeries<>+112(SB)/4, $0xbcc30c31
+DATA cErfSeries<>+116(SB)/4, $0xbcc30c31
+DATA cErfSeries<>+120(SB)/4, $0xbcc30c31
+DATA cErfSeries<>+124(SB)/4, $0xbcc30c31
+DATA cErfSeries<>+128(SB)/4, $0x3dcccccd
+DATA cErfSeries<>+132(SB)/4, $0x3dcccccd
+DATA cErfSeries<>+136(SB)/4, $0x3dcccccd
+DATA cErfSeries<>+140(SB)/4, $0x3dcccccd
+DATA cErfSeries<>+144(SB)/4, $0xbeaaaaab
+DATA cErfSeries<>+148(SB)/4, $0xbeaaaaab
+DATA cErfSeries<>+152(SB)/4, $0xbeaaaaab
+DATA cErfSeries<>+156(SB)/4, $0xbeaaaaab
+DATA cErfSeries<>+160(SB)/4, $0x3f800000
+DATA cErfSeries<>+164(SB)/4, $0x3f800000
+DATA cErfSeries<>+168(SB)/4, $0x3f800000
+DATA cErfSeries<>+172(SB)/4, $0x3f800000
+GLOBL cErfSeries<>(SB), RODATA|NOPTR, $176
+DATA cErfAS<>+0(SB)/4, $0x3f87dc22
+DATA cErfAS<>+4(SB)/4, $0x3f87dc22
+DATA cErfAS<>+8(SB)/4, $0x3f87dc22
+DATA cErfAS<>+12(SB)/4, $0x3f87dc22
+DATA cErfAS<>+16(SB)/4, $0xbfba00e3
+DATA cErfAS<>+20(SB)/4, $0xbfba00e3
+DATA cErfAS<>+24(SB)/4, $0xbfba00e3
+DATA cErfAS<>+28(SB)/4, $0xbfba00e3
+DATA cErfAS<>+32(SB)/4, $0x3fb5f0e3
+DATA cErfAS<>+36(SB)/4, $0x3fb5f0e3
+DATA cErfAS<>+40(SB)/4, $0x3fb5f0e3
+DATA cErfAS<>+44(SB)/4, $0x3fb5f0e3
+DATA cErfAS<>+48(SB)/4, $0xbe91a98e
+DATA cErfAS<>+52(SB)/4, $0xbe91a98e
+DATA cErfAS<>+56(SB)/4, $0xbe91a98e
+DATA cErfAS<>+60(SB)/4, $0xbe91a98e
+DATA cErfAS<>+64(SB)/4, $0x3e827906
+DATA cErfAS<>+68(SB)/4, $0x3e827906
+DATA cErfAS<>+72(SB)/4, $0x3e827906
+DATA cErfAS<>+76(SB)/4, $0x3e827906
+GLOBL cErfAS<>(SB), RODATA|NOPTR, $80
+DATA cTwoOverSqrtPi<>+0(SB)/4, $0x3f906ebb
+DATA cTwoOverSqrtPi<>+4(SB)/4, $0x3f906ebb
+DATA cTwoOverSqrtPi<>+8(SB)/4, $0x3f906ebb
+DATA cTwoOverSqrtPi<>+12(SB)/4, $0x3f906ebb
+GLOBL cTwoOverSqrtPi<>(SB), RODATA|NOPTR, $16
+DATA cASk<>+0(SB)/4, $0x3ea7ba05
+DATA cASk<>+4(SB)/4, $0x3ea7ba05
+DATA cASk<>+8(SB)/4, $0x3ea7ba05
+DATA cASk<>+12(SB)/4, $0x3ea7ba05
+GLOBL cASk<>(SB), RODATA|NOPTR, $16
+
 // func expF32ContractNEON(dst, src *float32, n int)
 // n must be a multiple of 4; the Go caller handles the tail. Inputs must be finite
 // and within [expUnderflowF32, expOverflowF32] -- the caller guards, exactly as
@@ -553,4 +630,161 @@ tanhloop:
 	SUBS $4, R2, R2
 	BNE tanhloop
 tanhdone:
+	RET
+
+// func erfF32ContractNEON(dst, src *float32, n int)
+//
+// erf under the contract, four lanes at a time, n a multiple of 4.
+//
+// THREE REGIONS COLLAPSED TO TWO. ErfF32 has a Maclaurin series below |x|=1, the
+// Abramowitz & Stegun 7.1.26 tail above it, and an explicit `|x| > 4 -> 1`
+// saturation. Only the first split needs a select here: the tail branch reaches
+// exactly 1 on its own once e^(-x^2) underflows, so the saturation is a
+// consequence rather than a case. What it DOES need is a clamp on the exponent
+// argument -- at |x| = 100, -x^2 is -10000, which would drive the kernel's
+// exponent construction far outside the range where its two-step 2^k is valid.
+//
+// Both branches are evaluated for every lane and blended with VBSL. Neither
+// misbehaves on the other's territory: the series merely diverges (finite) and
+// the tail form is well-conditioned wherever erf is near 1.
+//
+// The sixteen coefficients are walked with a post-incrementing VLD1.P rather than
+// held in registers -- there are not sixteen spare -- and they live in the same
+// order as erfSeriesCoeffs/erfASCoeffs in Go, which is why those are named tables
+// there rather than literals.
+TEXT ·erfF32ContractNEON(SB), NOSPLIT, $0-24
+	MOVD dst+0(FP), R0
+	MOVD src+8(FP), R1
+	MOVD n+16(FP), R2
+	CBZ  R2, erfdone
+	MOVD $cLog2e<>(SB), R3
+	VLD1 (R3), [V16.S4]
+	MOVD $cMagic<>(SB), R3
+	VLD1 (R3), [V17.S4]
+	MOVD $cLn2Hi<>(SB), R3
+	VLD1 (R3), [V18.S4]
+	MOVD $cLn2Lo<>(SB), R3
+	VLD1 (R3), [V19.S4]
+	MOVD $cP0<>(SB), R3
+	VLD1 (R3), [V20.S4]
+	MOVD $cP1<>(SB), R3
+	VLD1 (R3), [V21.S4]
+	MOVD $cP2<>(SB), R3
+	VLD1 (R3), [V22.S4]
+	MOVD $cP3<>(SB), R3
+	VLD1 (R3), [V23.S4]
+	MOVD $cP4<>(SB), R3
+	VLD1 (R3), [V24.S4]
+	MOVD $cP5<>(SB), R3
+	VLD1 (R3), [V25.S4]
+	MOVD $cOne<>(SB), R3
+	VLD1 (R3), [V26.S4]
+	MOVD $127, R4
+	VDUP R4, V27.S4
+	VMOVI $0, V28.B16
+
+erfloop:
+	VLD1.P 16(R1), [V1.S4]        // x
+	MOVD $cSignMask<>(SB), R3
+	VLD1 (R3), [V2.S4]
+	VAND V2.B16, V1.B16, V11.B16  // signbit
+	VFABS V1.S4, V10.S4           // a = |x|
+
+	// ---- Maclaurin branch, a < 1 ----
+	VFMUL V10.S4, V10.S4, V1.S4   // z = a*a
+	MOVD $cErfSeries<>(SB), R5
+	VLD1.P 16(R5), [V2.S4]
+	VLD1.P 16(R5), [V3.S4]
+	VFMLA V1.S4, V2.S4, V3.S4
+	VLD1.P 16(R5), [V2.S4]
+	VFMLA V1.S4, V3.S4, V2.S4
+	VLD1.P 16(R5), [V3.S4]
+	VFMLA V1.S4, V2.S4, V3.S4
+	VLD1.P 16(R5), [V2.S4]
+	VFMLA V1.S4, V3.S4, V2.S4
+	VLD1.P 16(R5), [V3.S4]
+	VFMLA V1.S4, V2.S4, V3.S4
+	VLD1.P 16(R5), [V2.S4]
+	VFMLA V1.S4, V3.S4, V2.S4
+	VLD1.P 16(R5), [V3.S4]
+	VFMLA V1.S4, V2.S4, V3.S4
+	VLD1.P 16(R5), [V2.S4]
+	VFMLA V1.S4, V3.S4, V2.S4
+	VLD1.P 16(R5), [V3.S4]
+	VFMLA V1.S4, V2.S4, V3.S4
+	VLD1.P 16(R5), [V2.S4]
+	VFMLA V1.S4, V3.S4, V2.S4
+	MOVD $cTwoOverSqrtPi<>(SB), R3
+	VLD1 (R3), [V5.S4]
+	VFMUL V10.S4, V5.S4, V6.S4    // (2/sqrt(pi)) * a
+	VFMUL V2.S4, V6.S4, V12.S4 // series = that * p
+
+	// ---- A&S tail branch, a >= 1 ----
+	MOVD $cASk<>(SB), R3
+	VLD1 (R3), [V5.S4]
+	VMOV V26.B16, V6.B16
+	VFMLA V10.S4, V5.S4, V6.S4    // 1 + 0.3275911*a   (fused, as the contract says)
+	VFDIV V6.S4, V26.S4, V13.S4   // t = 1/that
+	MOVD $cErfAS<>(SB), R5
+	VLD1.P 16(R5), [V2.S4]
+	VLD1.P 16(R5), [V3.S4]
+	VFMLA V13.S4, V2.S4, V3.S4
+	VLD1.P 16(R5), [V2.S4]
+	VFMLA V13.S4, V3.S4, V2.S4
+	VLD1.P 16(R5), [V3.S4]
+	VFMLA V13.S4, V2.S4, V3.S4
+	VLD1.P 16(R5), [V2.S4]
+	VFMLA V13.S4, V3.S4, V2.S4
+	VMOV V2.B16, V14.B16       // q
+
+	// ---- e^(-a*a), clamped so the exponent build stays in range ----
+	VFMUL V10.S4, V10.S4, V0.S4
+	VFNEG V0.S4, V0.S4
+	MOVD $cClamp<>(SB), R3
+	VLD1 (R3), [V2.S4]
+	VFMAX V2.S4, V0.S4, V0.S4
+	VFMUL V16.S4, V0.S4, V1.S4   // z  = x * log2e
+	VFADD V17.S4, V1.S4, V1.S4   // t  = z + magic
+	VFSUB V17.S4, V1.S4, V1.S4   // kf = t - magic
+	VFCVTZS V1.S4, V2.S4         // k  = int32(kf)
+	VMOV V0.B16, V3.B16          // r  = x
+	VFMLS V18.S4, V1.S4, V3.S4   // r -= kf*ln2Hi
+	VFMLS V19.S4, V1.S4, V3.S4   // r -= kf*ln2Lo
+	VMOV V21.B16, V4.B16
+	VFMLA V3.S4, V20.S4, V4.S4
+	VMOV V22.B16, V5.B16
+	VFMLA V3.S4, V4.S4, V5.S4
+	VMOV V23.B16, V4.B16
+	VFMLA V3.S4, V5.S4, V4.S4
+	VMOV V24.B16, V5.B16
+	VFMLA V3.S4, V4.S4, V5.S4
+	VMOV V25.B16, V4.B16
+	VFMLA V3.S4, V5.S4, V4.S4
+	VMOV V26.B16, V5.B16
+	VFMLA V3.S4, V4.S4, V5.S4    // q = p*r + 1
+	VMOV V26.B16, V4.B16
+	VFMLA V3.S4, V5.S4, V4.S4    // p = q*r + 1
+	VSSHR $1, V2.S4, V6.S4
+	VSUB V6.S4, V2.S4, V7.S4
+	VADD V27.S4, V6.S4, V6.S4
+	VADD V27.S4, V7.S4, V7.S4
+	VSHL $23, V6.S4, V6.S4
+	VSHL $23, V7.S4, V7.S4
+	VFMUL V6.S4, V4.S4, V4.S4
+	VFMUL V7.S4, V4.S4, V4.S4
+	VADD V27.S4, V2.S4, V8.S4
+	VCMGT V28.S4, V8.S4, V9.S4
+	VAND V9.B16, V4.B16, V4.B16
+	VFMUL V13.S4, V14.S4, V5.S4   // q*t
+	VMOV V26.B16, V6.B16
+	VFMLS V4.S4, V5.S4, V6.S4     // tail = 1 - (q*t)*e   (one fused op)
+
+	// ---- blend and re-sign ----
+	VCMGT V10.S4, V26.S4, V2.S4   // mask = (1 > a)
+	VBSL V6.B16, V12.B16, V2.B16  // mask ? series : tail
+	VORR V11.B16, V2.B16, V2.B16
+	VST1.P [V2.S4], 16(R0)
+	SUBS $4, R2, R2
+	BNE erfloop
+erfdone:
 	RET

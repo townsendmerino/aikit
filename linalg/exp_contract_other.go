@@ -11,3 +11,4 @@ func expContractImpl(dst, src []float32)      { expContractScalarInto(dst, src) 
 func softmaxContractImpl(dst, src []float32)  { softmaxRowContract(dst, src) }
 func siluContractImpl(dst, src []float32)     { siluContractScalarInto(dst, src) }
 func geluTanhContractImpl(dst, src []float32) { geluTanhScalarInto(dst, src) }
+func geluContractImpl(dst, src []float32)     { geluScalarInto(dst, src) }

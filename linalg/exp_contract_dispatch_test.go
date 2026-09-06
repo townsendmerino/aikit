@@ -62,6 +62,14 @@ func TestContractDispatch_matchesScalarEverywhere(t *testing.T) {
 				t.Fatalf("geluTanh n=%d i=%d: %v != %v", n, i, gotG[i], want)
 			}
 		}
+
+		gotGE := make([]float32, n)
+		GELUContractInto(gotGE, src)
+		for i, v := range src {
+			if want := geluF32Contract(v); math.Float32bits(gotGE[i]) != math.Float32bits(want) {
+				t.Fatalf("gelu(erf) n=%d i=%d: %v != %v", n, i, gotGE[i], want)
+			}
+		}
 	}
 }
 
@@ -113,6 +121,7 @@ func TestContractDispatch_inPlace(t *testing.T) {
 			{"exp", ExpContractInto},
 			{"silu", SiLUContractInto},
 			{"gelutanh", GELUTanhContractInto},
+			{"gelu", GELUContractInto},
 		} {
 			want := make([]float32, n)
 			tc.fn(want, src)

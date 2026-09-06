@@ -54,6 +54,23 @@ func GELUTanhContractInto(dst, src []float32) {
 	geluTanhContractImpl(dst, src)
 }
 
+// GELUContractInto writes the EXACT GELU — x·Φ(x), HF's "gelu" — elementwise
+// under the contract. A different function from GELUTanhContractInto, not a
+// spelling of it: the two differ by up to 4.73e-4, worst near x ≈ −2.7.
+func GELUContractInto(dst, src []float32) {
+	if len(dst) != len(src) {
+		panic("linalg: GELUContractInto length mismatch")
+	}
+	geluContractImpl(dst, src)
+}
+
+// geluScalarInto is the reference loop and the non-arm64 implementation.
+func geluScalarInto(dst, src []float32) {
+	for i, v := range src {
+		dst[i] = geluF32Contract(v)
+	}
+}
+
 // geluTanhScalarInto is the reference loop and the non-arm64 implementation.
 func geluTanhScalarInto(dst, src []float32) {
 	for i, v := range src {
