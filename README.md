@@ -382,6 +382,14 @@ no such consumer has surfaced yet.
   `HammingRows`) — new surface, distinct from `Dot`/`MatmulBT`/the int8/int4
   quant kernels (Hard tier, above): `linalg` is now a mixed-tier package, not
   wholly Experimental.
+- `linalg`'s fused attention (v1.35.0) — `AttendTileFused`, `FusedAttnScratch`,
+  `NewFusedAttnScratch`, `FusedAttnKeyBlock`, `GatherVBlockMajor`. A
+  FlashAttention-style single-tile schedule that keeps the score block resident
+  rather than materializing `kt × nKeys`. **Deliberately NOT bit-identical to a
+  materialized QK→softmax→AV** — the running-max rescale re-associates both the
+  denominator and the AV fold — so it is Experimental in the strong sense: a
+  caller needing bit-identity must not use it. Moved from goinfer (P19) body
+  verbatim, gated raw-bit against that frozen body.
 - `late` — the whole package (ColBERT-style MaxSim reranking). New package.
 - `hybrid` — the whole package (thin dense+lexical+`fuse.RRF` wrapper). New
   package.
