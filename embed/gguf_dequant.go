@@ -160,8 +160,15 @@ var mxfp4KValues = [16]int8{0, 1, 2, 3, 4, 6, 8, 12, 0, -1, -2, -3, -4, -6, -8, 
 
 // e8m0ToF32Half converts an 8-bit e8m0 block scale to float32, matching ggml's
 // ggml_e8m0_to_fp32_half (gguf/quants.py MXFP4.e8m0_to_fp32_half): x<2 is a
-// subnormal bit pattern, else the exponent field is x-1. The exact bit formula
-// (not 2^(x-128)) keeps the x∈{0,1} subnormals bit-identical to the reference.
+// subnormal bit pattern, else the exponent field is x-1.
+//
+// The bit formula is used because it is exact by construction and needs no libm
+// call — NOT because 2^(x-128) would be wrong. This comment used to say the
+// subnormals at x∈{0,1} depend on it; measured 2026-09-06 over all 256 inputs,
+// float32(math.Pow(2, x-128)) is bit-identical everywhere, because 2^-128 and
+// 2^-127 are exactly representable as float32 subnormals (which reach 2^-149).
+// The old wording would have told anyone simplifying this that they had broken
+// something they had not, which is worse than saying nothing.
 func e8m0ToF32Half(x uint8) float32 {
 	var bits uint32
 	if x < 2 {
