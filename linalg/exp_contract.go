@@ -202,3 +202,42 @@ func siluF32Contract(x float32) float32 {
 	}
 	return x / (1 + expF32Contract(t))
 }
+
+// tanhF32Contract is TanhF32 re-specified to the contract: same branches, same
+// coefficients, same order, every multiply-add pinned.
+//
+// The large-|x| saturation of TanhF32 is NOT reproduced as a separate branch,
+// because it falls out of the exp branch once the argument is clamped: at
+// a = 9, exp(18) = 6.6e7 and 1 − 2/6.6e7 rounds to exactly 1 in f32, and the
+// clamp keeps larger arguments finite while giving the same 1. One less branch to
+// mirror in assembly, for no change in value.
+func tanhF32Contract(x float32) float32 {
+	sign := float32(1)
+	a := x
+	if a < 0 {
+		sign, a = -1, -a
+	}
+	if a < 0.625 {
+		z := mulRound32(a, a)
+		p := float32(-5.70498872745e-3)
+		p = fma32(p, z, 2.06390887954e-2)
+		p = fma32(p, z, -5.37397155531e-2)
+		p = fma32(p, z, 1.33314422036e-1)
+		p = fma32(p, z, -3.33332819422e-1)
+		return sign * fma32(mulRound32(p, z), a, a)
+	}
+	t := mulRound32(2, a)
+	if t > expClampHiF32 {
+		t = expClampHiF32
+	}
+	return sign * (1 - 2/(expF32Contract(t)+1))
+}
+
+// geluTanhF32Contract is the tanh-approximation GELU, HF's "gelu_new" /
+// "gelu_pytorch_tanh", built on tanhF32Contract.
+func geluTanhF32Contract(x float32) float32 {
+	const c = 0.7978845608028654 // √(2/π)
+	x3 := mulRound32(mulRound32(x, x), x)
+	inner := mulRound32(c, fma32(0.044715, x3, x))
+	return mulRound32(mulRound32(0.5, x), 1+tanhF32Contract(inner))
+}
