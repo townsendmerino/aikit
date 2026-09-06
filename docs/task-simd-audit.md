@@ -875,6 +875,59 @@ prefill == speculative verify` guarantees rest on.
 
 ### S-06 · Perf-minor decode / Perf-major prefill — the transcendentals are scalar f64 `math.Exp` on one goroutine, while `linalg`'s f32 SIMD family sits unused
 
+> **STEP 0 MEASURED 2026-09-06 — the prize is 24.7% of prefill, five times the gate, so this
+> proceeds. And the S-06 share estimate was low because it predated S-01.**
+>
+> The decision (Francis, 2026-09-06) is that these get HAND-WRITTEN NEON and AVX2 kernels with a
+> scalar Go path bit-identical to the assembly on both arches. The Go 1.27 `simd` experiment is
+> NOT used: `exp_simd.go` stays behind `goexperiment.simd` and is not the way forward, because
+> nothing about a released binary's output may depend on how it was built.
+>
+> **The stub bound.** goinfer's elementwise transcendentals were stubbed to no-ops behind the
+> real ones — `silu` to identity, every softmax `math.Exp` to a constant (finite, so no NaN or
+> denormal cost confounds the timing) — and the two binaries built from ONE commit (goinfer
+> `edcf04d`, aikit v1.35.0), then interleaved per cell in one session:
+>
+> | K | real | stubbed | **upper bound on any kernel** |
+> |--:|--:|--:|--:|
+> | 512 | 3794 ms (136.8 tok/s) | 2856 ms (181.7) | **24.7%** |
+> | 3900 | 39272 ms (99.8) | 31796 ms (123.3) | **19.0%** |
+>
+> M1 Pro. The pre-registered rule was "proceed if ≥5% of prefill on either box; stop if under 3%
+> on both". 24.7% clears it by 5×, so the rule fires at its proceeding end and the 3700X arm is
+> not needed to decide (it is still worth having for the amd64 share, and is not yet run).
+>
+> **Why this is larger than the section below estimates.** That estimate predates the S-01 tile.
+> Making the matmuls 2.88× faster does not shrink the serial elementwise term at all, so it grew
+> as a FRACTION — which is the general shape worth remembering: every matmul win inflates the
+> share of whatever was left serial, and a share measured before a kernel lands is a lower bound
+> on the share after it.
+>
+> **Read it as an upper bound, which is what a stub gives.** Removing the work entirely is not
+> what a kernel does; a SIMD exp recovers some fraction of the 24.7%, never all of it. The number
+> to compare a shipped kernel against is this one, and the gap between them is the kernel's own
+> inefficiency rather than a mystery.
+>
+> Caveats recorded rather than buried: the box carried ordinary desktop load (loadavg 5.1–6.7,
+> NOT idle), which both arms saw — the RATIO is what this measurement is, and the absolute tok/s
+> here are not comparable to the quiet-box peer rows elsewhere in this document. The stub also
+> changes numerics wildly, so only TIMING is meaningful from it; it was built to keep every value
+> finite precisely so that timing stayed clean.
+>
+> **Still to do, in order:** goinfer's step 1 (fan the elementwise loops over the existing worker
+> pool — bit-identical, ships regardless of any of this); then this section's step 2 in aikit —
+> the numeric contract (one f32 exp, one FMA policy, an order-pinned softmax sum, raw-bit
+> scalar-vs-asm gates on both arches) written BEFORE any assembly; then goinfer's swap, which
+> changes bits by ≤4 ULP and takes the LM-head treatment: regenerate goldens once, re-run the HF
+> logit-parity gate, report the argmax-flip rate against the 1.5% bar.
+>
+> One thing checked while here, because the brief asked and the answer affects step 2's scope:
+> **aikit's acc64 attention path owns no softmax at all** — `MatmulQKAcc64` and `MatmulAVAcc64` are
+> the two matmuls and goinfer does the softmax between them, so there is no order-pinned f64
+> softmax in this package to protect. `fusedattn.go` does own one, but its running-max rescale is
+> already documented as re-associating the denominator and is gated at a cosine floor, "NOT a bit
+> gate" — so it is already outside the bit-identity contract and stays that way.
+
 - **Where:** goinfer `decoder/rmsnorm.go:79-118` (`silu`, `geluErf`, `geluTanh`, all f64
   "for parity"), the loops at `decoder/mlp.go:400-402` and `decoder/forwardn.go:585-587` (K×inter
   elements in one plain loop on the calling goroutine), every softmax (`decoder/attention.go:236/299`,
