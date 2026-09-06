@@ -86,3 +86,49 @@ func BenchmarkSoftmaxRowKernels(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkSiLUKernels is the SwiGLU half of the S-06 step-2 speed row. The
+// goinfer_f64 arm is a transcription of decoder/rmsnorm.go's silu, which is what
+// the MLP actually calls today and therefore the comparison that matters.
+// n=8960 is one gate row on the 1.5B.
+func BenchmarkSiLUKernels(b *testing.B) {
+	const n = 8960
+	rng := rand.New(rand.NewPCG(6, 6))
+	src := make([]float32, n)
+	for i := range src {
+		src[i] = float32(rng.NormFloat64() * 4)
+	}
+	dst := make([]float32, n)
+
+	b.Run("neon", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			siluF32ContractNEON(&dst[0], &src[0], n)
+		}
+	})
+	b.Run("scalar_contract", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			for i, v := range src {
+				dst[i] = siluF32Contract(v)
+			}
+		}
+	})
+	b.Run("shipped_SiLUF32", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			for i, v := range src {
+				dst[i] = SiLUF32(v)
+			}
+		}
+	})
+	b.Run("goinfer_f64", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			for i, v := range src {
+				x64 := float64(v)
+				dst[i] = float32(x64 / (1 + math.Exp(-x64)))
+			}
+		}
+	})
+}

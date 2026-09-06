@@ -172,3 +172,33 @@ func softmaxRowContract(dst, src []float32) {
 		dst[i] *= inv
 	}
 }
+
+// expClampHiF32 is the ceiling the SiLU contract applies to −x before
+// exponentiating, and it is required rather than defensive.
+//
+// expF32Contract's overflow branch builds its scale factor as
+// uint32(e-1)<<23, which is a valid float32 exponent field only while e ≤ 255.
+// At e ≥ 256 the shift overflows into the SIGN bit and the function returns −0
+// instead of a large number. ExpF32's own range guard makes that unreachable
+// through the public entry point — but SiLU feeds it −x, so an unclamped
+// x < −89.4 walks straight into it.
+const expClampHiF32 = expOverflowF32
+
+// siluF32Contract is x/(1+e^−x) with the exponent argument clamped into the
+// range where the contract exp is defined, so the scalar path and the NEON
+// kernel agree bit for bit.
+//
+// It differs from SiLUF32 only in one extreme tail: SiLUF32 lets e^−x reach +Inf
+// and returns a signed zero, whereas this returns x/(1+3.4e38) — a tiny nonzero.
+// That is a deliberate consequence of keeping both paths inside a defined range,
+// and it is far below any tolerance the consumers' parity gates apply.
+func siluF32Contract(x float32) float32 {
+	t := -x
+	if t < expClampLoF32 {
+		t = expClampLoF32
+	}
+	if t > expClampHiF32 {
+		t = expClampHiF32
+	}
+	return x / (1 + expF32Contract(t))
+}

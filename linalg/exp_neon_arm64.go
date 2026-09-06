@@ -15,3 +15,10 @@ package linalg
 //
 //go:noescape
 func expF32ContractNEON(dst, src *float32, n int)
+
+// siluF32ContractNEON computes dst[i] = src[i]/(1+exp(clamp(-src[i]))) for n
+// elements (n a multiple of 4). See the assembly for why the clamp is required
+// rather than defensive.
+//
+//go:noescape
+func siluF32ContractNEON(dst, src *float32, n int)

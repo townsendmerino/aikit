@@ -89,6 +89,12 @@ DATA cClamp<>+8(SB)/4, $0xc2d00000
 DATA cClamp<>+12(SB)/4, $0xc2d00000
 GLOBL cClamp<>(SB), RODATA|NOPTR, $16
 
+DATA cClampHi<>+0(SB)/4, $0x42b17217
+DATA cClampHi<>+4(SB)/4, $0x42b17217
+DATA cClampHi<>+8(SB)/4, $0x42b17217
+DATA cClampHi<>+12(SB)/4, $0x42b17217
+GLOBL cClampHi<>(SB), RODATA|NOPTR, $16
+
 // func expF32ContractNEON(dst, src *float32, n int)
 // n must be a multiple of 4; the Go caller handles the tail. Inputs must be finite
 // and within [expUnderflowF32, expOverflowF32] -- the caller guards, exactly as
@@ -277,4 +283,97 @@ sumloop:
 	BNE sumloop
 sumdone:
 	VST1 [V30.D2, V31.D2], (R5)
+	RET
+
+// func siluF32ContractNEON(dst, src *float32, n int)
+//
+// dst[i] = x / (1 + exp(clamp(-x))), the SwiGLU gate activation, four lanes at a
+// time. n must be a multiple of 4.
+//
+// THE CLAMP IS LOAD-BEARING, not defensive. expF32Contract's overflow branch
+// computes uint32(e-1)<<23, which is a valid exponent field only while e <= 255;
+// at e >= 256 it overflows into the SIGN bit and returns -0. ExpF32's own guard
+// makes that unreachable, but silu feeds it -x, so an unclamped x < -89.4 would
+// walk straight into it. Clamping -x to [-104, 88.72283] keeps both paths inside
+// the range where they are defined and agree. The cost is only in an extreme
+// tail: for x below -88.72 the result is x/(1+3.4e38), a tiny nonzero rather
+// than the signed zero SiLUF32 produces from an infinite denominator.
+TEXT ·siluF32ContractNEON(SB), NOSPLIT, $0-24
+	MOVD dst+0(FP), R0
+	MOVD src+8(FP), R1
+	MOVD n+16(FP), R2
+	CBZ  R2, siludone
+	MOVD $cLog2e<>(SB), R3
+	VLD1 (R3), [V16.S4]
+	MOVD $cMagic<>(SB), R3
+	VLD1 (R3), [V17.S4]
+	MOVD $cLn2Hi<>(SB), R3
+	VLD1 (R3), [V18.S4]
+	MOVD $cLn2Lo<>(SB), R3
+	VLD1 (R3), [V19.S4]
+	MOVD $cP0<>(SB), R3
+	VLD1 (R3), [V20.S4]
+	MOVD $cP1<>(SB), R3
+	VLD1 (R3), [V21.S4]
+	MOVD $cP2<>(SB), R3
+	VLD1 (R3), [V22.S4]
+	MOVD $cP3<>(SB), R3
+	VLD1 (R3), [V23.S4]
+	MOVD $cP4<>(SB), R3
+	VLD1 (R3), [V24.S4]
+	MOVD $cP5<>(SB), R3
+	VLD1 (R3), [V25.S4]
+	MOVD $cOne<>(SB), R3
+	VLD1 (R3), [V26.S4]
+	MOVD $127, R4
+	VDUP R4, V27.S4
+	VMOVI $0, V28.B16
+	MOVD $cClamp<>(SB), R3
+	VLD1 (R3), [V13.S4]        // -104
+	MOVD $cClampHi<>(SB), R3
+	VLD1 (R3), [V14.S4]        // 88.72283
+
+siluloop:
+	VLD1.P 16(R1), [V12.S4]    // x, preserved across the exp body
+	VFNEG V12.S4, V0.S4        // t = -x
+	VFMAX V13.S4, V0.S4, V0.S4 // t = max(t, -104)
+	VFMIN V14.S4, V0.S4, V0.S4 // t = min(t, 88.72283)
+	VFMUL V16.S4, V0.S4, V1.S4   // z  = x * log2e
+	VFADD V17.S4, V1.S4, V1.S4   // t  = z + magic
+	VFSUB V17.S4, V1.S4, V1.S4   // kf = t - magic
+	VFCVTZS V1.S4, V2.S4         // k  = int32(kf)
+	VMOV V0.B16, V3.B16          // r  = x
+	VFMLS V18.S4, V1.S4, V3.S4   // r -= kf*ln2Hi
+	VFMLS V19.S4, V1.S4, V3.S4   // r -= kf*ln2Lo
+	VMOV V21.B16, V4.B16
+	VFMLA V3.S4, V20.S4, V4.S4
+	VMOV V22.B16, V5.B16
+	VFMLA V3.S4, V4.S4, V5.S4
+	VMOV V23.B16, V4.B16
+	VFMLA V3.S4, V5.S4, V4.S4
+	VMOV V24.B16, V5.B16
+	VFMLA V3.S4, V4.S4, V5.S4
+	VMOV V25.B16, V4.B16
+	VFMLA V3.S4, V5.S4, V4.S4
+	VMOV V26.B16, V5.B16
+	VFMLA V3.S4, V4.S4, V5.S4    // q = p*r + 1
+	VMOV V26.B16, V4.B16
+	VFMLA V3.S4, V5.S4, V4.S4    // p = q*r + 1
+	VSSHR $1, V2.S4, V6.S4
+	VSUB V6.S4, V2.S4, V7.S4
+	VADD V27.S4, V6.S4, V6.S4
+	VADD V27.S4, V7.S4, V7.S4
+	VSHL $23, V6.S4, V6.S4
+	VSHL $23, V7.S4, V7.S4
+	VFMUL V6.S4, V4.S4, V4.S4
+	VFMUL V7.S4, V4.S4, V4.S4
+	VADD V27.S4, V2.S4, V8.S4
+	VCMGT V28.S4, V8.S4, V9.S4
+	VAND V9.B16, V4.B16, V4.B16
+	VFADD V26.S4, V4.S4, V4.S4 // 1 + e   (V26 holds 1.0)
+	VFDIV V4.S4, V12.S4, V5.S4 // x / (1+e)
+	VST1.P [V5.S4], 16(R0)
+	SUBS $4, R2, R2
+	BNE siluloop
+siludone:
 	RET
