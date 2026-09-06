@@ -54,3 +54,35 @@ func BenchmarkExpF32Kernels(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkSoftmaxRowKernels is the softmax half of the S-06 step-2 speed row.
+// nKeys=2048 is a mid-depth attention row; the softmax is called once per
+// (head, token) so it is O(L²) work over a decode.
+func BenchmarkSoftmaxRowKernels(b *testing.B) {
+	const n = 2048
+	rng := rand.New(rand.NewPCG(9, 9))
+	src := make([]float32, n)
+	for i := range src {
+		src[i] = float32(rng.NormFloat64() * 8)
+	}
+	dst := make([]float32, n)
+
+	b.Run("neon_contract", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			softmaxRowContractNEON(dst, src)
+		}
+	})
+	b.Run("scalar_contract", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			softmaxRowContract(dst, src)
+		}
+	})
+	b.Run("shipped_SoftmaxRowInto", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			SoftmaxRowInto(dst, src)
+		}
+	})
+}

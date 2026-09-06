@@ -113,3 +113,62 @@ func expF32Contract(x float32) float32 {
 	}
 	return p * math.Float32frombits(uint32(e)<<23)
 }
+
+// expClampLoF32 is the floor the softmax contract applies to (v − rowMax) before
+// exponentiating. It sits below expUnderflowF32, so exp of it is 0 under the
+// flush rule and nothing observable changes — its job is to keep the argument
+// FINITE. A row containing −Inf otherwise reaches VFCVTZS(−Inf), which saturates
+// to INT32_MIN, while Go's own float→int conversion of −Inf is
+// implementation-specific: the two paths would then produce different garbage
+// rather than the same answer, and a bit-identity gate would be checking noise.
+const expClampLoF32 = -104.0
+
+// softmaxRowContract is the ORDER-PINNED softmax reference: dst[i] =
+// e^(src[i]−max) / Σ, with the denominator accumulated into four float64 lane
+// partials (element i into partials[i&3]) and folded by the fixed tree
+// (p0+p1)+(p2+p3).
+//
+// The pinning is the whole point. A denominator is a REDUCTION, so its value
+// depends on the order of the adds: a sequential scalar sum and a 4-lane vector
+// sum are different numbers, which is how a kernel that looks bit-identical
+// quietly stops being one. Fixing the order in the CONTRACT rather than in an
+// implementation is what lets the Go path and the NEON kernel agree exactly.
+//
+// A row whose exponentials all underflow yields a uniform distribution rather
+// than NaN, matching the behaviour SoftmaxRowInto already documents.
+func softmaxRowContract(dst, src []float32) {
+	if len(dst) != len(src) {
+		panic("linalg: softmaxRowContract length mismatch")
+	}
+	if len(src) == 0 {
+		return
+	}
+	m := src[0]
+	for _, v := range src[1:] {
+		if v > m {
+			m = v
+		}
+	}
+	var p [4]float64
+	for i, v := range src {
+		d := v - m
+		if d < expClampLoF32 {
+			d = expClampLoF32
+		}
+		e := expF32Contract(d)
+		dst[i] = e
+		p[i&3] += float64(e)
+	}
+	sum := (p[0] + p[1]) + (p[2] + p[3])
+	if sum == 0 {
+		u := float32(1) / float32(len(src))
+		for i := range dst {
+			dst[i] = u
+		}
+		return
+	}
+	inv := float32(1 / sum)
+	for i := range dst {
+		dst[i] *= inv
+	}
+}
