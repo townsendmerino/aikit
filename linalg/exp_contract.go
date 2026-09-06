@@ -206,11 +206,14 @@ func siluF32Contract(x float32) float32 {
 // tanhF32Contract is TanhF32 re-specified to the contract: same branches, same
 // coefficients, same order, every multiply-add pinned.
 //
-// The large-|x| saturation of TanhF32 is NOT reproduced as a separate branch,
-// because it falls out of the exp branch once the argument is clamped: at
-// a = 9, exp(18) = 6.6e7 and 1 − 2/6.6e7 rounds to exactly 1 in f32, and the
-// clamp keeps larger arguments finite while giving the same 1. One less branch to
-// mirror in assembly, for no change in value.
+// TanhF32's explicit `x > 9 → 1` branch is NOT reproduced, and that costs one
+// ULP in a narrow band rather than nothing. Saturation still arrives on its own —
+// 1 − 2/(e^2x+1) reaches exactly 1 once the subtrahend drops below half an ULP of
+// 1, at |x| ≥ 9.02 — but in (9, 9.02) this returns 0.99999994 where TanhF32
+// returns 1. Measured across that band, not reasoned about. The trade is one
+// fewer branch to mirror in assembly against a 1-ULP difference confined to a
+// 0.02-wide interval where tanh is flat to seven digits, which is far below any
+// tolerance the parity gates apply.
 func tanhF32Contract(x float32) float32 {
 	sign := float32(1)
 	a := x

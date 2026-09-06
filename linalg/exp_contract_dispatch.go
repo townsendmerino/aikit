@@ -46,13 +46,16 @@ func SiLUContractInto(dst, src []float32) {
 }
 
 // GELUTanhContractInto writes the tanh-approximation GELU elementwise under the
-// contract. Scalar on every arch for now — the NEON tanh is not written yet, and
-// a dispatcher that silently had no fast path would be worse than one that says
-// so here.
+// contract.
 func GELUTanhContractInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: GELUTanhContractInto length mismatch")
 	}
+	geluTanhContractImpl(dst, src)
+}
+
+// geluTanhScalarInto is the reference loop and the non-arm64 implementation.
+func geluTanhScalarInto(dst, src []float32) {
 	for i, v := range src {
 		dst[i] = geluTanhF32Contract(v)
 	}

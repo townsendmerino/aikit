@@ -95,6 +95,42 @@ DATA cClampHi<>+8(SB)/4, $0x42b17217
 DATA cClampHi<>+12(SB)/4, $0x42b17217
 GLOBL cClampHi<>(SB), RODATA|NOPTR, $16
 
+DATA cSignMask<>+0(SB)/4, $0x80000000
+DATA cSignMask<>+4(SB)/4, $0x80000000
+DATA cSignMask<>+8(SB)/4, $0x80000000
+DATA cSignMask<>+12(SB)/4, $0x80000000
+GLOBL cSignMask<>(SB), RODATA|NOPTR, $16
+DATA cT0<>+0(SB)/4, $0xbbbaf0ea
+DATA cT0<>+4(SB)/4, $0xbbbaf0ea
+DATA cT0<>+8(SB)/4, $0xbbbaf0ea
+DATA cT0<>+12(SB)/4, $0xbbbaf0ea
+GLOBL cT0<>(SB), RODATA|NOPTR, $16
+DATA cT1<>+0(SB)/4, $0x3ca9134e
+DATA cT1<>+4(SB)/4, $0x3ca9134e
+DATA cT1<>+8(SB)/4, $0x3ca9134e
+DATA cT1<>+12(SB)/4, $0x3ca9134e
+GLOBL cT1<>(SB), RODATA|NOPTR, $16
+DATA cT2<>+0(SB)/4, $0xbd5c1e2d
+DATA cT2<>+4(SB)/4, $0xbd5c1e2d
+DATA cT2<>+8(SB)/4, $0xbd5c1e2d
+DATA cT2<>+12(SB)/4, $0xbd5c1e2d
+GLOBL cT2<>(SB), RODATA|NOPTR, $16
+DATA cT3<>+0(SB)/4, $0x3e088393
+DATA cT3<>+4(SB)/4, $0x3e088393
+DATA cT3<>+8(SB)/4, $0x3e088393
+DATA cT3<>+12(SB)/4, $0x3e088393
+GLOBL cT3<>(SB), RODATA|NOPTR, $16
+DATA cT4<>+0(SB)/4, $0xbeaaaa99
+DATA cT4<>+4(SB)/4, $0xbeaaaa99
+DATA cT4<>+8(SB)/4, $0xbeaaaa99
+DATA cT4<>+12(SB)/4, $0xbeaaaa99
+GLOBL cT4<>(SB), RODATA|NOPTR, $16
+DATA c0625<>+0(SB)/4, $0x3f200000
+DATA c0625<>+4(SB)/4, $0x3f200000
+DATA c0625<>+8(SB)/4, $0x3f200000
+DATA c0625<>+12(SB)/4, $0x3f200000
+GLOBL c0625<>(SB), RODATA|NOPTR, $16
+
 // func expF32ContractNEON(dst, src *float32, n int)
 // n must be a multiple of 4; the Go caller handles the tail. Inputs must be finite
 // and within [expUnderflowF32, expOverflowF32] -- the caller guards, exactly as
@@ -376,4 +412,145 @@ siluloop:
 	SUBS $4, R2, R2
 	BNE siluloop
 siludone:
+	RET
+
+// func tanhF32ContractNEON(dst, src *float32, n int)
+//
+// tanh under the contract, four lanes at a time, n a multiple of 4.
+//
+// BOTH BRANCHES ARE COMPUTED AND ONE IS SELECTED. tanhF32Contract splits at
+// |x| = 0.625 -- a 5-term odd polynomial below, 1 - 2/(e^2|x|+1) above -- and a
+// vector kernel cannot branch per lane, so it evaluates both and blends with
+// VBSL. Neither side misbehaves outside its own range: the polynomial merely
+// diverges (finite), and the exponential form tends to 0 as x does, so computing
+// the unused half is wasted work and never a NaN.
+//
+// The large-|x| saturation needs no branch of its own, but it arrives slightly
+// LATER than TanhF32's explicit one and that is a real 1-ULP difference, not a
+// rounding coincidence. TanhF32 returns exactly 1 for x > 9; this form reaches 1
+// when 2/(e^2x+1) falls below half an ULP of 1 (2.98e-8), i.e. at |x| >= 9.02.
+// In the band (9, 9.02) it returns 0.99999994, one ULP low. Measured, not
+// assumed -- an earlier version of this comment claimed the two agreed at x = 9
+// and they do, but it also claimed 1 - 2/6.6e7 rounds to 1, which it does not.
+// Clamping 2|x| to the exp range keeps larger arguments finite.
+//
+// Sign is carried as a BIT, not a multiply: tanh is odd, the computed magnitude
+// is non-negative, so extracting x's sign bit up front and OR-ing it back is
+// identical to the scalar's `sign * result` including at zero, where both give
+// a signed zero.
+TEXT ·tanhF32ContractNEON(SB), NOSPLIT, $0-24
+	MOVD dst+0(FP), R0
+	MOVD src+8(FP), R1
+	MOVD n+16(FP), R2
+	CBZ  R2, tanhdone
+	MOVD $cLog2e<>(SB), R3
+	VLD1 (R3), [V16.S4]
+	MOVD $cMagic<>(SB), R3
+	VLD1 (R3), [V17.S4]
+	MOVD $cLn2Hi<>(SB), R3
+	VLD1 (R3), [V18.S4]
+	MOVD $cLn2Lo<>(SB), R3
+	VLD1 (R3), [V19.S4]
+	MOVD $cP0<>(SB), R3
+	VLD1 (R3), [V20.S4]
+	MOVD $cP1<>(SB), R3
+	VLD1 (R3), [V21.S4]
+	MOVD $cP2<>(SB), R3
+	VLD1 (R3), [V22.S4]
+	MOVD $cP3<>(SB), R3
+	VLD1 (R3), [V23.S4]
+	MOVD $cP4<>(SB), R3
+	VLD1 (R3), [V24.S4]
+	MOVD $cP5<>(SB), R3
+	VLD1 (R3), [V25.S4]
+	MOVD $cOne<>(SB), R3
+	VLD1 (R3), [V26.S4]
+	MOVD $127, R4
+	VDUP R4, V27.S4
+	VMOVI $0, V28.B16
+	MOVD $cT0<>(SB), R3
+	VLD1 (R3), [V13.S4]
+	MOVD $cT1<>(SB), R3
+	VLD1 (R3), [V14.S4]
+	MOVD $cT2<>(SB), R3
+	VLD1 (R3), [V15.S4]
+	MOVD $cT3<>(SB), R3
+	VLD1 (R3), [V29.S4]
+	MOVD $cT4<>(SB), R3
+	VLD1 (R3), [V30.S4]
+	MOVD $c0625<>(SB), R3
+	VLD1 (R3), [V31.S4]
+
+tanhloop:
+	VLD1.P 16(R1), [V1.S4]        // x
+	MOVD $cSignMask<>(SB), R3
+	VLD1 (R3), [V2.S4]
+	VAND V2.B16, V1.B16, V11.B16  // signbit of x, kept for the end
+	VFABS V1.S4, V10.S4           // a = |x|
+
+	// ---- polynomial branch, |a| < 0.625 ----
+	VFMUL V10.S4, V10.S4, V1.S4   // z = a*a
+	VMOV V13.B16, V2.B16
+	VMOV V14.B16, V3.B16
+	VFMLA V1.S4, V2.S4, V3.S4     // t1 + t0*z
+	VMOV V15.B16, V2.B16
+	VFMLA V1.S4, V3.S4, V2.S4     // t2 + p*z
+	VMOV V29.B16, V3.B16
+	VFMLA V1.S4, V2.S4, V3.S4     // t3 + p*z
+	VMOV V30.B16, V2.B16
+	VFMLA V1.S4, V3.S4, V2.S4     // t4 + p*z   -> p
+	VFMUL V1.S4, V2.S4, V3.S4     // pz = p*z
+	VMOV V10.B16, V12.B16         // poly = a
+	VFMLA V10.S4, V3.S4, V12.S4   // poly = pz*a + a
+
+	// ---- exponential branch, |a| >= 0.625 ----
+	VFADD V10.S4, V10.S4, V0.S4   // t = 2a  (exact, no constant needed)
+	MOVD $cClampHi<>(SB), R3
+	VLD1 (R3), [V2.S4]
+	VFMIN V2.S4, V0.S4, V0.S4     // t = min(t, 88.72283)
+	VFMUL V16.S4, V0.S4, V1.S4   // z  = x * log2e
+	VFADD V17.S4, V1.S4, V1.S4   // t  = z + magic
+	VFSUB V17.S4, V1.S4, V1.S4   // kf = t - magic
+	VFCVTZS V1.S4, V2.S4         // k  = int32(kf)
+	VMOV V0.B16, V3.B16          // r  = x
+	VFMLS V18.S4, V1.S4, V3.S4   // r -= kf*ln2Hi
+	VFMLS V19.S4, V1.S4, V3.S4   // r -= kf*ln2Lo
+	VMOV V21.B16, V4.B16
+	VFMLA V3.S4, V20.S4, V4.S4
+	VMOV V22.B16, V5.B16
+	VFMLA V3.S4, V4.S4, V5.S4
+	VMOV V23.B16, V4.B16
+	VFMLA V3.S4, V5.S4, V4.S4
+	VMOV V24.B16, V5.B16
+	VFMLA V3.S4, V4.S4, V5.S4
+	VMOV V25.B16, V4.B16
+	VFMLA V3.S4, V5.S4, V4.S4
+	VMOV V26.B16, V5.B16
+	VFMLA V3.S4, V4.S4, V5.S4    // q = p*r + 1
+	VMOV V26.B16, V4.B16
+	VFMLA V3.S4, V5.S4, V4.S4    // p = q*r + 1
+	VSSHR $1, V2.S4, V6.S4
+	VSUB V6.S4, V2.S4, V7.S4
+	VADD V27.S4, V6.S4, V6.S4
+	VADD V27.S4, V7.S4, V7.S4
+	VSHL $23, V6.S4, V6.S4
+	VSHL $23, V7.S4, V7.S4
+	VFMUL V6.S4, V4.S4, V4.S4
+	VFMUL V7.S4, V4.S4, V4.S4
+	VADD V27.S4, V2.S4, V8.S4
+	VCMGT V28.S4, V8.S4, V9.S4
+	VAND V9.B16, V4.B16, V4.B16
+	VFADD V26.S4, V4.S4, V4.S4    // e + 1
+	VFADD V26.S4, V26.S4, V1.S4   // 2.0, built from 1+1
+	VFDIV V4.S4, V1.S4, V1.S4     // 2/(e+1)
+	VFSUB V1.S4, V26.S4, V1.S4    // alt = 1 - 2/(e+1)
+
+	// ---- select and re-sign ----
+	VCMGT V10.S4, V31.S4, V2.S4   // mask = (0.625 > a)
+	VBSL V1.B16, V12.B16, V2.B16  // mask ? poly : alt
+	VORR V11.B16, V2.B16, V2.B16  // reapply sign
+	VST1.P [V2.S4], 16(R0)
+	SUBS $4, R2, R2
+	BNE tanhloop
+tanhdone:
 	RET

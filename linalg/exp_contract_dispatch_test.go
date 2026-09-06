@@ -93,3 +93,36 @@ func TestContractDispatch_specials(t *testing.T) {
 		}
 	}
 }
+
+// TestContractDispatch_inPlace pins that dst may alias src. The arm64 GELU path
+// chunks through a stack buffer and writes dst while still reading src, so
+// aliasing is a real hazard there rather than a hypothetical one — and an
+// in-place caller is the natural way to use these (goinfer's activation loops
+// overwrite the gate row).
+func TestContractDispatch_inPlace(t *testing.T) {
+	rng := rand.New(rand.NewPCG(0xa11a, 0x5))
+	for _, n := range []int{1, 4, 7, 255, 256, 257, 1000, 8960} {
+		src := make([]float32, n)
+		for i := range src {
+			src[i] = float32(rng.NormFloat64() * 5)
+		}
+		for _, tc := range []struct {
+			name string
+			fn   func(dst, src []float32)
+		}{
+			{"exp", ExpContractInto},
+			{"silu", SiLUContractInto},
+			{"gelutanh", GELUTanhContractInto},
+		} {
+			want := make([]float32, n)
+			tc.fn(want, src)
+			inplace := append([]float32(nil), src...)
+			tc.fn(inplace, inplace)
+			for i := range want {
+				if math.Float32bits(inplace[i]) != math.Float32bits(want[i]) {
+					t.Fatalf("%s n=%d i=%d: in-place %v != separate %v", tc.name, n, i, inplace[i], want[i])
+				}
+			}
+		}
+	}
+}

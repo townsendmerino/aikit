@@ -132,3 +132,35 @@ func BenchmarkSiLUKernels(b *testing.B) {
 		}
 	})
 }
+
+// BenchmarkGELUTanhKernels compares the dispatched GELU-tanh against the scalar
+// contract and the shipped GELUTanhF32. n=8960 is one gemma-family gate row.
+func BenchmarkGELUTanhKernels(b *testing.B) {
+	const n = 8960
+	rng := rand.New(rand.NewPCG(8, 8))
+	src := make([]float32, n)
+	for i := range src {
+		src[i] = float32(rng.NormFloat64() * 4)
+	}
+	dst := make([]float32, n)
+	b.Run("dispatched", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			GELUTanhContractInto(dst, src)
+		}
+	})
+	b.Run("scalar_contract", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			geluTanhScalarInto(dst, src)
+		}
+	})
+	b.Run("shipped_GELUTanhF32", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			for i, v := range src {
+				dst[i] = GELUTanhF32(v)
+			}
+		}
+	})
+}
