@@ -946,7 +946,33 @@ prefill == speculative verify` guarantees rest on.
 > regeneration and an HF parity re-run. That is the trade to decide on, and it is a different trade
 > from the one the brief was written against.
 >
-> Caveat on the K=3900 cell specifically: this run carried heavy desktop load (loadavg 7.6–9.2,
+> **QUIET-BOX RE-TAKE 2026-09-06 — the 2.8% was a LOAD ARTIFACT; every depth clears the gate.**
+> The cell that sat near the stop line was re-measured on a settled box (background 37–44% of
+> 800%, `duetexpertd` waited out first), n=5, and with the ARM ORDER ROTATED — rotation A real-then-
+> stub, rotation B stub-then-real:
+>
+> | K | rotation A | rotation B | **mean** | vs the rule (≥5% proceed, <3% stop) |
+> |--:|--:|--:|--:|---|
+> | 512 | 9.9% | 5.8% | **7.9%** | proceed |
+> | 1024 | 13.7% | 5.9% | **9.8%** | proceed |
+> | 3900 | 4.2% | 6.4% | **5.3%** | proceed |
+>
+> So step 2 proceeds at every depth, and the earlier 2.8% should not be quoted — it was measured
+> while a second sweep of mine was running on the same box.
+>
+> **The rotation spread is the part worth keeping.** The two orders disagree by up to 7.8 points
+> (13.7 vs 5.9 at K=1024), and the sign fits an order effect at 2 of 3 depths: whichever arm runs
+> SECOND reads faster, so A (stub second) over-reads the bound and B (stub first) under-reads it.
+> K=3900 goes the other way, so ordering is real but not the whole story. Either way the mean is
+> the correction, and a single-order run at this precision could have reported anywhere from 4.2%
+> to 13.7% for the same system — which is the argument for rotating rather than a formality.
+>
+> **What this licenses is modest and should be said as such.** These are STUB bounds. On this
+> package's own exp figures a kernel takes maybe half to two thirds, so realistic step-2 delivery
+> is **~3–6% of prefill**, for hand-written NEON and AVX2, a numeric contract, raw-bit gates on two
+> arches, a goldens regeneration and an HF parity re-run.
+>
+> Superseded caveat, kept for the record: this run carried heavy desktop load (loadavg 7.6–9.2,
 > rising during it). Both arms saw it and the ratio is the measurement, but 2.8% is close enough to
 > the 3% stop line that it deserves a quiet-box re-take before anything is decided ON that cell.
 >
