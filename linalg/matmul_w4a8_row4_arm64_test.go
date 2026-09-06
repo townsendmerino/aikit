@@ -47,7 +47,7 @@ func TestMatmulBTW4A8Row4Into_bitIdenticalToMatmulBTW4A8Into(t *testing.T) {
 		got := make([]float32, N)
 		MatmulBTW4A8Row4Into(&ws2, a, packed4, scales4, got, 1, K, N, group)
 
-		for j := 0; j < N; j++ {
+		for j := range N {
 			if got[j] != want[j] {
 				t.Fatalf("K=%d N=%d j=%d: MatmulBTW4A8Row4Into %v != MatmulBTW4A8Into %v (bit mismatch)", K, N, j, got[j], want[j])
 			}
@@ -94,7 +94,7 @@ func TestMatmulBTW4A8Row4Into_parallelMatchesSerial(t *testing.T) {
 		ws.SetThreshold(0)
 		got := make([]float32, N)
 		MatmulBTW4A8Row4Into(&ws, a, packed4, scales4, got, 1, K, N, group)
-		for j := 0; j < N; j++ {
+		for j := range N {
 			if got[j] != serial[j] {
 				t.Fatalf("workers=%d j=%d: parallel %v != serial %v (bit mismatch)", workers, j, got[j], serial[j])
 			}

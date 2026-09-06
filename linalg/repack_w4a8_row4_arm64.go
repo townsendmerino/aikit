@@ -41,10 +41,10 @@ func repackSplitHalfRow(packed []byte, K int) []byte {
 	}
 	nGroups := K / 32
 	out := make([]byte, len(packed))
-	for g := 0; g < nGroups; g++ {
+	for g := range nGroups {
 		gk := g * 32
 		obase := g * 16
-		for i := 0; i < 16; i++ {
+		for i := range 16 {
 			lo := canonicalNibble(packed, gk+i)
 			hi := canonicalNibble(packed, gk+i+16)
 			out[obase+i] = lo | (hi << 4)
@@ -83,7 +83,7 @@ func repackSplitHalf4RowBlock(row0, row1, row2, row3 []byte, K int) []byte {
 	sh2 := repackSplitHalfRow(row2, K)
 	sh3 := repackSplitHalfRow(row3, K)
 	out := make([]byte, 4*bpr)
-	for g := 0; g < nGroups; g++ {
+	for g := range nGroups {
 		base := g * 16
 		obase := g * 64
 		copy(out[obase:obase+16], sh0[base:base+16])
@@ -112,7 +112,7 @@ func repackSplitHalf4RowDeshared(row0, row1, row2, row3 []byte, K int) (b0, b1, 
 // locality reasoning.
 func interleaveScales4Row(s0, s1, s2, s3 []float32, nGroups int) []float32 {
 	out := make([]float32, 4*nGroups)
-	for g := 0; g < nGroups; g++ {
+	for g := range nGroups {
 		out[4*g] = s0[g]
 		out[4*g+1] = s1[g]
 		out[4*g+2] = s2[g]

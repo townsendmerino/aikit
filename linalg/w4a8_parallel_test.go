@@ -56,7 +56,7 @@ func TestW4A8_parallelScaling(t *testing.T) {
 		ws.SetWorkers(workers)
 		ws.SetThreshold(0) // force-parallel regardless of the MAC-count gate
 		best := math.Inf(1)
-		for rep := 0; rep < 3; rep++ {
+		for range 3 {
 			i := 0
 			r := testing.Benchmark(func(b *testing.B) {
 				for b.Loop() {

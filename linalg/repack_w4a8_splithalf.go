@@ -31,12 +31,12 @@ func RepackW4A8SplitHalf(packed []byte, rows, cols, group int) []byte {
 		}
 		return b >> 4
 	}
-	for r := 0; r < rows; r++ {
+	for r := range rows {
 		src := packed[r*bpr : (r+1)*bpr]
 		dst := out[r*bpr : (r+1)*bpr]
 		for g := 0; g < cols/32; g++ {
 			gk, ob := g*32, g*16
-			for i := 0; i < 16; i++ {
+			for i := range 16 {
 				dst[ob+i] = nib(src, gk+i) | (nib(src, gk+i+16) << 4)
 			}
 		}

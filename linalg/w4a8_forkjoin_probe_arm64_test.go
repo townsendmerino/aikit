@@ -186,9 +186,7 @@ func dynamicChunkRun(workers, total, chunk int, body func(q0, q1 int)) {
 	var next atomic.Int64
 	var wg sync.WaitGroup
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for {
 				q0 := int(next.Add(int64(chunk))) - chunk
 				if q0 >= total {
@@ -196,7 +194,7 @@ func dynamicChunkRun(workers, total, chunk int, body func(q0, q1 int)) {
 				}
 				body(q0, min(q0+chunk, total))
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -259,7 +257,7 @@ func TestW4A8WorkPerBarrier(t *testing.T) {
 			// the CONCATENATED quad space, so there is one barrier per group of
 			// matrices rather than one per matrix.
 			best := 0.0
-			for rep := 0; rep < 3; rep++ {
+			for range 3 {
 				base0 := 0
 				r := testing.Benchmark(func(b *testing.B) {
 					for b.Loop() {
@@ -300,7 +298,7 @@ func TestW4A8WorkPerBarrier(t *testing.T) {
 		// does not already give for free.
 		for _, chunk := range []int{8, 32, 128} {
 			bestDyn := 0.0
-			for rep := 0; rep < 3; rep++ {
+			for range 3 {
 				i := 0
 				r := testing.Benchmark(func(b *testing.B) {
 					for b.Loop() {

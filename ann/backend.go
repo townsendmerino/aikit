@@ -227,10 +227,7 @@ func (f *FlatI8) EnableGPUShardSplit(gpuShare float64) error {
 	if f.n < 2 || !(gpuShare > 0 && gpuShare < 1) {
 		return errShardRange
 	}
-	rows := int(gpuShare * float64(f.n))
-	if rows < 1 {
-		rows = 1
-	}
+	rows := max(int(gpuShare*float64(f.n)), 1)
 	if rows > f.n-1 {
 		rows = f.n - 1
 	}
@@ -256,11 +253,9 @@ func (f *FlatI8) queryBatchSharded(queries [][]float32, k int) ([][]Hit, bool) {
 	var gpuHits [][]Hit
 	var gpuOK bool
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		gpuHits, gpuOK = f.scoreShardGPU(queries, k)
-	}()
+	})
 
 	cpuHits, cpuOK := f.scoreShardCPU(queries, k)
 	wg.Wait()

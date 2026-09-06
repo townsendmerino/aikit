@@ -47,7 +47,7 @@ func TestMatmulBTW4A8Row4PrefetchInto_bitIdenticalToRow4(t *testing.T) {
 			var ws2 Workspace
 			got := make([]float32, N)
 			MatmulBTW4A8Row4PrefetchInto(&ws2, a, packed4, scales4, got, 1, K, N, group, dist)
-			for j := 0; j < N; j++ {
+			for j := range N {
 				if got[j] != want[j] {
 					t.Fatalf("K=%d N=%d dist=%d j=%d: Prefetch %v != Row4 %v (bit mismatch)", K, N, dist, j, got[j], want[j])
 				}
@@ -94,7 +94,7 @@ func TestMatmulBTW4A8Row4DesharedInto_bitIdenticalToRow4(t *testing.T) {
 		var ws2 Workspace
 		got := make([]float32, N)
 		MatmulBTW4A8Row4DesharedInto(&ws2, a, w0, w1, w2, w3, s0, s1, s2, s3, got, 1, K, N, group)
-		for j := 0; j < N; j++ {
+		for j := range N {
 			if got[j] != want[j] {
 				t.Fatalf("K=%d N=%d j=%d: Deshared %v != Row4 %v (bit mismatch)", K, N, j, got[j], want[j])
 			}

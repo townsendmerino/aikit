@@ -24,7 +24,7 @@ func TestDotW4A8FoldSDOTv2_matchesOracle(t *testing.T) {
 	// nGroups from 1 to 37 covers every residue mod 4 several times over.
 	for nGroups := 1; nGroups <= 37; nGroups++ {
 		K := nGroups * group
-		for trial := 0; trial < 5; trial++ {
+		for trial := range 5 {
 			act := make([]int8, K)
 			for i := range act {
 				act[i] = int8(rng.Intn(255) - 128)
@@ -62,7 +62,7 @@ func TestDotW4A8SplitHalfSDOT_matchesOracle(t *testing.T) {
 	const group = 32
 	for nGroups := 1; nGroups <= 37; nGroups++ {
 		K := nGroups * group
-		for trial := 0; trial < 5; trial++ {
+		for trial := range 5 {
 			act := make([]int8, K)
 			for i := range act {
 				act[i] = int8(rng.Intn(255) - 128)
@@ -96,7 +96,7 @@ func TestDotW4A8FoldSDOT2Acc_matchesOracle(t *testing.T) {
 	const group = 32
 	for nGroups := 2; nGroups <= 40; nGroups += 2 {
 		K := nGroups * group
-		for trial := 0; trial < 5; trial++ {
+		for trial := range 5 {
 			act := make([]int8, K)
 			for i := range act {
 				act[i] = int8(rng.Intn(255) - 128)
@@ -127,7 +127,7 @@ func TestDotW4A8FoldSDOT4Acc_matchesOracle(t *testing.T) {
 	const group = 32
 	for nGroups := 4; nGroups <= 40; nGroups += 4 {
 		K := nGroups * group
-		for trial := 0; trial < 5; trial++ {
+		for trial := range 5 {
 			act := make([]int8, K)
 			for i := range act {
 				act[i] = int8(rng.Intn(255) - 128)
@@ -159,7 +159,7 @@ func TestDotW4A8SplitHalf2Acc_matchesOracle(t *testing.T) {
 	const group = 32
 	for nGroups := 2; nGroups <= 40; nGroups += 2 {
 		K := nGroups * group
-		for trial := 0; trial < 5; trial++ {
+		for trial := range 5 {
 			act := make([]int8, K)
 			for i := range act {
 				act[i] = int8(rng.Intn(255) - 128)
@@ -192,7 +192,7 @@ func TestDotW4A8SplitHalf4Acc_matchesOracle(t *testing.T) {
 	const group = 32
 	for nGroups := 4; nGroups <= 40; nGroups += 4 {
 		K := nGroups * group
-		for trial := 0; trial < 5; trial++ {
+		for trial := range 5 {
 			act := make([]int8, K)
 			for i := range act {
 				act[i] = int8(rng.Intn(255) - 128)
@@ -227,14 +227,14 @@ func TestDotW4A8SplitHalf4Row_matchesOracle(t *testing.T) {
 	const group = 32
 	for nGroups := 1; nGroups <= 37; nGroups++ {
 		K := nGroups * group
-		for trial := 0; trial < 5; trial++ {
+		for trial := range 5 {
 			act := make([]int8, K)
 			for i := range act {
 				act[i] = int8(rng.Intn(255) - 128)
 			}
 			rows := make([][]byte, 4)
 			scales := make([][]float32, 4)
-			for r := 0; r < 4; r++ {
+			for r := range 4 {
 				w := make([]float32, K)
 				for i := range w {
 					w[i] = float32(rng.NormFloat64())
@@ -250,7 +250,7 @@ func TestDotW4A8SplitHalf4Row_matchesOracle(t *testing.T) {
 			var got [4]float32
 			dotW4A8SplitHalf4Row(&act[0], &packed4[0], &scales4[0], &got[0], nGroups)
 
-			for r := 0; r < 4; r++ {
+			for r := range 4 {
 				if math.Abs(float64(got[r]-want[r])) > 1e-3*math.Abs(float64(want[r]))+1e-3 {
 					t.Fatalf("nGroups=%d trial=%d row=%d: got %v want %v", nGroups, trial, r, got[r], want[r])
 				}
@@ -299,14 +299,14 @@ func TestDotW4A8SplitHalf4Row_bitIdenticalToCanonical(t *testing.T) {
 	counts = append(counts, 48, 280) // K = 1536, 8960
 	for _, nGroups := range counts {
 		K := nGroups * group
-		for trial := 0; trial < 10; trial++ {
+		for trial := range 10 {
 			act := make([]int8, K)
 			for i := range act {
 				act[i] = int8(rng.Intn(255) - 128)
 			}
 			rows := make([][]byte, 4)
 			scales := make([][]float32, 4)
-			for r := 0; r < 4; r++ {
+			for r := range 4 {
 				w := make([]float32, K)
 				for i := range w {
 					w[i] = float32(rng.NormFloat64())
@@ -321,7 +321,7 @@ func TestDotW4A8SplitHalf4Row_bitIdenticalToCanonical(t *testing.T) {
 			var got [4]float32
 			dotW4A8SplitHalf4Row(&act[0], &packed4[0], &scales4[0], &got[0], nGroups)
 
-			for r := 0; r < 4; r++ {
+			for r := range 4 {
 				want := dotW4A8FoldSDOT(&act[0], &rows[r][0], &scales[r][0], nGroups)
 				if got[r] != want {
 					t.Fatalf("nGroups=%d trial=%d row=%d: got %v want %v (bit mismatch — not identical to canonical)", nGroups, trial, r, got[r], want)

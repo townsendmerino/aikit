@@ -48,7 +48,7 @@ func MatmulBTW4A8Row4PrefetchInto(ws *Workspace, a []float32, w4Row4 []byte, wSc
 	}
 	var out [4]float32
 	nQuads := N / 4
-	for q := 0; q < nQuads; q++ {
+	for q := range nQuads {
 		blk := w4Row4[q*4*bpr : q*4*bpr+4*bpr]
 		sblk := wScales4[q*4*nGroups : q*4*nGroups+4*nGroups]
 		dotW4A8SplitHalf4RowPrefetch(&aq[0], &blk[0], &sblk[0], &out[0], nGroups, prefetchDistance)
@@ -85,7 +85,7 @@ func RepackW4A8Row4Deshared(packed []byte, N, K, group int) (b0, b1, b2, b3 []by
 	b1 = make([]byte, nQuads*bpr)
 	b2 = make([]byte, nQuads*bpr)
 	b3 = make([]byte, nQuads*bpr)
-	for q := 0; q < nQuads; q++ {
+	for q := range nQuads {
 		r0, r1, r2, r3 := q*4*bpr, (q*4+1)*bpr, (q*4+2)*bpr, (q*4+3)*bpr
 		sh0, sh1, sh2, sh3 := repackSplitHalf4RowDeshared(packed[r0:r0+bpr], packed[r1:r1+bpr], packed[r2:r2+bpr], packed[r3:r3+bpr], K)
 		copy(b0[q*bpr:(q+1)*bpr], sh0)
@@ -115,7 +115,7 @@ func RepackW4A8Row4DesharedScales(scales []float32, N, K, group int) (s0, s1, s2
 	s1 = make([]float32, nQuads*nGroups)
 	s2 = make([]float32, nQuads*nGroups)
 	s3 = make([]float32, nQuads*nGroups)
-	for q := 0; q < nQuads; q++ {
+	for q := range nQuads {
 		r0, r1, r2, r3 := q*4*nGroups, (q*4+1)*nGroups, (q*4+2)*nGroups, (q*4+3)*nGroups
 		copy(s0[q*nGroups:(q+1)*nGroups], scales[r0:r0+nGroups])
 		copy(s1[q*nGroups:(q+1)*nGroups], scales[r1:r1+nGroups])
@@ -159,7 +159,7 @@ func MatmulBTW4A8Row4DesharedInto(ws *Workspace, a []float32, w0, w1, w2, w3 []b
 		return
 	}
 	var out [4]float32
-	for q := 0; q < nQuads; q++ {
+	for q := range nQuads {
 		p0 := w0[q*bpr : q*bpr+bpr]
 		p1 := w1[q*bpr : q*bpr+bpr]
 		p2 := w2[q*bpr : q*bpr+bpr]

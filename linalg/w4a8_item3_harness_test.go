@@ -36,7 +36,7 @@ func dotW4A8SplitHalfScalar(act []int8, packedSH []byte, scales []float32, group
 
 func TestRepackSplitHalf_roundtripsCanonical(t *testing.T) {
 	rng := rand.New(rand.NewSource(3))
-	for trial := 0; trial < 50; trial++ {
+	for trial := range 50 {
 		nGroups := 1 + rng.Intn(20)
 		K := nGroups * 32
 		w := make([]float32, K)
@@ -45,7 +45,7 @@ func TestRepackSplitHalf_roundtripsCanonical(t *testing.T) {
 		}
 		packed, _ := QuantizeGroupsInt4(w, 1, K, 32)
 		sh := repackSplitHalfRow(packed, K)
-		for k := 0; k < K; k++ {
+		for k := range K {
 			want := canonicalNibble(packed, k)
 			got := splitHalfNibble(sh, k)
 			if got != want {
@@ -64,9 +64,9 @@ func dotW4A8SplitHalf4RowScalar(act []int8, packed4 []byte, scales4 []float32, g
 	nGroups := (K + group - 1) / group
 	bpr := K / 2
 	var out [4]float32
-	for row := 0; row < 4; row++ {
+	for row := range 4 {
 		var total float32
-		for g := 0; g < nGroups; g++ {
+		for g := range nGroups {
 			ks := g * group
 			ke := min(ks+group, K)
 			rowBytes := packed4[g*64+row*16 : g*64+row*16+16]
@@ -91,7 +91,7 @@ func dotW4A8SplitHalf4RowScalar(act []int8, packed4 []byte, scales4 []float32, g
 
 func TestRepackSplitHalf4RowBlock_matchesPerRow(t *testing.T) {
 	rng := rand.New(rand.NewSource(37))
-	for trial := 0; trial < 30; trial++ {
+	for trial := range 30 {
 		nGroups := 1 + rng.Intn(15)
 		K := nGroups * 32
 		rows := make([][]byte, 4)
@@ -100,7 +100,7 @@ func TestRepackSplitHalf4RowBlock_matchesPerRow(t *testing.T) {
 		for i := range acts {
 			acts[i] = int8(rng.Intn(255) - 128)
 		}
-		for r := 0; r < 4; r++ {
+		for r := range 4 {
 			w := make([]float32, K)
 			for i := range w {
 				w[i] = float32(rng.NormFloat64())
@@ -113,7 +113,7 @@ func TestRepackSplitHalf4RowBlock_matchesPerRow(t *testing.T) {
 		scales4 := interleaveScales4Row(scales[0], scales[1], scales[2], scales[3], nGroups)
 
 		got := dotW4A8SplitHalf4RowScalar(acts, packed4, scales4, 32, K)
-		for r := 0; r < 4; r++ {
+		for r := range 4 {
 			want := dotW4A8Scalar(acts, rows[r], scales[r], 32, K)
 			if got[r] != want {
 				t.Fatalf("trial %d K=%d row=%d: got %v want %v", trial, K, r, got[r], want)
@@ -124,7 +124,7 @@ func TestRepackSplitHalf4RowBlock_matchesPerRow(t *testing.T) {
 
 func TestDotW4A8SplitHalfScalar_matchesCanonical_exact(t *testing.T) {
 	rng := rand.New(rand.NewSource(5))
-	for trial := 0; trial < 200; trial++ {
+	for trial := range 200 {
 		K := 32 * (1 + rng.Intn(20))
 		act := make([]int8, K)
 		for i := range act {

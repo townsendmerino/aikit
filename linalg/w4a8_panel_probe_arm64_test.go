@@ -73,7 +73,7 @@ func TestW4A8TilePanelTraffic(t *testing.T) {
 				}
 				MatmulBTW4A8Row4TileInto(ws, a, row4, row4s, dst, M, K, N, group)
 				best := 0.0
-				for rep := 0; rep < 3; rep++ {
+				for range 3 {
 					r := testing.Benchmark(func(b *testing.B) {
 						for b.Loop() {
 							MatmulBTW4A8Row4TileInto(ws, a, row4, row4s, dst, M, K, N, group)

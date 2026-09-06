@@ -60,7 +60,7 @@ func TestW4A8Row4ColdFix_warmIntact(t *testing.T) {
 	runCanonicalX4 := func() float64 {
 		r := testing.Benchmark(func(b *testing.B) {
 			for b.Loop() {
-				for j := 0; j < 4; j++ {
+				for range 4 {
 					sinkW4A8F32ARM64 = dotW4A8FoldSDOT(&act[0], &row0[0], &s0[0], nGroups)
 				}
 			}
@@ -123,7 +123,7 @@ func TestW4A8Row4ColdFix_warmIntact(t *testing.T) {
 
 func minOf3(f func() float64) float64 {
 	best := f()
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		if v := f(); v < best {
 			best = v
 		}

@@ -61,13 +61,13 @@ func TestW4A8Item3ParallelAggregate(t *testing.T) {
 		}
 		packed, scales := QuantizeGroupsInt4(w, N, K, group)
 		sh := make([]byte, len(packed))
-		for r := 0; r < N; r++ {
+		for r := range N {
 			row := packed[r*bpr : r*bpr+bpr]
 			copy(sh[r*bpr:r*bpr+bpr], repackSplitHalfRow(row, K))
 		}
 		p4 := make([]byte, N*bpr)
 		s4 := make([]float32, N*nGroups)
-		for q := 0; q < N/4; q++ {
+		for q := range N / 4 {
 			r0, r1, r2, r3 := q*4, q*4+1, q*4+2, q*4+3
 			blk := repackSplitHalf4RowBlock(
 				packed[r0*bpr:r0*bpr+bpr], packed[r1*bpr:r1*bpr+bpr],
@@ -116,7 +116,7 @@ func TestW4A8Item3ParallelAggregate(t *testing.T) {
 		ws.SetWorkers(workers)
 		ws.SetThreshold(0)
 		best := math.Inf(1)
-		for rep := 0; rep < 3; rep++ {
+		for range 3 {
 			i := 0
 			r := testing.Benchmark(func(b *testing.B) {
 				for b.Loop() {
@@ -137,7 +137,7 @@ func TestW4A8Item3ParallelAggregate(t *testing.T) {
 		ws.SetWorkers(workers)
 		ws.SetThreshold(0)
 		best := math.Inf(1)
-		for rep := 0; rep < 3; rep++ {
+		for range 3 {
 			i := 0
 			r := testing.Benchmark(func(b *testing.B) {
 				for b.Loop() {
@@ -158,7 +158,7 @@ func TestW4A8Item3ParallelAggregate(t *testing.T) {
 		ws.SetWorkers(workers)
 		ws.SetThreshold(0)
 		best := math.Inf(1)
-		for rep := 0; rep < 3; rep++ {
+		for range 3 {
 			i := 0
 			r := testing.Benchmark(func(b *testing.B) {
 				for b.Loop() {

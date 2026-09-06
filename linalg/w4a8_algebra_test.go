@@ -7,7 +7,7 @@ import (
 
 func TestDotW4A8Uncentered_matchesScalar_exact(t *testing.T) {
 	rng := rand.New(rand.NewSource(7))
-	for trial := 0; trial < 200; trial++ {
+	for trial := range 200 {
 		K := 1 + rng.Intn(400)
 		group := 32
 		nGroups := (K + group - 1) / group

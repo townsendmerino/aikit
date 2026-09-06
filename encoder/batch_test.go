@@ -241,10 +241,7 @@ func hostFanOut(width int) float64 {
 		wg.Add(1)
 		go func(w, lo int) {
 			defer wg.Done()
-			hi := lo + chunk
-			if hi > span {
-				hi = span
-			}
+			hi := min(lo+chunk, span)
 			out[w] = burn(lo, hi)
 		}(w, w*chunk)
 	}

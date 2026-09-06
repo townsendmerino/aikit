@@ -47,7 +47,7 @@ func benchW4A8Shape(t *testing.T, seed int64) (act []int8, packed, splitHalf []b
 	bytesPerRow = float64(bpr + nGroups*4)
 
 	splitHalf = make([]byte, len(packed))
-	for r := 0; r < N; r++ {
+	for r := range N {
 		row := packed[r*bpr : r*bpr+bpr]
 		copy(splitHalf[r*bpr:r*bpr+bpr], repackSplitHalfRow(row, K))
 	}
@@ -553,14 +553,14 @@ func TestW4A8Item4Row4VsBaselines(t *testing.T) {
 	}
 	packed, scales := QuantizeGroupsInt4(w, N, K, group)
 	splitHalf := make([]byte, len(packed))
-	for r := 0; r < N; r++ {
+	for r := range N {
 		row := packed[r*bpr : r*bpr+bpr]
 		copy(splitHalf[r*bpr:r*bpr+bpr], repackSplitHalfRow(row, K))
 	}
 	// Interleave every 4 consecutive rows into item 4's block layout.
 	packed4 := make([]byte, N*bpr)
 	scales4 := make([]float32, N*nGroups)
-	for q := 0; q < N/4; q++ {
+	for q := range N / 4 {
 		r0, r1, r2, r3 := q*4, q*4+1, q*4+2, q*4+3
 		blk := repackSplitHalf4RowBlock(
 			packed[r0*bpr:r0*bpr+bpr], packed[r1*bpr:r1*bpr+bpr],
@@ -577,7 +577,7 @@ func TestW4A8Item4Row4VsBaselines(t *testing.T) {
 		s0 := scales[0:nGroups]
 		r := testing.Benchmark(func(b *testing.B) {
 			for b.Loop() {
-				for j := 0; j < 4; j++ {
+				for range 4 {
 					sinkW4A8F32ARM64 = dotW4A8FoldSDOT(&act[0], &row0[0], &s0[0], nGroups)
 				}
 			}
@@ -589,7 +589,7 @@ func TestW4A8Item4Row4VsBaselines(t *testing.T) {
 		s0 := scales[0:nGroups]
 		r := testing.Benchmark(func(b *testing.B) {
 			for b.Loop() {
-				for j := 0; j < 4; j++ {
+				for range 4 {
 					sinkW4A8F32ARM64 = dotW4A8SplitHalf2Acc(&act[0], &row0[0], &s0[0], nGroups)
 				}
 			}
@@ -612,7 +612,7 @@ func TestW4A8Item4Row4VsBaselines(t *testing.T) {
 		i := 0
 		r := testing.Benchmark(func(b *testing.B) {
 			for b.Loop() {
-				for j := 0; j < 4; j++ {
+				for range 4 {
 					row := packed[i*bpr : i*bpr+bpr]
 					s := scales[i*nGroups : i*nGroups+nGroups]
 					sinkW4A8F32ARM64 = dotW4A8FoldSDOT(&act[0], &row[0], &s[0], nGroups)
@@ -629,7 +629,7 @@ func TestW4A8Item4Row4VsBaselines(t *testing.T) {
 		i := 0
 		r := testing.Benchmark(func(b *testing.B) {
 			for b.Loop() {
-				for j := 0; j < 4; j++ {
+				for range 4 {
 					row := splitHalf[i*bpr : i*bpr+bpr]
 					s := scales[i*nGroups : i*nGroups+nGroups]
 					sinkW4A8F32ARM64 = dotW4A8SplitHalf2Acc(&act[0], &row[0], &s[0], nGroups)
