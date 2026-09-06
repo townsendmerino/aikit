@@ -13,11 +13,11 @@ against an untagged aikit.
 |---|---|---|---|---|
 | **M5** duplicate inventory | *(none — no aikit change)* | *(see below)* | n/a — not a kernel swap | `TestZZM5_*` probes, mutation-checked |
 | **M1** fusedattn | **v1.35.0** ⚠️ *perfgate skipped — see CHANGELOG* | *pending* | *not measured* | `TestAttendTileFused_bitIdenticalToGoinferRef`, mutation-checked ×2 |
-| **M2** MXFP4 | *aikit half landed; tag pending* | *pending* | *pending* | `TestDequantMXFP4Split_bitIdenticalToGoinferRef` + `TestMXFP4Orders_areNotInterchangeable`, mutation-checked ×3 |
+| **M2** MXFP4 | **v1.36.0** (perfgate PASS) | goinfer `25a65447` | **identical** — argmax 244/244, cosine 0.999058 both sides, real 20B | `TestDequantMXFP4Split_bitIdenticalToGoinferRef` + `TestMXFP4Orders_areNotInterchangeable`, mutation-checked ×3 |
 | M3 W4A8 device kernels | *pending* | — | — | — |
 | M4 sequence mixers | *Phase 0 only, no move* | — | — | — |
 
-**Status 2026-09-06: M5 done. M1 landed (v1.35.0). M2's aikit half landed, untagged. M3–M4 not started.**
+**Status 2026-09-06: M5 done. M1 landed (v1.35.0), goinfer half pending. M2 COMPLETE both halves (v1.36.0 → goinfer `25a65447`). M3–M4 not started.**
 
 ---
 
@@ -150,10 +150,29 @@ aikit with the measurement recorded; goinfer's copy carries the same wording and
 when its half lands. This is the `A DOC COMMENT CLAIMING COVERAGE IS NOT COVERAGE` rule one step
 sideways: a comment claiming a *necessity* that no test asserts and no measurement supports.
 
-### Still owed for M2
+### M2's goinfer half — DONE, and the golden did not move
 
-- Tag aikit, then bump goinfer, swap `decoder/gptoss_safetensors.go:86` onto
-  `embed.DequantMXFP4Split`, delete the moved arithmetic, and prove the gpt-oss goldens did not
-  move. **Never the other order.**
-- One paired interleaved before/after cell.
-- goinfer's copy of the over-claiming e8m0 comment.
+aikit **v1.36.0** was tagged first (releasegate 4/4, perfgate PASS, vulncheck clean 15/15, root CI
+green), then goinfer bumped onto it, swapped `decoder/gptoss_safetensors.go:86` from
+`mxfp4DequantSplitInto` to `embed.DequantMXFP4Split`, and deleted `decoder/mxfp4.go`. Never the
+other order, and goinfer never built against an untagged aikit.
+
+**The paired cell**, same box and same session, on the real 20B checkpoint —
+`TestGptOssSafetensors_vsGGUF` under `-tags realckpt` with both checkpoints read from local NVMe:
+
+| | argmax | logit cosine | wall |
+|---|---|---|---|
+| **before** — goinfer's own `mxfp4DequantSplitInto`, aikit v1.35.0 | 244 vs 244 | **0.999058** | 262.06 s |
+| **after** — `embed.DequantMXFP4Split`, aikit v1.36.0 | 244 vs 244 | **0.999058** | 262.19 s |
+
+Every printed digit identical. That test is the right one for this move rather than a convenient
+one: it diffs the safetensors loader against the already-T3-validated GGUF path on the same model,
+and the split nibble order is exactly what it exists to catch.
+
+**goinfer keeps its `decoder/mxfp4_test.go`**, repointed at aikit rather than deleted with the
+implementation. It holds what aikit's gate structurally cannot: a fixture from a real gpt-oss:20b
+tensor dequantized by the reference `gguf` **Python** library. aikit has no Python, so its vectors
+are Go-generated and self-referential by construction; goinfer's is an independent oracle, and
+deleting it would have removed the only check that the packing matches what the reference actually
+emits for bytes off a real checkpoint. This is the general shape: a move deletes duplicated
+ARITHMETIC, not the consumer-side test that has an oracle the kernel repo cannot reach.
