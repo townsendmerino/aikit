@@ -9,6 +9,32 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added
+
+- **`embed`: MXFP4 (OCP FP4, ggml type 39) exported, in BOTH block layouts** — `MXFP4Scale`,
+  `DequantMXFP4Blocks` (contiguous GGUF 17-byte blocks), `DequantMXFP4Split` (the safetensors
+  form, where nibbles and scales are separate tensors), `MXFP4BlockElems` / `MXFP4BlockBytes`.
+  M2 of `docs/task-goinfer-kernel-moves.md`.
+
+  **The two layouts are not interchangeable and must not be unified.** They share the block size,
+  the scale encoding and the value table, so they read as one kernel with different addressing;
+  byte j packs elements j and j+16 in GGML and 2j and 2j+1 in safetensors. Measured on a real
+  gpt-oss expert against the validated GGUF path: **cosine 0.081 for GGML order on safetensors
+  data, 1.000000 for sequential.** The wrong choice produces finite, plausibly-scaled, completely
+  wrong weights without erroring. `TestMXFP4Orders_areNotInterchangeable` guards this.
+
+  Gated raw-bit (`math.Float32bits`, no tolerance) against frozen copies of goinfer's bodies over
+  all 256 e8m0 scale bytes and every 4-bit code; mutation-checked three ways.
+
+### Fixed
+
+- **`embed`: a comment on `e8m0ToF32Half` claimed something untrue.** It said the exact bit
+  formula, rather than `2^(x-128)`, is what keeps the x∈{0,1} subnormals bit-identical to the
+  reference. Measured over all 256 inputs, the two forms agree **everywhere** — 2^-128 and 2^-127
+  are exactly representable as float32 subnormals. No behaviour change; the formula is still the
+  right choice for being exact by construction with no libm call. The old wording would have told
+  anyone simplifying it that they had broken something they had not.
+
 ## [1.35.0] — 2026-09-06
 
 > **RELEASE-RITUAL EXCEPTION: `perfgate` was NOT run for this tag.** RELEASING.md step 2b calls

@@ -13,11 +13,11 @@ against an untagged aikit.
 |---|---|---|---|---|
 | **M5** duplicate inventory | *(none — no aikit change)* | *(see below)* | n/a — not a kernel swap | `TestZZM5_*` probes, mutation-checked |
 | **M1** fusedattn | **v1.35.0** ⚠️ *perfgate skipped — see CHANGELOG* | *pending* | *not measured* | `TestAttendTileFused_bitIdenticalToGoinferRef`, mutation-checked ×2 |
-| M2 MXFP4 | *pending* | — | — | — |
+| **M2** MXFP4 | *aikit half landed; tag pending* | *pending* | *pending* | `TestDequantMXFP4Split_bitIdenticalToGoinferRef` + `TestMXFP4Orders_areNotInterchangeable`, mutation-checked ×3 |
 | M3 W4A8 device kernels | *pending* | — | — | — |
 | M4 sequence mixers | *Phase 0 only, no move* | — | — | — |
 
-**Status 2026-09-06: M5 done. M1–M4 not started.**
+**Status 2026-09-06: M5 done. M1 landed (v1.35.0). M2's aikit half landed, untagged. M3–M4 not started.**
 
 ---
 
@@ -88,3 +88,72 @@ bits — is untouched by this and remains available as a goinfer-only change.
   (goinfer semantics), not kernels, so they are out of the premise rather than merely unfinished.
 - Audit P-08's `WeightMat`/W8A8 precision question is listed in the audit and is **a precision
   decision, not a duplicate**; it is not taken here.
+
+---
+
+## M2 · MXFP4 — aikit half DONE, goinfer half pending
+
+**What duplicated.** goinfer's `decoder/mxfp4.go` and this repo's `embed/gguf_dequant.go` both
+carry the MXFP4 (OCP FP4, ggml type 39) e2m1 value table and e8m0 scale conversion, **byte for
+byte** — same 16 doubled values, same bit formula, same lineage comment pointing at
+`gguf/quants.py`. goinfer additionally has one thing aikit did not: the **safetensors layout**,
+where the packed nibbles and the block scales arrive as two separate tensors. aikit's copy was
+unexported, so nothing could reuse it either way.
+
+**What the gate had to pin first: the two layouts are not one function.** They share the block
+size, the scale encoding and the value table, so they read as the same kernel with different
+addressing. They are not:
+
+| layout | shape | byte j packs |
+|---|---|---|
+| GGUF / GGML | contiguous 17-byte blocks | elements **j and j+16** |
+| safetensors | two tensors (`*_blocks`, `*_scales`) | elements **2j and 2j+1** |
+
+goinfer measured this rather than assuming it, and the assumption it replaced was wrong: its
+Phase 0 had recorded *"no new numerics, only the addressing differs"*. Dequantizing a real gpt-oss
+expert both ways and diffing against the same weight read through the already-validated GGUF path
+gave **cosine 0.081 for GGML order and 1.000000 for sequential**. Routing safetensors data through
+the GGML core yields finite, plausibly-scaled, completely wrong weights — it does not error and it
+does not look broken. So `DequantMXFP4Blocks` and `DequantMXFP4Split` stay separate on purpose,
+and `TestMXFP4Orders_areNotInterchangeable` goes red if they are ever unified, carrying that
+measurement in its own failure text.
+
+**New aikit surface** (`embed/mxfp4.go`): `MXFP4Scale`, `DequantMXFP4Blocks`, `DequantMXFP4Split`,
+`MXFP4BlockElems` / `MXFP4BlockBytes`. Split writes into a caller-owned `dst` because the caller is
+streaming — gpt-oss-20b's experts are ~76 GB dequantized to f32 across all layers — and checks its
+shapes **exactly** rather than as lower bounds, since `blocks` and `scales` are independently
+shaped tensors whose mismatch is the corruption worth refusing loudly.
+
+**The gate, written before the code** (it did not compile until the API existed, which is the
+point). Raw bits via `math.Float32bits`, never a tolerance, against frozen copies of goinfer's
+bodies at `4f5da73c`: all **256** e8m0 bytes — the whole domain, subnormals included — block counts
+1/2/3/17/256 so an off-by-one in the stride cannot be averaged away, and every one of the 256 byte
+values appearing as a nibble pair. No Python: the vectors are generated in Go from the source
+alone.
+
+**Mutation-checked three ways.** Swapping the split order to GGML's j/j+16 — the exact historical
+bug — reds 22 of 32 values on the first block. Perturbing one lane reds exactly one, printing
+`00400000` vs `00600000`. Shifting the e8m0 exponent field by one reds the scale test at x=2.
+
+### A fourth mutation stayed green, and chasing it found a false comment
+
+Replacing the bit formula with `float32(math.Pow(2, x-128))` changed **nothing**. That reads at
+first like a hole in the gate; it is not. Measured over all 256 inputs, the two forms are
+bit-identical **everywhere** — 2^-128 and 2^-127 are exactly representable as float32 subnormals,
+which reach 2^-149, and Go's `math.Pow` is exact for powers of two.
+
+So the comment *both* repos carried — "the exact bit formula (not 2^(x-128)) keeps the x∈{0,1}
+subnormals bit-identical to the reference" — was **over-claiming**. The formula is a fine choice
+(exact by construction, no libm call), but the stated *reason* was false, and it would have told
+anyone simplifying the function that they had broken subnormals they had not touched. Corrected in
+aikit with the measurement recorded; goinfer's copy carries the same wording and gets the same fix
+when its half lands. This is the `A DOC COMMENT CLAIMING COVERAGE IS NOT COVERAGE` rule one step
+sideways: a comment claiming a *necessity* that no test asserts and no measurement supports.
+
+### Still owed for M2
+
+- Tag aikit, then bump goinfer, swap `decoder/gptoss_safetensors.go:86` onto
+  `embed.DequantMXFP4Split`, delete the moved arithmetic, and prove the gpt-oss goldens did not
+  move. **Never the other order.**
+- One paired interleaved before/after cell.
+- goinfer's copy of the over-claiming e8m0 comment.
