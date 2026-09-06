@@ -45,6 +45,14 @@ func fms32(a, b, c float32) float32 {
 	return float32(float64(a)*float64(b) - float64(c))
 }
 
+// mulRound32 is a*b rounded to f32 and then FENCED: because the product is
+// formed in f64 and rounded on return, no later addition can be contracted into
+// it. Plain `a*b` in float32 leaves the compiler free to fuse with whatever adds
+// it next, which is the difference between a Go path and an unfused SIMD kernel.
+func mulRound32(a, b float32) float32 {
+	return float32(float64(a) * float64(b))
+}
+
 // expF32Contract is expF32Core re-specified to the contract: identical
 // algorithm, constants and operation ORDER, but every multiply-add pinned to a
 // correctly-rounded f32 FMA rather than left to the compiler. It is the ORACLE
@@ -58,9 +66,21 @@ func fms32(a, b, c float32) float32 {
 //
 // Caller guarantees a finite input in [expUnderflowF32, expOverflowF32].
 func expF32Contract(x float32) float32 {
-	// Range-reduce: x = k·ln2 + r, |r| ≤ ln2/2. The round-to-nearest-even magic
-	// is exact in f32 and contains no multiply-add, so it needs no policy.
-	z := x * log2eF32
+	// Range-reduce: x = k·ln2 + r, |r| ≤ ln2/2.
+	//
+	// mulRound32 here is NOT decoration. Written as `z := x * log2eF32` followed
+	// by `t := z + roundMagicF32`, Go fuses the pair into a single FMADDS on
+	// arm64 — the product is then rounded ONCE with the add instead of twice,
+	// which moves kf across its rounding boundary for some inputs and shifts the
+	// final result by 1 ULP. A NEON kernel doing VFMUL then VFADD cannot match
+	// that, so the contract has to pin it.
+	//
+	// An earlier draft of this file asserted that this step "contains no
+	// multiply-add, so it needs no policy". That was wrong: `z + magic` where z
+	// is a product IS a multiply-add, and the raw-bit gate against the NEON
+	// kernel caught it at x = -85.603676. Forcing the product to round to f32
+	// first leaves the add with nothing to fuse into.
+	z := mulRound32(x, log2eF32)
 	t := z + roundMagicF32
 	kf := t - roundMagicF32
 	k := int32(kf)
