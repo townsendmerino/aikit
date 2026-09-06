@@ -135,6 +135,34 @@ alone.
 bug — reds 22 of 32 values on the first block. Perturbing one lane reds exactly one, printing
 `00400000` vs `00600000`. Shifting the e8m0 exponent field by one reds the scale test at x=2.
 
+### What M2 cost goinfer's staleness gate — surfaced, not fixed here
+
+Deleting `decoder/mxfp4.go` broke goinfer's parity manifest in a way worth naming, because **every
+move in this task will do the same thing**.
+
+`testdata/parity_manifest.json` listed that file in the gpt-oss family's `own:` set, so
+`TestParityManifest_fresh` went red with *"parity manifest references missing files (rename?):
+[decoder/mxfp4.go]"*. Removing the entry is correct and was done. But look at what the entry was
+FOR: a change to that file restaled gpt-oss's parity, forcing re-validation. The arithmetic still
+exists — it is just in aikit now — and the manifest's only link to aikit is a single top-level
+`aikit_version` string mixed into every family's `deps_hash`.
+
+**That string reads `v1.19.0`. goinfer's `go.mod` reads `v1.36.0`.** It is hand-typed, it has been
+stale for seventeen versions, and goinfer's own notes already carry it as an open item (a full
+`gate parity` re-run is owed). So M2 moved a family's numerics from a file the gate watches to a
+dependency the gate is currently blind to. **The move is still right** — the paired real-checkpoint
+cell proves the arithmetic did not change — but the coverage it rode on got weaker, and saying so
+is the point.
+
+Concretely, for M3 and any move after it:
+
+- Removing a file from `own:` is not bookkeeping; it is a reduction in what restales the family.
+- The compensating gate is `aikit_version`, and it only works if it is bumped with the go.mod pin.
+  Bumping it correctly is NOT a `refresh_parity_hashes.sh` job — that script exists for provably
+  NON-numeric edits, and an aikit bump is exactly the case where numerics may legitimately have
+  moved. It needs a real parity run.
+- Until that happens, a move's own before/after cell is the actual evidence, not the manifest.
+
 ### A fourth mutation stayed green, and chasing it found a false comment
 
 Replacing the bit formula with `float32(math.Pow(2, x-128))` changed **nothing**. That reads at
