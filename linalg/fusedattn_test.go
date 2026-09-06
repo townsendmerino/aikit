@@ -182,10 +182,8 @@ func TestAttendTileFused_bitIdenticalToGoinferRef(t *testing.T) {
 		lo := make([]int, c.kt)
 		hi := make([]int, c.kt)
 		for i := range c.kt {
-			pos := c.nKeys - c.kt + i // this tile sits at the end of the prefix
-			if pos < 0 {
-				pos = 0
-			}
+			// this tile sits at the end of the prefix
+			pos := max(c.nKeys-c.kt+i, 0)
 			hi[i] = pos
 			if c.window > 0 && pos-c.window+1 > 0 {
 				lo[i] = pos - c.window + 1
