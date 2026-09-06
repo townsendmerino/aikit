@@ -914,8 +914,43 @@ prefill == speculative verify` guarantees rest on.
 > changes numerics wildly, so only TIMING is meaningful from it; it was built to keep every value
 > finite precisely so that timing stayed clean.
 >
-> **Still to do, in order:** goinfer's step 1 (fan the elementwise loops over the existing worker
-> pool — bit-identical, ships regardless of any of this); then this section's step 2 in aikit —
+> **STEP 1 SHIPPED AND THE BOUND WAS RE-MEASURED, 2026-09-06 — step 2's prize is now 7.3% / 11.5%
+> / 2.8%, not 24.7%.** goinfer parallelised the elementwise loops (`0eb95c6`, `19f7db0`):
+> **1.17× on prefill** at K=1024, decode flat at ~1.01×, bit-identical with 37 goldens re-run and
+> zero numeric drift.
+>
+> That consumed most of what step 0 measured, so the stub was re-run ON TOP of step 1 — same
+> method, same clone, both arms rebuilt from the post-step-1 commit:
+>
+> | K | real | stubbed | **bound remaining for step 2** |
+> |--:|--:|--:|--:|
+> | 512 | 2953 ms (175.7 tok/s) | 2736 ms (189.7) | **7.3%** |
+> | 1024 | 6382 ms (161.5) | 5649 ms (182.5) | **11.5%** |
+> | 3900 | 28711 ms (136.5) | 27912 ms (140.4) | **2.8%** |
+>
+> **The lesson is about inheriting a gate.** Step 0's 24.7% was the bound on ALL of S-06, and
+> step 0's rule (≥5% proceed, <3% stop) was written against it. Step 1 then took roughly two
+> thirds of it for free. Carrying 24.7% forward as step 2's justification would have been quoting
+> a number that a shipped change had already spent — so the bound was re-measured rather than
+> subtracted on paper, and against the SAME thresholds step 2 clears at K=512/1024 and falls
+> BELOW the stop line at K=3900.
+>
+> **The depth trend is real and was visible before step 1 too** (24.7% → 19.0% there): attention
+> grows with context while the elementwise MLP term does not, so this finding is worth least
+> exactly where prefill costs most. Any step-2 claim has to name its depth.
+>
+> **And this is still a STUB bound.** A SIMD exp recovers some fraction of it, never all — on this
+> package's own recorded figures (softmax 5.2 → 2.1 ns/elem, SiLU 3.86 → 1.34) roughly half to two
+> thirds. So the realistic step-2 delivery is ~4–7% of prefill at short context and ~1–2% at 3900,
+> for hand-written NEON *and* AVX2, a numeric contract, raw-bit gates on two arches, a goldens
+> regeneration and an HF parity re-run. That is the trade to decide on, and it is a different trade
+> from the one the brief was written against.
+>
+> Caveat on the K=3900 cell specifically: this run carried heavy desktop load (loadavg 7.6–9.2,
+> rising during it). Both arms saw it and the ratio is the measurement, but 2.8% is close enough to
+> the 3% stop line that it deserves a quiet-box re-take before anything is decided ON that cell.
+>
+> **Still to do, in order:** ~~goinfer's step 1~~ ✅ **DONE 2026-09-06**; then this section's step 2 in aikit —
 > the numeric contract (one f32 exp, one FMA policy, an order-pinned softmax sum, raw-bit
 > scalar-vs-asm gates on both arches) written BEFORE any assembly; then goinfer's swap, which
 > changes bits by ≤4 ULP and takes the LM-head treatment: regenerate goldens once, re-run the HF
