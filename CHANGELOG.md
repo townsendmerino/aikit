@@ -9,6 +9,18 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.36.0] — 2026-09-06
+
+> **Release evidence.** `perfgate` was RUN for this tag, unlike v1.35.0's recorded exception:
+> `VERDICT: PASS — no regression vs v1.35.0 above each shape's floor — 4/10 shapes resolve the
+> 5.0% class`. Read that as the tool's own sensitivity line asks: it is BLIND to the 5% class on
+> six shapes (`K2048_N2048` ±13.6%, `K4096_N4096` ±10.4%, `K1536_N8960` ±8.6%, `K2048_N2048`
+> ±25.7%, `K3584_N4096` ±34.8%, `K768_N8192` ±12.3%), so the green there is only evidence against
+> a larger regression. The four shapes that DO resolve 5% were flat: −0.10%, −0.04%, −0.03%,
+> +0.70%.
+>
+> `STATEMENT: no reachable vulnerabilities in 15/15 modules at a0d92b4 (2026-09-06T17:16:01Z)`.
+
 ### Added
 
 - **`embed`: MXFP4 (OCP FP4, ggml type 39) exported, in BOTH block layouts** — `MXFP4Scale`,
@@ -2982,7 +2994,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.31.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.36.0...HEAD
+[1.36.0]: https://github.com/townsendmerino/aikit/compare/v1.35.0...v1.36.0
 [1.35.0]: https://github.com/townsendmerino/aikit/compare/v1.34.0...v1.35.0
 [1.34.0]: https://github.com/townsendmerino/aikit/compare/v1.33.0...v1.34.0
 [1.33.0]: https://github.com/townsendmerino/aikit/compare/v1.32.0...v1.33.0
