@@ -123,10 +123,64 @@ func softmaxContractImpl(dst, src []float32) {
 	}
 }
 
-// tanh and both GELU forms stay on the scalar contract here. They are correct
-// and bit-identical to every other path — just not accelerated on amd64. They are
-// the gemma-family activations, which are not on the path S-06 step 0 measured,
-// so the assembly is deferred until an amd64 gemma workload is the thing being
-// optimised. Stated rather than left to be inferred from the absence of a kernel.
-func geluTanhContractImpl(dst, src []float32) { geluTanhScalarInto(dst, src) }
-func geluContractImpl(dst, src []float32)     { geluScalarInto(dst, src) }
+// geluTanhContractImpl and geluContractImpl route the TANH and the ERF through
+// their AVX2 kernels and keep the wrapper arithmetic in Go, exactly as the arm64
+// impls do — the wrappers are a handful of multiplies and at most one fused op,
+// so putting them in assembly would double the kernel surface for a small share
+// of the cost.
+//
+// Chunked through a stack buffer, which buys two things at once: no allocation,
+// and correctness when dst ALIASES src. Each chunk reads its source values before
+// writing the corresponding dst elements, and later chunks are untouched until
+// their turn, so in-place use is safe.
+
+func geluTanhContractImpl(dst, src []float32) {
+	if !hasAVX2 {
+		geluTanhScalarInto(dst, src)
+		return
+	}
+	const c = 0.7978845608028654 // √(2/π)
+	var buf [256]float32
+	for off := 0; off < len(src); off += len(buf) {
+		n := min(len(buf), len(src)-off)
+		s := src[off : off+n]
+		for i, v := range s {
+			x3 := mulRound32(mulRound32(v, v), v)
+			buf[i] = mulRound32(c, fma32(0.044715, x3, v))
+		}
+		if n8 := n &^ 7; n8 > 0 {
+			tanhF32ContractAVX2(&buf[0], &buf[0], n8)
+		}
+		for i := n &^ 7; i < n; i++ {
+			buf[i] = tanhF32Contract(buf[i])
+		}
+		for i, v := range s {
+			dst[off+i] = mulRound32(mulRound32(0.5, v), 1+buf[i])
+		}
+	}
+}
+
+func geluContractImpl(dst, src []float32) {
+	if !hasAVX2 {
+		geluScalarInto(dst, src)
+		return
+	}
+	const invSqrt2 = 0.7071067811865476
+	var buf [256]float32
+	for off := 0; off < len(src); off += len(buf) {
+		n := min(len(buf), len(src)-off)
+		s := src[off : off+n]
+		for i, v := range s {
+			buf[i] = mulRound32(invSqrt2, v)
+		}
+		if n8 := n &^ 7; n8 > 0 {
+			erfF32ContractAVX2(&buf[0], &buf[0], n8)
+		}
+		for i := n &^ 7; i < n; i++ {
+			buf[i] = erfF32Contract(buf[i])
+		}
+		for i, v := range s {
+			dst[off+i] = mulRound32(mulRound32(0.5, v), 1+buf[i])
+		}
+	}
+}

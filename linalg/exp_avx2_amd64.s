@@ -171,6 +171,126 @@ DATA acI127<>+28(SB)/4, $0x0000007f
 GLOBL acI127<>(SB), RODATA|NOPTR, $32
 
 
+DATA acSignMask<>+0(SB)/4, $0x80000000
+DATA acSignMask<>+4(SB)/4, $0x80000000
+DATA acSignMask<>+8(SB)/4, $0x80000000
+DATA acSignMask<>+12(SB)/4, $0x80000000
+DATA acSignMask<>+16(SB)/4, $0x80000000
+DATA acSignMask<>+20(SB)/4, $0x80000000
+DATA acSignMask<>+24(SB)/4, $0x80000000
+DATA acSignMask<>+28(SB)/4, $0x80000000
+GLOBL acSignMask<>(SB), RODATA|NOPTR, $32
+
+DATA acAbsMask<>+0(SB)/4, $0x7fffffff
+DATA acAbsMask<>+4(SB)/4, $0x7fffffff
+DATA acAbsMask<>+8(SB)/4, $0x7fffffff
+DATA acAbsMask<>+12(SB)/4, $0x7fffffff
+DATA acAbsMask<>+16(SB)/4, $0x7fffffff
+DATA acAbsMask<>+20(SB)/4, $0x7fffffff
+DATA acAbsMask<>+24(SB)/4, $0x7fffffff
+DATA acAbsMask<>+28(SB)/4, $0x7fffffff
+GLOBL acAbsMask<>(SB), RODATA|NOPTR, $32
+
+DATA ac0625<>+0(SB)/4, $0x3f200000
+DATA ac0625<>+4(SB)/4, $0x3f200000
+DATA ac0625<>+8(SB)/4, $0x3f200000
+DATA ac0625<>+12(SB)/4, $0x3f200000
+DATA ac0625<>+16(SB)/4, $0x3f200000
+DATA ac0625<>+20(SB)/4, $0x3f200000
+DATA ac0625<>+24(SB)/4, $0x3f200000
+DATA ac0625<>+28(SB)/4, $0x3f200000
+GLOBL ac0625<>(SB), RODATA|NOPTR, $32
+
+DATA acT0<>+0(SB)/4, $0xbbbaf0ea
+DATA acT0<>+4(SB)/4, $0xbbbaf0ea
+DATA acT0<>+8(SB)/4, $0xbbbaf0ea
+DATA acT0<>+12(SB)/4, $0xbbbaf0ea
+DATA acT0<>+16(SB)/4, $0xbbbaf0ea
+DATA acT0<>+20(SB)/4, $0xbbbaf0ea
+DATA acT0<>+24(SB)/4, $0xbbbaf0ea
+DATA acT0<>+28(SB)/4, $0xbbbaf0ea
+GLOBL acT0<>(SB), RODATA|NOPTR, $32
+
+DATA acT1<>+0(SB)/4, $0x3ca9134e
+DATA acT1<>+4(SB)/4, $0x3ca9134e
+DATA acT1<>+8(SB)/4, $0x3ca9134e
+DATA acT1<>+12(SB)/4, $0x3ca9134e
+DATA acT1<>+16(SB)/4, $0x3ca9134e
+DATA acT1<>+20(SB)/4, $0x3ca9134e
+DATA acT1<>+24(SB)/4, $0x3ca9134e
+DATA acT1<>+28(SB)/4, $0x3ca9134e
+GLOBL acT1<>(SB), RODATA|NOPTR, $32
+
+DATA acT2<>+0(SB)/4, $0xbd5c1e2d
+DATA acT2<>+4(SB)/4, $0xbd5c1e2d
+DATA acT2<>+8(SB)/4, $0xbd5c1e2d
+DATA acT2<>+12(SB)/4, $0xbd5c1e2d
+DATA acT2<>+16(SB)/4, $0xbd5c1e2d
+DATA acT2<>+20(SB)/4, $0xbd5c1e2d
+DATA acT2<>+24(SB)/4, $0xbd5c1e2d
+DATA acT2<>+28(SB)/4, $0xbd5c1e2d
+GLOBL acT2<>(SB), RODATA|NOPTR, $32
+
+DATA acT3<>+0(SB)/4, $0x3e088393
+DATA acT3<>+4(SB)/4, $0x3e088393
+DATA acT3<>+8(SB)/4, $0x3e088393
+DATA acT3<>+12(SB)/4, $0x3e088393
+DATA acT3<>+16(SB)/4, $0x3e088393
+DATA acT3<>+20(SB)/4, $0x3e088393
+DATA acT3<>+24(SB)/4, $0x3e088393
+DATA acT3<>+28(SB)/4, $0x3e088393
+GLOBL acT3<>(SB), RODATA|NOPTR, $32
+
+DATA acT4<>+0(SB)/4, $0xbeaaaa99
+DATA acT4<>+4(SB)/4, $0xbeaaaa99
+DATA acT4<>+8(SB)/4, $0xbeaaaa99
+DATA acT4<>+12(SB)/4, $0xbeaaaa99
+DATA acT4<>+16(SB)/4, $0xbeaaaa99
+DATA acT4<>+20(SB)/4, $0xbeaaaa99
+DATA acT4<>+24(SB)/4, $0xbeaaaa99
+DATA acT4<>+28(SB)/4, $0xbeaaaa99
+GLOBL acT4<>(SB), RODATA|NOPTR, $32
+
+DATA acTwoOverSqrtPi<>+0(SB)/4, $0x3f906ebb
+DATA acTwoOverSqrtPi<>+4(SB)/4, $0x3f906ebb
+DATA acTwoOverSqrtPi<>+8(SB)/4, $0x3f906ebb
+DATA acTwoOverSqrtPi<>+12(SB)/4, $0x3f906ebb
+DATA acTwoOverSqrtPi<>+16(SB)/4, $0x3f906ebb
+DATA acTwoOverSqrtPi<>+20(SB)/4, $0x3f906ebb
+DATA acTwoOverSqrtPi<>+24(SB)/4, $0x3f906ebb
+DATA acTwoOverSqrtPi<>+28(SB)/4, $0x3f906ebb
+GLOBL acTwoOverSqrtPi<>(SB), RODATA|NOPTR, $32
+
+DATA acASk<>+0(SB)/4, $0x3ea7ba05
+DATA acASk<>+4(SB)/4, $0x3ea7ba05
+DATA acASk<>+8(SB)/4, $0x3ea7ba05
+DATA acASk<>+12(SB)/4, $0x3ea7ba05
+DATA acASk<>+16(SB)/4, $0x3ea7ba05
+DATA acASk<>+20(SB)/4, $0x3ea7ba05
+DATA acASk<>+24(SB)/4, $0x3ea7ba05
+DATA acASk<>+28(SB)/4, $0x3ea7ba05
+GLOBL acASk<>(SB), RODATA|NOPTR, $32
+
+DATA acErfSeriesS<>+0(SB)/4, $0x32617183
+DATA acErfSeriesS<>+4(SB)/4, $0xb41bbbe3
+DATA acErfSeriesS<>+8(SB)/4, $0x35c3d001
+DATA acErfSeriesS<>+12(SB)/4, $0xb75debbd
+DATA acErfSeriesS<>+16(SB)/4, $0x38e00e01
+DATA acErfSeriesS<>+20(SB)/4, $0xba46980c
+DATA acErfSeriesS<>+24(SB)/4, $0x3b97b426
+DATA acErfSeriesS<>+28(SB)/4, $0xbcc30c31
+DATA acErfSeriesS<>+32(SB)/4, $0x3dcccccd
+DATA acErfSeriesS<>+36(SB)/4, $0xbeaaaaab
+DATA acErfSeriesS<>+40(SB)/4, $0x3f800000
+GLOBL acErfSeriesS<>(SB), RODATA|NOPTR, $44
+
+DATA acErfASS<>+0(SB)/4, $0x3f87dc22
+DATA acErfASS<>+4(SB)/4, $0xbfba00e3
+DATA acErfASS<>+8(SB)/4, $0x3fb5f0e3
+DATA acErfASS<>+12(SB)/4, $0xbe91a98e
+DATA acErfASS<>+16(SB)/4, $0x3e827906
+GLOBL acErfASS<>(SB), RODATA|NOPTR, $20
+
 // func expF32ContractAVX2(dst, src *float32, n int)
 // n must be a multiple of 8; the Go caller mops the tail and guards the range,
 // exactly as on arm64.
@@ -219,5 +339,254 @@ exploop:
 	SUBQ $8, CX
 	JNZ exploop
 expdone:
+	VZEROUPPER
+	RET
+
+
+// func tanhF32ContractAVX2(dst, src *float32, n int)
+//
+// tanh under the contract, eight lanes at a time, n a multiple of 8. The amd64
+// twin of tanhF32ContractNEON and bit-identical to it and to tanhF32Contract.
+//
+// TWO BRANCHES, BOTH ALWAYS EVALUATED. The scalar has a polynomial below
+// |x| = 0.625 and an exponential form above it; a vector kernel cannot branch per
+// lane, so it computes both and blends with VBLENDVPS. Neither side misbehaves
+// outside its own range -- the polynomial merely diverges (finite) and the
+// exponential form tends to 0 -- so the unused half is wasted work, never a NaN.
+//
+// The same LATE saturation as the NEON version, and for the same reason: this
+// form reaches exactly 1 when 2/(e^2x+1) drops below half an ULP, at |x| >= 9.02
+// rather than TanhF32's explicit x > 9, so in the band (9, 9.02) it returns
+// 0.99999994. That is a deliberate 1-ULP difference from TanhF32, shared with the
+// arm64 kernel and with the scalar contract, which is what keeps all three
+// bit-identical. Clamping 2|x| to the exp range keeps larger arguments finite.
+//
+// Sign is carried as a BIT rather than a multiply: tanh is odd and the computed
+// magnitude is non-negative, so masking x's sign bit out up front and OR-ing it
+// back reproduces `sign * result` -- everywhere EXCEPT x = -0, where the scalar's
+// `a < 0` branch treats -0 as positive and returns +0. One extra compare fixes
+// that; see the same note on the NEON twin, which shipped with the bug.
+//
+// Operand orders below were probed on the target box before this was written --
+// VBLENDVPS, VCMPPS and VDIVPS are all silent when reversed:
+//   VBLENDVPS Ymask, Ysrc2, Ysrc1, Ydst -> Ydst = mask ? Ysrc2 : Ysrc1
+//   VCMPPS $1, Yy, Yx, Yd               -> Yd = (Yx < Yy)
+//   VDIVPS Yy, Yx, Yd                   -> Yd = Yx / Yy
+TEXT ·tanhF32ContractAVX2(SB), NOSPLIT, $0-24
+	MOVQ dst+0(FP), DX
+	MOVQ src+8(FP), SI
+	MOVQ n+16(FP), CX
+	TESTQ CX, CX
+	JZ tanhdone
+
+tanhloop:
+	VMOVUPS (SI), Y0
+	VANDPS acSignMask<>(SB), Y0, Y1    // sign bit, kept for the end
+	VANDPS acAbsMask<>(SB), Y0, Y2     // a = |x|
+	// -0 is POSITIVE to the scalar contract: its branch is `a < 0`, and -0 < 0 is
+	// false, so tanh(-0) is +0 rather than -0. The sign BIT says otherwise, so
+	// clear it wherever a is zero. An INTEGER compare suffices: |x| has all-zero
+	// bits only for +0.
+	VPXOR Y3, Y3, Y3
+	VPCMPEQD Y3, Y2, Y4                // a == 0
+	VBLENDVPS Y4, Y3, Y1, Y1           // sign = (a == 0) ? 0 : sign
+
+	// ---- polynomial branch, a < 0.625 ----
+	VMULPS Y2, Y2, Y3                  // z = a*a
+	VMOVUPS acT0<>(SB), Y4
+	VFMADD213PS acT1<>(SB), Y3, Y4
+	VFMADD213PS acT2<>(SB), Y3, Y4
+	VFMADD213PS acT3<>(SB), Y3, Y4
+	VFMADD213PS acT4<>(SB), Y3, Y4     // -> p
+	VMULPS Y3, Y4, Y4                  // pz = p*z
+	VMOVUPS Y2, Y5                     // poly = a
+	VFMADD231PS Y2, Y4, Y5             // poly = pz*a + a
+
+	// ---- exponential branch, a >= 0.625 ----
+	VADDPS Y2, Y2, Y6                  // t = 2a (exact, no constant needed)
+	VMINPS acClampHi<>(SB), Y6, Y6     // t = min(t, 88.72283)
+	VMULPS acLog2e<>(SB), Y6, Y7
+	VADDPS acMagic<>(SB), Y7, Y7
+	VSUBPS acMagic<>(SB), Y7, Y7     // kf
+	VCVTTPS2DQ Y7, Y8                // k
+	VMOVUPS Y6, Y9                  // r
+	VFNMADD231PS acLn2Hi<>(SB), Y7, Y9
+	VFNMADD231PS acLn2Lo<>(SB), Y7, Y9
+	VMOVUPS acP0<>(SB), Y10
+	VFMADD213PS acP1<>(SB), Y9, Y10
+	VFMADD213PS acP2<>(SB), Y9, Y10
+	VFMADD213PS acP3<>(SB), Y9, Y10
+	VFMADD213PS acP4<>(SB), Y9, Y10
+	VFMADD213PS acP5<>(SB), Y9, Y10
+	VFMADD213PS acOne<>(SB), Y9, Y10 // q = p*r + 1
+	VFMADD213PS acOne<>(SB), Y9, Y10 // p = q*r + 1
+	VPSRAD $1, Y8, Y11
+	VPSUBD Y11, Y8, Y12
+	VPADDD acI127<>(SB), Y11, Y11
+	VPADDD acI127<>(SB), Y12, Y12
+	VPSLLD $23, Y11, Y11
+	VPSLLD $23, Y12, Y12
+	VMULPS Y11, Y10, Y10
+	VMULPS Y12, Y10, Y10
+	VPADDD acI127<>(SB), Y8, Y11
+	VPXOR Y12, Y12, Y12
+	VPCMPGTD Y12, Y11, Y11
+	VANDPS Y11, Y10, Y10
+	VADDPS acOne<>(SB), Y10, Y10       // e + 1
+	VMOVUPS acOne<>(SB), Y11
+	VADDPS Y11, Y11, Y11               // 2.0, built from 1+1
+	VDIVPS Y10, Y11, Y11               // 2/(e+1)
+	VMOVUPS acOne<>(SB), Y13
+	VSUBPS Y11, Y13, Y13               // alt = 1 - 2/(e+1)
+
+	// ---- select and re-sign ----
+	VCMPPS $1, ac0625<>(SB), Y2, Y14   // mask = (a < 0.625)
+	VBLENDVPS Y14, Y5, Y13, Y15        // mask ? poly : alt
+	VORPS Y1, Y15, Y15                 // reapply sign
+	VMOVUPS Y15, (DX)
+	ADDQ $32, SI
+	ADDQ $32, DX
+	SUBQ $8, CX
+	JNZ tanhloop
+tanhdone:
+	VZEROUPPER
+	RET
+
+// func erfF32ContractAVX2(dst, src *float32, n int)
+//
+// erf under the contract, eight lanes at a time, n a multiple of 8. The amd64
+// twin of erfF32ContractNEON.
+//
+// THREE REGIONS COLLAPSED TO TWO, exactly as on arm64. ErfF32 has a Maclaurin
+// series below |x| = 1, the Abramowitz & Stegun 7.1.26 tail above it, and an
+// explicit |x| > 4 -> 1 saturation. Only the first split needs a select: the tail
+// branch reaches exactly 1 on its own once e^(-x^2) underflows, so the saturation
+// is a consequence rather than a case. What it DOES need is a clamp on the
+// exponent argument -- at |x| = 100, -x^2 is -10000, far outside the range where
+// the two-step 2^k construction is valid.
+//
+// The sixteen coefficients are walked with VBROADCASTSS off a post-incremented
+// pointer rather than stored as sixteen 32-byte replicated blocks. That is half a
+// kilobyte saved, but the real reason is that the tables stay in the same shape
+// and order as erfSeriesCoeffs/erfASCoeffs in Go -- which is why those are named
+// tables there rather than literals, and why a coefficient cannot drift between
+// the scalar oracle and either kernel without the golden catching it.
+TEXT ·erfF32ContractAVX2(SB), NOSPLIT, $0-24
+	MOVQ dst+0(FP), DX
+	MOVQ src+8(FP), SI
+	MOVQ n+16(FP), CX
+	TESTQ CX, CX
+	JZ erfdone
+
+erfloop:
+	VMOVUPS (SI), Y0
+	VANDPS acSignMask<>(SB), Y0, Y1    // sign bit
+	VANDPS acAbsMask<>(SB), Y0, Y2     // a = |x|
+
+	// ---- Maclaurin branch, a < 1 ----
+	VMULPS Y2, Y2, Y3                  // z = a*a
+	LEAQ acErfSeriesS<>(SB), R8
+	VBROADCASTSS (R8), Y4
+	ADDQ $4, R8
+	VBROADCASTSS (R8), Y5
+	ADDQ $4, R8
+	VFMADD213PS Y5, Y3, Y4
+	VBROADCASTSS (R8), Y5
+	ADDQ $4, R8
+	VFMADD213PS Y5, Y3, Y4
+	VBROADCASTSS (R8), Y5
+	ADDQ $4, R8
+	VFMADD213PS Y5, Y3, Y4
+	VBROADCASTSS (R8), Y5
+	ADDQ $4, R8
+	VFMADD213PS Y5, Y3, Y4
+	VBROADCASTSS (R8), Y5
+	ADDQ $4, R8
+	VFMADD213PS Y5, Y3, Y4
+	VBROADCASTSS (R8), Y5
+	ADDQ $4, R8
+	VFMADD213PS Y5, Y3, Y4
+	VBROADCASTSS (R8), Y5
+	ADDQ $4, R8
+	VFMADD213PS Y5, Y3, Y4
+	VBROADCASTSS (R8), Y5
+	ADDQ $4, R8
+	VFMADD213PS Y5, Y3, Y4
+	VBROADCASTSS (R8), Y5
+	ADDQ $4, R8
+	VFMADD213PS Y5, Y3, Y4
+	VBROADCASTSS (R8), Y5
+	ADDQ $4, R8
+	VFMADD213PS Y5, Y3, Y4
+	VMULPS acTwoOverSqrtPi<>(SB), Y2, Y5 // (2/sqrt(pi)) * a
+	VMULPS Y4, Y5, Y5                  // series = that * p
+
+	// ---- A&S tail branch, a >= 1 ----
+	VMOVUPS acOne<>(SB), Y6
+	VFMADD231PS acASk<>(SB), Y2, Y6    // 1 + 0.3275911*a  (fused, as the contract says)
+	VMOVUPS acOne<>(SB), Y7
+	VDIVPS Y6, Y7, Y6                  // t = 1/that
+	LEAQ acErfASS<>(SB), R8
+	VBROADCASTSS (R8), Y7
+	ADDQ $4, R8
+	VBROADCASTSS (R8), Y8
+	ADDQ $4, R8
+	VFMADD213PS Y8, Y6, Y7
+	VBROADCASTSS (R8), Y8
+	ADDQ $4, R8
+	VFMADD213PS Y8, Y6, Y7
+	VBROADCASTSS (R8), Y8
+	ADDQ $4, R8
+	VFMADD213PS Y8, Y6, Y7
+	VBROADCASTSS (R8), Y8
+	ADDQ $4, R8
+	VFMADD213PS Y8, Y6, Y7
+	// Y7 = q
+
+	// ---- e^(-a*a), clamped so the exponent build stays in range ----
+	VMULPS Y2, Y2, Y8
+	VXORPS acSignMask<>(SB), Y8, Y8    // -a*a
+	VMAXPS acClampLo<>(SB), Y8, Y8     // max(e, -104)
+	VMULPS acLog2e<>(SB), Y8, Y3
+	VADDPS acMagic<>(SB), Y3, Y3
+	VSUBPS acMagic<>(SB), Y3, Y3     // kf
+	VCVTTPS2DQ Y3, Y4                // k
+	VMOVUPS Y8, Y9                  // r
+	VFNMADD231PS acLn2Hi<>(SB), Y3, Y9
+	VFNMADD231PS acLn2Lo<>(SB), Y3, Y9
+	VMOVUPS acP0<>(SB), Y8
+	VFMADD213PS acP1<>(SB), Y9, Y8
+	VFMADD213PS acP2<>(SB), Y9, Y8
+	VFMADD213PS acP3<>(SB), Y9, Y8
+	VFMADD213PS acP4<>(SB), Y9, Y8
+	VFMADD213PS acP5<>(SB), Y9, Y8
+	VFMADD213PS acOne<>(SB), Y9, Y8 // q = p*r + 1
+	VFMADD213PS acOne<>(SB), Y9, Y8 // p = q*r + 1
+	VPSRAD $1, Y4, Y10
+	VPSUBD Y10, Y4, Y11
+	VPADDD acI127<>(SB), Y10, Y10
+	VPADDD acI127<>(SB), Y11, Y11
+	VPSLLD $23, Y10, Y10
+	VPSLLD $23, Y11, Y11
+	VMULPS Y10, Y8, Y8
+	VMULPS Y11, Y8, Y8
+	VPADDD acI127<>(SB), Y4, Y10
+	VPXOR Y11, Y11, Y11
+	VPCMPGTD Y11, Y10, Y10
+	VANDPS Y10, Y8, Y8
+	VMULPS Y6, Y7, Y9                  // q*t
+	VMOVUPS acOne<>(SB), Y13
+	VFNMADD231PS Y8, Y9, Y13           // tail = 1 - (q*t)*e   (one fused op)
+
+	// ---- blend and re-sign ----
+	VCMPPS $1, acOne<>(SB), Y2, Y14    // mask = (a < 1)
+	VBLENDVPS Y14, Y5, Y13, Y15        // mask ? series : tail
+	VORPS Y1, Y15, Y15
+	VMOVUPS Y15, (DX)
+	ADDQ $32, SI
+	ADDQ $32, DX
+	SUBQ $8, CX
+	JNZ erfloop
+erfdone:
 	VZEROUPPER
 	RET

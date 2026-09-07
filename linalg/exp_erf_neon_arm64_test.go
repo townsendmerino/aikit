@@ -34,6 +34,10 @@ func TestErfContractNEON_bitIdenticalToScalar(t *testing.T) {
 			xs = append(xs, float32(b)+float32(d)*0.05, -(float32(b) + float32(d)*0.05))
 		}
 	}
+	// Both zeros explicitly. -0 is the input the sign-bit shortcut got wrong, and
+	// no generated value here ever produces it: the sweeps all build from
+	// arithmetic that yields +0.
+	xs = append(xs, 0, float32(math.Copysign(0, -1)))
 	rng := rand.New(rand.NewPCG(0xe4f, 0x2))
 	for range 200_000 {
 		xs = append(xs, float32(rng.NormFloat64()*3))

@@ -9,6 +9,106 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.37.0] — 2026-09-06
+
+### Added
+
+**A numeric contract for the f32 transcendentals, and hand-written NEON and AVX2 kernels that
+obey it.** Five new entry points — `ExpContractInto`, `SoftmaxRowContractInto`, `SiLUContractInto`,
+`GELUTanhContractInto`, `GELUContractInto` — each selecting the fastest conforming implementation
+for the build.
+
+**The contract is the point, not the kernels.** Every multiply-add in these paths is a
+correctly-rounded f32 fused multiply-add: on every architecture, in the assembly and in the Go
+fallback alike. That matters because `exp.go`'s existing Horner chains are *not* pinned — Go fuses
+them into FMADD on arm64 and does not below `GOAMD64=v3` on amd64, so the same source has been
+producing different bits per architecture, and the file's own comment already recorded the
+symptom.
+
+Go has no f32 FMA (`math.FMA` is float64-only), so the Go path reaches one through f64. That is
+exact rather than approximate, for two reasons, and the second is what makes it portable:
+
+1. an f32×f32 product needs ≤48 significand bits and f64 has 53, so the product is **exact** in
+   f64 — and therefore whether the compiler contracts the inner mul-add is *irrelevant*, since
+   rounding an exact product is the identity;
+2. rounding the f64 sum on to f32 is a double rounding, 53→24, innocuous because the intermediate
+   carries ≥2p+2 = 50 bits.
+
+Verified against `math/big` at 200-bit precision on adversarial inputs — 60 binades, plus cases
+forcing total cancellation and extreme scale mismatch, which is where a double rounding would show.
+
+**The cross-architecture golden is the result to take away.** Every other gate here proves a
+kernel matches its scalar oracle *on the machine it ran on*. `TestContractCrossArchGolden` hashes
+every entry point's output over a fixed deterministic input set and compares it to a **constant** —
+the only way to compare across instruction sets, since no process can execute both. That constant
+was computed on an M1 running NEON kernels and it passes on a Zen 2 running AVX2 kernels. **A
+golden generated on one machine is valid on the other.**
+
+Speed, n=8960 (one gate row), median of 3:
+
+| kernel | M1 Pro | 3700X |
+|---|--:|--:|
+| exp vs the f64 `math.Exp` consumers call today | **11.8×** | **27.6×** |
+| exp vs the shipped f32 `expF32Core` | 4.3× | 8.8× |
+| SiLU vs f64 | 10.5× | 6.6× |
+| softmax vs shipped `SoftmaxRowInto` | 2.1× | — |
+| GELU-tanh vs shipped `GELUTanhF32` | 3.7× | **3.6×** |
+| GELU-erf vs shipped `GELUF32` | 3.1× | **5.1×** |
+
+**Softmax pins its summation order**, because a denominator is a reduction and its value depends
+on the order of the adds: four f64 lane partials, element *i* into `partials[i&3]`, folded by the
+fixed tree `(p0+p1)+(p2+p3)`. The scalar reference is written that way too, even though nothing
+forces a Go loop to be, so that it can serve as the oracle.
+
+**`GOAMD64` needs no pinning for these paths**, which answers a finding the SIMD audit raised as
+open. Dispatch is a runtime check (`hasAVX2`, which already requires FMA3 and OS YMM state) and the
+scalar fallback is bit-identical, so a v1 build and a v3 build produce identical output and differ
+only in speed. That is stronger than a pin, because a pin can be forgotten by whoever builds the
+binary.
+
+**What this is worth end to end is much less than the kernel ratios, and is measured rather than
+extrapolated.** On arm64, swapping a consumer's f64 transcendentals for these moved CPU prefill by
+**1.03–1.09×** — 3–8% — because the transcendentals were never more than a tenth of the work once
+the fan-out was parallelised. Both numbers are true at once: the kernels are ~10× and the system is
+~1.05×. The amd64 end-to-end figure is not yet measured.
+
+**Both architectures now have the full kernel set.** tanh and erf were initially left on the
+scalar contract on amd64 on the grounds that they are the gemma-family activations, off the path
+the share measurement covered. That was a deferral rather than a reason, and building them cost
+little: the expensive parts — the contract, the oracle, the golden — already existed, so the
+marginal work was the assembly plus a bit-identity gate that the golden then checked for free.
+The amd64 numbers above are the result. Every entry point is now accelerated on both.
+
+Nothing in this package routes to the new entry points yet; they exist for consumers to adopt
+deliberately, since adoption changes bits by ≤4 ULP and is a goldens decision.
+
+### Fixed
+
+**The NEON tanh kernel returned −0 where the contract returns +0.** `tanhF32ContractNEON` took the
+result's sign from x's sign BIT, but the scalar contract branches on `x < 0` — and −0 < 0 is false,
+so the contract treats −0 as positive and returns +0. Exactly one input in the whole f32 domain,
+and the kernel's own comment asserted the opposite ("both give a signed zero"). Both kernels now
+clear the sign where |x| is zero, via an integer compare that is exact because |x| has all-zero
+bits only for +0.
+
+**No caller was affected**, and that is measured rather than argued: the only public consumer of
+the tanh kernel is `GELUTanhContractInto`, whose wrapper multiplies by 0.5·x — which is −0 at that
+input regardless — so both the old and the new kernel produce −0 there. The defect was confined to
+the kernel-versus-contract invariant.
+
+**Why it shipped, which is the part worth keeping.** Three separate gates cover this kernel and
+none of them contained −0: every input set was built by arithmetic (`base + d*step`, a seeded
+normal draw) and none of those expressions ever yields a negative zero. It surfaced only when the
+amd64 twin was written and its test happened to include `math.Copysign(0, -1)`. Both zeros are now
+explicit in the NEON tests and in the cross-architecture golden's input set — which is why
+`contractGolden` changes in this release. **A golden is only as good as the inputs it is computed
+over, and a hash cannot tell you what it never hashed.**
+
+Also moved `BenchmarkGELUTanhKernels` and `BenchmarkGELUErfKernels` out of the arm64-only bench
+file. They call nothing arch-specific, and sitting there meant amd64 had no measured number for
+the tanh/erf side of the contract at all.
+
+
 ## [1.36.0] — 2026-09-06
 
 > **Release evidence.** `perfgate` was RUN for this tag, unlike v1.35.0's recorded exception:
@@ -2995,6 +3095,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.36.0...HEAD
+[1.37.0]: https://github.com/townsendmerino/aikit/compare/v1.36.0...v1.37.0
 [1.36.0]: https://github.com/townsendmerino/aikit/compare/v1.35.0...v1.36.0
 [1.35.0]: https://github.com/townsendmerino/aikit/compare/v1.34.0...v1.35.0
 [1.34.0]: https://github.com/townsendmerino/aikit/compare/v1.33.0...v1.34.0

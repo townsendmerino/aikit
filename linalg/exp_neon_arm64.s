@@ -511,10 +511,15 @@ siludone:
 // and they do, but it also claimed 1 - 2/6.6e7 rounds to 1, which it does not.
 // Clamping 2|x| to the exp range keeps larger arguments finite.
 //
-// Sign is carried as a BIT, not a multiply: tanh is odd, the computed magnitude
-// is non-negative, so extracting x's sign bit up front and OR-ing it back is
-// identical to the scalar's `sign * result` including at zero, where both give
-// a signed zero.
+// Sign is carried as a BIT, not a multiply: tanh is odd and the computed
+// magnitude is non-negative, so extracting x's sign bit up front and OR-ing it
+// back reproduces the scalar's `sign * result` -- everywhere EXCEPT x = -0, which
+// needs one extra instruction. The scalar's branch is `a < 0` and -0 < 0 is
+// false, so it treats -0 as positive and returns +0; the sign bit says otherwise.
+// An earlier version of this comment asserted the two agreed at zero. They did
+// not, and no test covered -0, so the kernel shipped returning -0 there while the
+// contract returned +0. The zero-clearing below is the fix and the input set now
+// includes both zeros.
 TEXT ·tanhF32ContractNEON(SB), NOSPLIT, $0-24
 	MOVD dst+0(FP), R0
 	MOVD src+8(FP), R1
@@ -564,6 +569,12 @@ tanhloop:
 	VLD1 (R3), [V2.S4]
 	VAND V2.B16, V1.B16, V11.B16  // signbit of x, kept for the end
 	VFABS V1.S4, V10.S4           // a = |x|
+	// -0 is POSITIVE to the scalar contract: its branch is `a < 0`, and -0 < 0 is
+	// false, so tanh(-0) is +0 rather than -0. Taking the sign from the sign BIT
+	// gets exactly that one input wrong, so clear it wherever a is zero. An
+	// INTEGER compare suffices: |x| has all-zero bits only for +0.
+	VCMEQ V28.S4, V10.S4, V9.S4   // a == 0
+	VBIC V9.B16, V11.B16, V11.B16 // sign &^= that
 
 	// ---- polynomial branch, |a| < 0.625 ----
 	VFMUL V10.S4, V10.S4, V1.S4   // z = a*a

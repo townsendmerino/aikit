@@ -20,6 +20,10 @@ func contractGoldenInputs() []float32 {
 			xs = append(xs, float32(b)+float32(d)*0.0625)
 		}
 	}
+	// Both zeros explicitly. -0 is not reachable from the arithmetic above, and
+	// its absence is exactly how a tanh kernel that returned -0 where the
+	// contract returns +0 got past this gate and shipped.
+	xs = append(xs, 0, float32(math.Copysign(0, -1)))
 	rng := rand.New(rand.NewPCG(0x60_1de, 0x9a71))
 	for range 40_000 {
 		xs = append(xs, float32(rng.NormFloat64()*20))
@@ -85,7 +89,7 @@ func contractGoldenHash(t *testing.T) uint64 {
 //
 // If this fails, do NOT re-baseline it. It means an implementation diverged, and
 // the per-arch bit-identity tests will say which one.
-const contractGolden = 0x28d4e904d9441147
+const contractGolden uint64 = 0xc1570f5f8baaa167
 
 func TestContractCrossArchGolden(t *testing.T) {
 	got := contractGoldenHash(t)

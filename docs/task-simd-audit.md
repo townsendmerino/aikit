@@ -1050,9 +1050,23 @@ prefill == speculative verify` guarantees rest on.
 > in speed. That is stronger than pinning, because a pin can be forgotten by whoever builds the
 > binary.
 >
-> **Not accelerated on amd64, stated rather than inferred from a missing kernel:** tanh and both
-> GELU forms stay on the scalar contract there — correct and bit-identical, just not fast. They are
-> the gemma-family activations, off the path step 0 measured.
+> **Both arches now carry the full kernel set (v1.37.0).** tanh and erf were initially left on the
+> scalar contract on amd64 — correct and bit-identical, just not fast — on the grounds that they are
+> the gemma-family activations, off the path step 0 measured. That was a deferral rather than a
+> reason, and it was overruled and then built: the expensive parts (the contract, the oracle, the
+> golden) already existed, so the marginal cost was the assembly plus a bit-identity gate the golden
+> then checked for free. Measured on the 3700X, n=8960, pinned, median of 9: GELU-tanh **3.6×** and
+> GELU-erf **5.1×** over the shipped `GELUTanhF32`/`GELUF32`.
+>
+> **Writing the amd64 twin found a bug in the shipped NEON one**, which is the reusable part.
+> `tanhF32ContractNEON` returned −0 where the contract returns +0: it took the sign from x's sign
+> BIT, while the scalar branches on `x < 0`, and −0 < 0 is false. One input in the whole domain, and
+> the kernel's comment asserted the opposite. It reached no caller (`GELUTanhContractInto`'s 0.5·x
+> factor is −0 either way, verified rather than argued), but it broke the kernel-versus-contract
+> invariant. **It shipped because none of the three gates covering that kernel contained −0** — every
+> input set was built from arithmetic (`base + d*step`, seeded normal draws) and no such expression
+> ever produces a negative zero. Both zeros are now explicit in the NEON tests and in the
+> cross-architecture golden's inputs. A golden cannot tell you about an input it never hashed.
 >
 > **What is NOT done and is a separate decision:** the swap was measured, not landed. goinfer's
 > production adoption needs step 3's ritual — goldens regenerated once, the HF logit-parity gate
