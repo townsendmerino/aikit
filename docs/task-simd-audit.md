@@ -976,8 +976,9 @@ prefill == speculative verify` guarantees rest on.
 > rising during it). Both arms saw it and the ratio is the measurement, but 2.8% is close enough to
 > the 3% stop line that it deserves a quiet-box re-take before anything is decided ON that cell.
 >
-> **STEP 2's arm64 HALF IS COMPLETE AND MEASURED END TO END, 2026-09-06 — and the answer on
-> AVX2 is "probably not".**
+> **STEP 2 IS COMPLETE ON BOTH ARCHES, 2026-09-06.** The arm64 half was measured end to end
+> first and the AVX2 half followed a decision that overruled my recommendation — see below, where
+> both the recommendation and the outcome are kept.
 >
 > Kernels shipped, all bit-identical to a scalar oracle obeying the same contract, gated on raw
 > `Float32bits` over ~200k adversarial inputs each: exp, order-pinned softmax, SiLU, tanh, erf and
@@ -1013,12 +1014,45 @@ prefill == speculative verify` guarantees rest on.
 > bound and the delivery were measured on different days at different loads. Do not read the
 > per-depth capture fractions as physics.
 >
-> **THE AVX2 DECISION: the arm64 result argues against it.** Writing the amd64 half means AVX2
-> versions of five kernels, the `GOAMD64` settlement S-08 flagged, and the same raw-bit gate work
-> — comparable effort to this entire arm64 half — for a win bounded by the same small share of
-> prefill. amd64 is also the secondary target. The recommendation is to stop at arm64 unless an
-> amd64 prefill workload becomes the thing being optimised, and to record that as a decision rather
-> than leave it as an unbuilt item implying debt.
+> **THE AVX2 DECISION — I RECOMMENDED AGAINST IT AND WAS OVERRULED; IT IS BUILT.** The
+> recommendation, kept here because a superseded recommendation is part of the record and not an
+> embarrassment to delete: the arm64 half had returned only 3–8% of prefill end to end, so building
+> AVX2 versions of five kernels plus the `GOAMD64` settlement — comparable effort to the entire
+> arm64 half — looked like a poor trade on the secondary target.
+>
+> **Francis decided to build it (2026-09-06), and the kernel numbers came back better than the
+> arm64 ones**, which is the part the recommendation got wrong. On the 3700X, n=8960, median of 3:
+>
+> | path | ns/op | vs AVX2 |
+> |---|--:|--:|
+> | **AVX2 exp** | **4514** | — |
+> | shipped `expF32Core` | 39892 | 8.8× |
+> | `f64 math.Exp`, what goinfer calls today | 124436 | **27.6×** |
+> | SiLU dispatched | 20907 | **6.6×** vs goinfer's f64 |
+>
+> 27.6× against arm64's 11.8×, for two compounding reasons the recommendation did not weigh: AVX2
+> processes eight lanes to NEON's four, and amd64's f64 `math.Exp` is relatively slower to start
+> with. What the recommendation DID have right is that a kernel ratio is not a system ratio — the
+> amd64 end-to-end figure is not yet measured, and only that decides what the work bought.
+>
+> **The cross-architecture golden is the result worth keeping.** Every other gate proves a kernel
+> matches its oracle ON THE MACHINE IT RAN ON. `TestContractCrossArchGolden` hashes every contract
+> entry point's output over a fixed deterministic input set and compares it to a CONSTANT — the
+> only way to compare across instruction sets, since no process can execute both. That constant was
+> computed on the M1 running NEON kernels and it PASSES on the Zen 2 running AVX2 kernels. The
+> property the whole contract was built for is now demonstrated rather than argued, and the gate
+> catches the thing most likely to rot: an "optimisation" to one arch's kernel that moves a single
+> ULP fails here even while that arch's own bit-identity test still passes against its own oracle.
+>
+> **S-08's "GOAMD64 is unpinned" is answered by the contract rather than by a build flag.** Dispatch
+> is a RUNTIME check (`hasAVX2`, which already requires FMA3 and OS YMM state) and the scalar
+> fallback is bit-identical, so a v1 build and a v3 build produce identical output and differ only
+> in speed. That is stronger than pinning, because a pin can be forgotten by whoever builds the
+> binary.
+>
+> **Not accelerated on amd64, stated rather than inferred from a missing kernel:** tanh and both
+> GELU forms stay on the scalar contract there — correct and bit-identical, just not fast. They are
+> the gemma-family activations, off the path step 0 measured.
 >
 > **What is NOT done and is a separate decision:** the swap was measured, not landed. goinfer's
 > production adoption needs step 3's ritual — goldens regenerated once, the HF logit-parity gate
