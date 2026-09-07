@@ -976,6 +976,56 @@ prefill == speculative verify` guarantees rest on.
 > rising during it). Both arms saw it and the ratio is the measurement, but 2.8% is close enough to
 > the 3% stop line that it deserves a quiet-box re-take before anything is decided ON that cell.
 >
+> **STEP 2's arm64 HALF IS COMPLETE AND MEASURED END TO END, 2026-09-06 — and the answer on
+> AVX2 is "probably not".**
+>
+> Kernels shipped, all bit-identical to a scalar oracle obeying the same contract, gated on raw
+> `Float32bits` over ~200k adversarial inputs each: exp, order-pinned softmax, SiLU, tanh, erf and
+> both GELU forms.
+>
+> | kernel, n=8960 | vs shipped f32 | vs the f64 goinfer calls today |
+> |---|--:|--:|
+> | exp | 4.3× | **11.8×** |
+> | SiLU | 5.2× | **10.5×** |
+> | softmax (nKeys=2048) | 2.1× | — |
+> | GELU-tanh | 3.7× | — |
+> | GELU-erf | 3.1× | — |
+>
+> **END TO END, which is the number that matters and is far smaller.** A measurement-grade swap in
+> an isolated goinfer clone (4 SiLU sites, 2 softmax sites; aikit via a `replace`), both arms built
+> from one commit, interleaved with rotated arm order, n=5:
+>
+> | K | mean gain | prefill removed | step-2 bound | fraction of the ceiling |
+> |--:|--:|--:|--:|--:|
+> | 512 | **1.085×** | 7.8% | 7.9% | 99% |
+> | 1024 | 1.038× | 3.6% | 9.8% | 37% |
+> | 3900 | 1.034× | 3.3% | 5.3% | 62% |
+>
+> **So the whole of S-06 step 2 is worth 3–8% of CPU prefill on arm64.** That is a real win and it
+> is a small one, and the two facts have to be held together: the KERNELS are 10× faster and the
+> SYSTEM is 3–8% faster, because the transcendentals were never more than a tenth of the work
+> after step 1 took the fan-out half.
+>
+> **Precision caveat, stated because the conclusion leans on it.** The rotation spread is 1–3
+> points on effects of 3–8% (K=512 reads 1.097× one way and 1.073× the other; K=1024, 1.024× and
+> 1.052×), so these cells are near the resolution of the method. The K=1024 anomaly — 37% of its
+> ceiling where K=512 got 99% — is more likely bound noise than a real depth effect, since the
+> bound and the delivery were measured on different days at different loads. Do not read the
+> per-depth capture fractions as physics.
+>
+> **THE AVX2 DECISION: the arm64 result argues against it.** Writing the amd64 half means AVX2
+> versions of five kernels, the `GOAMD64` settlement S-08 flagged, and the same raw-bit gate work
+> — comparable effort to this entire arm64 half — for a win bounded by the same small share of
+> prefill. amd64 is also the secondary target. The recommendation is to stop at arm64 unless an
+> amd64 prefill workload becomes the thing being optimised, and to record that as a decision rather
+> than leave it as an unbuilt item implying debt.
+>
+> **What is NOT done and is a separate decision:** the swap was measured, not landed. goinfer's
+> production adoption needs step 3's ritual — goldens regenerated once, the HF logit-parity gate
+> re-run under the 3% near-tie rule, the argmax-flip rate reported against the 1.5% bar. One
+> encouraging signal: base and swapped binaries produced BYTE-IDENTICAL output on a greedy 40-token
+> completion, so no argmax flipped there. That is one prompt, not a gate.
+>
 > **Still to do, in order:** ~~goinfer's step 1~~ ✅ **DONE 2026-09-06**; then this section's step 2 in aikit —
 > the numeric contract (one f32 exp, one FMA policy, an order-pinned softmax sum, raw-bit
 > scalar-vs-asm gates on both arches) written BEFORE any assembly; then goinfer's swap, which
