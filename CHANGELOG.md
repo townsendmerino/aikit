@@ -108,6 +108,45 @@ Also moved `BenchmarkGELUTanhKernels` and `BenchmarkGELUErfKernels` out of the a
 file. They call nothing arch-specific, and sitting there meant amd64 had no measured number for
 the tanh/erf side of the contract at all.
 
+### Release gates
+
+`releasegate`:
+
+```
+VERDICT: PASS — v1.37.0 — 4/4 checks passed
+```
+
+`vulncheck`, `nobara` (Ryzen 7 3700X, linux/amd64):
+
+```
+STATEMENT: no reachable vulnerabilities in 15/15 modules at 8f053c2 (2026-09-07T01:04:27Z)
+```
+
+`perfgate`, `nobara`, working tree vs v1.36.0 interleaved. **The first run FAILED and it is
+recorded here rather than replaced by the passing ones**, because a gate that is re-run until it
+goes green is not a gate:
+
+```
+run 1: VERDICT: FAIL — 1 regression(s) vs v1.36.0 across 10 shapes
+run 2: VERDICT: PASS — no regression vs v1.36.0 above each shape's floor — 4/10 shapes resolve the 5.0% class
+run 3: VERDICT: PASS — no regression vs v1.36.0 above each shape's floor — 4/10 shapes resolve the 5.0% class
+```
+
+The flag was `BenchmarkW8A8SpanShapes/K2048_N2048` at **+8.35%** against a ±4.39% floor. Judged
+noise on three independent grounds, in increasing order of how much they actually prove:
+
+1. **No source change can explain it.** Every commit in `v1.36.0..8f053c2` adds new `linalg/exp_*`
+   files — 3585 insertions, zero deletions, nothing within reach of the W8A8 span path.
+2. **The same binary varies by as much as the effect.** `cur` for that shape read 0.117ms, then
+   0.106ms, then 0.105ms across the three runs. The 8% being attributed to a code change is
+   inside the run-to-run spread of code that did not change.
+3. **The delta flipped sign at the same magnitude**: +8.35%, −0.79%, −8.29%. A real regression does
+   not come back as an equal-and-opposite improvement.
+
+Note also that runs 2 and 3 do NOT by themselves refute run 1: their floor at that shape widened to
+±18.96% and ±11.34%, which is blind to the 5% class. The refutation rests on the reasoning above,
+particularly (2) — not on "two out of three were green."
+
 
 ## [1.36.0] — 2026-09-06
 
