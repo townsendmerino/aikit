@@ -172,6 +172,10 @@ func TestExpF32Contract_vsExpF32Core(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("contract vs shipped expF32Core on %s: %.2f%% of inputs differ, max %.2f ULP",
-		"arm64 (where Go already fuses)", 100*float64(differ)/float64(n), maxULP)
+	// The share differs BY ARCHITECTURE and that is the finding, not noise: Go
+	// fuses expF32Core's Horner chain on arm64 and does not below GOAMD64=v3 on
+	// amd64, so the shipped kernel's own bits are arch-dependent. The contract's
+	// are not. Logged without naming an arch, because this test runs on both.
+	t.Logf("contract vs shipped expF32Core: %.2f%% of inputs differ, max %.2f ULP",
+		100*float64(differ)/float64(n), maxULP)
 }

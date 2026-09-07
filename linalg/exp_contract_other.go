@@ -1,8 +1,8 @@
-//go:build !arm64
+//go:build !arm64 && !amd64
 
 package linalg
 
-// Non-arm64 impls: the scalar contract. Bit-identical to the arm64 kernels by
+// Impls for targets with no kernel: the scalar contract. Bit-identical to the arm64 kernels by
 // construction, so nothing about a model's output depends on which build ran it
 // — which is the entire point of the contract and the reason these are not left
 // as a faster-but-different fallback.
