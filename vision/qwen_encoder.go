@@ -6,7 +6,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"sync"
 
 	"github.com/townsendmerino/aikit/embed"
 	"github.com/townsendmerino/aikit/linalg"
@@ -337,7 +339,7 @@ func (e *QwenVisionEncoder) computeViTHidden(pixelValues []float32, gridTHW [][3
 	// because a full-attention block and a windowed block can each appear at
 	// any depth.
 	maxSeg := max(maxSegment(cuWin), maxSegment(cuFull))
-	s := newQwenScratch(nPatches, hidden, c.IntermediateSize, headDim, maxSeg)
+	s := newQwenScratch(nPatches, hidden, c.IntermediateSize, headDim, maxSeg, c.NumHeads)
 	att := s.att[:nPatches*hidden]
 	o := s.o[:nPatches*hidden]
 	mlpOut := s.mlpOut[:nPatches*hidden]
@@ -350,7 +352,9 @@ func (e *QwenVisionEncoder) computeViTHidden(pixelValues []float32, gridTHW [][3
 		}
 		b := &e.blocks[li]
 		rmsNormInto(n1, hWin, b.norm1w, nPatches, hidden)
-		e.attentionInto(att, n1, b, nPatches, cos, sin, cu, s)
+		if err := e.attentionInto(att, n1, b, nPatches, cos, sin, cu, s); err != nil {
+			return nil, err
+		}
 		b.projw.MatmulBT(att, o, nPatches)
 		addBias(o, b.projb, nPatches, hidden)
 		for i := range hWin {
@@ -409,13 +413,22 @@ func (e *QwenVisionEncoder) merge(hidden []float32, gridTHW [][3]int) []float32 
 	return out
 }
 
-// attention runs bidirectional MHA within each cu_seqlens segment (window or full
-// image). qkv is fused (reshape seq,3,heads,head_dim); 2D rotary is applied to q,k
-// before attending. Per-head QKᵀ / scores·V run on the f32 SIMD A·Bᵀ kernel.
-func (e *QwenVisionEncoder) attentionInto(out, x []float32, b *qwenBlock, seq int, cos, sin []float32, cu []int, s *qwenScratch) {
+// attention runs bidirectional MHA within each cu_seqlens segment (window or full image), via
+// linalg's fused schedule (P6, same treatment and same reasoning as encoder.go's attentionInto —
+// see that function's and encHeadScratch's doc comments for the shared design). qkv is fused
+// (reshape seq,3,heads,head_dim); 2D rotary is applied to q,k before attending. Segments run
+// sequentially (there are only a handful per layer — image windows — so nesting parallelism
+// inside them would just add contention); heads within one segment fan out across s.headPool.
+//
+// A decline from AttendTileFused is unreachable here for the same reason as SigLIP's: every
+// headPool worker's FusedAttnScratch is sized via NewFusedAttnScratch(maxSeg, hd), and maxSeg is
+// computed by the caller (computeViTHidden) as the longest run across BOTH cu_seqlens variants —
+// every segment length n this function is ever called with satisfies n <= maxSeg, and
+// FusedAttnScratch's buffers are prefix slices (Fits(n, hd) holds whenever n <= maxSeg).
+func (e *QwenVisionEncoder) attentionInto(out, x []float32, b *qwenBlock, seq int, cos, sin []float32, cu []int, s *qwenScratch) error {
 	hidden, nH := e.Cfg.HiddenSize, e.Cfg.NumHeads
 	hd := hidden / nH
-	scale := float32(1.0 / math.Sqrt(float64(hd)))
+	scale := 1.0 / math.Sqrt(float64(hd))
 
 	qkv := s.qkv[:seq*3*hidden]
 	b.qkvw.MatmulBT(x, qkv, seq)
@@ -440,35 +453,66 @@ func (e *QwenVisionEncoder) attentionInto(out, x []float32, b *qwenBlock, seq in
 		}
 	}
 
-	qh, kh, vt := s.qh, s.kh, s.vt
-	scores, oh := s.scores, s.oh
-	for head := range nH {
+	attendHead := func(ws *encHeadScratch, mm func(a, b, dst []float32, M, K, N int), head, start, n int) error {
 		off := head * hd
-		for si := 1; si < len(cu); si++ {
-			start, n := cu[si-1], cu[si]-cu[si-1]
-			for ii := range n {
-				gi := start + ii
-				copy(qh[ii*hd:(ii+1)*hd], q[gi*hidden+off:gi*hidden+off+hd])
-				copy(kh[ii*hd:(ii+1)*hd], k[gi*hidden+off:gi*hidden+off+hd])
-				vrow := v[gi*hidden+off : gi*hidden+off+hd]
-				for d := range hd {
-					vt[d*n+ii] = vrow[d]
+		linalg.GatherVBlockMajor(ws.kh, ws.vBlk, k[start*hidden:], v[start*hidden:], head, hd, hidden, n)
+		for i := range n {
+			gi := start + i
+			copy(ws.qh[i*hd:(i+1)*hd], q[gi*hidden+off:gi*hidden+off+hd])
+		}
+		for i := range n {
+			ws.hi[i] = n - 1 // full bidirectional attention within this segment
+		}
+		if !linalg.AttendTileFused(mm, ws.qh[:n*hd], ws.kh[:n*hd], ws.vBlk[:n*hd], ws.ch[:n*hd], ws.fused, n, hd, n, scale, s.loFull[:n], ws.hi[:n]) {
+			return fmt.Errorf("vision: AttendTileFused declined for n=%d hd=%d — scratch sizing invariant violated", n, hd)
+		}
+		for i := range n {
+			gi := start + i
+			copy(out[gi*hidden+off:gi*hidden+off+hd], ws.ch[i*hd:(i+1)*hd])
+		}
+		return nil
+	}
+
+	workers := len(s.headPool)
+	for si := 1; si < len(cu); si++ {
+		start, n := cu[si-1], cu[si]-cu[si-1]
+		if workers <= 1 {
+			ws := &s.headPool[0]
+			for head := range nH {
+				if err := attendHead(ws, linalg.MatmulBT, head, start, n); err != nil {
+					return err
 				}
 			}
-			linalg.MatmulBT(qh, kh, scores[:n*n], n, hd, n)
-			for i := range n {
-				row := scores[i*n : (i+1)*n]
-				for j := range row {
-					row[j] *= scale
-				}
-				softmaxRow(row)
+			continue
+		}
+		var wg sync.WaitGroup
+		errs := make([]error, workers)
+		headsPer := (nH + workers - 1) / workers
+		for w := range workers {
+			h0, h1 := w*headsPer, min((w+1)*headsPer, nH)
+			if h0 >= h1 {
+				continue
 			}
-			linalg.MatmulBT(scores[:n*n], vt[:hd*n], oh[:n*hd], n, n, hd)
-			for ii := range n {
-				copy(out[(start+ii)*hidden+off:(start+ii)*hidden+off+hd], oh[ii*hd:(ii+1)*hd])
+			wg.Add(1)
+			go func(w, h0, h1 int) {
+				defer wg.Done()
+				ws := &s.headPool[w]
+				for head := h0; head < h1; head++ {
+					if err := attendHead(ws, ws.mmWS.MatmulBT, head, start, n); err != nil {
+						errs[w] = err
+						return
+					}
+				}
+			}(w, h0, h1)
+		}
+		wg.Wait()
+		for _, err := range errs {
+			if err != nil {
+				return err
 			}
 		}
 	}
+	return nil
 }
 
 // qwenScratch is the Qwen ViT's per-Forward arena. It mirrors encScratch on the
@@ -485,32 +529,34 @@ func (e *QwenVisionEncoder) attentionInto(out, x []float32, b *qwenBlock, seq in
 // Sized once per Forward. Bit-identical: same operations, same order, distinct
 // buffers — the only change is who owns the memory.
 type qwenScratch struct {
-	n1, n2, o, att []float32 // [np*hidden] block buffers
-	mlpOut         []float32 // [np*hidden]
-	qkv            []float32 // [np*3*hidden]
-	q, k, v        []float32 // [np*hidden]
-	qh, kh, oh     []float32 // [maxSeg*hd]
-	vt             []float32 // [hd*maxSeg]
-	scores         []float32 // [maxSeg*maxSeg]
-	gate, up       []float32 // [np*inter]
+	n1, n2, o, att []float32        // [np*hidden] block buffers
+	mlpOut         []float32        // [np*hidden]
+	qkv            []float32        // [np*3*hidden]
+	q, k, v        []float32        // [np*hidden]
+	headPool       []encHeadScratch // P6: fused-attention worker slots, sized to maxSeg (§attentionInto)
+	loFull         []int            // shared, read-only, all-zero: every row's key range starts at 0
+	gate, up       []float32        // [np*inter]
 }
 
 // newQwenScratch sizes every buffer for the largest shape the forward will use.
 // maxSeg is the longest attention segment across BOTH cu_seqlens variants — the
 // windowed blocks and the full-attention blocks partition the same patches
 // differently, and a layer of either kind may run at any depth.
-func newQwenScratch(np, hidden, inter, hd, maxSeg int) *qwenScratch {
+func newQwenScratch(np, hidden, inter, hd, maxSeg, nH int) *qwenScratch {
+	workers := max(min(runtime.GOMAXPROCS(0), nH), 1)
+	pool := make([]encHeadScratch, workers)
+	for i := range pool {
+		pool[i] = newEncHeadScratch(maxSeg, hd)
+	}
 	return &qwenScratch{
 		n1: make([]float32, np*hidden), n2: make([]float32, np*hidden),
 		o: make([]float32, np*hidden), att: make([]float32, np*hidden),
 		mlpOut: make([]float32, np*hidden),
 		qkv:    make([]float32, np*3*hidden),
 		q:      make([]float32, np*hidden), k: make([]float32, np*hidden),
-		v:  make([]float32, np*hidden),
-		qh: make([]float32, maxSeg*hd), kh: make([]float32, maxSeg*hd),
-		oh: make([]float32, maxSeg*hd), vt: make([]float32, hd*maxSeg),
-		scores: make([]float32, maxSeg*maxSeg),
-		gate:   make([]float32, np*inter), up: make([]float32, np*inter),
+		v:        make([]float32, np*hidden),
+		headPool: pool, loFull: make([]int, maxSeg),
+		gate: make([]float32, np*inter), up: make([]float32, np*inter),
 	}
 }
 

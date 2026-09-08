@@ -6,6 +6,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
 
 	"github.com/townsendmerino/aikit/linalg"
 )
@@ -230,12 +232,14 @@ func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 	// safety (each call has its own).
 	inter := c.IntermediateSize
 	hd := hidden / c.NumAttentionHeads
-	s := newEncScratch(np, hidden, inter, hd)
+	s := newEncScratch(np, hidden, inter, hd, c.NumAttentionHeads)
 	for l := range e.layers {
 		lw := &e.layers[l]
 		// attention block (pre-LN, residual)
 		layerNormInto(s.n1, h, lw.ln1w, lw.ln1b, np, hidden, c.LayerNormEps)
-		e.attentionInto(s.att, s.n1, lw, np, s)
+		if err := e.attentionInto(s.att, s.n1, lw, np, s); err != nil {
+			return nil, err
+		}
 		lw.ow.MatmulBTInto(&s.ws, s.att, s.o, np)
 		addBias(s.o, lw.ob, np, hidden)
 		for i := range h {
@@ -260,34 +264,82 @@ func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 type encScratch struct {
 	n1, att, o, n2, mid, mlp []float32        // block buffers
 	q, k, v                  []float32        // attention projections [np,hidden]
-	qh, kh, vt, scores, oh   []float32        // per-head scratch
 	ws                       linalg.Workspace // reused across the WeightMat projections (audit #12)
+	headPool                 []encHeadScratch // P6: fused-attention worker slots, len = fan-out width
+	loFull, hiFull           []int            // shared across every head/worker: bidirectional, so
+	// every row's key range is the whole tile — [0,np-1] — computed once per Forward, not per head.
 }
 
-func newEncScratch(np, hidden, inter, hd int) *encScratch {
+// encHeadScratch is one fused-attention worker's private scratch: gather buffers sized to the
+// caller's tile width kt (SigLIP: np, one segment per image; Qwen: maxSeg, the longest
+// cu_seqlens run — AttendTileFused's buffers are prefix slices, so sizing to the max and using a
+// shorter prefix per call is exactly the reuse contract FusedAttnScratch documents), so
+// AttendTileFused's Fits(kt, hd) check always succeeds for the calls each tower makes (see
+// attentionInto's doc comment on why a decline is provably unreachable there) — and a private
+// serial matmul Workspace, so this worker's head-level fan-out doesn't nest inside MatmulBT's own
+// column-level fan-out (the identical reasoning goinfer's decoder/scratch.go documents for its
+// own per-worker Workspace). hi is private, not shared, because Qwen recomputes it per segment
+// (segment length varies within one Forward) — a shared buffer would make concurrent workers
+// write it in the same call, a data race even though every writer would agree on the value.
+type encHeadScratch struct {
+	qh, kh, vBlk, ch []float32
+	hi               []int
+	fused            *linalg.FusedAttnScratch
+	mmWS             *linalg.Workspace
+}
+
+func newEncHeadScratch(kt, hd int) encHeadScratch {
+	ws := &linalg.Workspace{}
+	ws.SetThreshold(1 << 62) // never fan out internally — see the type doc comment
+	return encHeadScratch{
+		qh: make([]float32, kt*hd), kh: make([]float32, kt*hd), vBlk: make([]float32, kt*hd),
+		ch:    make([]float32, kt*hd),
+		hi:    make([]int, kt),
+		fused: linalg.NewFusedAttnScratch(kt, hd),
+		mmWS:  ws,
+	}
+}
+
+func newEncScratch(np, hidden, inter, hd, nH int) *encScratch {
+	workers := max(min(runtime.GOMAXPROCS(0), nH), 1)
+	pool := make([]encHeadScratch, workers)
+	for i := range pool {
+		pool[i] = newEncHeadScratch(np, hd)
+	}
+	loFull, hiFull := make([]int, np), make([]int, np)
+	for i := range hiFull {
+		hiFull[i] = np - 1 // loFull stays zero-valued: every row attends to every patch
+	}
 	return &encScratch{
 		n1: make([]float32, np*hidden), att: make([]float32, np*hidden),
 		o: make([]float32, np*hidden), n2: make([]float32, np*hidden),
 		mid: make([]float32, np*inter), mlp: make([]float32, np*hidden),
 		q: make([]float32, np*hidden), k: make([]float32, np*hidden),
-		v:  make([]float32, np*hidden),
-		qh: make([]float32, np*hd), kh: make([]float32, np*hd),
-		vt: make([]float32, hd*np), scores: make([]float32, np*np),
-		oh: make([]float32, np*hd),
+		v:        make([]float32, np*hidden),
+		headPool: pool, loFull: loFull, hiFull: hiFull,
 	}
 }
 
-// attention runs bidirectional multi-head self-attention (no causal mask) over
-// the np patches. Per head, QKᵀ and scores·V run on the f32 SIMD A·Bᵀ kernel
-// (MatmulBT) — f32 is ample here (HF runs SigLIP in bf16/f16, far less precise),
-// and the f64-accumulate the text path uses for the discrete MoE router is just
-// dead weight on a vision tower, where it dominated the CPU prefill time. At
-// SigLIP sizes (≈4096 patches) this is the difference between minutes and seconds
-// per image vs the old scalar triple-loop.
-func (e *Encoder) attentionInto(att, x []float32, lw *encLayer, np int, s *encScratch) {
+// attentionInto runs bidirectional multi-head self-attention (no causal mask) over the np
+// patches, via linalg's fused (FlashAttention-style) schedule (P6 — aikit/linalg/fusedattn.go),
+// the SAME primitive goinfer's own text-decoder prefill already uses, fanned out across heads
+// with a private Workspace per worker (mirroring goinfer's decoder/forwardn.go
+// attendBatchedHeads exactly, down to the contiguous-head-run split and the serial-Workspace
+// reasoning — see encHeadScratch's doc comment). Replaces the old per-head materialized
+// QKᵀ→softmax→scores·V loop; f32 throughout remains the right precision here (HF runs SigLIP in
+// bf16/f16, far less precise than this).
+//
+// AttendTileFused declining (returning false) is possible in general — see its own doc comment —
+// but provably UNREACHABLE at this call site: every encHeadScratch's FusedAttnScratch is sized
+// via NewFusedAttnScratch(np, hd) for EXACTLY the (np, hd) this Forward call uses, and mm is
+// always non-nil, so Fits(np, hd) always holds. A decline here means the scratch-sizing
+// invariant above was violated, not a normal runtime condition, so it is reported as an error
+// (parity gate: TestSiglipEncoder_parity) rather than silently falling back to a different
+// numeric path.
+func (e *Encoder) attentionInto(att, x []float32, lw *encLayer, np int, s *encScratch) error {
 	hidden, nH := e.Cfg.HiddenSize, e.Cfg.NumAttentionHeads
 	hd := hidden / nH
-	scale := float32(1.0 / math.Sqrt(float64(hd)))
+	scale := 1.0 / math.Sqrt(float64(hd))
 	lw.qw.MatmulBTInto(&s.ws, x, s.q, np)
 	addBias(s.q, lw.qb, np, hidden)
 	lw.kw.MatmulBTInto(&s.ws, x, s.k, np)
@@ -295,31 +347,58 @@ func (e *Encoder) attentionInto(att, x []float32, lw *encLayer, np int, s *encSc
 	lw.vw.MatmulBTInto(&s.ws, x, s.v, np)
 	addBias(s.v, lw.vb, np, hidden)
 
-	for head := range nH {
+	attendHead := func(ws *encHeadScratch, mm func(a, b, dst []float32, M, K, N int), head int) error {
 		off := head * hd
+		linalg.GatherVBlockMajor(ws.kh, ws.vBlk, s.k, s.v, head, hd, hidden, np)
+		for i := range np { // Q gather: not covered by GatherVBlockMajor (K/V only)
+			copy(ws.qh[i*hd:(i+1)*hd], s.q[i*hidden+off:i*hidden+off+hd])
+		}
+		if !linalg.AttendTileFused(mm, ws.qh, ws.kh, ws.vBlk, ws.ch, ws.fused, np, hd, np, scale, s.loFull, s.hiFull) {
+			return fmt.Errorf("vision: AttendTileFused declined for np=%d hd=%d — scratch sizing invariant violated", np, hd)
+		}
 		for i := range np {
-			copy(s.qh[i*hd:(i+1)*hd], s.q[i*hidden+off:i*hidden+off+hd])
-			copy(s.kh[i*hd:(i+1)*hd], s.k[i*hidden+off:i*hidden+off+hd])
-			vrow := s.v[i*hidden+off : i*hidden+off+hd]
-			for d := range hd {
-				s.vt[d*np+i] = vrow[d] // vᵀ so scores·V = MatmulBT(scores, vᵀ)
+			copy(att[i*hidden+off:i*hidden+off+hd], ws.ch[i*hd:(i+1)*hd])
+		}
+		return nil
+	}
+
+	workers := len(s.headPool)
+	if workers <= 1 {
+		ws := &s.headPool[0]
+		for head := range nH {
+			if err := attendHead(ws, linalg.MatmulBT, head); err != nil {
+				return err
 			}
 		}
-		// scores[np,np] = qh · khᵀ, scaled, row-softmax.
-		linalg.MatmulBT(s.qh, s.kh, s.scores, np, hd, np)
-		for i := range np {
-			row := s.scores[i*np : (i+1)*np]
-			for j := range row {
-				row[j] *= scale
-			}
-			softmaxRow(row)
+		return nil
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, workers)
+	headsPer := (nH + workers - 1) / workers
+	for w := range workers {
+		h0, h1 := w*headsPer, min((w+1)*headsPer, nH)
+		if h0 >= h1 {
+			continue
 		}
-		// out_head[np,hd] = scores[np,np] · v_head[np,hd] = MatmulBT(scores, vᵀ).
-		linalg.MatmulBT(s.scores, s.vt, s.oh, np, np, hd)
-		for i := range np {
-			copy(att[i*hidden+off:i*hidden+off+hd], s.oh[i*hd:(i+1)*hd])
+		wg.Add(1)
+		go func(w, h0, h1 int) {
+			defer wg.Done()
+			ws := &s.headPool[w]
+			for head := h0; head < h1; head++ {
+				if err := attendHead(ws, ws.mmWS.MatmulBT, head); err != nil {
+					errs[w] = err
+					return
+				}
+			}
+		}(w, h0, h1)
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
 // --- small f32 helpers (LayerNorm is standard — mean/var — not RMS) ---
@@ -372,11 +451,4 @@ func addBias(x, bias []float32, rows, dim int) {
 			dst[d] += bias[d]
 		}
 	}
-}
-
-// softmaxRow normalizes one attention row in place. Attention is O(patches²), so
-// this is the other half of item 13's vision share; linalg's kernel keeps the
-// float64 sum accumulator and moves only the exponentials to float32.
-func softmaxRow(s []float32) {
-	linalg.SoftmaxRowInto(s, s)
 }

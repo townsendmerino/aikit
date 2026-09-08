@@ -9,6 +9,34 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.38.0] — 2026-09-08
+
+### Changed
+
+- **`vision`'s two ViT towers (SigLIP/`encoder.go`, Qwen2.5-VL/`qwen_encoder.go`) now run
+  attention through `linalg.AttendTileFused`, head-parallel, instead of a serial
+  materialize-QKᵀ→softmax→scores·V loop per head.** This is the same fused schedule and the
+  same per-worker-serial-`Workspace` fan-out goinfer's own text-decoder prefill already uses
+  (`decoder/forwardn.go`'s `attendBatchedHeads`) — ported to the tower rather than invented for
+  it, including its documented gotcha: a head-parallel goroutine must route its matmuls through
+  a private serial `*linalg.Workspace`, not the package-level `linalg.MatmulBT`, or it
+  double-parallelizes against `MatmulBT`'s own internal column fan-out. Bidirectional attention
+  (every row's key range is the whole tile) needed no change to `AttendTileFused` itself —
+  `lo=0, hi=n-1` for every row was already handled by its existing block-skip logic. Qwen's
+  `cu_seqlens` window/full-attention segmentation is unchanged; fusion applies per segment,
+  inside the existing segment loop, with a per-worker scratch buffer resized (not reallocated)
+  to the longest segment in the call.
+  Both existing real-checkpoint parity gates hold at their current thresholds — `vision`'s
+  fused schedule is documented as *not* bit-identical to the materialized path it replaces (the
+  running-max rescale re-associates the softmax denominator), so this was a real measurement,
+  not an assumption: `TestSiglipEncoder_parity` (f32 cosine 1.00000000, was already ≥0.9999;
+  int8 W8A8 0.99996609, ≥0.99) and `TestQwenVisionEncoder_parity` (pre-merge and merged f32
+  cosine 1.00000000 on both, ≥0.9999999 — the tightest bar in the suite) both pass unchanged,
+  confirmed additionally under `-race`. First slice of `docs/multimodal.md`'s P6 ("route the
+  tower through existing kernels") — CPU only; CUDA and Metal need genuinely new non-causal
+  kernels and a new tower weight-quantization pipeline, out of scope here and tracked
+  separately.
+
 ## [1.37.0] — 2026-09-06
 
 ### Added
@@ -3133,7 +3161,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.36.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.38.0...HEAD
+[1.38.0]: https://github.com/townsendmerino/aikit/compare/v1.37.0...v1.38.0
 [1.37.0]: https://github.com/townsendmerino/aikit/compare/v1.36.0...v1.37.0
 [1.36.0]: https://github.com/townsendmerino/aikit/compare/v1.35.0...v1.36.0
 [1.35.0]: https://github.com/townsendmerino/aikit/compare/v1.34.0...v1.35.0

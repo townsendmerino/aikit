@@ -128,12 +128,21 @@ func TestQwenScratch_poisonedArenaIsInert(t *testing.T) {
 	b := &e.blocks[0]
 
 	run := func(poison bool) ([]float32, []float32) {
-		s := newQwenScratch(seq, hidden, c.IntermediateSize, hd, maxSeg)
+		s := newQwenScratch(seq, hidden, c.IntermediateSize, hd, maxSeg, c.NumHeads)
 		if poison {
 			for _, buf := range [][]float32{s.n1, s.n2, s.o, s.att, s.mlpOut, s.qkv,
-				s.q, s.k, s.v, s.qh, s.kh, s.oh, s.vt, s.scores, s.gate, s.up} {
+				s.q, s.k, s.v, s.gate, s.up} {
 				for i := range buf {
 					buf[i] = float32(math.NaN())
+				}
+			}
+			for w := range s.headPool {
+				ws := &s.headPool[w]
+				for _, buf := range [][]float32{ws.qh, ws.kh, ws.vBlk, ws.ch,
+					ws.fused.SBlk, ws.fused.Tmp, ws.fused.Acc, ws.fused.MRun, ws.fused.LRun} {
+					for i := range buf {
+						buf[i] = float32(math.NaN())
+					}
 				}
 			}
 		}
@@ -141,7 +150,9 @@ func TestQwenScratch_poisonedArenaIsInert(t *testing.T) {
 		// s.att and s.mlpOut are themselves reused across layers, so a
 		// partially-written output is part of what this must catch.
 		att := s.att[:seq*hidden]
-		e.attentionInto(att, x, b, seq, cos, sin, cuWin, s)
+		if err := e.attentionInto(att, x, b, seq, cos, sin, cuWin, s); err != nil {
+			t.Fatal(err)
+		}
 		mlpOut := s.mlpOut[:seq*hidden]
 		e.mlpInto(mlpOut, x, b, seq, s)
 		return append([]float32(nil), att...), append([]float32(nil), mlpOut...)
