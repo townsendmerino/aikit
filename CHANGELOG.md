@@ -9,6 +9,53 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.39.0] — 2026-09-09
+
+### Added
+
+**`vision`'s third ViT family: `Gemma4Encoder`/`Gemma4Preprocess`, the "gemma4" plain family's
+vision tower (E2B/E4B/26B-A4B/31B — not the separate, encoder-free `gemma4_unified` 12B family).**
+Architecturally closer to this repo's own text decoders than to the other two towers: Gemma2/3-style
+sandwich RMSNorm (four independent norms per layer, not SigLIP's two LayerNorms), a gated
+SwiGLU-tanh MLP (not SigLIP's plain 2-layer GELU), axial 2-D RoPE on Q/K (a learned absolute
+position table is ALSO applied additively at the patch-embed stage — both are real, verified
+against the real forward pass, neither is dead code), q/k/v independently RMSNorm'd per head (v
+unscaled), a hardcoded attention scale of 1.0 (not `head_dim**-0.5`), and every attention/MLP
+projection wrapped in `Gemma4ClippableLinear`'s real input/output clamp — confirmed load-bearing
+against the real `google/gemma-4-E2B-it` checkpoint (`use_clipped_linears=true` there, with genuine
+finite per-tensor bounds like `[-6.375,6.3125]`, not the harmless ±inf a disabled clamp would carry).
+3×3 average pooling runs once, after all 16 layers (the encoder itself runs at full 16px-patch
+resolution); the projector is one unscaled RMSNorm + one bias-free Linear
+(`Gemma4MultimodalEmbedder`). `Gemma4Preprocess` implements the real aspect-ratio-preserving tiling
+rule (`get_aspect_ratio_preserving_size`) — resize to the largest multiple-of-48
+(`pooling_kernel_size × patch_size`) dimensions within a caller-chosen soft-token budget
+(`{70,140,280,560,1120}`), aspect ratio preserved by one uniform scale factor, each axis rounded
+down independently.
+
+Every load-bearing detail was checked against the real E2B-it safetensors header, not assumed from
+source reading alone — this is what caught the real clip bounds above, and the position table's
+actual on-disk shape (`[2,10240,768]`, one tensor spanning both axes, not two separate tables).
+Gated at cosine **1.000000000** against a tiny-random `Gemma4VisionModel`+`Gemma4MultimodalEmbedder`
+checkpoint (`TestGemma4Encoder_tinyGoldenParity` — exercises every component including the real
+clamp) and cosine **1.000000000** (max|diff| ≈6.9e-6, pure f32 rounding noise across 16 layers)
+against the real `google/gemma-4-E2B-it` vision-tower weights on synthetic patches, matched f32
+precision both sides (`TestGemma4Encoder_realCheckpointParity`). The aspect-ratio tiling formula is
+separately cross-checked numerically against the real HF function on five width/height/budget
+combinations (`TestGemma4AspectRatioSize_matchesRealFormula`). Pixel-level resize parity (PIL
+bicubic vs this repo's bilinear) is a known, explicitly deferred gap — the same one `encoder.go`'s
+SigLIP preprocessing already carries — not attempted here.
+
+CPU only; no `ResidentEncoder`/GPU backend yet (SigLIP and Qwen2.5-VL both have one). The decoder-
+side integration (goinfer: an "embed-by-vector" seam for gemma4's own forward path, per-layer-
+embedding PAD-token substitution at multimodal positions) and the full serving/generation wiring
+are separate, goinfer-side work — see goinfer's `docs/multimodal.md` P7 entry.
+
+`perfgate` VERDICT: PASS — no regression vs v1.38.0 above each shape's floor — 5/10 shapes resolve
+the 5.0% class (unsurprising: this release adds new files calling existing `linalg`/`WeightMat`
+kernels, none of which changed).
+
+`vulncheck` STATEMENT: no reachable vulnerabilities in 15/15 modules at nobara-pc, 2026-09-09.
+
 ## [1.38.0] — 2026-09-08
 
 ### Changed
@@ -3162,6 +3209,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.38.0...HEAD
+[1.39.0]: https://github.com/townsendmerino/aikit/compare/v1.38.0...v1.39.0
 [1.38.0]: https://github.com/townsendmerino/aikit/compare/v1.37.0...v1.38.0
 [1.37.0]: https://github.com/townsendmerino/aikit/compare/v1.36.0...v1.37.0
 [1.36.0]: https://github.com/townsendmerino/aikit/compare/v1.35.0...v1.36.0
