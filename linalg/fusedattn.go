@@ -79,9 +79,54 @@ func AttendTileFused(
 	kt, hd, nKeys int, scale float64,
 	lo, hi []int,
 ) bool {
+	return attendTileFused(mm, qh, kh, vBlk, ch, sc, kt, hd, nKeys, scale, lo, hi, false)
+}
+
+// AttendTileFusedContractExp is AttendTileFused with the score exponential taken
+// from the S-06 contract kernel (vectorised NEON/AVX2) instead of f64 math.Exp,
+// and the per-element score scale applied in float32 instead of widening to f64.
+//
+// FOR CALLERS WHOSE GATE IS COSINE, NOT BITS. AttendTileFused's f64 math.Exp is
+// part of its bit contract and goinfer's raw-bit gate depends on it — that entry
+// is unchanged and must stay so. The vision towers gate at cosine >= 0.9999 and
+// do not need those bits: before P6a they ran the f32 expF32Core through
+// SoftmaxRowScaledInto and passed the same gates, so this restores the exp KIND
+// item 13 chose for them while keeping P6a's fused schedule (audit M-09).
+//
+// Why it matters: math.Exp is ~2.7x (M1) / ~3.1x (3700X) an expF32Core and
+// 12-28x a contract exp, and a ViT runs one per score element — 7.25 G per
+// so400m image at np=4096. The closed form softmax/attention-matmul =
+// t_exp/(2*hd*t_mac) puts the f64 exp at ~2-3x the QK^T+AV MACs it sits between,
+// i.e. the exponential costs more than the attention it is part of.
+//
+// The running-max correction stays f64 math.Exp deliberately: it is evaluated
+// once per (row, key block) rather than per element, so it is free, and it
+// multiplies the whole accumulator — the one place in this kernel where the
+// extra accuracy is worth having.
+//
+// NOT bit-identical to AttendTileFused, by construction and by intent.
+func AttendTileFusedContractExp(
+	mm func(a, b, dst []float32, M, K, N int),
+	qh, kh, vBlk, ch []float32,
+	sc *FusedAttnScratch,
+	kt, hd, nKeys int, scale float64,
+	lo, hi []int,
+) bool {
+	return attendTileFused(mm, qh, kh, vBlk, ch, sc, kt, hd, nKeys, scale, lo, hi, true)
+}
+
+func attendTileFused(
+	mm func(a, b, dst []float32, M, K, N int),
+	qh, kh, vBlk, ch []float32,
+	sc *FusedAttnScratch,
+	kt, hd, nKeys int, scale float64,
+	lo, hi []int,
+	contractExp bool,
+) bool {
 	if mm == nil || !sc.Fits(kt, hd) {
 		return false
 	}
+	scale32 := float32(scale)
 	sBlk, tmp, acc, mRun, lRun := sc.SBlk, sc.Tmp, sc.Acc, sc.MRun, sc.LRun
 	for i := range kt {
 		mRun[i], lRun[i] = float32(math.Inf(-1)), 0
@@ -127,10 +172,21 @@ func AttendTileFused(
 			}
 			j0, j1 := a0-k0, a1-k0
 			blkMax := float32(math.Inf(-1))
-			for j := j0; j <= j1; j++ {
-				row[j] = float32(float64(row[j]) * scale)
-				if row[j] > blkMax {
-					blkMax = row[j]
+			if contractExp {
+				// f32 scale — the f64 widen per score element is the pass dead-ends
+				// §4.4 / item 13 removed from the towers and P6a reintroduced.
+				for j := j0; j <= j1; j++ {
+					row[j] *= scale32
+					if row[j] > blkMax {
+						blkMax = row[j]
+					}
+				}
+			} else {
+				for j := j0; j <= j1; j++ {
+					row[j] = float32(float64(row[j]) * scale)
+					if row[j] > blkMax {
+						blkMax = row[j]
+					}
 				}
 			}
 			mNew := mRun[i]
@@ -142,10 +198,25 @@ func AttendTileFused(
 			for j := range j0 {
 				row[j] = 0
 			}
-			for j := j0; j <= j1; j++ {
-				e := math.Exp(float64(row[j] - mNew))
-				row[j] = float32(e)
-				sum += e
+			if contractExp {
+				// Batched through the contract kernel rather than element-by-element:
+				// that is what reaches the NEON/AVX2 exp at all. Three cheap passes
+				// (subtract, exp, sum) beat one pass of scalar f64 math.Exp by a wide
+				// margin because the exp is the entire cost here.
+				seg := row[j0 : j1+1]
+				for j := range seg {
+					seg[j] -= mNew
+				}
+				ExpContractInto(seg, seg)
+				for _, e := range seg {
+					sum += float64(e)
+				}
+			} else {
+				for j := j0; j <= j1; j++ {
+					e := math.Exp(float64(row[j] - mNew))
+					row[j] = float32(e)
+					sum += e
+				}
 			}
 			for j := j1 + 1; j < n; j++ {
 				row[j] = 0

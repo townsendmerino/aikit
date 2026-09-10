@@ -463,7 +463,7 @@ func (e *QwenVisionEncoder) attentionInto(out, x []float32, b *qwenBlock, seq in
 		for i := range n {
 			ws.hi[i] = n - 1 // full bidirectional attention within this segment
 		}
-		if !linalg.AttendTileFused(mm, ws.qh[:n*hd], ws.kh[:n*hd], ws.vBlk[:n*hd], ws.ch[:n*hd], ws.fused, n, hd, n, scale, s.loFull[:n], ws.hi[:n]) {
+		if !linalg.AttendTileFusedContractExp(mm, ws.qh[:n*hd], ws.kh[:n*hd], ws.vBlk[:n*hd], ws.ch[:n*hd], ws.fused, n, hd, n, scale, s.loFull[:n], ws.hi[:n]) {
 			return fmt.Errorf("vision: AttendTileFused declined for n=%d hd=%d — scratch sizing invariant violated", n, hd)
 		}
 		for i := range n {

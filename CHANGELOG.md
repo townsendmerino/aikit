@@ -11,6 +11,36 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**The ViT towers no longer pay f64 `math.Exp` per attention score — the fused-attention kernel is
+1.43-1.73x faster, growing with patch count (audit M-09).** P6a moved the towers onto
+`AttendTileFused`, whose f64 `math.Exp` and f64 score-scale pass are part of the bit contract
+goinfer's raw-bit gate depends on — but the vision towers gate at COSINE, not bits, and before
+P6a they ran the f32 `expF32Core` that item 13 chose for them (measured -30.6% on the 576-patch
+tower at the time). New `linalg.AttendTileFusedContractExp` keeps P6a's fused schedule and takes
+the exponential from the S-06 contract kernel (vectorised NEON/AVX2, batched over the score row
+rather than called per element) with an f32 scale pass; the three towers use it.
+`AttendTileFused` itself is untouched and `TestAttendTileFused_bitIdenticalToGoinferRef` still
+passes, so goinfer's contract is unaffected.
+
+Kernel, `apple-m1pro`, benchstat `-count=6`, hd=80, full bidirectional attention:
+np=196 **-30.0%**, np=576 **-39.2%**, np=1024 **-41.0%**, np=2048 **-42.2%** (all p=0.002) —
+the ratio rises monotonically with np, as the closed form predicts.
+
+END-TO-END THE EFFECT IS MUCH SMALLER THAN THE AUDIT'S HEADLINE, and the reason is structural
+rather than a measurement problem: attention is O(np^2) while the projections and MLP around it
+are O(np), so the exponential's share of a tower grows with patch count. On the in-tree tower
+fixtures the whole-forward numbers are `SiglipTower/p196_h512` **-4.4%** (p=0.002) and
+`/p576_h768` **no significant change** (p=0.485). The audit's "the exp costs more than the
+attention MACs" is an so400m claim at np=4096, which no fixture in this repo can exercise — the
+largest is np=576. The kernel sweep above is the evidence for the mechanism; the tower numbers
+are the honest end-to-end figure at the sizes we can actually measure.
+
+The running-max correction stays f64 `math.Exp` deliberately: once per (row, key block) rather
+than per element, so it is free, and it rescales the whole accumulator — the one place the extra
+accuracy is worth having. Gated at cosine on all three towers: SigLIP **1.00000000**,
+Qwen2.5-VL **1.00000000**, Gemma 4 **1.000000000**.
+
+
 **The encoder and vision towers now actually run the SIMD transcendental kernels — 15.9% off a
 long text encode, 28.7-42.7% off a SigLIP tower (audit M-07, M-06, M-10).** Three findings with
 one root: the `*Into` activation family (`SiLUInto`, `GELUInto`, `GELUTanhInto`,

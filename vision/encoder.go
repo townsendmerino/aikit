@@ -353,7 +353,7 @@ func (e *Encoder) attentionInto(att, x []float32, lw *encLayer, np int, s *encSc
 		for i := range np { // Q gather: not covered by GatherVBlockMajor (K/V only)
 			copy(ws.qh[i*hd:(i+1)*hd], s.q[i*hidden+off:i*hidden+off+hd])
 		}
-		if !linalg.AttendTileFused(mm, ws.qh, ws.kh, ws.vBlk, ws.ch, ws.fused, np, hd, np, scale, s.loFull, s.hiFull) {
+		if !linalg.AttendTileFusedContractExp(mm, ws.qh, ws.kh, ws.vBlk, ws.ch, ws.fused, np, hd, np, scale, s.loFull, s.hiFull) {
 			return fmt.Errorf("vision: AttendTileFused declined for np=%d hd=%d — scratch sizing invariant violated", np, hd)
 		}
 		for i := range np {
