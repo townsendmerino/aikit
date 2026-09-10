@@ -30,7 +30,28 @@ type Config struct {
 	Size      int        // target square side (Gemma 3 SigLIP: 896)
 	Mean      [3]float32 // per-channel normalization mean (applied after /255)
 	Std       [3]float32 // per-channel normalization std
-	MaxPixels int        // reject a decoded image with more than this many pixels (W*H)
+	MaxPixels int        // reject a decoded image with more than this many pixels (W*H); <=0 uses DefaultMaxPixels
+}
+
+// DefaultMaxPixels is the decompression-bomb cap applied when Config.MaxPixels
+// is unset. 16 MP is far above any real photo and caps the decode allocation.
+//
+// A ZERO MaxPixels used to mean "no limit" (audit C-06), so any caller who built
+// a Config literal without naming the field — the natural thing to do, and what
+// a zero value gives you — silently turned the guard OFF. That is the wrong
+// direction for a fail-safe: the default for an unset security limit should be
+// the limit, not its absence. A caller who genuinely wants a larger bound sets
+// a larger number.
+const DefaultMaxPixels = 16 << 20
+
+// maxPixels resolves the effective decompression-bomb cap: the configured value
+// when set, DefaultMaxPixels when not. Factored out so the resolution can be
+// tested without synthesising a 16-megapixel image (audit C-06).
+func (c Config) maxPixels() int {
+	if c.MaxPixels <= 0 {
+		return DefaultMaxPixels
+	}
+	return c.MaxPixels
 }
 
 // Gemma3 is the SigLIP preprocessing Gemma 3 / 4 use: 896×896, mean=std=0.5 on
@@ -40,7 +61,7 @@ func Gemma3() Config {
 		Size:      896,
 		Mean:      [3]float32{0.5, 0.5, 0.5},
 		Std:       [3]float32{0.5, 0.5, 0.5},
-		MaxPixels: 16 << 20, // 16 MP — far above any real photo, caps the decode alloc
+		MaxPixels: DefaultMaxPixels,
 	}
 }
 
@@ -78,8 +99,9 @@ func Preprocess(data []byte, cfg Config) (*PixelValues, error) {
 	// int64: Width and Height are attacker-controlled header ints, so on a
 	// 32-bit build (386/arm) Width*Height in int can wrap negative and bypass
 	// this decompression-bomb guard.
-	if cfg.MaxPixels > 0 && int64(ic.Width)*int64(ic.Height) > int64(cfg.MaxPixels) {
-		return nil, fmt.Errorf("vision: image %dx%d exceeds %d-pixel limit (decompression bomb?)", ic.Width, ic.Height, cfg.MaxPixels)
+	maxPix := cfg.maxPixels()
+	if int64(ic.Width)*int64(ic.Height) > int64(maxPix) {
+		return nil, fmt.Errorf("vision: image %dx%d exceeds %d-pixel limit (decompression bomb?)", ic.Width, ic.Height, maxPix)
 	}
 
 	img, _, err := image.Decode(bytes.NewReader(data))

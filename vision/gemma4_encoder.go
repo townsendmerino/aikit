@@ -382,18 +382,33 @@ func (e *Gemma4Encoder) averagePool(h []float32, positionIDs [][2]int, np int) (
 	poolW, poolH = gridW/k, gridH/k
 	nPooled := poolW * poolH
 	sum := make([]float32, nPooled*hidden)
+	count := make([]int, nPooled)
 	for i, p := range positionIDs {
 		bx, by := p[0]/k, p[1]/k
 		bucket := by*poolW + bx
+		count[bucket]++
 		dst := sum[bucket*hidden : bucket*hidden+hidden]
 		src := h[i*hidden : i*hidden+hidden]
 		for d := range hidden {
 			dst[d] += src[d]
 		}
 	}
-	inv := float32(1.0 / float64(k*k))
-	for i := range sum {
-		sum[i] *= inv
+	// Divide by the bucket's ACTUAL occupancy, not k*k (audit C-06). The
+	// divisibility check above guarantees the grid splits into whole buckets; it
+	// does NOT guarantee that positionIDs densely covers that grid. A sparse or
+	// padded patch set leaves a bucket under-filled, and dividing it by k*k
+	// scales it toward zero — a mean that is quietly wrong rather than an error.
+	// Identical to the old constant whenever every bucket is full, which is the
+	// only case the single-image path produces today.
+	for b := range nPooled {
+		if count[b] == 0 {
+			continue // no patches landed here; leave the bucket at zero
+		}
+		inv := float32(1.0 / float64(count[b]))
+		row := sum[b*hidden : b*hidden+hidden]
+		for d := range row {
+			row[d] *= inv
+		}
 	}
 	return sum, poolW, poolH, nil
 }

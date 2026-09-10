@@ -11,6 +11,20 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**`vision`: an unset `Config.MaxPixels` no longer disables the decompression-bomb guard, and
+Gemma 4's pooler divides by real occupancy (audit C-06).** The guard read
+`cfg.MaxPixels > 0 && ...`, so a `Config` literal that simply did not name the field — the
+natural thing to write, and what the zero value gives — turned the check OFF entirely. An unset
+security limit now resolves to the new exported `DefaultMaxPixels` (16 MP, what `Gemma3()`
+already used); a caller who wants a larger bound sets a larger number. Separately,
+`Gemma4Encoder.averagePool` scaled every bucket by `1/(k*k)` regardless of how many patches
+landed in it: the divisibility check guarantees the grid splits into whole buckets but not that
+`positionIDs` densely covers it, so a sparse or padded patch set left a bucket under-filled and
+scaled toward zero — a mean that is quietly wrong rather than an error. It now divides by the
+bucket's actual count, identical to the old constant whenever every bucket is full (the only
+case today's single-image path produces).
+
+
 **`gpu/qwencuda`: a write-after-read race on the ViT segment bounds, and the same hazard closed
 generally in `Buffer.upload`/`CopyDevice`/`UploadBatch` (audit C-01).** The encoder uploaded new
 per-patch attention bounds INSIDE the layer loop whenever the block kind switched. `gpu.Upload`
