@@ -229,6 +229,25 @@ func (e *encoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32
 		return nil, err
 	}
 	n := plan.NPatches
+
+	// Threadgroup-memory budget check (audit C-02). AttentionSeg stages a
+	// per-query score row in DYNAMIC threadgroup memory of maxSeg*4 bytes, on top
+	// of the kernel's two static threadgroup arrays (smax/ssum, ViTBlock floats
+	// each). A dispatch whose total exceeds the device maximum — ~32 KiB on Apple
+	// GPUs — aborts the command buffer, and waitUntilCompleted returns cleanly
+	// from an abort: e.att simply keeps the previous layer's contents and the
+	// forward returns a plausible, wrong hidden state. mustCmdBufOK now turns
+	// that into a loud panic rather than silence, but declining here is better
+	// still: it is the documented obligation on MaxThreadgroupMemoryLength, it
+	// costs nothing, and it names the real limit instead of reporting a GPU
+	// fault. CUDA's analogue already fails the launch with an error.
+	//
+	// Both branches of the per-layer dispatch are covered by taking the larger of
+	// the window and full-attention segment bounds.
+	maxSegAny := max(plan.MaxWinSeg, plan.MaxFullSeg)
+	if need, have := attnThreadgroupBytes(maxSegAny), e.dev.MaxThreadgroupMemoryLength(); need > have {
+		return nil, fmt.Errorf("gpu: qwen ViT attention needs %d B of threadgroup memory for %d patches (max segment %d) but the device allows %d — reduce max_pixels", need, n, maxSegAny, have)
+	}
 	H, I, nH, hd := e.w.Hidden, e.w.Inter, e.w.NumHeads, e.w.HeadDim
 	pd := e.w.PatchDim
 	if len(pixelValues) != n*pd {
@@ -334,3 +353,16 @@ func (e *encoder) Close() {
 	e.dev.ReleaseAll()
 	e.dev.ReleaseObjects()
 }
+
+// attnThreadgroupBytes is the threadgroup memory one AttentionSeg dispatch needs
+// when the largest per-patch segment in the plan is maxSeg: the dynamic score row
+// the caller binds at index 0 (maxSeg floats), plus the kernel's two STATIC
+// threadgroup arrays, smax[LNBLOCK] and ssum[LNBLOCK], which are ViTBlock floats
+// each (gpu/metal_vit.go, attention_seg).
+//
+// Counting the static pair matters: the audit put the abort threshold at
+// n > 8192 patches from the dynamic term alone, but against a 32 KiB device
+// budget the extra 2 KiB brings the real limit down to a segment of 7680.
+// Factored out of ForwardViT so it can be tested without a checkpoint — the
+// qwenmetal suite skips entirely when testdata/qwen25vl-vision-tiny is absent.
+func attnThreadgroupBytes(maxSeg int) int { return maxSeg*4 + 2*gpu.ViTBlock*4 }

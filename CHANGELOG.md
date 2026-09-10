@@ -11,6 +11,33 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**Metal: an aborted dispatch is no longer silent (audit C-02).** `waitUntilCompleted` returns
+CLEANLY from a GPU fault, and the fire-and-forget `Queue.Run1D`/`Run2D`/`Run1DBatch`/
+`Run1DBatchTG` helpers committed, waited and returned without ever reading the command buffer's
+status — so an aborted dispatch left the output buffer holding its previous contents and the
+caller read that as a result. In the Qwen ViT that meant `e.att` keeping the previous layer's
+values and the forward returning a plausible, wrong hidden state. New `mustCmdBufOK` latches the
+terminal status at all four sites and panics with the `NSError`; it panics rather than returning
+because those helpers return nothing and adding errors would break every caller, it matches
+`MustBuf` (this package's existing answer to an unrecoverable device failure), and it composes
+with the callers that now recover. `qwenmetal.ForwardViT` additionally declines up front when
+`AttentionSeg`'s threadgroup scratch would exceed `MaxThreadgroupMemoryLength()`, which is the
+documented obligation on that accessor. Note the real threshold is tighter than the audit's
+estimate: counting the kernel's two STATIC threadgroup arrays (`smax`/`ssum`, `ViTBlock` floats
+each) alongside the dynamic score row, a 32 KiB device caps the segment at **7680**, not 8192.
+
+**`gpu/annmetal` recovers device OOM into an error instead of panicking (audit C-04).**
+`NewI8Index`, `ScoreBatch` and `TopKBatch` allocate buffers large enough to exhaust device memory
+— `TopKBatch`'s score matrix alone is 1 GB at N=1e6, M=256, the advertised shape — and the device
+layer reports exhaustion as a loud `MustBuf` panic. `anncuda` has recovered that into an error at
+all three of its sites since it shipped; `annmetal` did not, so an oversized corpus or batch
+panicked out of `EnableGPU`/`QueryBatch` instead of honouring `ann.Backend`'s "falls through to
+the tiers below on any error". Fixed at all three sites, and unlike `anncuda` the buffers are
+declared before the deferred cleanup so a partial allocation is released rather than leaked — on
+the one path where device memory is by definition already short. (`anncuda` should get the same
+treatment; it needs a CUDA box to verify.)
+
+
 **`bm25` WAND pruning no longer accepts `B > 1`, where its upper bound is unsound (audit C-03).**
 `wandUsable` admitted any `B >= 0`, but the bound is evaluated at `minNorm` and assumes the
 denominator `tf + K1*(1-B+B*norm)` keeps one sign across a posting list. For `B > 1` the `1-B`

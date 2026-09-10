@@ -602,6 +602,7 @@ func (q Queue) Run1D(p Pipeline, n, tg int, bufs ...Buffer) {
 	enc.Send(selEndEncoding)
 	cb.Send(selCommit)
 	cb.Send(selWaitCompleted)
+	mustCmdBufOK(cb, "dispatch aborted")
 }
 
 // Run2D encodes and runs a 2-D kernel over gx×gy THREADGROUPS of tgx×tgy threads each,
@@ -637,6 +638,7 @@ func (q Queue) Run2D(p Pipeline, gx, gy, tgx, tgy int, bufs ...Buffer) {
 	enc.Send(selEndEncoding)
 	cb.Send(selCommit)
 	cb.Send(selWaitCompleted)
+	mustCmdBufOK(cb, "dispatch aborted")
 }
 
 // Encoder batches many DIFFERENT kernel dispatches into ONE command buffer — the
@@ -749,6 +751,27 @@ func cmdBufError(nsErr objc.ID) error {
 		return errors.New("metal: command buffer aborted")
 	}
 	return fmt.Errorf("metal: command buffer aborted: %s", goString(nsErr.Send(selLocalizedDesc)))
+}
+
+// mustCmdBufOK panics if the command buffer aborted. The fire-and-forget Queue.Run*
+// helpers commit and waitUntilCompleted and return nothing, and waitUntilCompleted
+// returns CLEANLY on a GPU fault — so without this a dispatch that aborted (a GPU
+// fault, or threadgroup scratch over MaxThreadgroupMemoryLength) left the output
+// buffer holding whatever it held before and the caller read it as a result. That
+// is the silent-garbage path audit C-02 found in the ViT attention kernel above
+// 8192 patches; CUDA's analogue fails the launch with an error.
+//
+// It panics rather than returning an error because the Run* helpers return nothing
+// and giving them errors would break every caller. A loud panic matches MustBuf,
+// which is this package's existing answer to an unrecoverable device failure, and
+// composes with the callers that already recover it into an error (annmetal's three
+// sites, audit C-04). MUST be called after waitUntilCompleted and before the
+// autorelease pool drains the cb — reading a drained cb is a use-after-free.
+func mustCmdBufOK(cb objc.ID, what string) {
+	if int(objc.Send[uintptr](cb, selStatus)) != mtlCmdBufStatusError {
+		return
+	}
+	panic(fmt.Sprintf("metal: %s: %v", what, cmdBufError(cb.Send(selError))))
 }
 
 // ReadTimes reads the command buffer's GPU/kernel timestamps (valid post-completion).
@@ -893,6 +916,7 @@ func (q Queue) Run1DBatch(p Pipeline, n, tg, reps int, bufs ...Buffer) {
 	enc.Send(selEndEncoding)
 	cb.Send(selCommit)
 	cb.Send(selWaitCompleted)
+	mustCmdBufOK(cb, "dispatch aborted")
 }
 
 // Run1DBatchTG is Run1DBatch with dynamic threadgroup memory of tgBytes at index 0 (for kernels
@@ -918,6 +942,7 @@ func (q Queue) Run1DBatchTG(p Pipeline, n, tg, reps, tgBytes int, bufs ...Buffer
 	enc.Send(selEndEncoding)
 	cb.Send(selCommit)
 	cb.Send(selWaitCompleted)
+	mustCmdBufOK(cb, "dispatch aborted")
 }
 
 // Run1DTG runs ONE 1-D dispatch over n threads (threadgroup width tg) with tgBytes of
