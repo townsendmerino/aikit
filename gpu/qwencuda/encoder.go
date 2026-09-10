@@ -80,8 +80,13 @@ type encoder struct {
 	gate, up          gpu.Buffer
 	qi8, qs           gpu.Buffer
 	cosB, sinB        gpu.Buffer
-	segS, segE        gpu.Buffer
-	scratchWide       int
+	// TWO resident bound pairs, not one rewritten mid-forward (audit C-01).
+	// segSWin/segEWin hold the windowed bounds, segSFull/segEFull the
+	// full-attention ones; both are uploaded once before the layer loop and
+	// the loop only chooses which pair to BIND. See the note at the upload.
+	segSWin, segEWin   gpu.Buffer
+	segSFull, segEFull gpu.Buffer
+	scratchWide        int
 }
 
 func newEncoder(src *vision.QwenVisionEncoder) (enc *encoder, err error) {
@@ -132,7 +137,7 @@ func (e *encoder) ensure(n int) {
 		return
 	}
 	if e.cap > 0 {
-		for _, b := range []gpu.Buffer{e.pix, e.h, e.n1, e.n2, e.qkv, e.att, e.projOut, e.gate, e.up, e.qi8, e.qs, e.cosB, e.sinB, e.segS, e.segE} {
+		for _, b := range []gpu.Buffer{e.pix, e.h, e.n1, e.n2, e.qkv, e.att, e.projOut, e.gate, e.up, e.qi8, e.qs, e.cosB, e.sinB, e.segSWin, e.segEWin, e.segSFull, e.segEFull} {
 			e.dev.ReleaseBuf(b)
 		}
 	}
@@ -148,8 +153,10 @@ func (e *encoder) ensure(n int) {
 	e.qi8 = gpu.NewBufferLenOf[int8](e.dev, n*wide)
 	e.qs = f32(n)
 	e.cosB, e.sinB = f32(n*hd), f32(n*hd)
-	e.segS = gpu.NewBufferLenOf[int32](e.dev, n)
-	e.segE = gpu.NewBufferLenOf[int32](e.dev, n)
+	e.segSWin = gpu.NewBufferLenOf[int32](e.dev, n)
+	e.segEWin = gpu.NewBufferLenOf[int32](e.dev, n)
+	e.segSFull = gpu.NewBufferLenOf[int32](e.dev, n)
+	e.segEFull = gpu.NewBufferLenOf[int32](e.dev, n)
 	e.cap = n
 }
 
@@ -239,29 +246,47 @@ func (e *encoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32
 	}
 
 	scale := float32(1.0 / math.Sqrt(float64(hd)))
-	curFull := -1 // which segment bounds are currently uploaded: 1 full, 0 windowed
+	// Both bound pairs go up ONCE, before the first launch (audit C-01).
+	//
+	// This used to upload inside the layer loop whenever the block kind
+	// switched. gpu.Upload copies on the LEGACY NULL STREAM and then
+	// Synchronizes, which orders the copy before LATER launches — the RAW race
+	// it was written for — but nothing orders it after EARLIER ones. The queue's
+	// stream is CU_STREAM_NON_BLOCKING, which by definition does not order
+	// against the null stream. So at the first full-attention block (layer 7 in
+	// Qwen2.5-VL) the CPU issued the full-image bounds while layers 0-6 were
+	// still queued; the DMA could land under them, and their attention_seg would
+	// then read n = s1-s0 up to the whole image with shared memory sized for
+	// MaxWinSeg — an out-of-bounds shared write, i.e. garbage or a
+	// context-killing fault.
+	//
+	// Uploading both pairs up front removes the hazard by construction rather
+	// than by adding another sync: after this point nothing writes a buffer any
+	// queued launch reads. It also restores the "ONE Sync per forward" property
+	// the file's header claims — the old form made 14 full-device syncs.
+	//
+	// NOTE the tiny fixture cannot catch a regression here: each layer's GPU
+	// work is shorter than its own enqueue, so the queue never builds and the
+	// race never opens. The parity tests passing is necessary, not sufficient.
+	if err := gpu.Upload(e.segSWin, plan.WinStart); err != nil {
+		return nil, err
+	}
+	if err := gpu.Upload(e.segEWin, plan.WinEnd); err != nil {
+		return nil, err
+	}
+	if err := gpu.Upload(e.segSFull, plan.FullStart); err != nil {
+		return nil, err
+	}
+	if err := gpu.Upload(e.segEFull, plan.FullEnd); err != nil {
+		return nil, err
+	}
 	for li := range e.blocks {
 		B := &e.blocks[li]
 		full := e.src.IsFullAtt(li)
-		want := 0
-		if full {
-			want = 1
-		}
-		if want != curFull {
-			ss, se := plan.WinStart, plan.WinEnd
-			if full {
-				ss, se = plan.FullStart, plan.FullEnd
-			}
-			if err := gpu.Upload(e.segS, ss); err != nil {
-				return nil, err
-			}
-			if err := gpu.Upload(e.segE, se); err != nil {
-				return nil, err
-			}
-			curFull = want
-		}
+		segS, segE := e.segSWin, e.segEWin
 		maxSeg := plan.MaxWinSeg
 		if full {
+			segS, segE = e.segSFull, e.segEFull
 			maxSeg = plan.MaxFullSeg
 		}
 
@@ -278,7 +303,7 @@ func (e *encoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32
 			return nil, err
 		}
 		if err := e.q.Launch(e.k.AttentionSeg, gpu.SegAttentionGrid(n, nH, maxSeg),
-			gpu.Arg(e.qkv), gpu.Arg(e.att), gpu.Arg(e.segS), gpu.Arg(e.segE),
+			gpu.Arg(e.qkv), gpu.Arg(e.att), gpu.Arg(segS), gpu.Arg(segE),
 			gpu.ArgValue(int32(n)), gpu.ArgValue(int32(nH)), gpu.ArgValue(int32(hd)),
 			gpu.ArgValue(scale)); err != nil {
 			return nil, err

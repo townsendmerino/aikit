@@ -58,6 +58,11 @@ func CopyDevice(dst, src Buffer, nBytes int) error {
 	if nBytes == 0 {
 		return nil
 	}
+	// Pre-sync for the same write-after-read hazard Buffer.upload documents
+	// (audit C-01): a queued launch may still be reading dst.
+	if err := syncCopyContext(dst, src); err != nil {
+		return err
+	}
 	if err := src.b.CopyToDeviceAt(bg, int(dst.off), dst.b, int(src.off), nBytes); err != nil {
 		return err
 	}

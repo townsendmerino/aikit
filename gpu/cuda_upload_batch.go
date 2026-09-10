@@ -76,6 +76,14 @@ func UploadBatch(copies []HostCopy) error {
 			return fmt.Errorf("cuda: upload %d of %d: %w", i, len(copies), err)
 		}
 	}
+	// Pre-sync once for the whole batch — the write-after-read hazard
+	// Buffer.upload documents (audit C-01): queued launches may still be reading
+	// these destinations.
+	if cx != nil {
+		if err := cx.Synchronize(bg); err != nil {
+			return err
+		}
+	}
 	var issued bool
 	for i, c := range copies {
 		if len(c.Src) == 0 {

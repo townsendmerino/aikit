@@ -11,6 +11,31 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**`gpu/qwencuda`: a write-after-read race on the ViT segment bounds, and the same hazard closed
+generally in `Buffer.upload`/`CopyDevice`/`UploadBatch` (audit C-01).** The encoder uploaded new
+per-patch attention bounds INSIDE the layer loop whenever the block kind switched. `gpu.Upload`
+copies on the legacy null stream and synchronizes AFTER the copy, which orders it before later
+launches — the read-after-write race that sync was written for — but nothing ordered it after
+EARLIER ones, and the queue's stream is `CU_STREAM_NON_BLOCKING`, which by definition does not
+order against the null stream. So at the first full-attention block (layer 7 in Qwen2.5-VL) the
+host issued full-image bounds while layers 0-6 were still queued; the DMA could land under them
+and their `attention_seg` would read `n = s1-s0` up to the whole image with shared memory sized
+for `MaxWinSeg` — an out-of-bounds shared write, i.e. garbage or a context-killing fault. Both
+bound pairs are now resident and uploaded once before the first launch, with the layer loop only
+choosing which to bind: the hazard is removed by construction rather than by adding another
+sync, and it restores the "ONE Sync per forward" property the file's header claims (the old form
+made 14 full-device syncs). Independently, `Buffer.upload`, `CopyDevice` and `UploadBatch` now
+synchronize BEFORE the copy as well as after, closing the same write-after-read shape for every
+other caller.
+
+Verified on `nvidia-rtx2070s` (RTX 2070 SUPER, Ryzen 7 3700X): `gpu` 42 passed, `anncuda` 17,
+`qwencuda` 3, `enccuda` 5, `visioncuda` 3, zero failures, with GPU≡CPU cosine **1.000000000** and
+identical worst-case deltas before and after — as expected, the fix removes a race without
+changing arithmetic. NOTE the tiny fixture cannot expose the original defect (each layer's GPU
+work is shorter than its own enqueue, so the queue never builds); the parity tests passing is
+necessary, not sufficient, and this is recorded rather than claimed as proof.
+
+
 **The ViT towers no longer pay f64 `math.Exp` per attention score — the fused-attention kernel is
 1.43-1.73x faster, growing with patch count (audit M-09).** P6a moved the towers onto
 `AttendTileFused`, whose f64 `math.Exp` and f64 score-scale pass are part of the bit contract

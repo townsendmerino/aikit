@@ -354,6 +354,25 @@ func (b Buffer) upload(src []byte) error {
 	if got, want := b.b.Bytes(), uint64(b.off)+uint64(len(src)); got < want {
 		return fmt.Errorf("cuda: upload of %d bytes at offset %d overruns a %d-byte buffer", len(src), b.off, got)
 	}
+	// SYNCHRONIZE BEFORE THE COPY TOO, not just after (audit C-01).
+	//
+	// The trailing Synchronize below orders this copy before LATER launches —
+	// the read-after-write race the comment above describes. It does nothing
+	// about the mirror image: a launch ALREADY QUEUED on the (non-blocking)
+	// stream that READS this buffer, while the null-stream DMA lands new bytes
+	// underneath it. That write-after-read is how qwencuda's mid-forward segment
+	// upload could feed full-image bounds to layers still running with shared
+	// memory sized for the windowed ones.
+	//
+	// Same reasoning as the trailing sync: a full device sync is heavier than
+	// ideal, uploads are per-request rather than per-op, and a correct upload is
+	// not negotiable. A caller on a hot path wants an async copy on the queue's
+	// own stream, which needs pinned host memory and a queue-aware Buffer.
+	if b.cx != nil {
+		if err := b.cx.Synchronize(bg); err != nil {
+			return err
+		}
+	}
 	if err := b.b.CopyFromAt(bg, int(b.off), src); err != nil {
 		return err
 	}
