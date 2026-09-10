@@ -168,6 +168,17 @@ func (f *FlatI8) query(q []float32, k int, keep func(int) bool) []Hit {
 	// paged paths; TestFlatI8_pooledScratchIsInert poisons the pool to check it.
 	sc := flatI8ScratchPool.Get().(*flatI8Scratch)
 	defer flatI8ScratchPool.Put(sc)
+	// The pooled Workspace is a zero value, so left alone it inherits the
+	// process-wide parThreshold (1<<24 MACs) — that constant is goinfer's DECODE
+	// tuning, chosen so tiny per-token projections stay serial, and it is 32x
+	// Flat's flatParallelThreshold (1<<19), which was measured on THIS shape.
+	// The effect was that the int8 scan ran single-core up to ~65k vectors at
+	// dim 256 while the f32 scan sharded from ~2k (audit M-19). The kernel's
+	// MAC count here is M*N*K = 1*n*dim, directly comparable to Flat's N*dim.
+	//
+	// Width-inert: SetThreshold changes only the fan-out, and w8a8Span is
+	// bit-identical across any column split (TestW8A8Batch_widthInert).
+	sc.ws.SetThreshold(flatParallelThreshold)
 	if cap(sc.dst) < f.n {
 		sc.dst = make([]float32, f.n)
 	}

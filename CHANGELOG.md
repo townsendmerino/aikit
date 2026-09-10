@@ -27,6 +27,22 @@ the same zero-scale short-circuit, and the tile accumulates in int32;
 `TestW8A8Batch_bitIdenticalToPerOp` and `TestMatmulBTW8A8_MConsistent` gate it.
 `BenchmarkMatmulBTW8A8Batch_prefill` is new and pins the shapes.
 
+**`ann.FlatI8.Query` now shards at `Flat`'s measured threshold instead of goinfer's decode
+threshold — up to 2.6x on mid-size corpora (audit M-19).** The pooled scratch `Workspace` was a
+zero value, so it inherited the process-wide `parThreshold` (1<<24 MACs). That constant is
+goinfer's *decode* tuning — chosen so tiny per-token projections stay serial — and it is 32x
+`Flat`'s `flatParallelThreshold` (1<<19), which was measured on this exact one-query-against-n
+scan shape. The int8 scan therefore ran single-core up to ~65k vectors at dim 256 while the f32
+scan sharded from ~2k. One line: `sc.ws.SetThreshold(flatParallelThreshold)`. Measured on
+`apple-m1pro` (quiet box, benchstat `-count=6`): every shape below the old threshold improves —
+d256/N4k -16.4%, d256/N16k -51.9%, d256/N50k **-62.2%**, d768/N4k -36.5%, d768/N16k **-62.0%** —
+and every shape already above it is unchanged (d768/N50k and d768/N100k both `~`). Geomean
+-33.2%. Width-inert and so bit-identical: `SetThreshold` changes only the fan-out, and
+`w8a8Span` produces the same result under any column split (`TestW8A8Batch_widthInert`).
+`BenchmarkFlatI8QueryThreshold` is new and straddles the boundary. One unexplained residual:
+d256/N100k measured +5.1% (p=0.015) on a path that is above the old threshold and should be
+identical — small enough to read as drift, flagged rather than smoothed over.
+
 ## [1.39.1] — 2026-09-10
 
 ### Fixed
