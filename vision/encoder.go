@@ -411,8 +411,17 @@ func layerNorm(x, w, b []float32, rows, dim int, eps float64) []float32 {
 	return out
 }
 
+// Row-split across cores (audit M-10). Bit-identical: each row's f64 mean and
+// variance folds run in the same order they did serially, and rows never
+// interact — the split re-associates nothing.
 func layerNormInto(out, x, w, b []float32, rows, dim int, eps float64) {
-	for r := range rows {
+	parallelRows(rows, rows*dim, func(start, end int) {
+		layerNormRows(out, x, w, b, start, end, dim, eps)
+	})
+}
+
+func layerNormRows(out, x, w, b []float32, start, end, dim int, eps float64) {
+	for r := start; r < end; r++ {
 		xr := x[r*dim : r*dim+dim]
 		var mean float64
 		for _, val := range xr {
@@ -441,7 +450,12 @@ func layerNormInto(out, x, w, b []float32, rows, dim int, eps float64) {
 // f64 routine. Not bit-identical; contract is absolute error ≤1e-06, gated by
 // linalg's TestGELUTanhF32_accuracy and end-to-end by TestSiglipEncoder_parity.
 func geluTanh(x []float32) {
-	linalg.GELUTanhInto(x, x)
+	// Chunk-split across cores (audit M-10): elementwise and in place, so the
+	// split is numerically inert. This is the heaviest transcendental pass in
+	// the kit — 476M elements per so400m image — and it ran on one goroutine.
+	parallelChunks(len(x), func(lo, hi int) {
+		linalg.GELUTanhContractInto(x[lo:hi], x[lo:hi])
+	})
 }
 
 func addBias(x, bias []float32, rows, dim int) {

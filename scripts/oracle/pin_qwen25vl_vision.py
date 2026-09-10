@@ -28,7 +28,8 @@ from transformers import Qwen2_5_VLConfig, Qwen2_5_VLForConditionalGeneration
 from transformers.models.qwen2_5_vl.configuration_qwen2_5_vl import (
     Qwen2_5_VLTextConfig, Qwen2_5_VLVisionConfig)
 
-HERE = os.path.dirname(__file__)
+# Three parents — see the note in pin_siglip_vision.py.
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(HERE, "..", "testdata", "qwen25vl_vision_golden.json")
 CKPT = os.path.join(HERE, "..", "testdata", "qwen25vl-vision-tiny")
 

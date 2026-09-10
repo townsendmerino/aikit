@@ -699,9 +699,17 @@ func rmsNorm(x, w []float32, rows, dim int) []float32 {
 
 // rmsNormInto is rmsNorm writing into a caller-owned dst[:rows*dim] — the form
 // the per-layer loop uses so it does not allocate. dst may not alias x.
+// Row-split across cores (audit M-10) — bit-identical for the same reason as
+// layerNormInto: the f64 sum-of-squares fold is row-local.
 func rmsNormInto(out, x, w []float32, rows, dim int) {
+	parallelRows(rows, rows*dim, func(start, end int) {
+		rmsNormRows(out, x, w, start, end, dim)
+	})
+}
+
+func rmsNormRows(out, x, w []float32, start, end, dim int) {
 	const eps = 1e-6
-	for r := range rows {
+	for r := start; r < end; r++ {
 		xr := x[r*dim : r*dim+dim]
 		var ss float64
 		for _, v := range xr {
@@ -721,11 +729,15 @@ func rmsNormInto(out, x, w []float32, rows, dim int) {
 // this doc comment is the canonical one for both.
 
 func silu(x []float32) {
-	linalg.SiLUInto(x, x)
+	parallelChunks(len(x), func(lo, hi int) {
+		linalg.SiLUContractInto(x[lo:hi], x[lo:hi])
+	})
 }
 
 // geluErf is the exact (erf) GELU — nn.GELU() default, what the patch merger uses
 // (distinct from SigLIP's gelu-tanh).
 func geluErf(x []float32) {
-	linalg.GELUInto(x, x)
+	parallelChunks(len(x), func(lo, hi int) {
+		linalg.GELUContractInto(x[lo:hi], x[lo:hi])
+	})
 }

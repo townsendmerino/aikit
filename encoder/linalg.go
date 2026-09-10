@@ -152,14 +152,14 @@ func addBias(dst []float32, bias []float32, M, N int) {
 // normalizes, which cancels most of the residual — the encoders' HF parity
 // goldens are the end-to-end check that this stays invisible.
 func softmaxRow(row []float32) {
-	linalg.SoftmaxRowInto(row, row)
+	linalg.SoftmaxRowContractInto(row, row)
 }
 
 // softmaxRowScaled is softmaxRow fused with the attention score scale
 // (1/sqrt(headDim)) — see linalg.SoftmaxRowScaledInto for why this replaces
 // a caller's own separate `scores[i] *= scale` pass bit-identically.
 func softmaxRowScaled(row []float32, scale float32) {
-	linalg.SoftmaxRowScaledInto(row, row, scale)
+	linalg.SoftmaxRowScaledContractInto(row, row, scale)
 }
 
 // silu returns x · sigmoid(x), the SwiGLU gate activation.

@@ -22,7 +22,12 @@ import os
 import torch
 from transformers import SiglipVisionConfig, SiglipVisionModel
 
-OUT = os.path.join(os.path.dirname(__file__), "..", "testdata", "siglip_vision_golden.json")
+# NOTE: three parents. __file__ is scripts/oracle/<this>, so "..", "testdata"
+# resolves to scripts/testdata — NOT the repo testdata/ the Go tests read. That
+# bug is why TestSiglipEncoder_parity skipped even for someone who followed the
+# skip message and ran this script. pin_bge.py had it right (REPO_ROOT).
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+OUT = os.path.join(REPO_ROOT, "testdata", "siglip_vision_golden.json")
 
 # Tiny config that still exercises every SigLIP component. image_size/patch_size
 # give a 4×4 = 16-patch grid; 2 layers; gelu_pytorch_tanh (Gemma 3's SigLIP act).

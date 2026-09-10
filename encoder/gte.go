@@ -290,7 +290,7 @@ func (g *GTE) forward(ids []int32, clsOnly bool) []float32 {
 				up := upGate[i*2*I : i*2*I+I]
 				gate := upGate[i*2*I+I : i*2*I+2*I]
 				m := mid[i*I : (i+1)*I]
-				linalg.GELUInto(gate, gate)
+				linalg.GELUContractInto(gate, gate)
 				for j := range I {
 					m[j] = gate[j] * up[j]
 				}

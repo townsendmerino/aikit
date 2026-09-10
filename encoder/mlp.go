@@ -33,16 +33,32 @@ func swigluMLP(h []float32, Fc11, Fc12, Fc2 []float32, D, intermediate, L int, s
 	gate := s.gate[:L*intermediate]
 	s.mm(h, Fc11, val, L, D, intermediate)
 	s.mm(h, Fc12, gate, L, D, intermediate)
-	// mid = val ⊙ SiLU(gate), reuse val's storage. SiLU(gate) is computed
-	// batched (linalg.SiLUInto, vectorized under GOEXPERIMENT=simd — T1,
-	// autoresearch round 1) in place on gate, then the elementwise multiply
-	// into val is its own trivial pass — this used to call scalar SiLUF32
-	// per element here, the encoder's own biggest caller of SiLU that
-	// SiLUInto's vectorization never actually reached until now.
-	linalg.SiLUInto(gate, gate)
-	for i, v := range val {
-		val[i] = v * gate[i]
-	}
+	// mid = val ⊙ SiLU(gate), reuse val's storage.
+	//
+	// Two audit fixes here (M-07, M-06). M-07: this called linalg.SiLUInto,
+	// which is vectorized only under GOEXPERIMENT=simd — a build this library
+	// cannot require of importers, and one docs/task-archsimd-eval.md ruled out
+	// as a shipping path — so in every shipped build it ran the scalar loop. The
+	// hand-written NEON/AVX2 kernels live behind the *ContractInto API instead
+	// (5.2x/6.6x on SiLU per CHANGELOG v1.37.0), which is what this now calls.
+	// M-06: the SiLU and the product were the encoder's only elementwise stages
+	// that never got the parallelRows split the linears and GeGLU have, so they
+	// ran on one core while everything around them fanned out.
+	//
+	// Both are numerically inert as parallelism goes — the split is by row and
+	// each element is independent. The kernel swap is NOT bit-identical to the
+	// old scalar loop: measured max ABSOLUTE deviation 4.8e-07 over 200k normal
+	// inputs (2 ULP at unit magnitude). The encoder goldens are cosine >= 0.9999
+	// and gate it end to end.
+	parallelRows(L, L*intermediate, func(start, end int) {
+		lo, hi := start*intermediate, end*intermediate
+		g := gate[lo:hi]
+		linalg.SiLUContractInto(g, g)
+		v := val[lo:hi]
+		for i := range v {
+			v[i] *= g[i]
+		}
+	})
 	mid := s.mid[:L*D]
 	s.mm(val, Fc2, mid, L, intermediate, D)
 	for i := range h {

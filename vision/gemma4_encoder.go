@@ -572,8 +572,16 @@ func (e *Gemma4Encoder) mlpInto(down, x []float32, lw *gemma4EncLayer, np int, s
 // rmsNormHeadInto normalizes each head_dim-wide head slice of x independently
 // (shared weight w across every head; w == nil for an unscaled norm — v_norm).
 // In place.
+// Row-split across cores (audit M-10): each row's per-head f64 sum-of-squares
+// fold is row-local, so the split is bit-identical.
 func rmsNormHeadInto(x []float32, w []float32, rows, hidden, nH, hd int, eps float64) {
-	for r := range rows {
+	parallelRows(rows, rows*hidden, func(start, end int) {
+		rmsNormHeadRows(x, w, start, end, hidden, nH, hd, eps)
+	})
+}
+
+func rmsNormHeadRows(x []float32, w []float32, start, end, hidden, nH, hd int, eps float64) {
+	for r := start; r < end; r++ {
 		base := r * hidden
 		for hIdx := range nH {
 			off := base + hIdx*hd
@@ -597,8 +605,15 @@ func rmsNormHeadInto(x []float32, w []float32, rows, hidden, nH, hd int, eps flo
 // rmsNormWInto is plain weight-only RMSNorm — Gemma4RMSNorm's `x_norm * weight`,
 // NO `1+weight` offset (confirmed: modeling_gemma4.py:197-215). Writes into dst
 // (reused per-layer scratch).
+// Row-split across cores (audit M-10); bit-identical, the fold is row-local.
 func rmsNormWInto(dst, x, w []float32, rows, dim int, eps float64) {
-	for r := range rows {
+	parallelRows(rows, rows*dim, func(start, end int) {
+		rmsNormWRows(dst, x, w, start, end, dim, eps)
+	})
+}
+
+func rmsNormWRows(dst, x, w []float32, start, end, dim int, eps float64) {
+	for r := start; r < end; r++ {
 		xr := x[r*dim : r*dim+dim]
 		var ss float64
 		for _, v := range xr {
@@ -614,8 +629,15 @@ func rmsNormWInto(dst, x, w []float32, rows, dim int, eps float64) {
 
 // rmsNormUnscaledInto is Gemma4RMSNorm(with_scale=False) — variance-normalize
 // only, no weight multiply (the embed_vision projector's pre-projection norm).
+// Row-split across cores (audit M-10); bit-identical, the fold is row-local.
 func rmsNormUnscaledInto(dst, x []float32, rows, dim int, eps float64) {
-	for r := range rows {
+	parallelRows(rows, rows*dim, func(start, end int) {
+		rmsNormUnscaledRows(dst, x, start, end, dim, eps)
+	})
+}
+
+func rmsNormUnscaledRows(dst, x []float32, start, end, dim int, eps float64) {
+	for r := start; r < end; r++ {
 		xr := x[r*dim : r*dim+dim]
 		var ss float64
 		for _, v := range xr {

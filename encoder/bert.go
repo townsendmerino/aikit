@@ -408,7 +408,7 @@ func gelu(x []float32) {
 	chunks := (len(x) + chunk - 1) / chunk
 	parallelRows(chunks, len(x), func(start, end int) {
 		lo, hi := start*chunk, min(end*chunk, len(x))
-		linalg.GELUInto(x[lo:hi], x[lo:hi])
+		linalg.GELUContractInto(x[lo:hi], x[lo:hi])
 	})
 }
 
@@ -424,6 +424,6 @@ func geluTanh(x []float32) {
 	chunks := (len(x) + chunk - 1) / chunk
 	parallelRows(chunks, len(x), func(start, end int) {
 		lo, hi := start*chunk, min(end*chunk, len(x))
-		linalg.GELUTanhInto(x[lo:hi], x[lo:hi])
+		linalg.GELUTanhContractInto(x[lo:hi], x[lo:hi])
 	})
 }

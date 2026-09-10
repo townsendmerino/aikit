@@ -15,8 +15,22 @@ import "math"
 //
 // The unbiased=False variance (divisor D, not D-1) matches PyTorch's
 // default and is the load-bearing choice.
+// Split across cores by ROW (audit M-06). This was the last elementwise stage
+// in the encoder running on one goroutine while the linears around it fanned
+// out — 25 x L*D of it per forward. The split is EXACTLY bit-identical, and the
+// distinction from dead-ends §8.4 matters: that entry rejected a SIMD layernorm
+// because vectorising the mean/variance reduction re-associates an f64 sum. A
+// row split re-associates nothing — each row's two f64 reductions run in the
+// same order on one goroutine, and rows never interact. §8.4's "~0.5% of a
+// forward" was also measured against a forward that was serial here.
 func layerNorm(x, weight, bias []float32, L, D int, eps float64) {
-	for i := range L {
+	parallelRows(L, L*D, func(start, end int) {
+		layerNormRows(x, weight, bias, start, end, D, eps)
+	})
+}
+
+func layerNormRows(x, weight, bias []float32, start, end, D int, eps float64) {
+	for i := start; i < end; i++ {
 		row := x[i*D : (i+1)*D]
 		// mean in f64
 		var mean float64

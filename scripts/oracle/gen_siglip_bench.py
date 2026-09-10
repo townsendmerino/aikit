@@ -13,7 +13,9 @@ import os
 import torch
 from transformers import SiglipVisionConfig, SiglipVisionModel
 
-TD = os.path.join(os.path.dirname(__file__), "..", "testdata")
+# Three parents — see the note in pin_siglip_vision.py; "..", "testdata" lands in
+# scripts/testdata, which no Go test reads.
+TD = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "testdata")
 
 # Two real sizes, so the ViT slice shows the GPU win GROWING with tower size (bigger ops
 # amortize the per-op dispatch floor): a ViT-B/16-ish tower (196 patches) and a larger one

@@ -11,6 +11,51 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**The encoder and vision towers now actually run the SIMD transcendental kernels — 15.9% off a
+long text encode, 28.7-42.7% off a SigLIP tower (audit M-07, M-06, M-10).** Three findings with
+one root: the `*Into` activation family (`SiLUInto`, `GELUInto`, `GELUTanhInto`,
+`SoftmaxRowInto`) vectorises ONLY under `GOEXPERIMENT=simd` — a build this library cannot require
+of importers, and one `docs/task-archsimd-eval.md` ruled out as a shipping path — while the
+hand-written NEON/AVX2 kernels landed in v1.37.0 sit behind a separate `*ContractInto` API that
+had **no callers outside `linalg/`**. Every softmax, SiLU, GELU and GELU-tanh in `encoder/` and
+`vision/` ran the scalar Go loop in every shipped build, which `docs/internal/cpu-acceleration.md`
+items 7-14 described as landed wins. Ten call sites are now routed. Separately, `swigluMLP`,
+`swigluMLPQ8` and `layerNorm` in `encoder/`, and every norm and activation in `vision/`, ran
+single-core while the matmuls around them fanned out; they now take a row split (a new
+`vision.parallelRows`, the twin of encoder's).
+
+Measured on `apple-m1pro`, quiet box, benchstat `-count=6`: `BenchmarkEncode_singleLong`
+800.1ms -> 672.6ms (**-15.9%**, p=0.002); `BenchmarkSiglipTower/p196_h512` 149.7ms -> 85.7ms
+(**-42.7%**), `/p576_h768` 830.5ms -> 591.8ms (**-28.7%**), geomean **-36.1%** (both p=0.002).
+
+Numerics: the row splits are exactly bit-identical (every reduction is row-local — the
+distinction from dead-ends §8.4, which rejected a *SIMD* layernorm because vectorising the fold
+re-associates an f64 sum). The kernel routing is NOT bit-identical: measured max ABSOLUTE
+deviation 4.8e-07 (SiLU) and 2.4e-07 (both GELUs) over 200k normal inputs, ~2 ULP at unit
+magnitude. Raw ULP counts look far worse (up to 8.7e8) but that is a near-zero artefact — GELU
+crosses zero, so tiny absolute deltas straddle the sign bit; absolute error is the right metric
+for an activation feeding a matmul. Gated end to end: `TestSiglipEncoder_parity` cosine
+**1.00000000** (max abs diff 1.669e-06), `TestQwenVisionEncoder_parity` cosine **1.00000000**
+(6.706e-07), plus `TestGoldenFixture_cosine`, `TestBERT_parity`, `TestGTE_parity`,
+`TestCrossEncoder_parity`, `TestSPLADE_parity` and `TestModelQ8_cosineMatchesF32`.
+
+Also adds `linalg.SoftmaxRowScaledContractInto`, which did not exist — attention softmax is the
+largest single term in M-07's bound, so the fused scaled form needed a contract entry. It applies
+the scale as its own pass and calls the contract softmax unchanged, so cross-architecture
+bit-identity comes free rather than having to be re-earned by a second fused kernel.
+
+**The three vision fixture-generation scripts wrote to `scripts/testdata/`, not `testdata/`.**
+`pin_siglip_vision.py`, `pin_qwen25vl_vision.py` and `gen_siglip_bench.py` resolved their output
+as `dirname(__file__)/../testdata`, which is `scripts/testdata` — a directory no Go test reads
+(`pin_bge.py` had it right, via `REPO_ROOT`). So following the skip message's own instruction to
+"run scripts/oracle/pin_siglip_vision.py" did not fix the skip, and
+`TestSiglipEncoder_parity`, `TestQwenVisionEncoder_parity`, the two Gemma 4 real-checkpoint
+parity tests and `BenchmarkSiglipTower` had been silently skipping. With the paths fixed, the
+regenerated goldens are **bit-identical** to the committed ones (the scripts are fully seeded),
+`vision` goes from 29 passed / 5 skipped to 31 / 3, and `gpu/qwenmetal` from 1 / 3 to **4 / 0** —
+which retroactively gives the v1.39.x C-02 threadgroup-budget fix real end-to-end coverage.
+
+
 **Metal: an aborted dispatch is no longer silent (audit C-02).** `waitUntilCompleted` returns
 CLEANLY from a GPU fault, and the fire-and-forget `Queue.Run1D`/`Run2D`/`Run1DBatch`/
 `Run1DBatchTG` helpers committed, waited and returned without ever reading the command buffer's

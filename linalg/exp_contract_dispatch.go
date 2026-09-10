@@ -37,6 +37,31 @@ func SoftmaxRowContractInto(dst, src []float32) {
 	softmaxContractImpl(dst, src)
 }
 
+// SoftmaxRowScaledContractInto is SoftmaxRowContractInto fused with a scalar
+// multiply on the input — the attention shape, where the caller would otherwise
+// run its own `scores[i] *= 1/sqrt(headDim)` pass over an O(L^2) score matrix
+// immediately before the softmax.
+//
+// The scale is applied as its own pass into dst and the contract softmax then
+// runs in place, rather than folding the multiply into the kernel. That keeps
+// the contract EXACTLY as softmaxContractImpl defines it — same max-subtraction,
+// same pinned f64 lane-partial fold — so this stays bit-identical across
+// architectures for free, which a second fused kernel would have had to re-earn.
+// The extra pass is a multiply over a buffer already in cache, against an
+// exponential per element.
+func SoftmaxRowScaledContractInto(dst, src []float32, scale float32) {
+	if len(dst) != len(src) {
+		panic("linalg: SoftmaxRowScaledContractInto length mismatch")
+	}
+	if len(src) == 0 {
+		return
+	}
+	for i, v := range src {
+		dst[i] = v * scale
+	}
+	softmaxContractImpl(dst, dst)
+}
+
 // SiLUContractInto writes x/(1+e^-x) elementwise under the contract.
 func SiLUContractInto(dst, src []float32) {
 	if len(dst) != len(src) {
