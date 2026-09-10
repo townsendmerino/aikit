@@ -172,7 +172,10 @@ func termsByDF(ix *Index) []string {
 func TestWAND_declinesWhenBoundUnsound(t *testing.T) {
 	ix := Build(wandCorpus(2_000, 300, 40, 7))
 	q := headTerms(ix, 3)
-	for _, tc := range []struct{ k1, b float64 }{{-1, 0.75}, {1.5, -0.2}} {
+	// B > 1 joins K1 < 0 and B < 0 here (audit C-03): outside the standard
+	// 0 <= B <= 1 range the denominator can change sign across a posting list,
+	// so the bound evaluated at minNorm bounds nothing. See wandUsable.
+	for _, tc := range []struct{ k1, b float64 }{{-1, 0.75}, {1.5, -0.2}, {1.5, 1.5}, {1.5, 2.0}} {
 		ix.K1, ix.B = tc.k1, tc.b
 		if _, ok := ix.topKWAND(q, 10); ok {
 			t.Errorf("K1=%v B=%v: pruning accepted a query whose bound is unsound", tc.k1, tc.b)
@@ -297,6 +300,42 @@ func TestWAND_declinesLongQueries(t *testing.T) {
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("result %d: %+v vs %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// TestWAND_bGreaterThanOneMatchesExhaustive is the C-03 regression, kept
+// separate from the table above because it needs a corpus shaped to expose the
+// defect rather than the uniform one wandCorpus builds: 200 long documents set
+// avgdl high, and 20 two-token documents sharing a term then sit at a norm
+// small enough that tf + K1*(1-B+B*norm) is negative for them while positive
+// for the long ones. With B = 2 and the old `B >= 0` admission this made TopK
+// return ZERO results where the exhaustive scan returns ten — silent and total,
+// which is why the guard is a correctness fix and not a tuning one.
+func TestWAND_bGreaterThanOneMatchesExhaustive(t *testing.T) {
+	var docs [][]string
+	for range 200 {
+		d := make([]string, 0, 401)
+		for range 400 {
+			d = append(d, "filler")
+		}
+		docs = append(docs, append(d, "target"))
+	}
+	for range 20 {
+		docs = append(docs, []string{"target", "rare"})
+	}
+	ix := Build(docs)
+	q := []string{"target"}
+	for _, b := range []float64{1.0, 1.000001, 1.5, 2.0, 10.0} {
+		ix.K1, ix.B = 1.5, b
+		got, want := ix.TopK(q, 10), ix.topKExhaustive(q, 10)
+		if len(got) != len(want) {
+			t.Fatalf("B=%v: TopK returned %d results, exhaustive %d", b, len(got), len(want))
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("B=%v result %d: TopK %+v vs exhaustive %+v", b, i, got[i], want[i])
+			}
 		}
 	}
 }

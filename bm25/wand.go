@@ -118,9 +118,22 @@ const maxWandTerms = 8
 
 // wandUsable reports whether the pruning bound is sound for the current
 // parameters. The bound relies on the impact being monotone in tf and in the
-// normalization, which holds for K1 >= 0 and B >= 0; a caller who sets either
-// negative gets the exhaustive path instead of a wrong answer.
-func (ix *Index) wandUsable() bool { return ix.K1 >= 0 && ix.B >= 0 }
+// normalization, and on the denominator tf + K1*(1-B+B*norm) keeping one sign
+// across the posting list. That holds for K1 >= 0 and 0 <= B <= 1 — the
+// standard BM25 range. A caller outside it gets the exhaustive path instead of
+// a wrong answer.
+//
+// B > 1 is the case that is easy to miss (audit C-03). The bound is evaluated
+// at minNorm, and since d/dnorm of (1-B+B*norm) is B > 0, minNorm does minimise
+// the denominator — so the formula looks right. What breaks is that for B > 1
+// the term 1-B is negative, so across a corpus with skewed document lengths the
+// denominator can cross ZERO inside the list's norm range: the true impact is
+// unbounded near the crossing and negative past it, while the value computed at
+// minNorm is small or negative and bounds nothing. Measured before this
+// condition existed: a corpus of 200 long docs plus 20 two-token docs sharing a
+// term, K1=1.5 B=2.0, made TopK return 0 results where the exhaustive scan
+// returns 10 — silent, total loss, not a reordering.
+func (ix *Index) wandUsable() bool { return ix.K1 >= 0 && ix.B >= 0 && ix.B <= 1 }
 
 // topKWAND is TopK's pruning implementation. It returns ok=false when it
 // declines, and the caller falls back to the exhaustive scan.

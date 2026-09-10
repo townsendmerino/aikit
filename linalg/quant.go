@@ -162,7 +162,7 @@ func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, 
 
 // MatmulBTQ8Into is MatmulBTQ8 through a Workspace: the SERIAL path (the decode
 // case, M=1 below the parallel threshold — ~168 such calls per token) takes its
-// widened-weight-row scratch from ws.f32Buf and allocates nothing after warm-up,
+// widened-weight-row scratch from ws.deqBuf and allocates nothing after warm-up,
 // instead of the K-wide make per call the wrapper did. The parallel path takes a
 // per-worker scratch from a sync.Pool (the workers can't share ws's single
 // buffer), so it too stops allocating once warm. Output is byte-identical
@@ -170,7 +170,7 @@ func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, 
 func MatmulBTQ8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	checkMatmulQ8("MatmulBTQ8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	if M*N*K < ws.thr() || N < 2 {
-		q8Span(a, bQ, bScales, dst, M, K, N, 0, N, ws.f32Buf(q8SpanScratchRows*K))
+		q8Span(a, bQ, bScales, dst, M, K, N, 0, N, ws.deqBuf(q8SpanScratchRows*K))
 		return
 	}
 	ws.parallel(N, func(j0, j1 int) {
@@ -870,7 +870,7 @@ func MatmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M
 }
 
 // MatmulBTQ4Into is MatmulBTQ4 through a Workspace — same win as MatmulBTQ8Into:
-// the serial path takes its dequantized-weight-row scratch from ws.f32Buf(K)
+// the serial path takes its dequantized-weight-row scratch from ws.deqBuf(K)
 // (zero alloc after warm-up), the parallel path keeps a per-worker scratch. Output
 // is byte-identical (audit #14).
 func MatmulBTQ4Into(ws *Workspace, a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
@@ -880,7 +880,7 @@ func MatmulBTQ4Into(ws *Workspace, a []float32, bPacked []byte, bScales []float3
 	checkGroupMatmul("MatmulBTQ4", len(a), bPacked, bScales, len(dst), M, K, N, group)
 	nGroups, bpr := groupsFor(K, group)
 	if M*N*K < ws.thr() || N < 2 {
-		q4Span(a, bPacked, bScales, dst, M, K, N, group, nGroups, bpr, 0, N, ws.f32Buf(K))
+		q4Span(a, bPacked, bScales, dst, M, K, N, group, nGroups, bpr, 0, N, ws.deqBuf(K))
 		return
 	}
 	ws.parallel(N, func(j0, j1 int) {

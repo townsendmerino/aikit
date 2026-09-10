@@ -11,6 +11,32 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**`bm25` WAND pruning no longer accepts `B > 1`, where its upper bound is unsound (audit C-03).**
+`wandUsable` admitted any `B >= 0`, but the bound is evaluated at `minNorm` and assumes the
+denominator `tf + K1*(1-B+B*norm)` keeps one sign across a posting list. For `B > 1` the `1-B`
+term is negative, so on a corpus with skewed document lengths that denominator can cross ZERO
+inside the list's range: the true impact is unbounded near the crossing and negative past it,
+while the value computed at `minNorm` bounds nothing. Reproduced before the fix — 200 long
+documents plus 20 two-token documents sharing a term, `K1=1.5 B=2.0` — `TopK` returned **zero**
+results where the exhaustive scan returns ten. Silent and total, not a reordering. `B > 1` now
+takes the exhaustive path like `K1 < 0` and `B < 0` already did; `0 <= B <= 1` (the standard
+BM25 range, and every default) is unaffected. `TestWAND_bGreaterThanOneMatchesExhaustive` is the
+regression, and `TestWAND_declinesWhenBoundUnsound` gained the two `B > 1` rows.
+
+**`linalg.Workspace`'s weight-only Q8/Q4 dequant scratch is now separate from the activation-scale
+buffer (audit C-05).** `QuantizeActivations` returns views into the Workspace's `f32` scratch and
+documents their lifetime, but `MatmulBTQ8Into`/`MatmulBTQ4Into`'s serial paths took their
+dequantized-weight-row scratch from that same buffer via `f32Buf`. When the buffer was already
+large enough the slice did not GROW it — so the documented "valid until the next call that grows
+the scratch" rule was satisfied while the scales were overwritten in place with dequantized
+weight values. Measured on the fixture: held scales `[0.0225, 0.0190]` came back as
+`[127, -57]`. Latent (no in-tree caller interleaves this today) but reachable by the `FlatI8`
+paged-scan pattern or a mixed int8/W8A8 model on one Workspace. The spans now use a dedicated
+`deqBuf`, and the doc comment states the real rule. `TestWorkspace_quantizeActivationsSurvivesWeightOnlyMatmul`
+gates it — and warms the Workspace first, because against a cold one the growth allocates a
+fresh array and the defect hides.
+
+
 **`linalg.MatmulBTW8A8Batch` now reaches the S-01b W8A8 tile — 2.3-3.8x on the batched prefill
 shapes (audit M-01).** `w8a8BatchSpan` carried its own column-outer loop over `dotI8`, so the
 register-blocked tile that `w8a8Span` dispatches to at M>=4 was reached by the unbatched entry
