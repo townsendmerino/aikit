@@ -9,6 +9,34 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.39.1] — 2026-09-10
+
+### Fixed
+
+**`vision.Gemma4Encoder`: `vision_config.standardize=true` is now implemented, not refused.**
+v1.39.0 shipped `Gemma4EncoderConfig.Standardize` as a config field but left the behavior it
+gates unimplemented — `LoadGemma4Encoder` hard-refused any checkpoint that set it, confirmed
+false only on the real E2B-it checkpoint at the time. The real `google/gemma-4-26b-a4b-it`
+checkpoint sets it true (a genuine per-checkpoint split, not an edge case — confirmed directly
+against its `config.json`), so every 26B-A4B/31B-class vision request was completely unusable
+through this encoder until now. `Gemma4VisionModel.forward`'s own placement: `(hidden_states -
+std_bias) * std_scale`, applied to the pooler's already root-hidden_size-scaled output,
+immediately before the embedder's RMSNorm+projection — both buffers `[hidden_size]`
+(`vision_tower.std_bias`/`std_scale` in the real checkpoint). Gated at cosine **1.000000000**
+(max|diff| ≈1.4e-5) against the real 26B-A4B-it vision-tower weights on synthetic patches,
+matched f32 precision both sides (`TestGemma4Encoder_realCheckpointParity_26B`, the twin of
+v1.39.0's own E2B gate) — this checkpoint also exercises `use_clipped_linears=false` (the
+unclipped ±inf-bound path), which the E2B gate does not. `TestGemma4Encoder_realCheckpointParity`
+(E2B, `standardize=false`) is unchanged and still green — zero regression to the shipped path.
+Found via goinfer's own real-checkpoint end-to-end VL serving gate hitting the refusal directly.
+
+`perfgate` VERDICT: PASS — no regression vs v1.39.0 above each shape's floor — 4/10 shapes resolve
+the 5.0% class (unsurprising: this release only adds a conditional per-hidden-dim elementwise
+affine, never on the already-shipped `standardize=false` path and nowhere near the GEMV/matmul
+kernels this gate measures).
+
+`vulncheck` STATEMENT: no reachable vulnerabilities in 15/15 modules at nobara-pc, 2026-09-10.
+
 ## [1.39.0] — 2026-09-09
 
 ### Added
@@ -3209,6 +3237,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.38.0...HEAD
+[1.39.1]: https://github.com/townsendmerino/aikit/compare/v1.39.0...v1.39.1
 [1.39.0]: https://github.com/townsendmerino/aikit/compare/v1.38.0...v1.39.0
 [1.38.0]: https://github.com/townsendmerino/aikit/compare/v1.37.0...v1.38.0
 [1.37.0]: https://github.com/townsendmerino/aikit/compare/v1.36.0...v1.37.0

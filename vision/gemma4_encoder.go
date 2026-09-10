@@ -46,11 +46,15 @@ type Gemma4EncoderConfig struct {
 	PosEmbTableSize   int     `json:"position_embedding_size"`
 	RMSNormEps        float64 `json:"rms_norm_eps"`
 	UseClippedLinears bool    `json:"use_clipped_linears"`
-	// Standardize gates an extra (bias,scale) affine after pooling. Confirmed
-	// false on the real E2B checkpoint (config.json's vision_config.standardize) —
-	// left unimplemented here; LoadGemma4Encoder errors if a checkpoint sets it,
-	// rather than silently producing a wrong forward (H8: fail loud on an
-	// unimplemented-but-detectable config path, not on an absent one).
+	// Standardize gates an extra (bias,scale) affine after pooling: false on the
+	// real E2B checkpoint, true on the real 26B-A4B checkpoint (both confirmed
+	// directly against real config.json — this is a real per-checkpoint split,
+	// not an edge case). Gemma4VisionModel.forward applies it to the pooler's
+	// already root-hidden_size-scaled output, before the embedder's RMSNorm+
+	// projection: `(hidden_states - std_bias) * std_scale`, both [hidden_size]
+	// (`model.vision_tower.std_bias`/`std_scale` in the real checkpoint's
+	// safetensors header). LoadGemma4Encoder loads the two buffers only when
+	// this is set.
 	Standardize    bool `json:"standardize"`
 	RopeParameters *struct {
 		RopeTheta float64 `json:"rope_theta"`
@@ -83,8 +87,6 @@ func (c Gemma4EncoderConfig) validate() error {
 		return fmt.Errorf("pooling_kernel_size must be > 0, got %d", c.PoolingKernelSize)
 	case c.PosEmbTableSize <= 0:
 		return fmt.Errorf("position_embedding_size must be > 0, got %d", c.PosEmbTableSize)
-	case c.Standardize:
-		return fmt.Errorf("vision_config.standardize=true is not implemented (only confirmed false on real checkpoints so far — see the type's doc comment)")
 	}
 	return nil
 }
@@ -131,6 +133,8 @@ type Gemma4Encoder struct {
 	posEmbY        []float32 // [PosEmbTableSize, hidden] — position_embedding_table[1]
 	layers         []gemma4EncLayer
 	embedderProjW  linalg.WeightMat // [TextHiddenSize, hidden], plain Linear (no bias, no clip)
+	stdBias        []float32        // [hidden]; nil unless Cfg.Standardize
+	stdScale       []float32        // [hidden]; nil unless Cfg.Standardize
 }
 
 // LoadGemma4Encoder reads a Gemma 4 checkpoint (config.json + safetensors) and
@@ -252,6 +256,10 @@ func LoadGemma4Encoder(dir string, quant bool) (*Gemma4Encoder, error) {
 		lw.downProj = clipped(p+"mlp.down_proj", hidden, inter)
 	}
 	e.embedderProjW = qm("embed_vision.embedding_projection.weight", textHidden, hidden)
+	if cfg.Standardize {
+		e.stdBias = get("vision_tower.std_bias", hidden)
+		e.stdScale = get("vision_tower.std_scale", hidden)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("vision: load weights: %w", err)
 	}
@@ -331,8 +339,16 @@ func (e *Gemma4Encoder) Forward(patches []float32, positionIDs [][2]int) ([]floa
 	for i := range pooled {
 		pooled[i] *= sq
 	}
-	// standardize: unimplemented, guarded loud at load (cfg.validate()) — not a
-	// silent skip here.
+	// standardize: (x - std_bias) * std_scale, applied to the pooler's already
+	// root-hidden_size-scaled output — matches Gemma4VisionModel.forward's own
+	// placement exactly (after pooling, before the embedder's RMSNorm+projection
+	// below). Both buffers are [hidden], broadcast per pooled row.
+	if c.Standardize {
+		for i := range pooled {
+			d := i % hidden
+			pooled[i] = (pooled[i] - e.stdBias[d]) * e.stdScale[d]
+		}
+	}
 
 	nPooled := len(pooled) / hidden
 	normed := make([]float32, len(pooled))

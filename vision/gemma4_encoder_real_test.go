@@ -109,3 +109,83 @@ func TestGemma4Encoder_realCheckpointParity(t *testing.T) {
 	}
 	t.Logf("gemma4 vision REAL checkpoint (E2B-it) parity: cosine = %.9f, max|diff| = %g", cos, maxDiff)
 }
+
+// gemma4Real26BCkptDir is the real google/gemma-4-26b-a4b-it checkpoint — the
+// standardize=True geometry TestGemma4Encoder_realCheckpointParity's E2B fixture
+// does not exercise at all (hidden 1152/27 layers/head_dim 72 vs E2B's smaller
+// tower, and use_clipped_linears=False vs E2B's True).
+func gemma4Real26BCkptDir(t *testing.T) string {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir: %v", err)
+	}
+	dir := filepath.Join(home, "models", "gemma-4-26b-a4b-it")
+	if _, err := os.Stat(filepath.Join(dir, "model.safetensors.index.json")); err != nil {
+		t.Skipf("real gemma-4-26b-a4b-it checkpoint not found at %s: %v", dir, err)
+	}
+	return dir
+}
+
+// TestGemma4Encoder_realCheckpointParity_26B is TestGemma4Encoder_realCheckpointParity's twin
+// for the standardize=True geometry: this is what caught goinfer's own real-checkpoint gate
+// failing outright (LoadGemma4Encoder used to hard-refuse standardize=true — "not implemented"
+// — before this fix added the missing `(x - std_bias) * std_scale` affine,
+// Gemma4VisionModel.forward's own placement, immediately after the pooler's root-hidden_size
+// scaling and before the embedder's RMSNorm+projection). Matched-precision f32-vs-f32, same bar
+// as the E2B gate.
+func TestGemma4Encoder_realCheckpointParity_26B(t *testing.T) {
+	ckptDir := gemma4Real26BCkptDir(t)
+	goldenPath := gemma4Testdata(t, "gemma4_vision_real_26b_golden.json.gz")
+
+	var g gemma4Golden
+	readMaybeGzipJSON(t, goldenPath, &g)
+
+	enc, err := LoadGemma4Encoder(ckptDir, false)
+	if err != nil {
+		t.Fatalf("LoadGemma4Encoder: %v", err)
+	}
+	if enc.Cfg.HiddenSize != g.Config.HiddenSize || enc.Cfg.NumHiddenLayers != g.Config.NumHiddenLayers ||
+		enc.Cfg.NumAttentionHeads != g.Config.NumAttentionHeads || enc.Cfg.HeadDim != g.Config.HeadDim {
+		t.Fatalf("loaded config mismatch: got %+v, want hidden=%d layers=%d heads=%d headDim=%d",
+			enc.Cfg, g.Config.HiddenSize, g.Config.NumHiddenLayers, g.Config.NumAttentionHeads, g.Config.HeadDim)
+	}
+	if !enc.Cfg.Standardize {
+		t.Fatalf("Standardize = false, want true (the real 26B-A4B checkpoint sets this — the fixed affine path must be exercised, not silently skipped)")
+	}
+	if enc.Cfg.UseClippedLinears {
+		t.Fatalf("UseClippedLinears = true, want false (the real 26B-A4B checkpoint has this off — the unclipped ±inf-bound path must be exercised here, distinct from the E2B gate)")
+	}
+	if enc.TextHiddenSize != g.TextHiddenSize {
+		t.Fatalf("TextHiddenSize = %d, want %d", enc.TextHiddenSize, g.TextHiddenSize)
+	}
+
+	positionIDs := make([][2]int, g.NumPatches)
+	for i := range positionIDs {
+		positionIDs[i] = [2]int{g.PositionIDs[i*2], g.PositionIDs[i*2+1]}
+	}
+
+	got, err := enc.Forward(g.Patches, positionIDs)
+	if err != nil {
+		t.Fatalf("Forward: %v", err)
+	}
+	if len(got) != len(g.Projected) {
+		t.Fatalf("output len %d, want %d (shape %v)", len(got), len(g.Projected), g.ProjectedShape)
+	}
+	cos := cosineSim(got, g.Projected)
+	var maxDiff float32
+	for i := range got {
+		d := got[i] - g.Projected[i]
+		if d < 0 {
+			d = -d
+		}
+		if d > maxDiff {
+			maxDiff = d
+		}
+	}
+	if cos < 0.9999 {
+		n := min(8, len(got))
+		t.Fatalf("cosine = %.9f (want >= 0.9999), max|diff| = %g\ngot[:8]  = %v\nwant[:8] = %v", cos, maxDiff, got[:n], g.Projected[:n])
+	}
+	t.Logf("gemma4 vision REAL checkpoint (26B-A4B, standardize=true) parity: cosine = %.9f, max|diff| = %g", cos, maxDiff)
+}

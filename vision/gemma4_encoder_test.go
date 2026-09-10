@@ -21,6 +21,7 @@ type gemma4Golden struct {
 		PosEmbTableSize   int     `json:"position_embedding_size"`
 		RMSNormEps        float64 `json:"rms_norm_eps"`
 		UseClippedLinears bool    `json:"use_clipped_linears"`
+		Standardize       bool    `json:"standardize"`
 	} `json:"config"`
 	TextHiddenSize   int       `json:"text_hidden_size"`
 	NumPatches       int       `json:"num_patches"`
