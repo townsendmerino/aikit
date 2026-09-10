@@ -216,3 +216,35 @@ func (s *scratch) mmq8(dst, a []float32, wq []int8, wscales []float32, M, K, N i
 	}
 	matmulBTQ8Into(dst, a, wq, wscales, M, K, N, s.deqW)
 }
+
+// headScratch is one attention head's private working set, for the head-parallel
+// path (audit M-05). The per-forward scratch holds exactly one of each of these,
+// which is all the serial loop needs; a fan-out needs one set per worker.
+//
+// Pooled rather than sized into scratch as [workers]x: the serial path then pays
+// nothing at all, and the parallel path allocates only on its first few calls.
+// scores alone is mOut*L floats — 1 MB at L=512 — so multiplying the per-forward
+// arena by numCPU would cost real memory on every forward to serve the case that
+// fans out.
+type headScratch struct {
+	qH, kH, vH, ctxHead, scores []float32
+}
+
+var headScratchPool = sync.Pool{New: func() any { return new(headScratch) }}
+
+func getHeadScratch(mOut, headDim, L int) *headScratch {
+	hs := headScratchPool.Get().(*headScratch)
+	hs.qH = ensureF32(hs.qH, mOut*headDim)
+	hs.kH = ensureF32(hs.kH, L*headDim)
+	hs.vH = ensureF32(hs.vH, headDim*L)
+	hs.ctxHead = ensureF32(hs.ctxHead, mOut*headDim)
+	hs.scores = ensureF32(hs.scores, mOut*L)
+	// Reslice to the exact lengths attendOneHead indexes; ensureF32 only
+	// guarantees capacity.
+	hs.qH, hs.kH = hs.qH[:mOut*headDim], hs.kH[:L*headDim]
+	hs.vH, hs.ctxHead = hs.vH[:headDim*L], hs.ctxHead[:mOut*headDim]
+	hs.scores = hs.scores[:mOut*L]
+	return hs
+}
+
+func putHeadScratch(hs *headScratch) { headScratchPool.Put(hs) }

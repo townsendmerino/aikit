@@ -1,6 +1,9 @@
 package encoder
 
-import "math"
+import (
+	"math"
+	"sync"
+)
 
 // selfAttention runs one block's bidirectional multi-head self-attention and
 // adds the output to the residual `h`, returning h resliced to mOut*D rows.
@@ -92,27 +95,29 @@ func attentionCore(h []float32, Q, K, V, OutProj, OutProjB []float32, heads, hea
 	ctxHead := s.ctxHead[:mOut*headDim]
 	scores := s.scores[:mOut*L]
 
-	for headIdx := range heads {
-		for i := range L {
-			src := i*D + headIdx*headDim
-			if i < mOut {
-				copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
-			}
-			copy(kH[i*headDim:(i+1)*headDim], K[src:src+headDim])
-			// V transposed: vHT[d, i] = V[i, head, d], folded into the extract so
-			// scores·V can use the A·Bᵀ matmul (which needs Vᵀ as its b operand).
-			for d := range headDim {
-				vHT[d*L+i] = V[src+d]
-			}
+	if w := attnHeadWorkers(s, heads, mOut, headDim, L); w > 1 {
+		// Head-parallel (audit M-05). Each head is an independent computation
+		// over its own slice of Q/K/V writing its own columns of ctx, so this is
+		// bit-identical to the serial loop — no reduction crosses a head.
+		var wg sync.WaitGroup
+		for wi := range w {
+			wg.Add(1)
+			go func(wi int) {
+				defer wg.Done()
+				hs := getHeadScratch(mOut, headDim, L)
+				defer putHeadScratch(hs)
+				for headIdx := wi; headIdx < heads; headIdx += w {
+					attendOneHead(ctx, Q, K, V, headIdx, headDim, D, L, mOut, scale,
+						hs.qH, hs.kH, hs.vH, hs.ctxHead, hs.scores, s.mm,
+						softmaxRowsScaledSerial)
+				}
+			}(wi)
 		}
-		s.mm(qH, kH, scores, mOut, headDim, L)
-		softmaxRowsScaled(scores, scale, mOut, L)
-		// ctxHead[mOut, headDim] = scores[mOut, L] · V[L, headDim], as scores · (vHT)ᵀ.
-		s.mm(scores, vHT, ctxHead, mOut, L, headDim)
-		// Scatter this head's context into the interleaved ctx[mOut, D].
-		for i := range mOut {
-			dst := i*D + headIdx*headDim
-			copy(ctx[dst:dst+headDim], ctxHead[i*headDim:(i+1)*headDim])
+		wg.Wait()
+	} else {
+		for headIdx := range heads {
+			attendOneHead(ctx, Q, K, V, headIdx, headDim, D, L, mOut, scale,
+				qH, kH, vHT, ctxHead, scores, s.mm, softmaxRowsScaled)
 		}
 	}
 
@@ -128,3 +133,88 @@ func attentionCore(h []float32, Q, K, V, OutProj, OutProjB []float32, heads, hea
 	}
 	return h
 }
+
+// attendOneHead runs one attention head into its columns of ctx, using
+// caller-supplied per-head buffers so the head loop can run serially on one
+// scratch or in parallel on several. Extracted rather than duplicated: the two
+// paths must not be able to drift apart.
+//
+// softmax is a parameter for one reason — nesting. The serial path passes
+// softmaxRowsScaled, which fans its rows across cores. Inside a head worker
+// that would be a second fan-out under the first, so the parallel path passes
+// the serial form (softmaxRowsScaledSerial) and the parallelism stays on the
+// head axis where the work is coarser.
+func attendOneHead(
+	ctx, Q, K, V []float32,
+	headIdx, headDim, D, L, mOut int, scale float32,
+	qH, kH, vHT, ctxHead, scores []float32,
+	mm func(a, b, dst []float32, M, K, N int),
+	softmax func(scores []float32, scale float32, rows, cols int),
+) {
+	for i := range L {
+		src := i*D + headIdx*headDim
+		if i < mOut {
+			copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
+		}
+		copy(kH[i*headDim:(i+1)*headDim], K[src:src+headDim])
+		// V transposed: vHT[d, i] = V[i, head, d], folded into the extract so
+		// scores·V can use the A·Bᵀ matmul (which needs Vᵀ as its b operand).
+		for d := range headDim {
+			vHT[d*L+i] = V[src+d]
+		}
+	}
+	mm(qH, kH, scores, mOut, headDim, L)
+	softmax(scores, scale, mOut, L)
+	// ctxHead[mOut, headDim] = scores[mOut, L] · V[L, headDim], as scores · (vHT)ᵀ.
+	mm(scores, vHT, ctxHead, mOut, L, headDim)
+	// Scatter this head's context into the interleaved ctx[mOut, D].
+	for i := range mOut {
+		dst := i*D + headIdx*headDim
+		copy(ctx[dst:dst+headDim], ctxHead[i*headDim:(i+1)*headDim])
+	}
+}
+
+// softmaxRowsScaledSerial is softmaxRowsScaled without the row fan-out, for a
+// caller that is already running on a worker goroutine.
+func softmaxRowsScaledSerial(scores []float32, scale float32, rows, cols int) {
+	for i := range rows {
+		softmaxRowScaled(scores[i*cols:(i+1)*cols], scale)
+	}
+}
+
+// attnHeadWorkers decides the head-loop fan-out (audit M-05).
+//
+// The per-head matmuls sit BELOW parallelThreshold for every sequence this
+// library actually encodes — with headDim=64 the QK^T shape clears 32M only at
+// L >= 708, and BERT/CodeRankEmbed/rerank cap at maxSeq=512 — so before this the
+// head loop and both of its matmuls ran on one core while the linears around
+// them used every core. Roughly a third of a lone forward.
+//
+// The conditions are deliberately narrow:
+//
+//   - a backend (GPU) is not fanned out: s.mm would be called concurrently and
+//     a device queue is not promised to be safe for that;
+//   - if the per-head matmul would ITSELF parallelize, the cores are already
+//     busy and a head fan-out on top would oversubscribe — so head-parallelism
+//     is taken exactly when the inner matmuls are serial, which is the case the
+//     finding is about;
+//   - inflightForwards > 1 means sibling forwards already occupy the machine,
+//     the same guard parallelRows and wantParallelMatmul use.
+func attnHeadWorkers(s *scratch, heads, mOut, headDim, L int) int {
+	if heads < 2 || s.be != nil || inflightForwards.Load() > 1 {
+		return 1
+	}
+	if wantParallelMatmul(mOut, headDim, L) {
+		return 1
+	}
+	// Below this the head loop is a few hundred microseconds and the spawn is
+	// pure overhead. mOut*L*headDim is one head's QK^T MAC count.
+	if int64(mOut)*int64(L)*int64(headDim) < attnHeadParallelThreshold {
+		return 1
+	}
+	return min(numCPU, heads)
+}
+
+// attnHeadParallelThreshold is the per-head QK^T MAC count at/above which
+// fanning the head loop pays for the goroutine spawn.
+const attnHeadParallelThreshold = 1 << 20

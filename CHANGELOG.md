@@ -11,6 +11,26 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**Text-encoder attention is now head-parallel — another 19.6% off a long encode (audit M-05).**
+The 12-head loop and both of its per-head matmuls ran on ONE core while the linears around them
+used every core. That was not an oversight so much as an unanswered question: `parallelThreshold`
+is 32M MACs, the per-head QK^T at headDim=64 clears it only at L >= 708, and BERT /
+CodeRankEmbed / rerank all cap at maxSeq=512 — so every per-head matmul was deliberately serial,
+with the threshold's own comment noting the net effect "needs an end-to-end forward benchmark on
+real weights to judge — a follow-up, not guessed at here". This is that benchmark.
+`BenchmarkEncode_singleLong` on `apple-m1pro`, benchstat `-count=6`: 682.9ms -> 549.0ms,
+**-19.6%** (p=0.002). Together with the contract-kernel routing earlier in this release the same
+benchmark has gone 800.1ms -> 549.0ms, **-31.4%**.
+
+Bit-identical: each head reads its own slice of Q/K/V and writes its own columns of ctx, so no
+reduction crosses a head. The fan-out is deliberately narrow — it declines when a compute
+backend is attached (`s.mm` would be called concurrently and a device queue makes no such
+promise), when the per-head matmul would itself parallelize (the cores are already busy and a
+head fan-out on top would oversubscribe), and when another forward is in flight. Per-worker head
+buffers come from a pool rather than sizing the per-forward arena by `numCPU`, so the serial path
+pays nothing: `scores` alone is 1 MB at L=512. Gated by the full encoder suite and `-race`.
+
+
 **`vision`: an unset `Config.MaxPixels` no longer disables the decompression-bomb guard, and
 Gemma 4's pooler divides by real occupancy (audit C-06).** The guard read
 `cfg.MaxPixels > 0 && ...`, so a `Config` literal that simply did not name the field — the
