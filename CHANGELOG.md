@@ -9,6 +9,24 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Fixed
+
+**`linalg.MatmulBTW8A8Batch` now reaches the S-01b W8A8 tile — 2.3-3.8x on the batched prefill
+shapes (audit M-01).** `w8a8BatchSpan` carried its own column-outer loop over `dotI8`, so the
+register-blocked tile that `w8a8Span` dispatches to at M>=4 was reached by the unbatched entry
+and bypassed by the batched one. That is the wrong way round for the shape the tile was built
+for: an `int8int8` prefill row batches q&#8214;k&#8214;v and gate&#8214;up — 30.6M of the 44.4M MACs per
+Qwen2.5-Coder-1.5B layer, 69% — through the batched entry, and only down-proj (unbatched) got
+the tile. `w4a8BatchOp` already routes through its span for exactly this reason; this is the
+W8A8 twin. Measured on `apple-m1pro` (quiet box, benchstat `-count=6`) at goinfer's real prefill
+shapes, K=1536: q&#8214;k&#8214;v -73.9% at M=4, -69.9% at M=128; gate&#8214;up -58.1% at M=4, -72.4% at
+M=128; geomean **-59.4% (2.46x)**. Both M=1 controls are statistically unchanged (p=0.589,
+p=0.065) — the single-token decode path does not move, which is the point. Bit-identical by
+construction: `w8a8SpanRows` computes the same `float32(dotI8(...)) * aScales[i] * bScale` with
+the same zero-scale short-circuit, and the tile accumulates in int32;
+`TestW8A8Batch_bitIdenticalToPerOp` and `TestMatmulBTW8A8_MConsistent` gate it.
+`BenchmarkMatmulBTW8A8Batch_prefill` is new and pins the shapes.
+
 ## [1.39.1] — 2026-09-10
 
 ### Fixed

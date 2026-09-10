@@ -488,19 +488,20 @@ func w8a8BatchSpan(aq []int8, aScales []float32, ops []W8A8Op, M, K, g0, g1 int)
 	for _, op := range ops {
 		lo, hi := max(g0, base), min(g1, base+op.N) // this op's slice of [g0,g1)
 		if lo < hi {
-			// Column-outer (see w8a8Span): weight row reused across M rows.
-			for j := lo; j < hi; j++ {
-				jj := j - base
-				bj := op.BQ[jj*K : jj*K+K]
-				bScale := op.Scales[jj]
-				for i := range M {
-					if aScales[i] == 0 {
-						op.Dst[i*op.N+jj] = 0
-						continue
-					}
-					op.Dst[i*op.N+jj] = float32(dotI8(aq[i*K:i*K+K], bj)) * aScales[i] * bScale
-				}
-			}
+			// Hand this op's column slice to w8a8Span rather than re-implementing
+			// its inner loop, so the batched shape gets the S-01b tile at M>=4
+			// exactly as the unbatched span does. This used to be its own
+			// column-outer loop over dotI8, which meant the tile — built for the
+			// int8int8 prefill shape — was reached by down-proj (unbatched) and
+			// bypassed by q‖k‖v and gate‖up (batched), i.e. 69% of a 1.5B layer's
+			// MACs took the per-pair GEMV. w4a8BatchOp already routes through its
+			// span for this reason; this is the W8A8 twin of that (audit M-01).
+			//
+			// Bit-identity is free: w8a8SpanRows computes the same
+			// float32(dotI8(...)) * aScales[i] * bScale with the same zero-scale
+			// short-circuit, and the tile accumulates in int32.
+			// TestMatmulBTW8A8_MConsistent is the gate.
+			w8a8Span(aq, aScales, op.BQ, op.Scales, op.Dst, M, K, op.N, lo-base, hi-base)
 		}
 		base += op.N
 	}
