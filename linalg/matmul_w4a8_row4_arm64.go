@@ -38,11 +38,18 @@ func RepackW4A8Row4(packed []byte, N, K, group int) []byte {
 	if len(packed) < N*bpr {
 		panic(fmt.Sprintf("linalg: RepackW4A8Row4 packed len %d < N*bytesPerRow = %d", len(packed), N*bpr))
 	}
+	// Zero-alloc-per-quad (audit M-22): RepackInt4Row4Quad writes directly
+	// into out's own quad slice — src (packed's quad, canonical, untouched)
+	// and dst (out's quad, being built) never overlap here, so this is
+	// exactly RepackInt4Row4Quad's contract, not the aliased case
+	// RepackInt4Row4InPlace's scratch dance is for. Used to call
+	// repackSplitHalf4RowBlock, which does the same transform via 5 per-quad
+	// allocations (4 per-row split-half temporaries + 1 output); that
+	// function is unchanged and still exercised directly by its own tests.
 	out := make([]byte, N*bpr)
 	for q := 0; q < N/4; q++ {
-		r0, r1, r2, r3 := q*4*bpr, (q*4+1)*bpr, (q*4+2)*bpr, (q*4+3)*bpr
-		blk := repackSplitHalf4RowBlock(packed[r0:r0+bpr], packed[r1:r1+bpr], packed[r2:r2+bpr], packed[r3:r3+bpr], K)
-		copy(out[q*4*bpr:(q*4+4)*bpr], blk)
+		base := q * 4 * bpr
+		RepackInt4Row4Quad(out[base:base+4*bpr], packed[base:base+4*bpr], K)
 	}
 	return out
 }
@@ -63,11 +70,13 @@ func RepackW4A8Row4Scales(scales []float32, N, K, group int) []float32 {
 	if len(scales) < N*nGroups {
 		panic(fmt.Sprintf("linalg: RepackW4A8Row4Scales scales len %d < N*nGroups = %d", len(scales), N*nGroups))
 	}
+	// Zero-alloc-per-quad, same reasoning as RepackW4A8Row4 above (audit
+	// M-22): used to call interleaveScales4Row, unchanged and still tested
+	// directly.
 	out := make([]float32, N*nGroups)
 	for q := 0; q < N/4; q++ {
-		r0, r1, r2, r3 := q*4*nGroups, (q*4+1)*nGroups, (q*4+2)*nGroups, (q*4+3)*nGroups
-		blk := interleaveScales4Row(scales[r0:r0+nGroups], scales[r1:r1+nGroups], scales[r2:r2+nGroups], scales[r3:r3+nGroups], nGroups)
-		copy(out[q*4*nGroups:(q*4+4)*nGroups], blk)
+		base := q * 4 * nGroups
+		RepackInt4Row4ScalesQuad(out[base:base+4*nGroups], scales[base:base+4*nGroups], nGroups)
 	}
 	return out
 }

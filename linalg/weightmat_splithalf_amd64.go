@@ -2,6 +2,8 @@
 
 package linalg
 
+import "fmt"
+
 // RepackInt4SplitHalf builds the amd64 split-half layout for this int4-resident WeightMat and
 // returns whether it did. OPT-IN by design: nothing calls it implicitly, because it allocates a
 // SECOND copy of the tensor's packed nibbles (canonical stays authoritative and is never
@@ -69,6 +71,19 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 		matmulBTW4A8SplitHalfInto(ws, a, w.q4SplitHalf, w.q4s, dst, w.cols, w.rows, w.group)
 		return
 	}
+	// audit M-22: reachable at M>1 for a split-half-only WeightMat — amd64 has
+	// no register-blocked tile for split-half (unlike arm64's row4, which got
+	// one specifically so this branch stays reachable for M>1 too), so there
+	// is genuinely no fast path for prefill through this layout yet, and
+	// w.q4 == nil here means there is no canonical to fall back to either. A
+	// canonical-only or "both" WeightMat never reaches this: q4SplitHalf is
+	// nil for canonical-only, and w.q4 is non-nil for "both", so the call
+	// below is identical to before this check existed for both those cases.
+	if w.q4 == nil {
+		panic(fmt.Sprintf("linalg: WeightMat.MatmulBTW4A8Into: split-half-only WeightMat (rows=%d cols=%d) "+
+			"has no path for M=%d — the split-half AVX2 kernel is M=1 only and there is no canonical "+
+			"fallback; a split-half-only tensor cannot serve M>1 through this method", w.rows, w.cols, M))
+	}
 	MatmulBTW4A8Into(ws, a, w.q4, w.q4s, dst, M, w.cols, w.rows, w.group)
 }
 
@@ -115,3 +130,11 @@ func w4a8SplitHalfSpan(aq []int8, aScale float32, w4sh []byte, wScales, dst []fl
 		dst[j] = dotW4A8SplitHalfAVX2(&aq[0], &prow[0], &srow[0], nFull) * aScale
 	}
 }
+
+// splitHalfUsable reports whether this CPU can safely dispatch the
+// split-half AVX2 kernel — the same hasAVX2 && !hasAVX512VNNIVL gate
+// RepackInt4SplitHalf's own body applies (see its comment for why a VNNI
+// host declines rather than downgrading). Exported via Int4SplitHalfUsable
+// (weightmat.go, audit M-22) for a caller building a repacked-only
+// WeightMat, which has no canonical to fall back to if this is false.
+func splitHalfUsable() bool { return hasAVX2 && !hasAVX512VNNIVL }

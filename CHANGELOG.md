@@ -50,6 +50,48 @@ excluded from that promise and may change in any release until it graduates.
   including the two dead ends it passed through first (a wrong memory-latency diagnosis and a
   verified-but-useless prefetch attempt) recorded in `perf-dead-ends.md` §8.13.
 
+- **`linalg.WeightMat` int4 tensors can now be built repacked-only — no resident canonical
+  nibbles/scales at all, closing the 2x-memory gap audit M-22 found (aikit side; the loader that
+  would actually call this on a real checkpoint is goinfer's, not this repo's, so that half stays
+  a documented follow-up — see the M-22 entry in `docs/audit-2026-09-10.md`).** Additive: every
+  existing constructor, method, and caller keeps its exact current behavior and dispatch order —
+  `WrapInt4`/`RepackInt4Row4`/`RepackInt4SplitHalf`-built ("canonical" and "both") WeightMats are
+  untouched, checked by `TestWeightMatInt4_existingPoliciesUnchanged`.
+  <br>New API: `RepackInt4Row4InPlace`/`RepackInt4SplitHalfInPlace` (permute the caller's OWN
+  q4/q4s bytes into row4/split-half order in place, consuming the input — peak extra memory is
+  ONE quad's or row's worth of scratch, not a second tensor-sized array, because both layouts are
+  fixed permutations local to one quad/row); `RepackInt4Row4Quad`/`RepackInt4Row4ScalesQuad` and
+  `RepackInt4SplitHalfRow` (the same per-quad/per-row transform, exported so a loader streaming
+  bytes off an mmap'd checkpoint can write repacked order directly into a fresh destination
+  buffer — canonical never touches the heap at all); `WrapInt4Row4Only`/`WrapInt4SplitHalfOnly`
+  (wrap already-repacked bytes, e.g. pre-repacked on disk); `Int4Row4Usable`/`Int4SplitHalfUsable`
+  (gates a caller checks before committing — there is no canonical fallback once repacked-only);
+  `IsInt4()` (int4-resident in ANY layout) and `Int4Layout()` (which one). `Int4()` KEEPS its
+  narrow pre-existing meaning — ok iff canonical bytes are present, not iff the tensor is int4 —
+  because a GPU consult and other canonical-bytes-only callers key off it; `IsInt4()` is the new,
+  separate "is this tensor int4 at all" question. No `DropCanonical()`: a mutable drop-after-the-
+  fact was considered and rejected during design (would need a goinfer-side dispatch fix too,
+  since goinfer routes W4A8 off `Int4()`'s ok flag) in favor of committing to a layout once, at
+  construction.
+  <br>`Row()` is layout-independent (works identically on canonical, row4, split-half, or
+  repacked-only, bit-identical to `DequantizeRowInt4` — `TestWeightMatRow_repackedMatchesCanonical`
+  across `{4,1536} .. {128,8960}`), which is what lets a tied embedding table (read per-token via
+  `Row()` *and* driven through the matmul as the LM head — goinfer's largest tensor) be
+  repacked-only. `MatmulBT`/`MatmulBTInto` gained one new dispatch case for `q4Row4`/`q4SplitHalf`
+  present without canonical; the existing `q4 != nil` case is byte-for-byte unchanged and checked
+  first. `MatmulBTW4A8Batch`'s upfront shape validation and `w4a8BatchOp`'s edge fallback now
+  substitute Row4's length/bytes for canonical's when `W4` is nil (row4 is documented to be the
+  same byte count as canonical for the same N), and panic with a clear message instead of a nil-
+  slice fault on a genuinely unaligned edge a repacked-only op can't serve.
+  <br>Verified on both arches (`nvidia-rtx2070s` for amd64/split-half): `go build`/`go vet`/
+  `go test -v`/`go test -race` all green on arm64 (apple-m1pro) and amd64; in-place-vs-out-of-
+  place and streamed-vs-in-place byte-for-byte equality; a gate-failure (rows not a multiple of 4)
+  leaves the input completely untouched; `testing.AllocsPerRun` confirms allocation count is
+  independent of row count — 2 allocations on arm64 (nibble scratch + scale scratch), 1 on amd64
+  (split-half doesn't repack scales, only nibbles). No batch-path equivalent exists for
+  split-half — it's M=1-only with no `W4A8Op`-style batch struct, so there was nothing there to
+  fix.
+
 ## [1.40.0] — 2026-09-10
 
 > **PERFGATE EXCEPTION: `go run -C tools ./perfgate v1.39.1` returns `VERDICT: FAIL`, and it is a

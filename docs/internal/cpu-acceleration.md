@@ -168,6 +168,44 @@ tolerance. Tests assert exact equality.
     "cpu+metal"`/`"cpu+cuda"` rows), reproducible via
     `AIKIT_GPU_BENCH=1 go test ./gpu/annmetal/... -run Crossover` (and the
     CUDA mirror in `gpu/anncuda`).
+- **`WeightMat` int4 storage now has three representation policies, fixed at
+  construction (audit M-22, aikit side; CHANGELOG `[Unreleased]`).**
+  1. **Canonical-only** (`WrapInt4`) — packed nibbles + per-group scales, the
+     original storage. Every accessor works; `Int4()` returns them.
+  2. **"Both"** (`WrapInt4` + `RepackInt4Row4`/`RepackInt4SplitHalf`) — canonical
+     PLUS the arch-specific repacked layout (row4 on arm64/NEON, split-half on
+     amd64/AVX2), the pre-M-22 fast-matmul path. Costs 2× the nibbles (row4
+     also 2× the scales, since split-half shares scales unrepacked). Unchanged
+     by M-22 — same bytes, same dispatch order, same code path.
+  3. **Repacked-only** (`RepackInt4Row4InPlace`/`RepackInt4SplitHalfInPlace`,
+     or `WrapInt4Row4Only`/`WrapInt4SplitHalfOnly` for already-repacked bytes)
+     — ONLY the repacked layout, no canonical bytes resident at all. The
+     memory win M-22 exists for. The in-place constructors permute the
+     caller's own q4/q4s bytes using one quad's (row4) or one row's
+     (split-half) worth of scratch — never a second tensor-sized array —
+     because both layouts are fixed permutations LOCAL to one quad/row; a
+     loader that wants canonical to never exist in the heap at all can instead
+     stream a checkpoint's bytes straight into repacked order via the
+     exported per-quad/per-row primitives (`RepackInt4Row4Quad`+
+     `RepackInt4Row4ScalesQuad`, `RepackInt4SplitHalfRow`) into a fresh
+     destination buffer.
+  <br>**The rule that keeps `Int4()` safe across all three: `Int4()` means
+  "canonical bytes present", not "this tensor is int4".** A repacked-only
+  WeightMat is int4 (`Kind()` returns `"int4"`, `IsInt4()` returns `true`,
+  `Int4Layout()` names which layout) but `Int4()`'s `ok` is `false` there,
+  deliberately — a GPU consult or any other canonical-bytes-only caller reads
+  through `Int4()`, and `ok=true` with a nil slice would be the worst
+  outcome. Ask `IsInt4()`/`Int4Layout()` for "is/which int4"; ask `Int4()`
+  only when canonical bytes specifically are needed. `Row()` is
+  layout-independent (identical output across all three policies, bit-exact
+  to `DequantizeRowInt4`), so a repacked-only tensor still answers `.Row()`
+  correctly — the property that makes a tied embedding table (per-token
+  `.Row()` reads AND matmul-as-LM-head) a valid repacked-only candidate, not
+  an exception requiring "both".
+  <br>Aikit-side only: no loader in this repo calls the new constructors on a
+  real checkpoint yet. The goinfer-side adoption (which tensors qualify, when
+  to prefer streaming over in-place) is a documented follow-up, not done here
+  — see the M-22 entry in `docs/audit-2026-09-10.md`.
 
 ### AVX2 kernel numbers (Ryzen 7 3700X, `-bench 'Dot'`, MB/s)
 

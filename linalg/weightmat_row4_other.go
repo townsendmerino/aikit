@@ -23,3 +23,10 @@ func row4Usable() bool { return false }
 func w4a8BatchRow4Span(aq []int8, aScale float32, row4 []byte, row4Scales, dst []float32, nGroups, bpr, q0, q1 int) {
 	panic("linalg: w4a8BatchRow4Span reached off arm64 — row4Usable() should have gated this")
 }
+
+// RepackInt4Row4InPlace is always ok=false off arm64 (Int4Row4Usable is
+// always false there, via row4Usable above) — input untouched, no partial
+// write. audit M-22. See weightmat_row4_arm64.go for the real body.
+func RepackInt4Row4InPlace(q4 []byte, q4s []float32, rows, cols, group int) (WeightMat, bool) {
+	return WeightMat{}, false
+}

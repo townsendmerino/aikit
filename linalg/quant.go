@@ -811,8 +811,22 @@ func MatmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []W4A8Op
 	// non-batch path does.
 	totalN := 0
 	for _, op := range ops {
-		checkMatmulW4A8("MatmulBTW4A8Batch", len(a), len(op.W4), len(op.Scales), len(op.Dst), M, K, op.N, group)
-		checkGroupMatmul("MatmulBTW4A8Batch", len(a), op.W4, op.Scales, len(op.Dst), M, K, op.N, group)
+		// audit M-22: a repacked-only op (W4 nil) has no canonical bytes to
+		// validate — check Row4/Row4Scales's length against the SAME formula
+		// instead. RepackW4A8Row4's own contract ("same byte count as the
+		// input; only the bit arrangement changes") is what makes this valid:
+		// row4's byte/float count for N rows is identical to canonical's, so
+		// the existing N*bytesPerRow / N*nGroups shape check is unchanged,
+		// only which slice's length feeds it. A canonical op (W4 != nil) is
+		// checked exactly as before this case existed.
+		w4Len, scalesLen := len(op.W4), len(op.Scales)
+		checkPacked, checkScales := op.W4, op.Scales
+		if op.W4 == nil {
+			w4Len, scalesLen = len(op.Row4), len(op.Row4Scales)
+			checkPacked, checkScales = op.Row4, op.Row4Scales
+		}
+		checkMatmulW4A8("MatmulBTW4A8Batch", len(a), w4Len, scalesLen, len(op.Dst), M, K, op.N, group)
+		checkGroupMatmul("MatmulBTW4A8Batch", len(a), checkPacked, checkScales, len(op.Dst), M, K, op.N, group)
 		totalN += op.N
 	}
 	nGroups, bpr := groupsFor(K, group)
@@ -855,11 +869,28 @@ func w4a8BatchSpan(aq []int8, aScales []float32, ops []W4A8Op, M, K, group, nGro
 // columns run canonical — legitimate because the two layouts are bit-identical
 // for the same logical weights, which is what TestDotW4A8SplitHalf4Row_bitIdenticalToCanonical
 // pins, so this is a dispatch choice and never a numeric one.
+//
+// op.W4 == nil (a repacked-only WeightMat's op, audit M-22) reaches canonical
+// only for an edge or at M>1 — this batched path has no row4 TILE (unlike
+// WeightMat.MatmulBTW4A8Into's M>1 case on arm64), so M>1 was already
+// canonical-only before repacked-only existed. A batch where every op shares
+// N%4==0 keeps every edge empty (ws.parallel's fan-out shards on multiples of
+// 8, and a 4-aligned base plus an 8-aligned shard boundary is 4-aligned), so
+// this is the narrow, mixed-shape case: PANIC rather than pass nil into
+// w4a8Span's length checks three calls down, naming what a repacked-only
+// tensor cannot do here instead of an unattributed nil-slice fault.
 func w4a8BatchOp(aq []int8, aScales []float32, op W4A8Op, M, K, group, nGroups, bpr, j0, j1 int) {
 	canonical := func(c0, c1 int) {
-		if c0 < c1 {
-			w4a8Span(aq, aScales, op.W4, op.Scales, op.Dst, M, K, op.N, group, nGroups, bpr, c0, c1)
+		if c0 >= c1 {
+			return
 		}
+		if op.W4 == nil {
+			panic(fmt.Sprintf("linalg: w4a8BatchOp: repacked-only op (N=%d) needs the canonical "+
+				"fallback for columns [%d,%d) at M=%d — MatmulBTW4A8Batch only serves row4 at "+
+				"whole-quad, M=1 boundaries; a repacked-only WeightMat cannot be used in a batch "+
+				"whose shard boundaries split one of its quads, or at M>1", op.N, c0, c1, M))
+		}
+		w4a8Span(aq, aScales, op.W4, op.Scales, op.Dst, M, K, op.N, group, nGroups, bpr, c0, c1)
 	}
 	if op.Row4 == nil || !row4Usable() || M != 1 || group != 32 || op.N%4 != 0 || K%group != 0 {
 		canonical(j0, j1)
