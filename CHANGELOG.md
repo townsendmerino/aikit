@@ -9,6 +9,61 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.40.0] — 2026-09-10
+
+> **PERFGATE EXCEPTION: `go run -C tools ./perfgate v1.39.1` returns `VERDICT: FAIL`, and it is a
+> false positive from perfgate's own baseline-comparison model — not a production regression.**
+>
+> Darwin/arm64, apple-m1pro, 2026-09-11T05:33:22Z: 5 regressions, reproduced on perfgate's own
+> second measurement — `GEMV_W8A8_baseline` and `W8A8SpanShapes` at K768/N200000, K3584/N18944,
+> and K4096/N4096, all +126% to +235%. Every regressed shape clears the 16.78M-MAC parallel
+> threshold; every shape under it is flat. That pattern looks like a dispatch regression and
+> is not one.
+>
+> The cause is this release's own G-08 fix (`d3cd792`), landing on the near side of the exact
+> comparison that would expose it. Before G-08, `GEMV_W8A8_baseline` and `W8A8SpanShapes` left
+> the Workspace threshold at its default, so a shape above 16.78M MACs silently fanned out across
+> all 8 cores — which is what G-08 flagged (`K4096_N4096` inflating a recorded "45x" kernel
+> comparison by the worker count, docs/audit-2026-09-10.md §G-08). The fix pins
+> `ws.SetThreshold(math.MaxInt)` in both benchmarks so every shape now measures the SERIAL kernel
+> only, by design. perfgate then compares HEAD's binary (serial, pinned) against v1.39.1's
+> (unpinned, parallel at these shapes) under the same shape name: same kernel, fewer cores, not a
+> slower kernel.
+>
+> Verified three ways, not just argued: (1) `w8a8Span` / `w8a8SpanRows` / `dotI8` /
+> `MatmulBTW8A8Pre` are byte-identical between v1.39.1 and HEAD — `git diff v1.39.1 HEAD --
+> linalg/quant.go` touches none of them, only the batched-M-01 and quantiser-M-03 call sites; (2)
+> prev/cur test binaries built once and run interleaved 4x apiece at K768/N200000 land at 1.58ms
+> / 5.15ms with <1% spread on each side — deterministic, not thermal drift (an earlier
+> git-bisect pass using single-sample, non-interleaved timing did chase a false lead into a
+> go.mod-only commit before this was caught); (3) removing the `SetThreshold` pin from HEAD's
+> `W8A8SpanShapes` and rerunning K768/N200000 recovers 1.43-1.50ms, matching v1.39.1 — the
+> production dispatch path, unpinned, is unaffected by anything in this release.
+>
+> No code on this path changed this release; only the benchmark's definition of what it measures
+> did, and only once. v1.41.0's A/B will compare two serial-pinned binaries and see none of this.
+> Recorded as an exception rather than reset so the next perfgate run against v1.40.0 is trusted
+> at face value.
+
+Remediation of the whole-repo performance audit (`docs/audit-2026-09-10.md`): every
+actionable correctness finding, 21 of 24 major performance findings, and the gate
+hardening that makes the rest of it hold. Highlights, all measured and all with the
+box named in their entry:
+
+- **CUDA ViT int8 GEMM 13.8-14.0x** — from the roofline campaign's 7% of `dp4a` roof to
+  essentially at it (M-12).
+- **encoder end-to-end -31.4%** on a long forward (800.1ms -> 549.0ms), from routing the
+  activations to the hand-written SIMD kernels that had no callers (M-07) and fanning the
+  attention head loop (M-05).
+- **amd64 acc64 attention AV 4.8x**, arm64 canonical W4A8 tile **1.93x**, amd64 int8-weight
+  GEMM **2.07x**, batched W8A8 prefill **2.9-4.2x** on arm64 — four new hand-written kernels
+  and one dispatch fix.
+- **`FlatI8.QueryBatch` 3.6x** and **`late.MaxSim` 2.4x** on the retrieval side.
+- **six correctness fixes**, including a CUDA write-after-read race on the ViT segment bounds
+  and a Metal command-buffer abort that was silently returning the previous layer's output.
+- **`perfgate` can now fail**: coverage from 6 measured rows to 45, a blind run exits non-zero,
+  a FAIL must reproduce, and `releasegate` requires the VERDICT in this file.
+
 ### Corrected
 
 Two claims in earlier entries were wrong and are corrected here rather than by rewriting a
@@ -587,6 +642,14 @@ and every shape already above it is unchanged (d768/N50k and d768/N100k both `~`
 `BenchmarkFlatI8QueryThreshold` is new and straddles the boundary. One unexplained residual:
 d256/N100k measured +5.1% (p=0.015) on a path that is above the old threshold and should be
 identical — small enough to read as drift, flagged rather than smoothed over.
+
+`perfgate` VERDICT: FAIL — 5 regression(s) vs v1.39.1 across 27 shapes, confirmed on a second
+measurement — 17/27 shapes resolve the 5.0% class. See the PERFGATE EXCEPTION at the top of this
+section: all 5 are `GEMV_W8A8_baseline`/`W8A8SpanShapes` at shapes above the parallel threshold,
+caused by this release's own G-08 benchmark-serialization fix comparing against v1.39.1's
+unpinned (silently parallel) numbers for the same shapes — not a code regression on this path.
+
+`vulncheck` STATEMENT: no reachable vulnerabilities in 15/15 modules at nobara-pc, 2026-09-11.
 
 ## [1.39.1] — 2026-09-10
 
@@ -3815,7 +3878,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.38.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.40.0...HEAD
+[1.40.0]: https://github.com/townsendmerino/aikit/compare/v1.39.1...v1.40.0
 [1.39.1]: https://github.com/townsendmerino/aikit/compare/v1.39.0...v1.39.1
 [1.39.0]: https://github.com/townsendmerino/aikit/compare/v1.38.0...v1.39.0
 [1.38.0]: https://github.com/townsendmerino/aikit/compare/v1.37.0...v1.38.0
