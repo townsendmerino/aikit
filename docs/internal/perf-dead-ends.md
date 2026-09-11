@@ -450,6 +450,74 @@ analysis kept predicting load-reduction wins that do not exist on arm64.
   to rewrite than to curate, and the sole record of a negative must not be a commit title on an
   unpushed local branch.
 
+### 8.11 · `vit.cu` `attention` full query-tiled rewrite (audit M-14's recommended fix) — **3.2-3.7× SLOWER than the shipped partial fix**, `nvidia-rtx2070s`, 2026-09-11
+- **Tried:** the fix M-14 actually asked for, not the narrower one that shipped
+  (`c5e2b3f`, staging K for the block's ONE query). One block per (head, tile of
+  8 queries — one warp per query), K/V for the tile staged ONCE in shared memory and
+  reused by all 8, online (two-level: per-tile local softmax, one rescale-merge into
+  the running per-query state) softmax so the shared footprint stays
+  `2·ATTN_KTILE·hd·4` bytes regardless of `np` — the standard flash-attention shape,
+  matching the finding's own "query-tiled attention (a block per (head, 16-32
+  queries)...)" fix text. Three variants measured: `ATTN_QT` ∈ {2, 8, 16} and
+  `ATTN_KTILE` ∈ {16, 32}, plus a stripped variant with NO shared-memory K/V staging
+  at all (direct global/L2 reads, same query-tiling and online softmax otherwise).
+- **Mechanism (the premise):** the finding's own count — "≥4.9 GB/layer at so400m"
+  re-streamed from global memory, once per query — assumes that traffic is real DRAM
+  cost. Every variant preserved this project's actual bit-identity posture for this
+  file (`BIT-IDENTITY-EXEMPT`, cosine-tolerance gate, not bit-for-bit) and passed it:
+  `gpu/visioncuda`'s real-checkpoint SigLIP parity held at cosine 1.000000000, worst
+  abs Δ 8.34e-07 — this is a measured PERFORMANCE negative, not an abandoned-for-
+  correctness one.
+- **Number / box:** `BenchmarkCUDAAttention`, `nvidia-rtx2070s`, best variant
+  (`ATTN_QT=8`, `ATTN_KTILE=16`, staged) against the shipped baseline (`c5e2b3f`'s
+  partial fix, which itself declines its own staging above `np=3072` — see M-14's
+  entry — so the baseline numbers below are its UNSTAGED direct-read path at the two
+  largest shapes):
+
+      shape          shipped (c5e2b3f)   query-tiled (this attempt)
+      so400m np729     101 GMAC/s          21.0 GMAC/s
+      so400m np1024    104 GMAC/s          21.1 GMAC/s
+      qwen np1024      108 GMAC/s          23.4 GMAC/s
+      hires np2048      96 GMAC/s          21.3 GMAC/s
+      hires np3072      74 GMAC/s          21.4 GMAC/s
+      hires np4096      68 GMAC/s          21.4 GMAC/s
+
+  Every variant — `ATTN_QT` 2/8/16, `ATTN_KTILE` 16/32, and the no-shared-staging
+  direct-read stripped-down version — landed in the SAME narrow 15.9-23.4 GMAC/s
+  band regardless of what was tuned. `ATTN_KTILE=64` failed to compile at all
+  (`CUDA_ERROR_INVALID_PTX`, register pressure from the per-lane `scores[64]` array).
+- **Why — the premise did not survive contact.** The direct-read variant is the
+  falsification: it removes ALL shared-memory staging, ALL of the barriers that come
+  with it, and reads K/V straight from global memory exactly like the retired
+  per-query kernel's unstaged path did — the ONE thing query-tiling was supposed to
+  buy (fewer bytes crossing to DRAM) is gone, replaced by nothing. It measured
+  IDENTICALLY to the staged version (21.0-21.5 vs 21.4-21.5 GMAC/s at every shape) —
+  not a partial win eaten by overhead, no difference at all. That rules out staging
+  cost, barrier count (also ruled out directly: `ATTN_KTILE=32` halves the tile-loop
+  iteration count from `ATTN_KTILE=16` and changed nothing) and shared-memory
+  occupancy pressure as the bottleneck. It leaves one live explanation, unconfirmed
+  (no `ncu`/`nsys` on the measuring box — a profiler pass would settle this
+  directly): K and V for one head at these shapes are ~1.2 MB each, comfortably
+  inside this card's 4 MB L2 — so the "redundant" per-query re-reads the finding
+  counted as DRAM traffic were most likely already mostly L2 HITS on THIS hardware,
+  and the real cost of the new kernel is the warp-cooperative reduction structure
+  itself (a `__shfl_xor_sync` butterfly per (query, key) pair, ~5 dependent
+  instructions moving ~3 useful floats/lane at hd=72-80) against the retired kernel's
+  and this variant's common ancestor: fully independent, uncommunicating per-thread
+  serial dot products, which cost more redundant memory traffic in theory but need
+  zero cross-thread synchronization to produce it.
+- **What would need to be true to revisit this:** either (a) a profiler on the
+  measuring box to confirm L2 hit rate directly rather than infer it, or (b) a shape
+  where K/V for one head does NOT fit L2 (a much larger `hd` or `np` than any shipped
+  tower uses today — so400m tops out at np=4096, hd=72). Neither is close at hand.
+  `attention_seg` (Qwen's segmented kernel) was not attempted — it never got even the
+  partial K-staging fix `attention` did, so it is a smaller, lower-risk piece of
+  M-14's remaining scope that this result does not speak to either way.
+- **The code is not preserved, on purpose**, same reasoning as §8.10: fully
+  re-derivable from the description and numbers above, and the working tree shipped
+  no change from this attempt — `git log` shows nothing between the audit's M-14
+  partial fix and the anncuda C-04 completion that follows it.
+
 ---
 
 ## Reasoned out, not built — recorded so nobody re-chases them
