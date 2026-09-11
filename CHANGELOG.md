@@ -9,6 +9,8 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.41.0] — 2026-09-11
+
 ### Fixed
 
 - **`gpu/anncuda`: OOM at `NewI8Index`/`ScoreBatch`/`TopKBatch` now releases whatever had already
@@ -49,6 +51,8 @@ excluded from that promise and may change in any release until it graduates.
   faster in isolation" and "the integration measures flat" had nowhere left to hide. Full chase,
   including the two dead ends it passed through first (a wrong memory-latency diagnosis and a
   verified-but-useless prefetch attempt) recorded in `perf-dead-ends.md` §8.13.
+
+### Added
 
 - **`linalg.WeightMat` int4 tensors can now be built repacked-only — no resident canonical
   nibbles/scales at all, closing the 2x-memory gap audit M-22 found (aikit side; the loader that
@@ -91,6 +95,12 @@ excluded from that promise and may change in any release until it graduates.
   (split-half doesn't repack scales, only nibbles). No batch-path equivalent exists for
   split-half — it's M=1-only with no `W4A8Op`-style batch struct, so there was nothing there to
   fix.
+
+`perfgate` VERDICT: PASS — no regression vs v1.40.0 above each shape's floor — 33/45 shapes resolve
+the 5.0% class (unsurprising: M-22 adds new dispatch branches reachable only from the new
+repacked-only constructors, never on the existing canonical/"both" paths this gate measures).
+
+`vulncheck` STATEMENT: no reachable vulnerabilities in 15/15 modules at nobara-pc, 2026-09-11.
 
 ## [1.40.0] — 2026-09-10
 
@@ -3961,7 +3971,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.40.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.41.0...HEAD
+[1.41.0]: https://github.com/townsendmerino/aikit/compare/v1.40.0...v1.41.0
 [1.40.0]: https://github.com/townsendmerino/aikit/compare/v1.39.1...v1.40.0
 [1.39.1]: https://github.com/townsendmerino/aikit/compare/v1.39.0...v1.39.1
 [1.39.0]: https://github.com/townsendmerino/aikit/compare/v1.38.0...v1.39.0
