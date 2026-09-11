@@ -9,6 +9,24 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`gpu/anncuda`: OOM at `NewI8Index`/`ScoreBatch`/`TopKBatch` now releases whatever had already
+  landed on the device instead of leaking it (audit C-04, the anncuda half).** C-04 (v1.40.0)
+  fixed this for `annmetal` and noted the CUDA backend still had the older pattern — recover
+  registered before the allocations with nothing by which to release them, or a release `defer`
+  registered only after all of them succeeded — and left it as future work needing a CUDA box to
+  verify. All three sites now declare their buffers before a single `defer` that releases
+  whatever succeeded and converts the panic to an error, mirroring `annmetal` exactly.
+  Also found while porting the fix: `growBuf` (the scratch-reuse helper `TopKBatch`'s small-batch
+  path shares across calls) released the old buffer before allocating the new one, so a panic out
+  of the allocation left the caller's field pointing at an already-released buffer rather than its
+  old, still-valid one — a later call on the same index would reuse a freed handle. Reordered to
+  allocate first. Verified on `nvidia-rtx2070s` (nobara-pc): full `gpu/anncuda` suite green under
+  `-race`, including `TestCUDATopK_scratchReuseIsInert`, which exercises the `growBuf` path
+  directly across 8 calls with varying (M, k). The OOM panic path itself still needs a real device
+  failure to reach and is not claimed as tested (same shape as G-07).
+
 ## [1.40.0] — 2026-09-10
 
 > **PERFGATE EXCEPTION: `go run -C tools ./perfgate v1.39.1` returns `VERDICT: FAIL`, and it is a

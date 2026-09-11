@@ -133,25 +133,37 @@ func (b *cudaBackend) NewI8Index(bq []int8, scales []float32, n, dim int) (idx a
 	// memory, and the device layer reports OOM as a loud panic (MustBuf) rather
 	// than a silently unusable buffer. Recover it into an error so EnableGPU
 	// declines and the index keeps scoring on the CPU — the right answer for OOM.
+	//
+	// Buffers are declared BEFORE the defer and assigned by name rather than
+	// inline in the returned struct, so a panic part-way through this sequence
+	// is released rather than leaked (audit C-04, ported from gpu/annmetal,
+	// which got this fix first — this constructor used to register its recover
+	// before any allocation but had nothing by which to release the ones that
+	// had already landed, so e.g. codes/scales/qi8 succeeding and qscale then
+	// hitting OOM leaked all three, on the one path where device memory is by
+	// definition short). ReleaseBuf ignores the zero Buffer, so the loop below
+	// is safe over fields a panic never reached.
+	var codes, scl, qi8, qscale, kbuf, nbuf, out gpu.Buffer
 	defer func() {
 		if r := recover(); r != nil {
+			for _, buf := range []gpu.Buffer{codes, scl, qi8, qscale, kbuf, nbuf, out} {
+				b.dev.ReleaseBuf(buf)
+			}
 			idx, err = nil, fmt.Errorf("gpu: device upload failed: %v", r)
 		}
 	}()
-	x := &cudaI8Index{
-		b:      b,
-		n:      n,
-		dim:    dim,
-		codes:  gpu.NewBufferOf(b.dev, bq),
-		scales: gpu.NewBufferOf(b.dev, scales),
-		qi8:    gpu.NewBufferOf(b.dev, make([]int8, dim)),
-		qscale: gpu.NewBufferOf(b.dev, []float32{0}),
-		kbuf:   gpu.NewBufferOf(b.dev, []uint32{uint32(dim)}),
-		nbuf:   gpu.NewBufferOf(b.dev, []uint32{uint32(n)}),
-		out:    b.dev.NewBufferLen(n),
-		hq:     make([]int8, dim),
-	}
-	return x, nil
+	codes = gpu.NewBufferOf(b.dev, bq)
+	scl = gpu.NewBufferOf(b.dev, scales)
+	qi8 = gpu.NewBufferOf(b.dev, make([]int8, dim))
+	qscale = gpu.NewBufferOf(b.dev, []float32{0})
+	kbuf = gpu.NewBufferOf(b.dev, []uint32{uint32(dim)})
+	nbuf = gpu.NewBufferOf(b.dev, []uint32{uint32(n)})
+	out = b.dev.NewBufferLen(n)
+	return &cudaI8Index{
+		b: b, n: n, dim: dim,
+		codes: codes, scales: scl, qi8: qi8, qscale: qscale, kbuf: kbuf, nbuf: nbuf, out: out,
+		hq: make([]int8, dim),
+	}, nil
 }
 
 type cudaI8Index struct {
@@ -229,20 +241,24 @@ func (x *cudaI8Index) ScoreBatch(queries [][]float32, dst []float32) (err error)
 	}
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	// Same OOM-to-error contract as NewI8Index: an M×N output can be large.
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("gpu: batch scratch allocation failed: %v", r)
-		}
-	}()
-	qi8Buf := gpu.NewBufferOf(x.b.dev, qi8)
-	qscaleBuf := gpu.NewBufferOf(x.b.dev, qscale)
-	outBuf := x.b.dev.NewBufferLen(M * N)
+	// Same OOM-to-error contract as NewI8Index (audit C-04): an M×N output can
+	// be large. Declared before the defer, one defer instead of two, so a
+	// partial allocation is released rather than leaked — the release used to
+	// be its own defer registered AFTER the three allocations, so a panic on
+	// the second or third left the first one leaked for the life of the
+	// process (nothing else references it).
+	var qi8Buf, qscaleBuf, outBuf gpu.Buffer
 	defer func() {
 		for _, b := range []gpu.Buffer{qi8Buf, qscaleBuf, outBuf} {
 			x.b.dev.ReleaseBuf(b)
 		}
+		if r := recover(); r != nil {
+			err = fmt.Errorf("gpu: batch scratch allocation failed: %v", r)
+		}
 	}()
+	qi8Buf = gpu.NewBufferOf(x.b.dev, qi8)
+	qscaleBuf = gpu.NewBufferOf(x.b.dev, qscale)
+	outBuf = x.b.dev.NewBufferLen(M * N)
 	if err := x.launchBatch(qi8Buf, qscaleBuf, outBuf, M, N, K); err != nil {
 		return err
 	}
@@ -453,10 +469,20 @@ func (x *cudaI8Index) growBuf(b gpu.Buffer, n int, make func(int) gpu.Buffer) gp
 	if b.Len() >= n && n > 0 {
 		return b
 	}
+	// Allocate the new buffer BEFORE releasing the old one (found while
+	// porting C-04's fix to this file, same MustBuf OOM panic it is about):
+	// the reverse order released the old buffer first, so a panic out of
+	// `make` left the caller's field — t.qi8 etc., on the persistent
+	// per-index cache TopKBatch reuses across calls — still pointing at a
+	// buffer that had already been released instead of its old, valid one. A
+	// later call would then reuse a freed handle. This order costs holding
+	// both sizes at once for a moment; it buys getting back a still-valid old
+	// buffer, untouched, on failure.
+	nb := make(n)
 	if b.Len() > 0 {
 		x.b.dev.ReleaseBuf(b)
 	}
-	return make(n)
+	return nb
 }
 
 // launchTopK selects each query's top k from the [M*N] score matrix, either with one
@@ -651,6 +677,18 @@ func (x *cudaI8Index) TopKBatch(queries [][]float32, k int) (hits [][]ann.Hit, e
 		qi8Buf, qscaleBuf, scoreBuf = t.qi8, t.qscale, t.score
 		idxBuf, valBuf, mBuf, kBuf = t.idx, t.val, t.mBuf, t.kBuf
 	} else {
+		// Registered BEFORE any of these seven allocations, not after (audit
+		// C-04): a panic partway through used to leak whatever had already
+		// landed, because the defer that would release it was not registered
+		// yet. Only this branch's own fresh buffers — the M<=topkScratchMaxM
+		// branch above aliases the persistent per-index cache in x.tk, which
+		// this call must not release. ReleaseBuf ignores the zero Buffer, so
+		// this is safe over the fields a panic never reached.
+		defer func() {
+			for _, b := range []gpu.Buffer{qi8Buf, qscaleBuf, scoreBuf, idxBuf, valBuf, mBuf, kBuf} {
+				x.b.dev.ReleaseBuf(b)
+			}
+		}()
 		qi8Buf = gpu.NewBufferOf(x.b.dev, qi8)
 		qscaleBuf = gpu.NewBufferOf(x.b.dev, qscale)
 		scoreBuf = x.b.dev.NewBufferLen(M * N)
@@ -658,11 +696,6 @@ func (x *cudaI8Index) TopKBatch(queries [][]float32, k int) (hits [][]ann.Hit, e
 		valBuf = x.b.dev.NewBufferLen(M * k)
 		mBuf = gpu.NewBufferOf(x.b.dev, []uint32{uint32(M)})
 		kBuf = gpu.NewBufferOf(x.b.dev, []uint32{uint32(k)})
-		defer func() {
-			for _, b := range []gpu.Buffer{qi8Buf, qscaleBuf, scoreBuf, idxBuf, valBuf, mBuf, kBuf} {
-				x.b.dev.ReleaseBuf(b)
-			}
-		}()
 	}
 	if err := x.launchBatch(qi8Buf, qscaleBuf, scoreBuf, M, N, K); err != nil {
 		return nil, err
