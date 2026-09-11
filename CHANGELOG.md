@@ -9,6 +9,57 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added
+
+- **`linalg`: split-half int4 now serves M>1 — a split-half-only `WeightMat` can serve prefill,
+  not just decode (audit M-22 follow-up, prerequisite for
+  goinfer's `docs/task-int4-layout-2026-09.md` L5).** `RepackInt4SplitHalfInPlace`/
+  `WrapInt4SplitHalfOnly` (v1.41.0) shipped M=1-only: `WeightMat.MatmulBTW4A8Into` panicked at
+  M>1 for a split-half-only tensor by design, since there was neither a canonical fallback nor a
+  split-half kernel above M=1. Not a per-row loop over the M=1 kernel — that would re-pay the
+  nibble unpack per activation row, the exact cost the S-01 tile mechanism exists to remove, and
+  would make prefill through this layout slower than canonical. New: `dotW4A8SplitHalfTile4RowAVX2`
+  (`dot_w4a8_splithalf_tile_amd64.s`), a split-half-input variant of the S-01b AVX2 tile —
+  identical register blocking and accumulation order to the canonical tile
+  (`dotW4A8Tile4RowAVX2`), only the nibble-unpack prologue changed to split-half's (no
+  `VPUNPCKLBW`/`VPUNPCKHBW`, the same two-instruction deletion `dotW4A8SplitHalfAVX2` already
+  makes over the canonical M=1 kernel). Bit-identical to the canonical tile by construction.
+  <br>`WeightMat.MatmulBTW4A8Into` dispatch by M: M=1 → the existing decode kernel; M≥4's
+  `M&^3` tile-eligible rows → the new tile; the `M%4` remainder (all of M when 2≤M<4) → the
+  same per-row kernel M=1 uses, fed from the batch's already-quantized activations. K%32==0
+  stays a hard guard at every M — no ragged-tail path, matching the M=1 kernel's own contract.
+  The M>1 panic is now unreachable for a successfully-constructed split-half-only `WeightMat`;
+  it remains for a hand-built one bypassing the constructors' validation.
+  <br>`W4A8Op` (`MatmulBTW4A8Batch`, the batched q‖k‖v / gate‖up path) gains a `SplitHalf []byte`
+  field, routed at M=1 through the same kernel with no quad-alignment carve-out (unlike `Row4`,
+  split-half doesn't interleave rows — a `SplitHalf` op serves its whole requested range or none
+  of it). The batch path still has no tile for either repacked layout, so a `SplitHalf` op at
+  M>1 still panics — the message now names split-half too. Not reachable today: goinfer's two
+  batch callers are both M=1.
+  <br>Additive throughout: canonical-only, "both", and row4 dispatch are all byte-for-byte
+  unchanged.
+  <br>Verified on real AVX2 hardware via a linux/amd64 container under QEMU (docker/OrbStack
+  `--platform linux/amd64`, TCG emulates AVX2) — checked, not assumed: Rosetta on this Mac
+  (macOS 26.6.2) does NOT expose AVX2 to a darwin/amd64 binary, confirmed by running
+  `TestAVX2_detection` under it first. `go build`/`go vet` clean on amd64 (QEMU) and arm64
+  (native); every new test — bit-identity of the tile against canonical
+  (`TestMatmulBTW4A8SplitHalfTile_bitIdenticalToCanonical`, M∈{4,5,7,8,16,64}, K∈{1536,2048,
+  4096,8960}, N incl. one not a multiple of 8), the M=1-alone-vs-inside-a-batch M-consistency
+  diagonal (`TestWeightMatW4A8_MConsistentAcrossSplitHalfDispatch`), the repacked-only path
+  extended to M>1 (`TestWeightMatSplitHalf_repackedOnlyMatchesCanonical`, M∈{1,2,3,4,8,64}), and
+  the batch path both matching canonical at M=1 and panicking (named) at M>1 — asserts the tile
+  actually engaged (`w4a8SplitHalfTileRows`'s own returned row count, not merely `hasAVX2`) before
+  trusting a result, so a silent fallback could not pass unnoticed. Full `go test ./linalg/...`
+  green on amd64 (QEMU) and arm64 (native), `-race` clean on both; one unrelated pre-existing
+  test, `TestFMAPeakAMD64_empirical`, fails under QEMU (it infers a clock speed from measured
+  GFLOPS, and TCG emulation runs nowhere near real clock rates) — not a regression, not gated by
+  this change, excluded from the run with `-skip`.
+  <br>**Measurement and tag: pending nvidia-rtx2070s.** nobara was unreachable all session
+  (ssh timeout), so no perfgate pass/fail line is recorded in this section on purpose — the
+  release gate's evidence check requires one (or a documented exception, spelled out fully so it
+  does not read as one by accident) before a tag can promote this section, so a tag cannot land
+  until the real GMAC/s numbers replace this paragraph.
+
 ## [1.41.0] — 2026-09-11
 
 ### Fixed

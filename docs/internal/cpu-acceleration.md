@@ -169,7 +169,7 @@ tolerance. Tests assert exact equality.
     `AIKIT_GPU_BENCH=1 go test ./gpu/annmetal/... -run Crossover` (and the
     CUDA mirror in `gpu/anncuda`).
 - **`WeightMat` int4 storage now has three representation policies, fixed at
-  construction (audit M-22, aikit side; CHANGELOG `[Unreleased]`).**
+  construction (audit M-22, aikit side; CHANGELOG `[1.41.0]`).**
   1. **Canonical-only** (`WrapInt4`) — packed nibbles + per-group scales, the
      original storage. Every accessor works; `Int4()` returns them.
   2. **"Both"** (`WrapInt4` + `RepackInt4Row4`/`RepackInt4SplitHalf`) — canonical
@@ -206,6 +206,51 @@ tolerance. Tests assert exact equality.
   real checkpoint yet. The goinfer-side adoption (which tensors qualify, when
   to prefer streaming over in-place) is a documented follow-up, not done here
   — see the M-22 entry in `docs/audit-2026-09-10.md`.
+- **Split-half now serves M>1 — a split-half-only WeightMat can serve prefill,
+  not just decode (audit M-22 follow-up, CHANGELOG `[Unreleased]`, measurement
+  pending `nvidia-rtx2070s`).** Before this, `WeightMat.MatmulBTW4A8Into`
+  panicked at M>1 for a split-half-only tensor by design — there was no
+  canonical fallback and no split-half kernel above M=1. goinfer wants
+  split-half-only on amd64 CPU boxes (the parked +2.10% decode win, whose
+  memory cost repacked-only removes — +624.8 MiB on a 1.5B), and every such
+  box prefills, so this closed the gap: a split-half-input variant of the
+  S-01b AVX2 tile (`dotW4A8SplitHalfTile4RowAVX2`), instruction-for-
+  instruction the canonical tile's register-blocked body with only the
+  nibble-unpack prologue swapped for split-half's (no `VPUNPCKLBW`/
+  `VPUNPCKHBW` — see `dotW4A8SplitHalfAVX2`'s own comment for why the layout
+  makes that unpack unnecessary). Bit-identical to the canonical tile by
+  construction, the same way `dotW4A8SplitHalfAVX2` is bit-identical to
+  `dotW4A8FoldAVX2`.
+  <br>**`WeightMat.MatmulBTW4A8Into`'s split-half dispatch by M:**
+
+  | M | kernel |
+  |---|---|
+  | M=1 | `matmulBTW4A8SplitHalfInto` — the decode kernel, `dotW4A8SplitHalfAVX2`, one call per output |
+  | M≥4, the `M&^3` tile-eligible rows | `matmulBTW4A8SplitHalfMultiInto` → `dotW4A8SplitHalfTile4RowAVX2` — one weight-row unpack shared across 4 activation rows |
+  | any M, the `M%4` remainder (this is ALL of M when 2≤M<4) | `matmulBTW4A8SplitHalfMultiInto` → `dotW4A8SplitHalfAVX2`, one activation row at a time — the same per-row kernel M=1 uses, just fed from the already-quantized batch rather than a fresh single-row quantize |
+
+  K%32==0 is a hard guard at every M (no ragged-tail path, matching the M=1
+  kernel's own contract) — `Int4SplitHalfUsable` already refuses a tensor
+  that doesn't satisfy this at construction, so a split-half-only WeightMat
+  can never present a bad K to any of these three rows.
+  <br>`MatmulBTW4A8Batch` (the batched q‖k‖v / gate‖up entry) gained a
+  `SplitHalf []byte` field on `W4A8Op` (scales are `Scales`, shared with
+  canonical — never repacked), routed at M=1 through the same
+  `dotW4A8SplitHalfAVX2` kernel with NO quad-alignment carve-out (unlike
+  `Row4`, split-half doesn't interleave rows, so a `SplitHalf` op serves its
+  entire requested column range or none of it). The batch path still has no
+  tile for EITHER repacked layout, so a `SplitHalf` op at M>1 still panics,
+  now naming split-half in the message too — this is seam-completeness for
+  a currently-unreachable case (goinfer's batch callers are both M=1), not a
+  new capability.
+  <br>Verified on real AVX2 hardware via a linux/amd64 container under QEMU
+  (nobara was unreachable this session): `go build`/`go vet` clean, the new
+  bit-identity/M-consistency/batch tests all green, and the full
+  `go test ./linalg/...` suite green with `-race` (one unrelated pre-existing
+  test, `TestFMAPeakAMD64_empirical`, fails under QEMU — it infers a clock
+  speed from measured GFLOPS and TCG emulation runs nowhere near real
+  clock rates, not a regression). The perfgate VERDICT/measurement itself
+  still needs real hardware and is recorded as pending in the CHANGELOG.
 
 ### AVX2 kernel numbers (Ryzen 7 3700X, `-bench 'Dot'`, MB/s)
 

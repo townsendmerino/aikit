@@ -29,3 +29,9 @@ func (w *WeightMat) RepackInt4SplitHalf() bool { return false }
 // splitHalfUsable is always false off amd64 — see the arm64 file's twin for
 // the same reasoning. Audit M-22.
 func splitHalfUsable() bool { return false }
+
+// w4a8BatchSplitHalfSpan is unreachable off amd64, same reasoning as the
+// arm64 twin. Audit M-22 follow-up.
+func w4a8BatchSplitHalfSpan(aq []int8, aScale float32, splitHalf []byte, scales, dst []float32, K, N, nGroups, bpr, j0, j1 int) {
+	panic("linalg: w4a8BatchSplitHalfSpan reached off amd64 — splitHalfUsable() should have gated this")
+}

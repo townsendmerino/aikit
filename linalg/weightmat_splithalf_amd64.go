@@ -50,13 +50,15 @@ func (w *WeightMat) RepackInt4SplitHalf() bool {
 }
 
 // MatmulBTW4A8Into is the WeightMat-method form for an int4-resident w: it uses the split-half
-// AVX2 kernel when RepackInt4SplitHalf has populated the layout and M=1, and the canonical
-// per-row kernel otherwise.
+// AVX2 kernels when RepackInt4SplitHalf has populated the layout, and the canonical per-row
+// kernel otherwise.
 //
-// M=1 ONLY, matching arm64's row4 dispatch and for the same reason: this is a decode-path
-// optimization. Prefill (M>1) amortizes the unpack across many activation rows, so the shuffle
-// ops the split-half layout deletes are not the binding cost there, and routing it through an
-// untested path would buy nothing for the risk.
+// TWO split-half kernels, split at M=1, the same shape as arm64's row4 dispatch. M=1 takes
+// matmulBTW4A8SplitHalfInto, the decode kernel. M>1 takes matmulBTW4A8SplitHalfMultiInto (audit
+// M-22 follow-up, prerequisite for a split-half-only WeightMat to serve prefill): the AVX2 tile
+// over the M&^3 tile-eligible rows, the M%4 remainder through the same per-row kernel M=1 uses.
+// Before this, M>1 had no split-half path at all and a split-half-only WeightMat (no canonical
+// to fall back to) panicked here — see docs/audit-2026-09-10.md's M-22 entry.
 //
 // A WeightMat that was never repacked — including every paged tensor, which by construction has
 // no load-time repack step because a read-only mmap span cannot be rewritten in place — simply
@@ -65,24 +67,27 @@ func (w *WeightMat) RepackInt4SplitHalf() bool {
 //
 // Chooses a KERNEL, never a numeric result: the two layouts hold the same logical weights and
 // the kernels do the same arithmetic in the same order
-// (TestWeightMatSplitHalf_matchesCanonical).
+// (TestWeightMatSplitHalf_matchesCanonical, TestWeightMatSplitHalf_repackedOnlyMatchesCanonical).
 func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
-	if M == 1 && w.q4SplitHalf != nil {
-		matmulBTW4A8SplitHalfInto(ws, a, w.q4SplitHalf, w.q4s, dst, w.cols, w.rows, w.group)
+	if w.q4SplitHalf != nil {
+		if M == 1 {
+			matmulBTW4A8SplitHalfInto(ws, a, w.q4SplitHalf, w.q4s, dst, w.cols, w.rows, w.group)
+			return
+		}
+		matmulBTW4A8SplitHalfMultiInto(ws, a, w.q4SplitHalf, w.q4s, dst, M, w.cols, w.rows, w.group)
 		return
 	}
-	// audit M-22: reachable at M>1 for a split-half-only WeightMat — amd64 has
-	// no register-blocked tile for split-half (unlike arm64's row4, which got
-	// one specifically so this branch stays reachable for M>1 too), so there
-	// is genuinely no fast path for prefill through this layout yet, and
-	// w.q4 == nil here means there is no canonical to fall back to either. A
-	// canonical-only or "both" WeightMat never reaches this: q4SplitHalf is
-	// nil for canonical-only, and w.q4 is non-nil for "both", so the call
-	// below is identical to before this check existed for both those cases.
+	// audit M-22: structurally unreachable for a successfully-constructed
+	// split-half-only WeightMat — the branch above now catches q4SplitHalf !=
+	// nil at every M, so this is reached only by a hand-built WeightMat{} that
+	// bypasses RepackInt4SplitHalfInPlace/WrapInt4SplitHalfOnly's validation
+	// (no split-half AND no canonical). A canonical-only or "both" WeightMat
+	// never reaches this: q4SplitHalf is nil for canonical-only, and w.q4 is
+	// non-nil for "both", so the call below is identical to before this check
+	// existed for both those cases.
 	if w.q4 == nil {
-		panic(fmt.Sprintf("linalg: WeightMat.MatmulBTW4A8Into: split-half-only WeightMat (rows=%d cols=%d) "+
-			"has no path for M=%d — the split-half AVX2 kernel is M=1 only and there is no canonical "+
-			"fallback; a split-half-only tensor cannot serve M>1 through this method", w.rows, w.cols, M))
+		panic(fmt.Sprintf("linalg: WeightMat.MatmulBTW4A8Into: no split-half and no canonical layout "+
+			"(rows=%d cols=%d) — nothing to dispatch to", w.rows, w.cols))
 	}
 	MatmulBTW4A8Into(ws, a, w.q4, w.q4s, dst, M, w.cols, w.rows, w.group)
 }
@@ -138,3 +143,13 @@ func w4a8SplitHalfSpan(aq []int8, aScale float32, w4sh []byte, wScales, dst []fl
 // (weightmat.go, audit M-22) for a caller building a repacked-only
 // WeightMat, which has no canonical to fall back to if this is false.
 func splitHalfUsable() bool { return hasAVX2 && !hasAVX512VNNIVL }
+
+// w4a8BatchSplitHalfSpan is w4a8SplitHalfSpan reached from the portable batch
+// span (quant.go's w4a8BatchOp), which is compiled on every architecture —
+// exists only so that file can name the split-half kernel without an
+// amd64-only symbol reference. The non-amd64 twin (weightmat_splithalf_
+// arm64.go, weightmat_canonical_other.go) is unreachable behind
+// splitHalfUsable(). Audit M-22 follow-up.
+func w4a8BatchSplitHalfSpan(aq []int8, aScale float32, splitHalf []byte, scales, dst []float32, K, N, nGroups, bpr, j0, j1 int) {
+	w4a8SplitHalfSpan(aq, aScale, splitHalf, scales, dst, K, N, nGroups, bpr, j0, j1)
+}

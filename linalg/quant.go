@@ -769,11 +769,22 @@ func w4a8SpanRows(aq []int8, aScales []float32, w4 []byte, wScales, dst []float3
 // canonical. W4/Scales are required either way, because a column sub-range that
 // is not quad-aligned falls back to them (the two layouts are bit-identical, so
 // the fallback is a dispatch detail, not a numeric one).
+//
+// SplitHalf is amd64's twin of Row4, at M=1 only (the batch path has no
+// register-blocked tile for split-half, unlike WeightMat.MatmulBTW4A8Into's
+// M>1 case — audit M-22 follow-up). UNLIKE row4, split-half does not
+// interleave rows, so there is no quad-alignment carve-out: a SplitHalf op
+// serves its ENTIRE requested column range directly, whole or not at all.
+// It has no Scales twin of its own — split-half permutes nibbles within a
+// group and never repacks scales (RepackW4A8SplitHalf's own doc), so Scales
+// serves double duty: canonical's per-group scales when W4 != nil, or the
+// same shared per-group scales when only SplitHalf is set.
 type W4A8Op struct {
 	W4         []byte
 	Scales     []float32
 	Row4       []byte
 	Row4Scales []float32
+	SplitHalf  []byte
 	Dst        []float32
 	N          int
 }
@@ -812,18 +823,24 @@ func MatmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []W4A8Op
 	totalN := 0
 	for _, op := range ops {
 		// audit M-22: a repacked-only op (W4 nil) has no canonical bytes to
-		// validate — check Row4/Row4Scales's length against the SAME formula
-		// instead. RepackW4A8Row4's own contract ("same byte count as the
-		// input; only the bit arrangement changes") is what makes this valid:
-		// row4's byte/float count for N rows is identical to canonical's, so
-		// the existing N*bytesPerRow / N*nGroups shape check is unchanged,
-		// only which slice's length feeds it. A canonical op (W4 != nil) is
-		// checked exactly as before this case existed.
+		// validate — check Row4/Row4Scales's (or SplitHalf's) length against
+		// the SAME formula instead. RepackW4A8Row4's own contract ("same byte
+		// count as the input; only the bit arrangement changes") is what
+		// makes this valid for row4; split-half shares Scales with canonical
+		// (never repacked), so its own length check reuses Scales directly. A
+		// canonical op (W4 != nil) is checked exactly as before either case
+		// existed.
 		w4Len, scalesLen := len(op.W4), len(op.Scales)
 		checkPacked, checkScales := op.W4, op.Scales
-		if op.W4 == nil {
+		switch {
+		case op.W4 != nil:
+			// unchanged.
+		case op.Row4 != nil:
 			w4Len, scalesLen = len(op.Row4), len(op.Row4Scales)
 			checkPacked, checkScales = op.Row4, op.Row4Scales
+		case op.SplitHalf != nil:
+			w4Len, scalesLen = len(op.SplitHalf), len(op.Scales)
+			checkPacked, checkScales = op.SplitHalf, op.Scales
 		}
 		checkMatmulW4A8("MatmulBTW4A8Batch", len(a), w4Len, scalesLen, len(op.Dst), M, K, op.N, group)
 		checkGroupMatmul("MatmulBTW4A8Batch", len(a), checkPacked, checkScales, len(op.Dst), M, K, op.N, group)
@@ -861,9 +878,13 @@ func w4a8BatchSpan(aq []int8, aScales []float32, ops []W4A8Op, M, K, group, nGro
 }
 
 // w4a8BatchOp computes one op's local column range [j0,j1), preferring the row4
-// kernel over the quad-aligned interior when the op carries that layout.
+// kernel over the quad-aligned interior when the op carries that layout, or the
+// split-half kernel over the WHOLE range when it carries that one instead (audit
+// M-22 follow-up: split-half has no row-interleave, so unlike row4 it has no
+// quad-alignment carve-out — a SplitHalf op serves its entire requested range or
+// none of it).
 //
-// The edges are the only fiddly part and they are rarely non-empty: fan-out
+// The edges are the only fiddly part for row4, and they are rarely non-empty: fan-out
 // shard boundaries are multiples of 8 columns and real N values are multiples of
 // 4, so the interior usually covers everything. When it does not, the unaligned
 // columns run canonical — legitimate because the two layouts are bit-identical
@@ -871,13 +892,15 @@ func w4a8BatchSpan(aq []int8, aScales []float32, ops []W4A8Op, M, K, group, nGro
 // pins, so this is a dispatch choice and never a numeric one.
 //
 // op.W4 == nil (a repacked-only WeightMat's op, audit M-22) reaches canonical
-// only for an edge or at M>1 — this batched path has no row4 TILE (unlike
-// WeightMat.MatmulBTW4A8Into's M>1 case on arm64), so M>1 was already
-// canonical-only before repacked-only existed. A batch where every op shares
-// N%4==0 keeps every edge empty (ws.parallel's fan-out shards on multiples of
-// 8, and a 4-aligned base plus an 8-aligned shard boundary is 4-aligned), so
-// this is the narrow, mixed-shape case: PANIC rather than pass nil into
-// w4a8Span's length checks three calls down, naming what a repacked-only
+// only for an edge (row4) or at M>1 (row4 or split-half) — this batched path has
+// no register-blocked tile for EITHER repacked layout (unlike
+// WeightMat.MatmulBTW4A8Into's M>1 case, which has both: row4's on arm64,
+// split-half's on amd64 as of this follow-up), so M>1 was already canonical-only
+// for a repacked-only op before and after that method-level fix. A batch where
+// every op shares N%4==0 keeps every row4 edge empty (ws.parallel's fan-out
+// shards on multiples of 8, and a 4-aligned base plus an 8-aligned shard boundary
+// is 4-aligned), so this is the narrow, mixed-shape case: PANIC rather than pass
+// nil into w4a8Span's length checks three calls down, naming what a repacked-only
 // tensor cannot do here instead of an unattributed nil-slice fault.
 func w4a8BatchOp(aq []int8, aScales []float32, op W4A8Op, M, K, group, nGroups, bpr, j0, j1 int) {
 	canonical := func(c0, c1 int) {
@@ -886,11 +909,16 @@ func w4a8BatchOp(aq []int8, aScales []float32, op W4A8Op, M, K, group, nGroups, 
 		}
 		if op.W4 == nil {
 			panic(fmt.Sprintf("linalg: w4a8BatchOp: repacked-only op (N=%d) needs the canonical "+
-				"fallback for columns [%d,%d) at M=%d — MatmulBTW4A8Batch only serves row4 at "+
-				"whole-quad, M=1 boundaries; a repacked-only WeightMat cannot be used in a batch "+
-				"whose shard boundaries split one of its quads, or at M>1", op.N, c0, c1, M))
+				"fallback for columns [%d,%d) at M=%d — MatmulBTW4A8Batch only serves row4/split-half "+
+				"at M=1 (row4 additionally needs whole-quad boundaries); a repacked-only WeightMat "+
+				"cannot be used in a batch whose shard boundaries split one of its row4 quads, or at "+
+				"M>1", op.N, c0, c1, M))
 		}
 		w4a8Span(aq, aScales, op.W4, op.Scales, op.Dst, M, K, op.N, group, nGroups, bpr, c0, c1)
+	}
+	if op.SplitHalf != nil && splitHalfUsable() && M == 1 && group == 32 && K%group == 0 {
+		w4a8BatchSplitHalfSpan(aq, aScales[0], op.SplitHalf, op.Scales, op.Dst, K, op.N, nGroups, bpr, j0, j1)
+		return
 	}
 	if op.Row4 == nil || !row4Usable() || M != 1 || group != 32 || op.N%4 != 0 || K%group != 0 {
 		canonical(j0, j1)

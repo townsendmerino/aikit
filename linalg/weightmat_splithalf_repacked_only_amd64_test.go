@@ -29,10 +29,12 @@ func vnniDeclineCheck(t *testing.T) bool {
 }
 
 // TestWeightMatSplitHalf_repackedOnlyMatchesCanonical is TestWeightMatSplit
-// Half_matchesCanonical's repacked-only twin (audit M-22): a split-half-only
-// WeightMat, built by RepackInt4SplitHalfInPlace, must produce the same M=1
-// output as canonical — split-half is M=1 only (MatmulBTW4A8Into's own
-// guard), so unlike row4 this has no M sweep to run.
+// Half_matchesCanonical's repacked-only twin (audit M-22, extended by the
+// M-22 split-half-M>1 follow-up): a split-half-only WeightMat, built by
+// RepackInt4SplitHalfInPlace, must produce the same output as canonical at
+// EVERY M in the sweep — M=1 through the decode kernel, M>=4 through the
+// new tile, 2<=M<4 through the tile's own per-row remainder path — with no
+// panic, closing the M>1 gap MatmulBTW4A8Into used to guard against.
 func TestWeightMatSplitHalf_repackedOnlyMatchesCanonical(t *testing.T) {
 	if !vnniDeclineCheck(t) {
 		return
@@ -46,29 +48,37 @@ func TestWeightMatSplitHalf_repackedOnlyMatchesCanonical(t *testing.T) {
 			if !Int4SplitHalfUsable(sh.cols, group) {
 				t.Skip("split-half not usable for this shape")
 			}
-			q4, q4s := quantizeInt4Random(rng, sh.rows, sh.cols, group)
-			canon := WrapInt4(cloneBytes(q4), cloneFloats(q4s), sh.rows, sh.cols, group)
-			a := make([]float32, sh.cols)
-			for i := range a {
-				a[i] = float32(rng.NormFloat64())
-			}
+			for _, M := range []int{1, 2, 3, 4, 8, 64} {
+				t.Run("M"+itoa(M), func(t *testing.T) {
+					if M >= 4 {
+						assertSplitHalfTileEngages(t, M, sh.cols)
+					}
+					q4, q4s := quantizeInt4Random(rng, sh.rows, sh.cols, group)
+					canon := WrapInt4(cloneBytes(q4), cloneFloats(q4s), sh.rows, sh.cols, group)
+					a := make([]float32, M*sh.cols)
+					for i := range a {
+						a[i] = float32(rng.NormFloat64())
+					}
 
-			var wsCanon Workspace
-			want := make([]float32, sh.rows)
-			canon.MatmulBTInto(&wsCanon, a, want, 1)
+					var wsCanon Workspace
+					want := make([]float32, M*sh.rows)
+					canon.MatmulBTInto(&wsCanon, a, want, M)
 
-			w, ok := RepackInt4SplitHalfInPlace(cloneBytes(q4), cloneFloats(q4s), sh.rows, sh.cols, group)
-			if !ok {
-				t.Fatal("RepackInt4SplitHalfInPlace: ok=false")
-			}
-			var ws Workspace
-			got := make([]float32, sh.rows)
-			w.MatmulBTInto(&ws, a, got, 1)
+					w, ok := RepackInt4SplitHalfInPlace(cloneBytes(q4), cloneFloats(q4s), sh.rows, sh.cols, group)
+					if !ok {
+						t.Fatal("RepackInt4SplitHalfInPlace: ok=false")
+					}
+					var ws Workspace
+					got := make([]float32, M*sh.rows)
+					w.MatmulBTInto(&ws, a, got, M)
 
-			for i := range got {
-				if got[i] != want[i] {
-					t.Fatalf("row %d: repacked-only %v, canonical %v", i, got[i], want[i])
-				}
+					for i := range got {
+						if got[i] != want[i] {
+							t.Fatalf("M=%d idx=%d (row %d, col %d): repacked-only %v, canonical %v",
+								M, i, i/sh.rows, i%sh.rows, got[i], want[i])
+						}
+					}
+				})
 			}
 		})
 	}

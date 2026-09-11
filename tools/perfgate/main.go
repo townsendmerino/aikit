@@ -66,12 +66,16 @@ const (
 	//	GEMV_W8A8_baseline        W8A8 M=1 through the f32 entry
 	//	MatmulBTW8A8Batch_prefill W8A8 M>1 — the batched tile, goinfer's prefill
 	//	W4A8_CanonicalVsSplitHalf W4A8 M=1 — the int4 decode kernel
+	//	MatmulBTW4A8SplitHalfTile W4A8 M>1 on amd64 split-half-only — the tile
+	//	                          this gate exists to protect (audit M-22 follow-up:
+	//	                          split-half M>1)
 	//	MatmulQKAcc64/AVAcc64     the f64 attention kernels at depth
 	//	AttendTileFused_expKind   the fused ViT attention schedule
 	//	SoftmaxRowKernels/SiLUKernels  the S-06 contract transcendentals
 	//	QuantizeRowInt8           the activation quantiser
 	defaultBench = `^(BenchmarkW8A8SpanShapes|BenchmarkGEMV_W8A8_baseline|` +
 		`BenchmarkMatmulBTW8A8Batch_prefill|BenchmarkW4A8_CanonicalVsSplitHalf|` +
+		`BenchmarkMatmulBTW4A8SplitHalfTile|` +
 		`BenchmarkMatmulQKAcc64|BenchmarkMatmulAVAcc64|BenchmarkAttendTileFused_expKind|` +
 		`BenchmarkSoftmaxRowKernels|BenchmarkSiLUKernels|BenchmarkQuantizeRowInt8)$`
 	defaultPkg = "./linalg"
