@@ -30,3 +30,27 @@ func BenchmarkFlatI8QueryThreshold(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkFlatI8QueryBatchCPU covers audit M-18: with no device attached,
+// QueryBatch fell through to a per-query loop, so the corpus weight matrix was
+// streamed once PER QUERY instead of once for the batch. The batched M-row
+// W8A8 GEMM was already in the file, reachable only through the GPU shard
+// split.
+func BenchmarkFlatI8QueryBatchCPU(b *testing.B) {
+	const d = 256
+	for _, n := range []int{10_000, 100_000} {
+		for _, batch := range []int{8, 64} {
+			b.Run(fmt.Sprintf("N%d/batch%d", n, batch), func(b *testing.B) {
+				corpus := makeUnitVectors(n, d, 0xfeed)
+				queries := makeUnitVectors(batch, d, 0xdade)
+				f := NewFlatI8(corpus)
+				b.ResetTimer()
+				for b.Loop() {
+					sinkHitsBatch = f.QueryBatch(queries, 10)
+				}
+			})
+		}
+	}
+}
+
+var sinkHitsBatch [][]Hit

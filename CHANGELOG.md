@@ -11,6 +11,16 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**CPU-only `FlatI8.QueryBatch` uses the batched M-row GEMM — 3.6x (audit M-18).** The batched
+W8A8 kernel was already in the file, reachable ONLY through the GPU shard split; with no device
+attached `QueryBatch` fell through to a per-query loop, so the corpus weight matrix was streamed
+once per query instead of once per batch. Every recorded GPU "x vs CPU" crossover was measured
+against that non-batching baseline. Measured on `apple-m1pro`, benchstat `-count=6`, dim 256:
+N=10k/batch=8 **-72.6%**, N=10k/batch=64 **-78.3%**, N=100k/batch=8 **-66.8%**,
+N=100k/batch=64 **-70.3%**, geomean **-72.3%** (all p=0.002) — above the 2.1-2.5x the
+shard-split records bounded it at. `BenchmarkFlatI8QueryBatchCPU` is new.
+
+
 **`late.MaxSim` scores eight document tokens per kernel call — 2.4x (audit M-20).** Late
 interaction is the one-vs-many shape `linalg.Dot8x4` exists for, but `MaxSim` was calling the
 single-row `linalg.Dot` once per (query token x doc token) pair, re-streaming the query strip

@@ -112,6 +112,30 @@ func (f *FlatI8) QueryBatch(queries [][]float32, k int) [][]Hit {
 			return out
 		}
 	}
+	// CPU batched path (audit M-18). scoreShardCPU is the M-row W8A8 GEMM — the
+	// same kernel query() runs at M=1, generalized to the batch — and it already
+	// sat in this file, reachable ONLY through the GPU shard split. With no
+	// device attached the batch fell through to a per-query loop, so the CPU
+	// scored the corpus once per query and streamed the whole weight matrix
+	// every time instead of once for the batch. Every recorded GPU "x vs CPU"
+	// crossover was measured against that non-batching baseline, and the
+	// shard-split records bound this path at >= 2.1-2.5x at N=100k/batch=64.
+	//
+	// Only when there is no device and no pager: the per-query fallback below
+	// still has to serve single-query GPU scoring and the paged scan, both of
+	// which Query dispatches on and neither of which this kernel covers.
+	// The gpuShard conditions are load-bearing and are NOT implied by f.gpu ==
+	// nil: a shard is wired through gpuShard/gpuShardRows independently, and
+	// when a wired shard FAILS this path is reached with gpuShardRows still set.
+	// scoreShardCPU would then score only [gpuShardRows, n) and return a
+	// corpus-partial answer — caught by TestQueryBatch_shardSplitFallsThrough.
+	// Requiring gpuShardRows == 0 keeps this to the plain CPU index, where
+	// scoreShardCPU scores [0, n) and offsets by 0.
+	if f.gpu == nil && f.pager == nil && f.gpuShard == nil && f.gpuShardRows == 0 && allDim && k > 0 {
+		if hits, ok := f.scoreShardCPU(queries, k); ok {
+			return hits
+		}
+	}
 	// Fallback: per query (CPU, or single-query GPU if enabled).
 	for m, q := range queries {
 		out[m] = f.Query(q, k)
@@ -333,6 +357,9 @@ func (f *FlatI8) scoreShardCPU(queries [][]float32, k int) ([][]Hit, bool) {
 		sc.dst = make([]float32, need)
 	}
 	dst := sc.dst[:need]
+	// Same measured threshold Query uses (audit M-19): the pooled Workspace is a
+	// zero value and would otherwise inherit goinfer's decode-tuned parThreshold.
+	sc.ws.SetThreshold(flatParallelThreshold)
 	linalg.MatmulBTW8A8Into(&sc.ws, qbuf, f.bq[f.gpuShardRows*f.dim:], f.scales[f.gpuShardRows:], dst, M, f.dim, shardN)
 	hits := make([][]Hit, M)
 	for m := range queries {
