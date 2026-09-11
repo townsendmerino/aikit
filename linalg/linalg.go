@@ -3,6 +3,7 @@ package linalg
 import (
 	"runtime"
 	"sync"
+	"sync/atomic"
 )
 
 // Dot returns Σ a[i]*b[i]. len(a) must equal len(b).
@@ -221,14 +222,47 @@ func parallelSpawnCols(N, workers int, fn func(j0, j1 int)) {
 	if r := chunk % 8; r != 0 {
 		chunk += 8 - r
 	}
+
+	// DYNAMIC CHUNKING (audit M-08). The workers used to take one fixed shard
+	// each, so the slowest-STARTING worker set the barrier for all of them. S-02
+	// measured the mechanism on decode: a start spread of 92.6 µs against a
+	// 57.7 µs median shard — the goroutines do not begin together, and with a
+	// static split an early-woken worker finishes its shard and then idles at the
+	// barrier while a late-woken one still has its whole shard to do. Handing out
+	// chunks from an atomic counter lets the early workers absorb the late ones'
+	// share. Measured 1.135x at six workers when S-02 evaluated it; it was
+	// recorded as "complementary rather than a substitute" for the batch form
+	// that shipped in v1.34.0, and then never built.
+	//
+	// NUMERICALLY INERT, for the same reason the width contract is: every output
+	// column is still computed in full by exactly one worker, and the chunks stay
+	// 8-aligned, so no 8-column group is ever split. WHICH worker takes a chunk
+	// does not enter the arithmetic.
+	//
+	// grain is smaller than chunk so there is something left to steal — one shard
+	// per worker would reduce to the static split. 8-aligned for the contract
+	// above; clamped so a tiny N does not spawn a counter per column.
+	grain := chunk / 4
+	if r := grain % 8; r != 0 {
+		grain += 8 - r
+	}
+	if grain < 8 {
+		grain = 8
+	}
+	var next atomic.Int64
 	var wg sync.WaitGroup
-	for j0 := 0; j0 < N; j0 += chunk {
-		j1 := min(j0+chunk, N)
+	for range workers {
 		wg.Add(1)
-		go func(j0, j1 int) {
+		go func() {
 			defer wg.Done()
-			fn(j0, j1)
-		}(j0, j1)
+			for {
+				j0 := int(next.Add(int64(grain))) - grain
+				if j0 >= N {
+					return
+				}
+				fn(j0, min(j0+grain, N))
+			}
+		}()
 	}
 	wg.Wait()
 }

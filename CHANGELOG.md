@@ -11,6 +11,24 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**Matmul fan-out hands out work dynamically instead of one fixed shard per worker — 11.5%
+(audit M-08).** `parallelSpawnCols` split the output columns into one equal shard per worker, so
+the slowest-STARTING worker set the barrier for all of them. S-02 measured the mechanism on
+decode — a goroutine start spread of 92.6 µs against a 57.7 µs median shard — and measured the
+remedy at **1.135x at six workers**, recording it as "complementary rather than a substitute"
+for the batch form that shipped in v1.34.0. It was then never built. Workers now pull 8-aligned
+chunks from an atomic counter, so an early-woken worker absorbs a late one's share. Measured on
+`apple-m1pro`, benchstat `-count=8 -benchtime=2s`, over the batched prefill shapes: geomean
+**-11.5%**, and on the shapes that actually fan out -7.5% to **-21.7%** (all p=0.000) — in line
+with the 1.135x S-02 predicted. The two serial-path shapes in the set move +1.6% and +0.6%,
+below the measured harness floor and not attributable.
+
+Numerically inert, for the same reason the fan-out WIDTH already was: every output column is
+still computed in full by exactly one worker and chunks stay 8-aligned, so no 8-column group is
+split and which worker takes a chunk never enters the arithmetic.
+`TestParallelWidth_bitIdentical` and the M-consistency suites gate it, plus `-race`.
+
+
 **`embed`: Q6_K dequant hoists the `d·scale` product out of its element loop (audit M-24).** The
 sub-block index `is` takes only two values across the 32 iterations, so the same eight products
 were recomputed sixteen times each — four float32 multiplies per output element, on a load-time
