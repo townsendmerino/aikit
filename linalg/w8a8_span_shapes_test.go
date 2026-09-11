@@ -2,6 +2,7 @@ package linalg
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"testing"
 )
@@ -67,6 +68,13 @@ func BenchmarkW8A8SpanShapes(b *testing.B) {
 		}
 		dst := make([]float32, N)
 		var ws Workspace
+		// PIN THE KERNEL SERIAL (audit G-01). Three of these shapes sit within a
+		// few percent of parThreshold on a 16-thread box (K3584_N4096 is 14.7M
+		// MACs against 16.78M), so an unpinned run measures whether the fork/join
+		// happened, not what the kernel did — which is why those rows have carried
+		// ±11-35% floors and read BLIND in every recorded perfgate run. The fan-out
+		// is worth measuring, but not in the benchmark whose job is the kernel.
+		ws.SetThreshold(math.MaxInt)
 		mb := float64(K) * float64(N) / (1 << 20)
 		// The regime is in the sub-benchmark NAME, not just a log line: the A/B gate
 		// (tools/perfgate) and any benchstat run parse the name, and the whole point of

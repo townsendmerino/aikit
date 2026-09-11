@@ -73,6 +73,7 @@ func run(args []string) int {
 		{Name: "golangci-lint", Run: func() gate.Cell { return checkLint(root) }},
 		{Name: "apidiff", Run: func() gate.Cell { return checkAPIDiff(root, ver) }},
 		{Name: "core-deps", Run: func() gate.Cell { return checkCoreDeps(root) }},
+		{Name: "perf-evidence", Run: func() gate.Cell { return checkPerfEvidence(root, ver) }},
 	}
 	cells := gate.RunAll(checks)
 	rep := gate.ReconcileWith(cells, gate.FailWins)
@@ -291,4 +292,57 @@ func firstLine(s string) string {
 		}
 	}
 	return ""
+}
+
+// (5) PERF EVIDENCE — the release's CHANGELOG section must carry a perfgate
+// VERDICT line, or an explicit EXCEPTION saying why it does not (audit G-04).
+//
+// v1.38.0 — the release that changed BOTH ViT towers' attention schedule —
+// shipped with no perfgate, no vulncheck and no recorded exception, and this
+// gate passed it, because it only checked that a CHANGELOG section and a
+// compare link existed. The "exception recorded in the open" convention
+// introduced in v1.35.0 decayed to silence over three releases, which is what
+// an unenforced convention does.
+//
+// The gpu module's tag-evidence workflow already requires a VERDICT: line in
+// the tag message; this is the root module's equivalent, checked against the
+// CHANGELOG section where this repo actually records its gates. Deliberately
+// NOT a check that perfgate passed — that is perfgate's job and its exit code.
+// This checks only that the question was asked and answered in the open.
+func checkPerfEvidence(root, ver string) gate.Cell {
+	data, err := os.ReadFile(filepath.Join(root, "CHANGELOG.md"))
+	if err != nil {
+		return failMsg("perf-evidence", "cannot read CHANGELOG.md: "+err.Error())
+	}
+	sec, ok := changelogSection(string(data), ver)
+	if !ok {
+		// checkChangelog already fails on this; do not double-report.
+		return gate.Cell{Name: "perf-evidence", Outcome: gate.OK,
+			Fields: []gate.Field{{Key: "section", State: "absent (reported by changelog check)"}}}
+	}
+	hasVerdict := strings.Contains(sec, "perfgate") &&
+		(strings.Contains(sec, "VERDICT") || strings.Contains(sec, "EXCEPTION"))
+	if !hasVerdict {
+		return failMsg("perf-evidence", fmt.Sprintf(
+			"CHANGELOG [%s] has no perfgate VERDICT or EXCEPTION line — run `go run -C tools ./perfgate <prev-tag>` "+
+				"and paste its VERDICT, or record an explicit EXCEPTION saying why this release does not need one", ver))
+	}
+	fmt.Println("release-gate: perfgate VERDICT/EXCEPTION recorded for v" + ver)
+	return gate.Cell{Name: "perf-evidence", Outcome: gate.OK,
+		Fields: []gate.Field{{Key: "perfgate", State: "recorded"}}}
+}
+
+// changelogSection returns the body of the `## [ver]` section, up to the next
+// `## [` heading.
+func changelogSection(doc, ver string) (string, bool) {
+	head := "## [" + ver + "]"
+	i := strings.Index(doc, head)
+	if i < 0 {
+		return "", false
+	}
+	rest := doc[i+len(head):]
+	if j := strings.Index(rest, "\n## ["); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest, true
 }

@@ -1,6 +1,7 @@
 package linalg
 
 import (
+	"math"
 	"math/rand"
 	"testing"
 )
@@ -70,10 +71,18 @@ func BenchmarkGEMV_W8A8_baseline(b *testing.B) {
 			bScales[i] = 0.01
 		}
 		dst := make([]float32, s.N)
+		// Workspace form, pinned serial (audit G-01, G-08). This called the
+		// ALLOCATING MatmulBTW8A8 wrapper, so every ns/op carried a make of the
+		// quantized activation — and at K4096_N4096 the shape clears parThreshold,
+		// so the baseline fanned out while the Q6K kernel it is compared against
+		// runs serial, inflating that comparison by the worker count. Both are
+		// artefacts of the harness rather than of the kernel.
+		var ws Workspace
+		ws.SetThreshold(math.MaxInt)
 		b.Run(shapeName(s.K, s.N)+"_"+regimeTag(s.K, s.N), func(b *testing.B) {
 			b.SetBytes(int64(s.N * s.K)) // int8: 1 byte/weight
 			for i := 0; i < b.N; i++ {
-				MatmulBTW8A8(a, bq, bScales, dst, 1, s.K, s.N)
+				MatmulBTW8A8Into(&ws, a, bq, bScales, dst, 1, s.K, s.N)
 			}
 		})
 	}

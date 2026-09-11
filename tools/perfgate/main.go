@@ -55,8 +55,26 @@ import (
 )
 
 const (
-	defaultBench = `^(BenchmarkW8A8SpanShapes|BenchmarkGEMV_W8A8_baseline)$`
-	defaultPkg   = "./linalg"
+	// The gate's coverage (audit G-01). It used to be the two W8A8 M=1 families
+	// alone, which left the production int4 decode kernel, BOTH M>1 tiles, the
+	// acc64 attention kernels, the activation quantiser, the S-06 contract
+	// kernels and AttendTileFused with no performance gate at all — every one of
+	// them a path a release has changed. Each family below is here because a
+	// regression in it would otherwise ship green:
+	//
+	//	W8A8SpanShapes            W8A8 M=1, the original two
+	//	GEMV_W8A8_baseline        W8A8 M=1 through the f32 entry
+	//	MatmulBTW8A8Batch_prefill W8A8 M>1 — the batched tile, goinfer's prefill
+	//	W4A8_CanonicalVsSplitHalf W4A8 M=1 — the int4 decode kernel
+	//	MatmulQKAcc64/AVAcc64     the f64 attention kernels at depth
+	//	AttendTileFused_expKind   the fused ViT attention schedule
+	//	SoftmaxRowKernels/SiLUKernels  the S-06 contract transcendentals
+	//	QuantizeRowInt8           the activation quantiser
+	defaultBench = `^(BenchmarkW8A8SpanShapes|BenchmarkGEMV_W8A8_baseline|` +
+		`BenchmarkMatmulBTW8A8Batch_prefill|BenchmarkW4A8_CanonicalVsSplitHalf|` +
+		`BenchmarkMatmulQKAcc64|BenchmarkMatmulAVAcc64|BenchmarkAttendTileFused_expKind|` +
+		`BenchmarkSoftmaxRowKernels|BenchmarkSiLUKernels|BenchmarkQuantizeRowInt8)$`
+	defaultPkg = "./linalg"
 )
 
 type config struct {
@@ -141,8 +159,17 @@ func run(args []string) int {
 	charA := make([]map[string]float64, 0, cfg.visits)
 	charB := make([]map[string]float64, 0, cfg.visits)
 	for v := 0; v < cfg.visits; v++ {
-		charA = append(charA, runVisit(curBin, cfg))
-		charB = append(charB, runVisit(curBin, cfg))
+		a, err := runVisit(curBin, cfg)
+		if err != nil {
+			fmt.Println(gate.Verdict(gate.Inconclusive, "characterization: "+err.Error()))
+			return 4
+		}
+		b, err := runVisit(curBin, cfg)
+		if err != nil {
+			fmt.Println(gate.Verdict(gate.Inconclusive, "characterization: "+err.Error()))
+			return 4
+		}
+		charA, charB = append(charA, a), append(charB, b)
 	}
 	floors := deriveFloors(charA, charB, cfg)
 
@@ -151,9 +178,30 @@ func run(args []string) int {
 	fmt.Println()
 	curV := make([]map[string]float64, 0, cfg.visits)
 	prevV := make([]map[string]float64, 0, cfg.visits)
+	// ABBA, not ABAB (audit G-05). With a fixed A-then-B order every visit, a
+	// monotone drift over the run — the machine warming, a background task
+	// ramping — lands entirely on one arm and reads as a real difference. That
+	// is the single bias the interleave exists to remove. Alternating the order
+	// each visit puts half of any drift on each arm.
 	for v := 0; v < cfg.visits; v++ {
-		curV = append(curV, runVisit(curBin, cfg))
-		prevV = append(prevV, runVisit(prevBin, cfg))
+		first, second := curBin, prevBin
+		if v%2 == 1 {
+			first, second = prevBin, curBin
+		}
+		r1, err := runVisit(first, cfg)
+		if err != nil {
+			fmt.Println(gate.Verdict(gate.Inconclusive, "comparison: "+err.Error()))
+			return 4
+		}
+		r2, err := runVisit(second, cfg)
+		if err != nil {
+			fmt.Println(gate.Verdict(gate.Inconclusive, "comparison: "+err.Error()))
+			return 4
+		}
+		if v%2 == 1 {
+			r1, r2 = r2, r1
+		}
+		curV, prevV = append(curV, r1), append(prevV, r2)
 	}
 
 	shapes := sharedShapes(curV, prevV)
@@ -194,11 +242,87 @@ func run(args []string) int {
 	fmt.Println()
 	switch rep.Outcome {
 	case gate.Fail:
-		fmt.Println(gate.Verdict(gate.Fail, fmt.Sprintf("%d regression(s) vs %s across %d shapes", rep.Fail, cfg.prevTag, rep.Total)))
+		// CONFIRMATION ROUND (audit G-03). The floor is derived per run from this
+		// machine's own noise, so a single FAIL is not reproducible — the recorded
+		// v1.37.0 floors at one shape span 4.39% -> 18.96% -> 11.34% across runs,
+		// and "re-run until green" was therefore structurally available, which is
+		// what that release did.
+		//
+		// Re-measuring and requiring the SAME shape to fail twice takes that away
+		// symmetrically: it costs nothing on a green run, and a regression that
+		// only appears once is reported as INCONCLUSIVE rather than silently
+		// dropped by a human re-run. It does not make the floor reproducible —
+		// persisting per-(box, shape) floors would — but it removes the asymmetry
+		// that let one noisy sample decide a release either way.
+		failed := map[string]bool{}
+		for _, c := range cells {
+			if c.Outcome == gate.Fail {
+				failed[c.Name] = true
+			}
+		}
+		fmt.Printf("confirming %d regression(s) with a second measurement…\n", len(failed))
+		curV2 := make([]map[string]float64, 0, cfg.visits)
+		prevV2 := make([]map[string]float64, 0, cfg.visits)
+		for v := 0; v < cfg.visits; v++ {
+			first, second := curBin, prevBin
+			if v%2 == 1 {
+				first, second = prevBin, curBin
+			}
+			r1, err := runVisit(first, cfg)
+			if err != nil {
+				fmt.Println(gate.Verdict(gate.Inconclusive, "confirmation: "+err.Error()))
+				return 4
+			}
+			r2, err := runVisit(second, cfg)
+			if err != nil {
+				fmt.Println(gate.Verdict(gate.Inconclusive, "confirmation: "+err.Error()))
+				return 4
+			}
+			if v%2 == 1 {
+				r1, r2 = r2, r1
+			}
+			curV2, prevV2 = append(curV2, r1), append(prevV2, r2)
+		}
+		confirmed, transient := []string{}, []string{}
+		for sh := range failed {
+			if judge(sh, curV2, prevV2, floors[sh], cfg).Outcome == gate.Fail {
+				confirmed = append(confirmed, shortShape(sh))
+			} else {
+				transient = append(transient, shortShape(sh))
+			}
+		}
+		sort.Strings(confirmed)
+		sort.Strings(transient)
+		if len(transient) > 0 {
+			fmt.Printf("  did NOT reproduce: %s\n", strings.Join(transient, " "))
+		}
+		if len(confirmed) == 0 {
+			fmt.Println(gate.Verdict(gate.Inconclusive, fmt.Sprintf(
+				"%d regression(s) did not reproduce on a second measurement — not green, not a fail; re-run or investigate",
+				len(transient))))
+			return 5
+		}
+		fmt.Printf("  reproduced: %s\n", strings.Join(confirmed, " "))
+		fmt.Println(gate.Verdict(gate.Fail, fmt.Sprintf("%d regression(s) vs %s across %d shapes, confirmed on a second measurement",
+			len(confirmed), cfg.prevTag, rep.Total)))
 		return 1
 	case gate.Inconclusive:
 		fmt.Println(gate.Verdict(gate.Inconclusive, "a shape could not be measured"))
 		return 2
+	}
+	// A gate that measured nothing, or that resolved the class it targets on
+	// NOTHING, must not exit 0 (audit G-02, G-06). Both used to print a green.
+	// Distinct codes so a caller can tell "this found no regression" from "this
+	// could not have found one".
+	if rep.Total == 0 {
+		fmt.Println(gate.Verdict(gate.Inconclusive, "no shapes were measured — the gate did not run"))
+		return 4
+	}
+	if below == 0 {
+		fmt.Println(gate.Verdict(gate.Inconclusive, fmt.Sprintf(
+			"BLIND — 0/%d shapes resolve the %.1f%% class, so this run is not evidence against a %.1f%% regression",
+			rep.Total, cfg.targetClass, cfg.targetClass)))
+		return 3
 	}
 	fmt.Println(gate.Verdict(gate.OK, fmt.Sprintf("no regression vs %s above each shape's floor — %d/%d shapes resolve the %.1f%% class",
 		cfg.prevTag, below, rep.Total, cfg.targetClass)))
@@ -275,10 +399,36 @@ func deriveFloors(a, b []map[string]float64, cfg config) map[string]float64 {
 }
 
 // runVisit runs the compiled benchmark once and parses ns/op per shape key.
-func runVisit(bin string, cfg config) map[string]float64 {
+// runVisit runs the benchmark binary once and parses its rows.
+//
+// It returns an error when the binary FAILS or when it produced no parseable
+// benchmark lines (audit G-06). Both used to be swallowed — `outB, _ :=` and
+// then an empty map — so a panic, a regex typo or a missing fixture in the
+// prev-tag worktree produced zero rows, zero shapes, and a green "PASS — 0/0".
+// A gate whose instrument did not run must not report on the thing it was
+// meant to measure.
+func runVisit(bin string, cfg config) (map[string]float64, error) {
 	cmd := exec.Command(bin, "-test.run=^$", "-test.bench="+cfg.benchRe, "-test.benchtime="+cfg.benchtime, "-test.count=1")
-	outB, _ := cmd.CombinedOutput()
-	return parseBench(string(outB))
+	outB, err := cmd.CombinedOutput()
+	rows := parseBench(string(outB))
+	if err != nil {
+		return rows, fmt.Errorf("benchmark binary %s failed: %w\n%s", filepath.Base(bin), err, tail(string(outB), 20))
+	}
+	if len(rows) == 0 {
+		return rows, fmt.Errorf("benchmark binary %s produced no parseable rows for %s\n%s",
+			filepath.Base(bin), cfg.benchRe, tail(string(outB), 20))
+	}
+	return rows, nil
+}
+
+// tail returns the last n lines, for putting a failing binary's own output in
+// the error rather than making the reader go and re-run it.
+func tail(s string, n int) string {
+	ln := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(ln) > n {
+		ln = ln[len(ln)-n:]
+	}
+	return "    " + strings.Join(ln, "\n    ")
 }
 
 var reBench = regexp.MustCompile(`^(Benchmark\S+?)-\d+\s+\d+\s+([\d.]+)\s+ns/op`)

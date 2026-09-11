@@ -11,6 +11,41 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**`perfgate` and `releasegate` hardened so the gate can actually fail (audit G-01..G-06).** The
+audit's point was not that the gate was wrong but that it could not lose: it measured one kernel
+family at one M, re-derived its floor every run, and exited 0 when it had measured nothing.
+Every perf fix in this release would have shipped under a green from it. Six changes:
+
+- **G-01 coverage.** The benchmark set was the two W8A8 M=1 families, leaving the int4 decode
+  kernel, BOTH M>1 tiles, the acc64 attention kernels, the activation quantiser, the S-06
+  contract kernels and `AttendTileFused` with no performance gate at all. It now also runs
+  `MatmulBTW8A8Batch_prefill`, `W4A8_CanonicalVsSplitHalf`, `MatmulQKAcc64`/`MatmulAVAcc64`,
+  `AttendTileFused_expKind`, `SoftmaxRowKernels`/`SiLUKernels` and `QuantizeRowInt8` — 45 rows
+  where there were 6.
+- **G-02 blind greens.** 0 shapes resolving the target class now exits 3 with a BLIND verdict
+  instead of printing a green.
+- **G-03 reproducibility.** A FAIL now has to reproduce on a second interleaved measurement.
+  Previously the per-run floor made a single FAIL unreproducible and "re-run until green"
+  structurally available — which is what v1.37.0 did. A regression that appears once and not
+  twice is now INCONCLUSIVE (exit 5): not green, not a fail.
+- **G-04 release evidence.** `releasegate` now requires the CHANGELOG section to carry a
+  perfgate `VERDICT` or an explicit `EXCEPTION`. Checked against history: it passes v1.39.1 and
+  **fails v1.38.0**, the release that changed both ViT towers' attention schedule and shipped
+  with no perfgate and no recorded exception.
+- **G-05 interleave bias.** ABAB became ABBA, so a monotone drift over the run no longer lands
+  entirely on one arm — the single bias the interleave exists to remove.
+- **G-06 silent no-op.** A failing benchmark binary, or one producing no parseable rows, was
+  swallowed (`outB, _ :=`) and reported "PASS — 0/0 shapes". Both now exit 4 with the binary's
+  own output attached. Verified: a deliberately bogus regex now exits 4 where it used to exit 0.
+
+Two of the gate's existing rows also measured the wrong thing and were fixed: `W8A8SpanShapes`
+now pins its Workspace threshold so the streamed shapes measure the KERNEL rather than whether a
+fork/join happened (three of them sit within a few percent of `parThreshold` on a 16-thread box,
+which is why they have read BLIND at ±11-35% in every recorded run), and `GEMV_W8A8_baseline`
+moved off the allocating wrapper to `MatmulBTW8A8Into` with the same pin — its ns/op included a
+`make`, and at K4096_N4096 it fanned out while the Q6K kernel it is compared against runs serial.
+
+
 **The activation quantiser is row-split under the fan-out instead of running serially on the
 caller (audit M-03).** Every W8A8/W4A8 entry quantised all M rows in a plain loop on the calling
 goroutine and only then fanned the matmul across columns, so at prefill — where M is 512+ — six
