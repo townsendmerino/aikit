@@ -27,6 +27,29 @@ excluded from that promise and may change in any release until it graduates.
   directly across 8 calls with varying (M, k). The OOM panic path itself still needs a real device
   failure to reach and is not claimed as tested (same shape as G-07).
 
+- **`ann.HNSW` int8-mode neighbour scoring now batches through the new `linalg.DotI8x8` —
+  1.42x on `nvidia-rtx2070s`, confirmed end to end (audit M-21).** `scoreInto`'s f32 mode has
+  batched 8 candidates per call since item 15; int8 mode stayed one `DotI8` call at a time because
+  no gathered 8-row int8 kernel existed. `DotI8x8` is the AVX2 kernel recovered from `c888546`
+  (deleted as dead code when the GEMM it was built for reverted — a linear B-matrix scan lost to
+  the prefetcher once B stopped fitting cache; HNSW's candidate set has no sequential prefetch to
+  lose in the first place, since `h.code(ids[i])` is already an arbitrary gather regardless of
+  kernel shape, so that retirement reason doesn't carry over). Bit-identical to eight separate
+  `DotI8` calls — integer arithmetic is associative, no overflow risk for any length this library
+  sees — gated by `TestHNSW_int8BatchedScoringMatchesPristine`, asserted EXACT rather than to a
+  tolerance.
+  <br>Wiring this in surfaced a second, independent bug, caught only because the first measurement
+  came back flat: `scoreInto`'s entry guard was `h.scoreUnbatched || len(h.vecs) == 0`, and int8
+  mode never populates `h.vecs` (`Add` stores int8 data in `h.bq` instead) — so that guard was
+  unconditionally true for every int8-mode index, silently forcing the scalar per-candidate path
+  regardless of `h.scoreUnbatched`, for as long as this branch has existed. The correctness gate
+  couldn't catch it because the bypassed path computes the same right answer. Caught by chasing an
+  unexpectedly flat benchmark through three levels of isolation (kernel-only, then real-corpus
+  scoreInto, then a rigorously interleaved A/B) until the mismatch between "the kernel is provably
+  faster in isolation" and "the integration measures flat" had nowhere left to hide. Full chase,
+  including the two dead ends it passed through first (a wrong memory-latency diagnosis and a
+  verified-but-useless prefetch attempt) recorded in `perf-dead-ends.md` §8.13.
+
 ## [1.40.0] — 2026-09-10
 
 > **PERFGATE EXCEPTION: `go run -C tools ./perfgate v1.39.1` returns `VERDICT: FAIL`, and it is a

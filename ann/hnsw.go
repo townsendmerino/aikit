@@ -324,11 +324,52 @@ func (h *HNSW) sim(qv queryVec, id int) float64 {
 // change which nodes are explored. TestHNSW_batchedScoringMatchesPristine
 // checks it does not, over a grid of dims, sizes and ef values.
 //
-// The int8 path stays scalar: linalg has no gathered 8-row int8 kernel, and
-// DotI8 already runs a SIMD reduction per candidate.
+// The int8 path ALSO scores eight candidates per call, through linalg.DotI8x8
+// (audit M-21): linalg had no gathered 8-row int8 kernel when this comment was
+// written, so the mode was left scalar even though DotI8 already runs a SIMD
+// reduction per candidate — DotI8x8 shares the QUERY's widening across all
+// eight the same way Dot8x4 shares the query strip, on top of each candidate
+// already being SIMD-scored.
+//
+// Bit-identical to the per-candidate path: DotI8x8 is exactly eight DotI8
+// calls' worth of integer arithmetic (associative, no overflow risk — see
+// linalg's own doc comment), and the rescale below is the same
+// scale*h.scales[id] multiply h.sim does per candidate, just applied to
+// DotI8x8's eight raw sums instead of DotI8's one.
 func (h *HNSW) scoreInto(qv queryVec, ids []int, dst []float64) []float64 {
 	dst = dst[:0]
-	if h.scoreUnbatched || h.int8 || len(h.vecs) == 0 {
+	if h.scoreUnbatched {
+		for _, id := range ids {
+			dst = append(dst, h.sim(qv, id))
+		}
+		return dst
+	}
+	if h.int8 {
+		// int8 mode never populates h.vecs (Add stores it in h.bq instead —
+		// see Add's if h.int8 branch), so the len(h.vecs)==0 guard below,
+		// which exists for the f32 path's empty-index case, was ALWAYS true
+		// here and silently forced every int8 score through the scalar path
+		// regardless of h.scoreUnbatched. Caught by measurement, not
+		// inspection: the correctness gate (TestHNSW_int8BatchedScoringMatchesPristine)
+		// could not catch it because the bypassed scalar path computes the
+		// same right answer — see perf-dead-ends.md for the full chase.
+		q := qv.q8
+		i := 0
+		for ; i+8 <= len(ids); i += 8 {
+			c0, c1, c2, c3 := h.code(ids[i]), h.code(ids[i+1]), h.code(ids[i+2]), h.code(ids[i+3])
+			c4, c5, c6, c7 := h.code(ids[i+4]), h.code(ids[i+5]), h.code(ids[i+6]), h.code(ids[i+7])
+			sums := linalg.DotI8x8(q, c0, c1, c2, c3, c4, c5, c6, c7)
+			for j := range 8 {
+				id := ids[i+j]
+				dst = append(dst, float64(sums[j])*qv.scale*float64(h.scales[id]))
+			}
+		}
+		for ; i < len(ids); i++ {
+			dst = append(dst, h.sim(qv, ids[i]))
+		}
+		return dst
+	}
+	if len(h.vecs) == 0 {
 		for _, id := range ids {
 			dst = append(dst, h.sim(qv, id))
 		}

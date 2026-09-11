@@ -74,6 +74,58 @@ func TestHNSW_batchedScoringMatchesPristine(t *testing.T) {
 	}
 }
 
+// TestHNSW_int8BatchedScoringMatchesPristine is TestHNSW_batchedScoringMatchesPristine's
+// int8 twin (audit M-21): int8-mode scoreInto now batches through DotI8x8
+// instead of staying scalar. Unlike the f32 kernel this is asserted EXACT, not
+// to a ULP tolerance — DotI8x8's own doc comment claims bit-identity to eight
+// separate DotI8 calls (integer arithmetic is associative, no overflow risk),
+// and a real int8-mode index (built through NewHNSW/Add, not hand-assembled)
+// is what actually exercises the quantized code path end to end.
+func TestHNSW_int8BatchedScoringMatchesPristine(t *testing.T) {
+	rng := rand.New(rand.NewSource(21))
+	for _, d := range []int{64, 65, 256, 768} {
+		for _, n := range []int{9, 500, 3000} {
+			vecs := make([][]float32, n)
+			for i := range vecs {
+				v := make([]float32, d)
+				for j := range v {
+					v[j] = float32(rng.NormFloat64())
+				}
+				vecs[i] = v
+			}
+			h := NewHNSW(Config{Int8: true, Seed: 21})
+			for _, v := range vecs {
+				h.Add(v)
+			}
+			if !h.int8 {
+				t.Fatalf("d=%d n=%d: index is not in int8 mode", d, n)
+			}
+			qv := h.prepare(vecs[0])
+
+			// Group sizes that straddle the 8-wide kernel in both directions.
+			for _, gsz := range []int{0, 1, 7, 8, 9, 16, 17, 31, n} {
+				if gsz > n {
+					continue
+				}
+				ids := make([]int, gsz)
+				for i := range ids {
+					ids[i] = rng.Intn(n)
+				}
+				got := h.scoreInto(qv, ids, nil)
+				if len(got) != len(ids) {
+					t.Fatalf("d=%d n=%d gsz=%d: got %d scores, want %d", d, n, gsz, len(got), len(ids))
+				}
+				for i, id := range ids {
+					if want := h.simPristine(qv, id); got[i] != want {
+						t.Fatalf("d=%d n=%d gsz=%d idx=%d id=%d: batched %v, per-candidate %v (want EXACT, int8 is associative)",
+							d, n, gsz, i, id, got[i], want)
+					}
+				}
+			}
+		}
+	}
+}
+
 // TestHNSW_batchedQueryMatchesPristine is the real gate for item 15's claim
 // that the two-phase rewrite is ORDER-PRESERVING. Batching moves scores by ~1
 // ULP and, more importantly, restructures the loop that feeds the evolving

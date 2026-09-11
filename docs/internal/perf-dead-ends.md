@@ -518,6 +518,64 @@ analysis kept predicting load-reduction wins that do not exist on arm64.
   no change from this attempt — `git log` shows nothing between the audit's M-14
   partial fix and the anncuda C-04 completion that follows it.
 
+### 8.13 · M-21's own chase: a wrong memory-latency diagnosis and a verified-but-useless prefetch, before the REAL bug — `nvidia-rtx2070s`, 2026-09-11
+- **Not a dead end in the usual sense** — M-21 shipped (`ann.HNSW` int8 scoring now
+  batches through `linalg.DotI8x8`, 1.42x, CHANGELOG `[Unreleased]`) — but the path to
+  it passed through two genuine wrong turns worth recording, because both LOOKED like
+  confirmed findings before the real bug surfaced.
+- **Wrong turn 1 — "memory-latency-bound, not compute-bound."** First measurement:
+  `DotI8x8` clearly faster in isolation (linalg-level microbenchmark, tiny
+  cache-resident arrays), but `scoreInto` batched vs unbatched against a real
+  50k-vector int8 corpus with scattered candidate ids measured FLAT — 276.8 vs 280.2
+  ns/op at gsz=16, 1083 vs 1085 at gsz=64, 3347 vs 3351 at gsz=200. Conclusion drawn:
+  `h.code(ids[i])`'s scattered gather is memory-latency-bound, so a faster kernel buys
+  nothing once each candidate's row has to come from L3/DRAM anyway — the exact shape
+  of §8.10's `q8Span` finding, and plausible on its face.
+- **Wrong turn 2 — software prefetch, tried in good faith, verified real, changed
+  nothing.** If wrong turn 1 were right, prefetching candidates several groups ahead
+  (the caller already has the whole `ids` slice) should hide the latency. Built
+  `linalg.PrefetchT0` (`PREFETCHT0` amd64 / `PRFM PLDL1KEEP` arm64, the same raw-WORD
+  trick `dot_w4a8_arm64.s`'s `dotW4A8SplitHalf4RowPrefetch` already uses for PRFM),
+  wired it into `scoreInto`'s int8 path 8 candidates ahead. Confirmed via
+  `go tool objdump` that `PREFETCHT0 0(AX)` was actually emitted and actually called —
+  not a compiled-away no-op. Measured: NO CHANGE (still flat, same ns/op as without
+  it). A control (`scattered/touch1byte` vs `sequential/touch1byte`, isolating pure
+  gather cost) then showed why: 1.55 vs 1.52 ns/candidate — IDENTICAL regardless of
+  scatter pattern, meaning the corpus was never actually cold. `b.Loop()` re-runs the
+  SAME fixed 200-candidate `ids` array millions of times; 200×256B = 51.2 KB fits L1/L2
+  and stays hot for the entire benchmark after the first pass. Wrong turn 1's
+  diagnosis was an artifact of the benchmark's own repetition, not a property of a
+  real cold HNSW traversal.
+- **What actually made `scoreInto` measure flat.** With prefetch removed, a
+  field-by-field sweep (compute-only → +rescale discarded → +index-write →
+  +growing-append, batched vs unbatched at each step) showed the ~25-29% win intact
+  at EVERY step that hand-inlined the same logic scoreInto uses — and then vanishing
+  the instant the benchmark called the REAL `h.scoreInto()` method, both arms
+  converging to the SAME elevated number regardless of `h.scoreUnbatched`. That was
+  the tell: `scoreInto`'s entry guard was `h.scoreUnbatched || len(h.vecs) == 0`, and
+  `Add` never populates `h.vecs` in int8 mode (it appends to `h.bq` instead) — so
+  `len(h.vecs) == 0` was unconditionally true for every int8-mode index, and the
+  batched branch this whole investigation was trying to measure was UNREACHABLE
+  through the real call, silently falling back to the scalar path regardless of the
+  flag. `TestHNSW_int8BatchedScoringMatchesPristine` could not catch it: the bypassed
+  scalar path computes the identical right answer, so the correctness gate was green
+  the entire time the performance gate was measuring a path that never ran.
+- **Number / box, once fixed:** rigorously interleaved (perfgate's own method — 8
+  visits, alternating which arm goes first, `nvidia-rtx2070s`): batched 2.379 µs,
+  unbatched 3.381 µs, ratio 1.421. End to end, `BenchmarkHNSWQueryBatchedInt8`: ef64
+  ~62-65 µs (was ~77-80), ef200 ~211-222 µs (was ~263-295) — roughly 15-20% on a real
+  query, the graph-traversal overhead around the scoring diluting the raw 1.42x as
+  expected.
+- **Why this earns an entry despite shipping:** the two wrong turns are exactly the
+  kind of plausible-but-unverified story a later session could rebuild from
+  first-glance evidence and stop at — "batching didn't help, it's memory-bound" reads
+  as a complete, citable finding on its own, and would have quietly sat next to §8.10
+  forever if the flat prefetch result hadn't been suspicious enough to keep pulling
+  on. The lesson isn't "prefetch doesn't work" or "this is memory-bound" — both are
+  false as stated — it's that a flat A/B on a REAL integration point, when an isolated
+  microbenchmark of the same mechanism is NOT flat, is itself a finding worth chasing
+  to a reachability check before it is chasing a bottleneck.
+
 ---
 
 ## Reasoned out, not built — recorded so nobody re-chases them
