@@ -114,7 +114,7 @@ func bitsDiff(t *testing.T, what string, got, want []float32) int {
 
 // TestMXFP4Scale_bitIdenticalToGoinferRef covers all 256 e8m0 bytes, which is the whole domain.
 func TestMXFP4Scale_bitIdenticalToGoinferRef(t *testing.T) {
-	for x := 0; x < 256; x++ {
+	for x := range 256 {
 		got, want := MXFP4Scale(byte(x)), refE8M0ToF32Half(byte(x))
 		if math.Float32bits(got) != math.Float32bits(want) {
 			t.Errorf("MXFP4Scale(%d) = %08x, want %08x", x, math.Float32bits(got), math.Float32bits(want))

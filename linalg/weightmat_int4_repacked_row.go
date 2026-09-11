@@ -28,7 +28,7 @@ func dequantizeRowFromRow4(q4Row4 []byte, q4Row4Scales []float32, cols, i int, d
 	q, r := i/4, i%4
 	quadBase := q * 4 * bpr
 	scaleQuadBase := q * 4 * nGroups
-	for g := 0; g < nGroups; g++ {
+	for g := range nGroups {
 		s := q4Row4Scales[scaleQuadBase+4*g+r]
 		gk := g * groupSize
 		end := min(gk+groupSize, cols)
@@ -63,7 +63,7 @@ func dequantizeRowFromSplitHalf(q4SplitHalf []byte, scales []float32, cols, i in
 	bpr := (cols + 1) / 2
 	row := q4SplitHalf[i*bpr : (i+1)*bpr]
 	srow := scales[i*nGroups : (i+1)*nGroups]
-	for g := 0; g < nGroups; g++ {
+	for g := range nGroups {
 		s := srow[g]
 		gk := g * groupSize
 		end := min(gk+groupSize, cols)

@@ -363,11 +363,11 @@ func checkPerfEvidence(root, ver string) gate.Cell {
 // `## [` heading.
 func changelogSection(doc, ver string) (string, bool) {
 	head := "## [" + ver + "]"
-	i := strings.Index(doc, head)
-	if i < 0 {
+	_, after, ok := strings.Cut(doc, head)
+	if !ok {
 		return "", false
 	}
-	rest := doc[i+len(head):]
+	rest := after
 	if j := strings.Index(rest, "\n## ["); j >= 0 {
 		rest = rest[:j]
 	}

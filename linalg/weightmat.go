@@ -280,7 +280,7 @@ func RepackInt4SplitHalfInPlace(q4 []byte, q4s []float32, rows, cols, group int)
 	requireExactLen("RepackInt4SplitHalfInPlace", "q4", len(q4), mul(rows, bpr))
 	requireExactLen("RepackInt4SplitHalfInPlace", "q4s", len(q4s), mul(rows, nGroups))
 	rowScratch := make([]byte, bpr) // the one allocation, reused every row
-	for r := 0; r < rows; r++ {
+	for r := range rows {
 		row := q4[r*bpr : (r+1)*bpr]
 		copy(rowScratch, row)
 		RepackInt4SplitHalfRow(row, rowScratch, cols)

@@ -153,13 +153,13 @@ func RepackInt4Row4Quad(dst, src []byte, K int) {
 	requireLen("RepackInt4Row4Quad", "dst", len(dst), 4*bpr)
 	requireLen("RepackInt4Row4Quad", "src", len(src), 4*bpr)
 	nGroups := K / 32
-	for g := 0; g < nGroups; g++ {
+	for g := range nGroups {
 		gk := g * 32
 		obase := g * 64
-		for r := 0; r < 4; r++ {
+		for r := range 4 {
 			row := src[r*bpr : (r+1)*bpr]
 			rbase := obase + r*16
-			for i := 0; i < 16; i++ {
+			for i := range 16 {
 				lo := canonicalNibble(row, gk+i)
 				hi := canonicalNibble(row, gk+i+16)
 				dst[rbase+i] = lo | (hi << 4)
@@ -177,8 +177,8 @@ func RepackInt4Row4Quad(dst, src []byte, K int) {
 func RepackInt4Row4ScalesQuad(dst, src []float32, nGroups int) {
 	requireLen("RepackInt4Row4ScalesQuad", "dst", len(dst), 4*nGroups)
 	requireLen("RepackInt4Row4ScalesQuad", "src", len(src), 4*nGroups)
-	for g := 0; g < nGroups; g++ {
-		for r := 0; r < 4; r++ {
+	for g := range nGroups {
+		for r := range 4 {
 			dst[4*g+r] = src[r*nGroups+g]
 		}
 	}
