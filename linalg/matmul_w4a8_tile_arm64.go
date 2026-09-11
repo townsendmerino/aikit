@@ -48,9 +48,7 @@ func MatmulBTW4A8Row4TileInto(ws *Workspace, a []float32, w4Row4 []byte, wScales
 	nGroups, bpr := groupsFor(K, group)
 	aq := ws.int8Buf(M * K)
 	aScales := ws.f32Buf(M)
-	for i := range M {
-		aScales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
-	}
+	quantizeRowsInto(aq, aScales, a, M, K, ws.width)
 	nQuads := N / 4
 	if M*N*K < ws.thr() || nQuads < 2 {
 		w4a8Row4TileSpan(aq, aScales, w4Row4, wScales4, dst, M, K, N, nGroups, bpr, 0, nQuads)

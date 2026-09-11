@@ -280,13 +280,47 @@ func MatmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, 
 // across many weight blocks quantizes it ONCE. aq must be len ≥ M*K, scales ≥ M.
 // (A paged FlatI8 scan reuses the query across ~9766 blocks; re-quantizing it in
 // every block cost ~52 ms/query at 10M vectors — lens §3.5.)
+// quantizeRowsInto quantizes a's M rows into aq/aScales, splitting the rows
+// across cores when there are enough elements to pay for the spawn.
+//
+// WHY THIS EXISTS (audit M-03). Every W8A8/W4A8 entry quantized all M rows in a
+// plain loop on the CALLING goroutine and only then fanned the matmul out across
+// columns — so at prefill, where M is 512+, six to eight cores idled through the
+// entire quantise. It is 16,640 elements per 1.5B layer per token, ~2.4 ns each
+// on a scalar (amd64) arm: on the order of 11-16% of an amd64 prefill, and
+// comparable per q/k/v call to the tiled matmul it precedes. On arm64 the NEON
+// pass makes it ~1.3%, so this matters far more off arm64 — but the split is
+// free on both.
+//
+// Bit-identical on either path: each row's max-abs and scaled round depend only
+// on that row, so splitting by row re-associates nothing.
+//
+// width is the caller's Workspace fan-out cap (0 to inherit the global).
+func quantizeRowsInto(aq []int8, aScales []float32, a []float32, M, K, width int) {
+	if M < 2 || int64(M)*int64(K) < quantRowsParallelMinElems {
+		for i := range M {
+			aScales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
+		}
+		return
+	}
+	parallelSpawnCols(M, resolveWidth(width), func(i0, i1 int) {
+		for i := i0; i < i1; i++ {
+			aScales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
+		}
+	})
+}
+
+// quantRowsParallelMinElems is the M*K element count at/above which splitting
+// the quantise pays for the goroutine spawn. A spawn is ~µs against a pass that
+// runs at ~0.2 ns/element (NEON) to ~2.4 ns/element (scalar), so this wants to
+// sit well above the decode shapes (M=1) and well below a prefill row batch.
+const quantRowsParallelMinElems = 1 << 16
+
 func QuantizeActivationsInto(aq []int8, scales []float32, a []float32, M, K int) {
 	if len(aq) < M*K || len(scales) < M || len(a) < M*K {
 		panic("linalg: QuantizeActivationsInto short buffer")
 	}
-	for i := range M {
-		scales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
-	}
+	quantizeRowsInto(aq, scales, a, M, K, 0)
 }
 
 // SumActGroupsInto computes, for each of M already-quantized int8 activation
@@ -468,9 +502,7 @@ func MatmulBTW8A8Batch(ws *Workspace, a []float32, M, K int, ops []W8A8Op) {
 	}
 	aq := ws.int8Buf(M * K)
 	aScales := ws.f32Buf(M)
-	for i := range M {
-		aScales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
-	}
+	quantizeRowsInto(aq, aScales, a, M, K, ws.width)
 	if M*totalN*K < ws.thr() || totalN < 2 {
 		w8a8BatchSpan(aq, aScales, ops, M, K, 0, totalN)
 		return
@@ -671,9 +703,7 @@ func MatmulBTW4A8Into(ws *Workspace, a []float32, w4 []byte, wScales []float32, 
 	nGroups, bpr := groupsFor(K, group)
 	aq := ws.int8Buf(M * K)
 	aScales := ws.f32Buf(M)
-	for i := range M {
-		aScales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
-	}
+	quantizeRowsInto(aq, aScales, a, M, K, ws.width)
 	// Serial fast-path calls the named span directly (no closure → no heap
 	// escape → zero alloc, the steady-state decode case). Only the parallel
 	// branch pays a closure allocation. Mirrors MatmulBTW8A8Into.
@@ -788,9 +818,7 @@ func MatmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []W4A8Op
 	nGroups, bpr := groupsFor(K, group)
 	aq := ws.int8Buf(M * K)
 	aScales := ws.f32Buf(M)
-	for i := range M {
-		aScales[i] = quantizeRowInt8(a[i*K:i*K+K], aq[i*K:i*K+K])
-	}
+	quantizeRowsInto(aq, aScales, a, M, K, ws.width)
 	if M*totalN*K < ws.thr() || totalN < 2 {
 		w4a8BatchSpan(aq, aScales, ops, M, K, group, nGroups, bpr, 0, totalN)
 		return

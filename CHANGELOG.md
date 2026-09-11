@@ -11,6 +11,29 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**The activation quantiser is row-split under the fan-out instead of running serially on the
+caller (audit M-03).** Every W8A8/W4A8 entry quantised all M rows in a plain loop on the calling
+goroutine and only then fanned the matmul across columns, so at prefill — where M is 512+ — six
+to sixteen cores idled through the whole quantise. Five call sites now share one
+`quantizeRowsInto` helper that splits by row above a 65,536-element threshold. Bit-identical:
+each row's max-abs and scaled round depend only on that row.
+
+Measured where the mechanism applies (M*K >= 65,536, i.e. M >= 43 at K=1536). On
+`nvidia-rtx2070s` (Ryzen 7 3700X, where the quantiser is still scalar and the audit put this at
+11-16% of prefill): q&#8214;k&#8214;v M=128 **-61.4%**, gate&#8214;up M=128 **-31.1%**, geomean **-14.1%**
+over the shape set. The M=1 and M=4 control shapes take a provably identical serial path and
+were re-measured in isolation to confirm they do not move (p=0.878/0.645/0.279/0.878). On
+`apple-m1pro` the NEON quantiser makes the same term ~1.3% of a prefill, and the measured
+movement there sits too close to the harness noise floor to attribute — see below.
+
+*Methodology note.* A NULL A/B on `apple-m1pro` — the same binary benchmarked against itself —
+reports differences up to **+6.1%** and a **+3.86% geomean drift**, including one shape at
+"p=0.002" where the code is byte-identical. benchstat's ± is within-run variance; thermal and
+layout drift BETWEEN runs is not in it. Treat sub-10% single-shape deltas on that box as
+unattributable without an isolated re-run, which is how the controls above were checked. Every
+other figure in this release is far above that floor.
+
+
 **Text-encoder attention is now head-parallel — another 19.6% off a long encode (audit M-05).**
 The 12-head loop and both of its per-head matmuls ran on ONE core while the linears around them
 used every core. That was not an oversight so much as an unanswered question: `parallelThreshold`
