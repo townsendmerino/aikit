@@ -125,16 +125,35 @@ func dequantQ6KBlock(raw []byte, sb int, out []float32) {
 		qlo := ql[chunk*64:]
 		qho := qh[chunk*32:]
 		sco := sc[chunk*8:]
+		// Hoist d·scale out of the element loop (audit M-24). `is` takes only two
+		// values across the 32 iterations, so this recomputed the same eight
+		// products 16 times each — four f32 multiplies per output element, on a
+		// load-time path that runs over every tensor in the file.
+		//
+		// BIT-IDENTICAL, and the grouping is what makes it so: the original is
+		// `d * float32(scale) * float32(q)`, which Go evaluates left to right as
+		// `(d*scale) * q`. Precomputing `d*scale` keeps the same two roundings in
+		// the same order. It would NOT be safe had the source been written
+		// `d * (scale * q)`. TestDequantQ6KBlock_hoistIsBitIdentical compares
+		// BITS against the pre-hoist body and was checked to fail on a 1-ULP
+		// perturbation.
+		var ds [2][4]float32
+		for is := range 2 {
+			ds[is][0] = d * float32(int8(sco[is+0]))
+			ds[is][1] = d * float32(int8(sco[is+2]))
+			ds[is][2] = d * float32(int8(sco[is+4]))
+			ds[is][3] = d * float32(int8(sco[is+6]))
+		}
 		for l := range 32 {
-			is := l / 16
+			s := &ds[l/16]
 			q1 := int8((qlo[l]&0x0F)|(((qho[l]>>0)&3)<<4)) - 32
 			q2 := int8((qlo[l+32]&0x0F)|(((qho[l]>>2)&3)<<4)) - 32
 			q3 := int8((qlo[l]>>4)|(((qho[l]>>4)&3)<<4)) - 32
 			q4 := int8((qlo[l+32]>>4)|(((qho[l]>>6)&3)<<4)) - 32
-			out[n0+l+0] = d * float32(int8(sco[is+0])) * float32(q1)
-			out[n0+l+32] = d * float32(int8(sco[is+2])) * float32(q2)
-			out[n0+l+64] = d * float32(int8(sco[is+4])) * float32(q3)
-			out[n0+l+96] = d * float32(int8(sco[is+6])) * float32(q4)
+			out[n0+l+0] = s[0] * float32(q1)
+			out[n0+l+32] = s[1] * float32(q2)
+			out[n0+l+64] = s[2] * float32(q3)
+			out[n0+l+96] = s[3] * float32(q4)
 		}
 	}
 }

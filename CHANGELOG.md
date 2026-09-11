@@ -11,6 +11,16 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**`embed`: Q6_K dequant hoists the `d·scale` product out of its element loop (audit M-24).** The
+sub-block index `is` takes only two values across the 32 iterations, so the same eight products
+were recomputed sixteen times each — four float32 multiplies per output element, on a load-time
+path that runs over every tensor in the file. Bit-identical, and the grouping is what makes it
+so: the original reads `d * float32(scale) * float32(q)`, which Go evaluates left to right as
+`(d*scale) * q`, so precomputing `d*scale` preserves the same two roundings in the same order.
+`TestDequantQ6KBlock_hoistIsBitIdentical` compares BITS (not values) against the pre-hoist body
+and was verified to fail on a 1-ULP perturbation.
+
+
 **CPU-only `FlatI8.QueryBatch` uses the batched M-row GEMM — 3.6x (audit M-18).** The batched
 W8A8 kernel was already in the file, reachable ONLY through the GPU shard split; with no device
 attached `QueryBatch` fell through to a per-query loop, so the corpus weight matrix was streamed
