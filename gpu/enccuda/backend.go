@@ -142,7 +142,9 @@ func (b *Backend) growHost(h **gpu.HostBuffer[uint8], cap *int, nBytes int) erro
 		return nil
 	}
 	if *h != nil {
-		_ = (*h).Close()
+		if err := (*h).Close(); err != nil {
+			return err
+		}
 	}
 	nh, err := gpu.NewHostBuffer[uint8](b.dev, nBytes)
 	if err != nil {
@@ -158,7 +160,9 @@ func (b *Backend) growHostF32(h **gpu.HostBuffer[float32], cap *int, n int) erro
 		return nil
 	}
 	if *h != nil {
-		_ = (*h).Close()
+		if err := (*h).Close(); err != nil {
+			return err
+		}
 	}
 	nh, err := gpu.NewHostBuffer[float32](b.dev, n)
 	if err != nil {
