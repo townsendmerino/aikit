@@ -84,6 +84,82 @@ kernel void gemv_w8a8(
     int total = simd_sum(acc);           // fold the W lane partials (int add is associative)
     if (lane == 0) out[j] = float(total) * qscale * scales[j];
 }
+// gemm_w8a8_qtile — the batched GEMM for the shape ANN actually has (audit M-16).
+//
+// gemm_w8a8_tiled below is the 16x16 byte-tiled form: one output per thread,
+// byte-granular threadgroup staging. That is the same shape CUDA's sweep ranked
+// WORST and that the roofline campaign measured at ~3% of either M1 Pro roof —
+// and the July dead end that concluded "GPU loses ~5x to the SIMD CPU" measured
+// that kernel, not the one CUDA's sweep found best. So the dead end's premise is
+// what is being retested here, not its arithmetic.
+//
+// The shape is skinny-M: a handful of QUERIES against a huge corpus. A 64x64
+// output tile is the wrong geometry for that — at M=8 it wastes seven eighths of
+// every tile. What batching should buy is reading each corpus row ONCE and
+// amortizing it across the queries, and that is exactly what this does, reusing
+// the structure gemv_w8a8 above already proved: one SIMD-GROUP per corpus row,
+// its 32 lanes walking the row in char4 chunks so each warp covers a contiguous
+// 128-byte span, and simd_sum folding the lane partials at the end.
+//
+// The difference from gemv is QTILE accumulators instead of one: a lane loads the
+// corpus chunk once and MACs it against QTILE query chunks. The corpus is the
+// streamed operand (N*K bytes); the queries are tiny and stay in cache. So the
+// corpus traffic per output falls by QTILE.
+//
+// BIT-IDENTICAL to gemm_w8a8_tiled and to the CPU: the accumulator is int32 and
+// integer addition is associative, so neither the lane split nor the simd_sum
+// tree can change the sum, and the epilogue applies the same
+// qscale[m]*scales[j] in the same order.
+#define QTILE 8
+kernel void gemm_w8a8_qtile(
+    device const char*  codes  [[buffer(0)]],   // [N*K] int8 corpus rows
+    device const char*  qi8    [[buffer(1)]],   // [M*K] int8 queries
+    device const float* scales [[buffer(2)]],   // [N]
+    constant uint&      K      [[buffer(3)]],
+    constant uint&      N      [[buffer(4)]],
+    device const float* qscale [[buffer(5)]],   // [M]
+    device float*       out    [[buffer(6)]],   // [M*N] scores, row-major
+    constant uint&      M      [[buffer(7)]],
+    uint gid [[thread_position_in_grid]],
+    uint W   [[threads_per_simdgroup]]) {
+    uint group = gid / W;
+    uint lane  = gid % W;
+    uint j     = group % N;            // corpus row this SIMD-group owns
+    uint mBase = (group / N) * QTILE;  // this pass's query block
+    if (j >= N || mBase >= M) return;
+
+    device const char* row = codes + (uint)j * K;
+    int acc[QTILE];
+    for (uint t = 0; t < QTILE; t++) acc[t] = 0;
+
+    if ((K & 3u) == 0u) {
+        device const char4* r4 = (device const char4*)row;
+        for (uint c = lane; c < (K >> 2); c += W) {
+            char4 b = r4[c];           // read the corpus chunk ONCE for all QTILE queries
+            for (uint t = 0; t < QTILE; t++) {
+                // Clamp rather than branch: a past-the-end query recomputes the
+                // last row's product and its store is skipped below, which keeps
+                // the loop bound a compile-time QTILE so acc[] stays in registers.
+                uint m = mBase + t; if (m >= M) m = M - 1;
+                char4 a = ((device const char4*)(qi8 + (uint)m * K))[c];
+                acc[t] += int(a.x)*int(b.x) + int(a.y)*int(b.y) + int(a.z)*int(b.z) + int(a.w)*int(b.w);
+            }
+        }
+    } else {
+        for (uint k = lane; k < K; k += W) {
+            int b = int(row[k]);
+            for (uint t = 0; t < QTILE; t++) {
+                uint m = mBase + t; if (m >= M) m = M - 1;
+                acc[t] += int(qi8[(uint)m * K + k]) * b;
+            }
+        }
+    }
+    for (uint t = 0; t < QTILE; t++) {
+        int total = simd_sum(acc[t]);
+        uint m = mBase + t;
+        if (lane == 0 && m < M) out[(uint)m * N + j] = float(total) * qscale[m] * scales[j];
+    }
+}
 kernel void gemm_w8a8_tiled(
     device const char*  codes  [[buffer(0)]],   // [N*K] int8 (corpus rows = B)
     device const char*  qi8    [[buffer(1)]],   // [M*K] int8 queries (= A)
@@ -212,12 +288,14 @@ kernel void topk_rows(
 }`
 
 type metalBackend struct {
-	dev   *gpu.Device
-	q     gpu.Queue
-	gemv  gpu.Pipeline // one query  × N rows (FlatI8.Query), SIMD-group per row
-	gemvW int          // gemv's SIMD-group width (threadExecutionWidth); launch is N×this
-	gemm  gpu.Pipeline // M queries × N rows (FlatI8.QueryBatch), tiled
-	topk  gpu.Pipeline // per-query top-k over the device score matrix
+	dev    *gpu.Device
+	q      gpu.Queue
+	gemv   gpu.Pipeline // one query  × N rows (FlatI8.Query), SIMD-group per row
+	gemvW  int          // gemv's SIMD-group width (threadExecutionWidth); launch is N×this
+	gemmqW int          // gemm_w8a8_qtile's SIMD-group width, same role
+	gemm   gpu.Pipeline // M queries × N rows (FlatI8.QueryBatch), 16x16 byte-tiled (fallback)
+	gemmq  gpu.Pipeline // M queries × N rows, SIMD-group-per-row QTILE form (audit M-16)
+	topk   gpu.Pipeline // per-query top-k over the device score matrix
 }
 
 // topkTG / topkMaxK mirror the topk_rows kernel's TOPK_TG / TOPK_MAXK; k above topkMaxK
@@ -258,6 +336,11 @@ func init() {
 		dev.ReleaseObjects()
 		return
 	}
+	gemmq, err := dev.NewComputePipeline(lib, "gemm_w8a8_qtile")
+	if err != nil {
+		dev.ReleaseObjects()
+		return
+	}
 	topk, err := dev.NewComputePipeline(lib, "topk_rows")
 	if err != nil {
 		dev.ReleaseObjects()
@@ -267,7 +350,12 @@ func init() {
 	if w <= 0 {
 		w = 32 // every Apple GPU is 32; guard a bad query rather than divide by zero on launch
 	}
-	ann.RegisterBackend(&metalBackend{dev: dev, q: dev.NewCommandQueue(), gemv: gemv, gemvW: w, gemm: gemm, topk: topk})
+	wq := gemmq.ThreadExecutionWidth()
+	if wq <= 0 {
+		wq = 32
+	}
+	ann.RegisterBackend(&metalBackend{dev: dev, q: dev.NewCommandQueue(), gemv: gemv, gemvW: w, gemmqW: wq, gemm: gemm,
+		gemmq: gemmq, topk: topk})
 }
 
 func (b *metalBackend) Name() string { return "metal" }
@@ -282,6 +370,24 @@ func (b *metalBackend) runLocked(p gpu.Pipeline, n, tg int, bufs ...gpu.Buffer) 
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
 	b.q.Run1D(p, n, tg, bufs...)
+}
+
+// qtileGEMM dispatches the batched score GEMM (audit M-16).
+//
+// The QTILE kernel is a 1-D dispatch of one SIMD-GROUP per (corpus row, query
+// block): ceil(M/QTILE) blocks x N rows x W lanes. It replaces the 16x16
+// byte-tiled 2-D dispatch, whose geometry wastes most of every tile at the
+// skinny-M shape ANN actually runs and which measured ~3% of roof.
+//
+// Both kernels take the same buffers in the same order and produce identical
+// bits (int32 accumulator, same epilogue), so this is a dispatch swap.
+const qtileQ = 8 // must match QTILE in the MSL source
+
+func (b *metalBackend) runGEMM(M, N int, bufs ...gpu.Buffer) {
+	blocks := (M + qtileQ - 1) / qtileQ
+	W := b.gemmqW
+	tg := W * 8 // whole SIMD-groups per threadgroup
+	b.runLocked(b.gemmq, blocks*N*W, tg, bufs...)
 }
 
 // runLocked2D is runLocked for a 2-D dispatchThreadgroups grid — the tiled GEMM's shape
@@ -412,11 +518,7 @@ func (x *metalI8Index) ScoreBatch(queries [][]float32, dst []float32) (err error
 	nBuf = gpu.NewBufferOf(x.b.dev, []uint32{uint32(N)})
 	mBuf = gpu.NewBufferOf(x.b.dev, []uint32{uint32(M)})
 	outBuf = x.b.dev.NewBufferLen(M * N)
-	// Tiled GEMM: one TILE×TILE output block per threadgroup (dispatchThreadgroups →
-	// uniform whole groups, so the edge tiles are full and the kernel bounds-checks).
-	const tile = 16
-	gx, gy := (N+tile-1)/tile, (M+tile-1)/tile
-	x.b.runLocked2D(x.b.gemm, gx, gy, tile, tile, x.codes, qi8Buf, x.scales, x.kbuf, nBuf, qscaleBuf, outBuf, mBuf)
+	x.b.runGEMM(M, N, x.codes, qi8Buf, x.scales, x.kbuf, nBuf, qscaleBuf, outBuf, mBuf)
 	copy(dst, outBuf.Floats())
 	return nil
 }
@@ -466,9 +568,7 @@ func (x *metalI8Index) TopKBatch(queries [][]float32, k int) (hits [][]ann.Hit, 
 	scoreBuf = dev.NewBufferLen(M * N)                 // device-only; never crosses to the host
 	idxOut = gpu.NewBufferOf(dev, make([]uint32, M*k)) // device int* (u32 storage, same bytes)
 	scoreOut = dev.NewBufferLen(M * k)                 // only M*k floats come back
-	const tile = 16
-	gx, gy := (N+tile-1)/tile, (M+tile-1)/tile
-	x.b.runLocked2D(x.b.gemm, gx, gy, tile, tile, x.codes, qi8Buf, x.scales, x.kbuf, nBuf, qscaleBuf, scoreBuf, mBuf)
+	x.b.runGEMM(M, N, x.codes, qi8Buf, x.scales, x.kbuf, nBuf, qscaleBuf, scoreBuf, mBuf)
 	// one threadgroup per query (M groups of topkTG threads), reducing scoreBuf → M*k.
 	x.b.runLocked(x.b.topk, M*topkTG, topkTG, scoreBuf, nBuf, kBuf, idxOut, scoreOut)
 

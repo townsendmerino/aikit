@@ -11,6 +11,31 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**`gpu/annmetal`'s batched score GEMM gets the SIMD-group-per-row QTILE shape — 2.0x at skinny
+M, and the dead end it retests does NOT overturn (audit M-16).** The batch path ran the 16x16
+byte-tiled kernel: one output per thread, byte-granular threadgroup staging — the same shape
+CUDA's own sweep ranked WORST, and the shape the July dead end measured when it recorded "the
+GPU batch GEMM loses ~5x to the SIMD CPU". New `gemm_w8a8_qtile` uses the geometry `gemv_w8a8`
+next door already proved: one SIMD-group per corpus row, its lanes walking the row in `char4`
+chunks, with QTILE=8 accumulators so the corpus row is read ONCE and amortized across eight
+queries. Bit-identical (int32 accumulator, same epilogue); `TestMetalGEMM_batchParityWithCPU`
+reports worst score Δ **0.000e+00**.
+
+Measured on `apple-m1pro`, dim 256: N=500k/M=8 54.2 -> **110.6 GMAC/s** (2.04x), N=100k/M=8
+51.0 -> 99.9 (1.96x), and essentially flat at M=32/64 (110 -> 114) where the 16x16 tiles are
+already well filled. So the tiled kernel WAS the wrong geometry at the skinny-M shape ANN
+actually runs, which is the part of the dead end's premise the audit questioned — and it was
+worth 2x.
+
+BUT THE DEAD END'S CONCLUSION STANDS, and it is worth saying plainly rather than leaving the
+2x to imply otherwise: at N=100k/M=64 the CPU path does **176.6 GMAC/s** against this kernel's
+**112.1** — the CPU is still **1.57x faster**, and by MORE than before, because M-18 in this
+same release made the CPU batch path 3.6x quicker. Both kernels also sit around 14 GB/s of
+corpus traffic against the M1 Pro's ~200 GB/s, so neither is near roof; QTILE=8 means the corpus
+is re-read ceil(M/8) times, which is the next lever. `BenchmarkMetalGEMMKernels` compares the
+two kernels directly so this is re-checkable rather than re-litigated.
+
+
 **CUDA ViT int8 projections get a register-blocked GEMM — 13.8-14.0x, from 7% of roof to
 essentially at it (audit M-12).** Every int8 projection in `visioncuda` and `qwencuda` ran
 `gemm_w8a8_tiled`: one output per thread, byte-granular shared staging, 32 `ld.shared.u8` per 4
