@@ -87,6 +87,14 @@ type Backend struct {
 	mu               sync.Mutex
 	aBuf, bBuf, cBuf gpu.Buffer
 	aCap, bCap, cCap int
+
+	// Pinned host staging for the async H2D/D2H path (audit M-15). Sized in
+	// BYTES for the uint8 upload buffers UploadAsync takes, and in elements for
+	// the float32 readback.
+	aHost, bHost       *gpu.HostBuffer[uint8]
+	aHostCap, bHostCap int
+	cHost              *gpu.HostBuffer[float32]
+	cHostCap           int
 	// q8 holds dequantized int8 weights resident on the device. Sound here (model
 	// weights are write-once) where an f32 cache would not be; see MatmulBTQ8.
 	q8 map[uintptr]q8w
@@ -125,6 +133,46 @@ func (b *Backend) grow(buf *gpu.Buffer, cap *int, n int) {
 	*buf, *cap = gpu.NewBufferLenOf[float32](b.dev, n), n
 }
 
+// growHost ensures a pinned host staging buffer holds at least nBytes (audit
+// M-15). Pinned memory is what makes an async H2D copy possible at all — a
+// pageable source forces the driver through a staging path and a blocking
+// copy — and it is also materially faster per byte.
+func (b *Backend) growHost(h **gpu.HostBuffer[uint8], cap *int, nBytes int) error {
+	if nBytes <= *cap {
+		return nil
+	}
+	if *h != nil {
+		_ = (*h).Close()
+	}
+	nh, err := gpu.NewHostBuffer[uint8](b.dev, nBytes)
+	if err != nil {
+		return err
+	}
+	*h, *cap = nh, nBytes
+	return nil
+}
+
+// growHostF32 is growHost for the float32 readback staging buffer.
+func (b *Backend) growHostF32(h **gpu.HostBuffer[float32], cap *int, n int) error {
+	if n <= *cap {
+		return nil
+	}
+	if *h != nil {
+		_ = (*h).Close()
+	}
+	nh, err := gpu.NewHostBuffer[float32](b.dev, n)
+	if err != nil {
+		return err
+	}
+	*h, *cap = nh, n
+	return nil
+}
+
+// f32Bytes reinterprets a float32 slice as the bytes UploadAsync wants.
+func f32Bytes(v []float32) []byte {
+	return unsafe.Slice((*byte)(unsafe.Pointer(unsafe.SliceData(v))), len(v)*4)
+}
+
 // MatmulBT computes dst[M,N] = a[M,K] · b[N,K]ᵀ.
 //
 // Small shapes go to the CPU path — see minGPUFlops. On the device path the weight is
@@ -154,6 +202,79 @@ func (b *Backend) gpuMatmul(a, w, dst []float32, M, K, N int) (err error) {
 	b.grow(&b.aBuf, &b.aCap, M*K)
 	b.grow(&b.bBuf, &b.bCap, N*K)
 	b.grow(&b.cBuf, &b.cCap, M*N)
+
+	// PINNED STAGING + STREAM-ORDERED COPIES (audit M-15). This used to call
+	// gpu.Upload twice — pageable source, blocking copy, and (since the C-01
+	// fix) a device-wide synchronize on BOTH sides of each — then Launch, then
+	// Sync, then a blocking Download: three device-wide syncs and ~17 MB per
+	// call through pageable memory, while this module's own pinned/async
+	// primitives went unused.
+	//
+	// Now both operands are memcpy'd into pinned host buffers and uploaded with
+	// UploadAsync on THIS queue's stream. Stream order is the guarantee that
+	// matters: the kernel Launch'd next on the same queue observes the bytes
+	// with no host-side wait, so the two upload syncs disappear and the forward
+	// keeps ONE sync — the existing one before readback.
+	// GATED ON STAGED BYTES, because the async path is not free: UploadAsync
+	// requires a PINNED source, so the operands must first be memcpy'd into
+	// pinned host memory. Below ~1 MiB that copy is cheap against the four
+	// device-wide synchronizes the two blocking Uploads cost (two each, since
+	// the C-01 fix added a pre-copy sync); above it the copy dominates.
+	//
+	// Measured on nvidia-rtx2070s, pinned-async vs blocking, by total staged
+	// bytes:
+	//     0.8 MB (M80 K384 N384)    -14.7%
+	//     0.2 MB (M128 K64 N128)    -30.6%
+	//     3.1 MB (M128 K768 N768)   +11.4%   <- inverts
+	// A first version had no gate and shipped that +11.4%.
+	staged := (M*K + N*K + M*N) * 4
+	if staged > pinnedStageMaxBytes {
+		return b.gpuMatmulBlocking(a, w, dst, M, K, N)
+	}
+	if err := b.growHost(&b.aHost, &b.aHostCap, M*K*4); err != nil {
+		return err
+	}
+	if err := b.growHost(&b.bHost, &b.bHostCap, N*K*4); err != nil {
+		return err
+	}
+	if err := b.growHostF32(&b.cHost, &b.cHostCap, M*N); err != nil {
+		return err
+	}
+	copy(b.aHost.Slice(), f32Bytes(a[:M*K]))
+	copy(b.bHost.Slice(), f32Bytes(w[:N*K]))
+	if err := b.q.UploadAsync(b.aBuf, b.aHost); err != nil {
+		return err
+	}
+	if err := b.q.UploadAsync(b.bBuf, b.bHost); err != nil {
+		return err
+	}
+	gp, gcfg := b.k.GEMMF32Plan(M, N, K)
+	if err := b.q.Launch(gp, gcfg,
+		gpu.Arg(b.aBuf), gpu.Arg(b.bBuf), gpu.Arg(b.cBuf),
+		gpu.ArgValue(int32(M)), gpu.ArgValue(int32(N)), gpu.ArgValue(int32(K))); err != nil {
+		return err
+	}
+	// The one sync. It also satisfies UploadAsync's contract that the host must
+	// not overwrite a pinned source until the queue drains — the next call
+	// rewrites aHost/bHost, and it cannot run before this returns.
+	if err := b.q.Sync(); err != nil {
+		return err
+	}
+	if err := gpu.ReadToHost(b.cBuf, b.cHost); err != nil {
+		return err
+	}
+	copy(dst[:M*N], b.cHost.Slice()[:M*N])
+	return nil
+}
+
+// pinnedStageMaxBytes is the total staged payload above which gpuMatmul keeps
+// the blocking pageable path — see the note at its use.
+const pinnedStageMaxBytes = 1 << 20
+
+// gpuMatmulBlocking is the pre-M-15 path: blocking pageable uploads, launch,
+// sync, blocking download. Retained for payloads too large for pinned staging
+// to pay for its extra host copy.
+func (b *Backend) gpuMatmulBlocking(a, w, dst []float32, M, K, N int) error {
 	if err := gpu.Upload(b.aBuf, a[:M*K]); err != nil {
 		return err
 	}

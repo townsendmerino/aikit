@@ -11,6 +11,24 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**`gpu/enccuda` stages small transfers through pinned memory on the queue's stream — up to 30.5%
+(audit M-15).** The matmul path called blocking `gpu.Upload` twice from PAGEABLE memory, then
+`Sync`, then a blocking `Download` — and since this release's C-01 fix each `Upload` also
+synchronizes on BOTH sides, so a call carried four device-wide syncs for its transfers alone,
+while this module's own pinned/async primitives (`NewHostBuffer`, `UploadAsync`, `ReadToHost`)
+went unused. Operands are now memcpy'd into pinned host buffers and uploaded with `UploadAsync`
+on the queue's own stream: stream order means the kernel launched next observes the bytes with
+no host wait, so those syncs disappear and the call keeps the ONE sync it already had before
+readback. Measured on `nvidia-rtx2070s`: **-30.5%** (M128 K64 N128), -29.3% (M80 K64 N80),
+-16.7% (M64 K384 N384), -14.8% (M80 K384 N384).
+
+GATED ON STAGED BYTES, and the gate is a measured correction rather than caution: `UploadAsync`
+requires a pinned source, so the operands must be copied into pinned memory first, and above
+~1 MiB that copy costs more than the syncs it saves. A first version had no gate and regressed
+the largest shape **+11.4%** (M128 K768 N768, 3.1 MB staged). Payloads over 1 MiB keep the
+blocking path; that shape now measures flat, and M512 K768 N3072 is unchanged.
+
+
 **Metal ViT forward batches a layer into ONE command buffer, and quantises the shared activation
 once — 38.5% at the small tower (audit M-13).** Every op was its own `Queue.Run1D`/`Run2D`:
 commit, wait, drain a pool — about 24 per layer, roughly 290 per forward. Q/K/V additionally
