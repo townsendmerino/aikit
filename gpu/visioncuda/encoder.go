@@ -146,7 +146,14 @@ func (e *encoder) proj(src gpu.Buffer, m mat, bias, dst gpu.Buffer, M int) error
 		gpu.ArgValue(int32(M)), gpu.ArgValue(int32(K))); err != nil {
 		return err
 	}
-	if err := e.launch(e.k.GEMMW8A8Tiled, gpu.TileGrid(M, N),
+	// GEMMW8A8Plan takes the register-blocked int8 kernel on aligned shapes
+	// and gemm_w8a8_tiled otherwise (audit M-12). The tiled kernel computes
+	// one output per thread from byte-granular shared memory — the LSU-bound
+	// shape the roofline campaign measured at 7% of roof and retired from the
+	// ANN path, which every ViT int8 projection was still running. Both
+	// produce identical bits, so this is a pure dispatch change.
+	gp, gc := e.k.GEMMW8A8Plan(M, N, K)
+	if err := e.launch(gp, gc,
 		gpu.Arg(e.qi8), gpu.Arg(e.qs), gpu.Arg(m.q), gpu.Arg(m.s), gpu.Arg(dst),
 		gpu.ArgValue(int32(M)), gpu.ArgValue(int32(N)), gpu.ArgValue(int32(K))); err != nil {
 		return err

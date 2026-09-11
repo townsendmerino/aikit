@@ -11,6 +11,38 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**CUDA ViT int8 projections get a register-blocked GEMM — 13.8-14.0x, from 7% of roof to
+essentially at it (audit M-12).** Every int8 projection in `visioncuda` and `qwencuda` ran
+`gemm_w8a8_tiled`: one output per thread, byte-granular shared staging, 32 `ld.shared.u8` per 4
+`dp4a`. That is LSU-bound rather than MAC-bound, and it is the same kernel shape the roofline
+campaign measured at 360 GMAC/s against this card's 4876 GMAC/s `dp4a` roof and then RETIRED
+from the ANN path — a retirement that never reached the ViT path.
+
+New `gemm_w8a8_reg`, the int8 twin of `gemm_f32_reg`: packed-word shared staging (one
+`ld.shared.u32` feeds a whole `dp4a` instead of four `ld.shared.u8` feeding a quarter of one)
+and a 4x4 micro-tile per thread, so 32 shared loads feed 64 `dp4a` — 0.5 loads per `dp4a`
+against the tiled kernel's 8. Measured on `nvidia-rtx2070s` (RTX 2070 SUPER): siglip_qkv/np4096
+715 -> **9867 GFLOP/s** (13.8x), siglip_fc1/np4096 713 -> **9975** (14.0x), siglip_qkv/np1024
+705 -> **8730** (12.4x). ~9975 GFLOP/s is ≈4990 GMAC/s, i.e. at the recorded `dp4a` roof.
+
+Edge tiles stage ZEROS and skip their stores rather than bounds-checking the inner loop, so the
+kernel needs only K%16==0 and accepts any M and N. That is not a detail: a first version
+required M%64 and N%64 like the f32 kernel, and SigLIP-so400m's intermediate width of 4304 is a
+multiple of 16 but not 64 — so the MLP projections, which are most of a ViT's work, silently
+fell back to the old kernel. The benchmark showed it as a skipped row.
+
+Bit-identical to `gemm_w8a8_tiled` (exact int32 accumulator, same `aScale[m]*bScale[n]` epilogue
+order), verified directly rather than inferred: `TestCUDA_gemmW8A8Reg` checks routing — a
+misaligned shape reaching an unchecked kernel is out-of-bounds device access — then compares
+the two kernels element-for-element on aligned AND ragged shapes, and asserts the output is not
+all zeros. That test matters because the ViT parity fixtures are hidden=32, far too small to
+align, so they exercise the fallback and prove nothing about this kernel.
+
+`BenchmarkGEMMW8A8` gained a third arm. It compared tiled only against the naive kernel nobody
+runs, which is why it could not see this: tiled beats naive 9.5x and still sat at 7% of roof
+(part of audit G-08).
+
+
 **amd64 gets the AVX2 f64 acc64 attention kernels — AV 4.8x, QK 1.15x (audit M-11).** S-04's
 arm64 half landed the NEON lane-per-output ports in v1.33.0; the amd64 half stayed pure Go, so
 at depth 8k the f64 attention was the token on a 3700X. `avAcc64AVX32` folds a 32-dim V block

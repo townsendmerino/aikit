@@ -104,6 +104,17 @@ const (
 	// Launch with TileGrid(M, N).
 	KernelGEMMW8A8Tiled = "gemm_w8a8_tiled"
 
+	// KernelGEMMW8A8Reg is the register-blocked int8 GEMM: a 64x64 output tile per
+	// block, 4x4 outputs per thread, packed-word shared staging and __dp4a. The
+	// int8 twin of gemm_f32_reg (audit M-12) — gemm_w8a8_tiled computes ONE output
+	// per thread from byte-granular shared memory, which is 32 ld.shared.u8 per 4
+	// dp4a and LSU-bound, the shape the roofline campaign measured at 7% of roof
+	// and retired from the ANN path. ALIGNED ONLY — M%64==0, N%64==0, K%16==0.
+	// BIT-IDENTICAL to gemm_w8a8_tiled: an exact int32 accumulator scaled by
+	// aScale[m]*bScale[n] in the same order. Use GEMMW8A8Plan rather than picking
+	// it directly; same signature and binding order as gemm_w8a8_tiled.
+	KernelGEMMW8A8Reg = "gemm_w8a8_reg"
+
 	// KernelGEMMF32Reg is the register-blocked f32 GEMM: a 64x64 output tile per block,
 	// 4x4 outputs per thread. ALIGNED ONLY — M%64==0, N%64==0, K%16==0 — so its inner
 	// loops carry no bounds checks. Use GEMMF32Plan rather than picking it directly.
@@ -167,6 +178,8 @@ type ViT struct {
 	GEMMF32Tiled  Pipeline
 	// Register-blocked f32 GEMM (aligned fast path). Reach it via GEMMF32Plan.
 	GEMMF32Reg Pipeline
+	// Register-blocked int8 GEMM (aligned fast path). Reach it via GEMMW8A8Plan.
+	GEMMW8A8Reg Pipeline
 }
 
 // NewViT loads ViTPTX on this device and builds every encoder pipeline. The module is
@@ -197,6 +210,7 @@ func (d *Device) NewViT() (ViT, error) {
 		{KernelGEMMW8A8Tiled, &v.GEMMW8A8Tiled},
 		{KernelGEMMF32Tiled, &v.GEMMF32Tiled},
 		{KernelGEMMF32Reg, &v.GEMMF32Reg},
+		{KernelGEMMW8A8Reg, &v.GEMMW8A8Reg},
 	} {
 		p, err := d.NewComputePipeline(lib, bind.name)
 		if err != nil {
@@ -283,6 +297,37 @@ func (v ViT) GEMMF32Plan(M, N, K int) (Pipeline, LaunchConfig) {
 		}
 	}
 	return v.GEMMF32Tiled, TileGrid(M, N)
+}
+
+// IntRegK is gemm_w8a8_reg's K-step in ELEMENTS (IBK words of four int8); with
+// IntRegBlock it forms the kernel's alignment requirement.
+//
+// 16 rather than gemm_f32_reg's 64-element step is deliberate: SigLIP-so400m's
+// intermediate width is 4304, a multiple of 16 but NOT of 64, so a K%64 kernel
+// would have missed the MLP projections that are most of a ViT's work.
+const (
+	IntRegBlock = 64
+	IntRegK     = 16
+)
+
+// GEMMW8A8Plan picks the int8 GEMM kernel and its launch geometry for M×N×K —
+// the int8 analogue of GEMMF32Plan (audit M-12).
+//
+// It needs only K%16==0: M and N edge tiles stage zeros and skip their stores,
+// so the inner loop stays unguarded while any M and N are accepted. That
+// matters because SigLIP-so400m's intermediate width is 4304 — a multiple of 16
+// but not 64 — and an M%64/N%64 requirement would have excluded the MLP
+// projections, which are most of a ViT's work. A K%16!=0 shape falls back to
+// gemm_w8a8_tiled. Both bind identically (A, aScale, B, bScale, C, M, N, K) and
+// produce identical bits, so a caller only swaps the pipeline and config.
+func (v ViT) GEMMW8A8Plan(M, N, K int) (Pipeline, LaunchConfig) {
+	if K%IntRegK == 0 && M > 0 && N > 0 && K > 0 {
+		return v.GEMMW8A8Reg, LaunchConfig{
+			GridX: uint32((N + IntRegBlock - 1) / IntRegBlock), GridY: uint32((M + IntRegBlock - 1) / IntRegBlock), GridZ: 1,
+			BlockX: IntRegBlock / RTN, BlockY: IntRegBlock / RTM, BlockZ: 1,
+		}
+	}
+	return v.GEMMW8A8Tiled, TileGrid(M, N)
 }
 
 // RTM/RTN are gemm_f32_reg's per-thread micro-tile dims; they must match vit.cu.

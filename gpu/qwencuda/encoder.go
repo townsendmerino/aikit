@@ -170,7 +170,11 @@ func (e *encoder) proj(src gpu.Buffer, m mat, bias, dst gpu.Buffer, M int) error
 			gpu.ArgValue(int32(M)), gpu.ArgValue(int32(K))); err != nil {
 			return err
 		}
-		if err := e.q.Launch(e.k.GEMMW8A8Tiled, gpu.TileGrid(M, N),
+		// GEMMW8A8Plan takes the register-blocked int8 kernel on aligned shapes
+		// and gemm_w8a8_tiled otherwise (audit M-12). Identical bits either way,
+		// so this is a pure dispatch change.
+		gp, gc := e.k.GEMMW8A8Plan(M, N, K)
+		if err := e.q.Launch(gp, gc,
 			gpu.Arg(e.qi8), gpu.Arg(e.qs), gpu.Arg(m.a), gpu.Arg(m.b), gpu.Arg(dst),
 			gpu.ArgValue(int32(M)), gpu.ArgValue(int32(N)), gpu.ArgValue(int32(K))); err != nil {
 			return err

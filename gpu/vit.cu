@@ -482,6 +482,110 @@ extern "C" __global__ void gemm_w8a8_tiled(
     if (m < M && n < N) C[(long)m * N + n] = (float)acc * aScale[m] * bScale[n];
 }
 
+// ---------------------------------------------------------------------------
+// gemm_w8a8_reg — the int8 twin of gemm_f32_reg (audit M-12).
+//
+// gemm_w8a8_tiled above computes ONE output per thread with byte-granular
+// shared staging: its PTX is 32 ld.shared.u8 per 4 dp4a. That is LSU-bound, not
+// MAC-bound, and the roofline campaign measured the same shape at 360 GMAC/s
+// against this card's 4876 GMAC/s dp4a roof — 7% — then RETIRED it from the ANN
+// path (anncuda/gemv_w8a8.cu). The retirement never reached the ViT path, where
+// every int8 projection still ran it: ~300 GMAC per so400m image, ~0.83 s.
+//
+// Two changes, both from gemm_f32_reg's playbook:
+//
+//   PACKED-WORD STAGING. Shared memory holds int (four int8), not signed char,
+//   so one ld.shared.u32 feeds a whole dp4a instead of four ld.shared.u8 feeding
+//   a quarter of one. A is reinterpreted as int* with K/4 words per row, which
+//   is why K%4 is required; device allocations are 256-byte aligned so the row
+//   starts are too.
+//
+//   4x4 REGISTER BLOCKING. Each thread owns a 4x4 micro-tile, so the 8 shared
+//   words it loads per k-word feed 16 dp4a rather than 1. Per 16-element k-step
+//   that is 32 ld.shared.u32 for 64 dp4a — 0.5 loads per dp4a against the tiled
+//   kernel's 8, a 16x better ratio, which is the whole point since the kernel is
+//   load-bound.
+//
+// K steps 16 elements (IBK=4 words) rather than gemm_f32_reg's 16 floats, so the
+// alignment requirement stays K%16==0 — SigLIP-so400m's inter of 4304 is a
+// multiple of 16 but NOT of 64, and a K%64 kernel would have missed the MLP
+// projections that are most of the work.
+//
+// The epilogue is byte-for-byte gemm_w8a8_tiled's: an exact int32 accumulator
+// scaled by aScale[m]*bScale[n] in the same order, so the two kernels agree
+// exactly and GEMMW8A8Plan can route between them freely.
+//
+// Requires only K%16==0 (IBK words of four int8). M and N are free: edge tiles
+// stage zeros and skip their stores, so the inner loop is still unguarded.
+// GEMMW8A8Plan routes a K%16!=0 shape to gemm_w8a8_tiled.
+// ---------------------------------------------------------------------------
+
+#define IBM 64
+#define IBN 64
+#define IBK 4  // words of four int8 = 16 K-elements per step
+#define IBTM 4 // per-thread micro-tile rows (mirrors gemm_f32_reg's RTM)
+#define IBTN 4 // per-thread micro-tile cols (mirrors gemm_f32_reg's RTN)
+
+extern "C" __global__ void gemm_w8a8_reg(
+    const signed char* __restrict__ A, const float* __restrict__ aScale,
+    const signed char* __restrict__ B, const float* __restrict__ bScale,
+    float* __restrict__ C, int M, int N, int K)
+{
+    __shared__ int As[IBK][IBM + 1];
+    __shared__ int Bs[IBK][IBN + 1];
+    const int* __restrict__ Aw = (const int*)A;
+    const int* __restrict__ Bw = (const int*)B;
+    int kw = K >> 2; // words per row
+
+    int tid = threadIdx.y * blockDim.x + threadIdx.x; // 0..255
+    int m0 = blockIdx.y * IBM, n0 = blockIdx.x * IBN;
+    int lr = tid >> 2, lc = tid & 3; // 64 rows x 4 k-words per pass
+
+    int acc[IBTM][IBTN];
+    #pragma unroll
+    for (int i = 0; i < IBTM; i++)
+        #pragma unroll
+        for (int j = 0; j < IBTN; j++) acc[i][j] = 0;
+
+    for (int k0 = 0; k0 < kw; k0 += IBK) {
+        // Edge tiles are handled by STAGING ZEROS, not by bounds-checking the
+        // inner loop. An out-of-range row contributes zero to its accumulator
+        // and its output is simply not stored, so the 64 dp4a per k-step stay
+        // unguarded. Two predicated global loads per thread per k-step is
+        // nothing against that, and it is what lets this kernel take N=4304 —
+        // SigLIP-so400m's intermediate width, a multiple of 16 but not of 64,
+        // and the shape the MLP projections use, which is most of a ViT's work.
+        As[lc][lr] = (m0 + lr < M) ? Aw[(long)(m0 + lr) * kw + k0 + lc] : 0;
+        Bs[lc][lr] = (n0 + lr < N) ? Bw[(long)(n0 + lr) * kw + k0 + lc] : 0;
+        __syncthreads();
+
+        #pragma unroll
+        for (int kk = 0; kk < IBK; kk++) {
+            int a[IBTM], b[IBTN];
+            #pragma unroll
+            for (int i = 0; i < IBTM; i++) a[i] = As[kk][threadIdx.y * IBTM + i];
+            #pragma unroll
+            for (int j = 0; j < IBTN; j++) b[j] = Bs[kk][threadIdx.x * IBTN + j];
+            #pragma unroll
+            for (int i = 0; i < IBTM; i++)
+                #pragma unroll
+                for (int j = 0; j < IBTN; j++) acc[i][j] = __dp4a(a[i], b[j], acc[i][j]);
+        }
+        __syncthreads();
+    }
+
+    #pragma unroll
+    for (int i = 0; i < IBTM; i++) {
+        int m = m0 + threadIdx.y * IBTM + i;
+        if (m >= M) continue;
+        #pragma unroll
+        for (int j = 0; j < IBTN; j++) {
+            int n = n0 + threadIdx.x * IBTN + j;
+            if (n < N) C[(long)m * N + n] = (float)acc[i][j] * aScale[m] * bScale[n];
+        }
+    }
+}
+
 extern "C" __global__ void gemm_f32_tiled(
     const float* __restrict__ A, const float* __restrict__ B,
     float* __restrict__ C, int M, int N, int K)

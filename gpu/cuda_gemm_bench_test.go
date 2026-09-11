@@ -17,7 +17,7 @@ import (
 //
 // Shapes are the real ViT projections: SigLIP-so400m is hidden=1152, inter=4304 at
 // np=4096 patches, which is the fat-GEMM regime the whole native-GPU bet is aimed at.
-func benchGEMM(b *testing.B, tiled bool, M, N, K int) {
+func benchGEMM(b *testing.B, kind string, M, N, K int) {
 	d, err := CreateSystemDefaultDevice()
 	if err != nil {
 		b.Skipf("no CUDA device: %v", err)
@@ -49,9 +49,24 @@ func benchGEMM(b *testing.B, tiled bool, M, N, K int) {
 	dAs, dBs := NewBufferOf(d, as), NewBufferOf(d, bs)
 	dC := NewBufferLenOf[float32](d, M*N)
 
-	p, cfg := v.GEMMW8A8, Grid1D(M*N, 256)
-	if tiled {
+	// THREE arms, not two (audit G-08). This used to compare the tiled kernel
+	// only against the naive one nobody runs, which is why it could not see
+	// M-12: tiled beats naive comfortably and still sat at ~7% of roof. "reg"
+	// is the register-blocked int8 kernel the ViT path now takes.
+	var p Pipeline
+	var cfg LaunchConfig
+	switch kind {
+	case "untiled":
+		p, cfg = v.GEMMW8A8, Grid1D(M*N, 256)
+	case "tiled":
 		p, cfg = v.GEMMW8A8Tiled, TileGrid(M, N)
+	case "reg":
+		p, cfg = v.GEMMW8A8Plan(M, N, K)
+		if p != v.GEMMW8A8Reg {
+			b.Skipf("shape %dx%dx%d does not align for the register kernel", M, N, K)
+		}
+	default:
+		b.Fatalf("unknown kernel %q", kind)
 	}
 	run := func() {
 		if err := q.Launch(p, cfg, Arg(dA), Arg(dAs), Arg(dB), Arg(dBs), Arg(dC),
@@ -87,7 +102,8 @@ var gemmShapes = []struct {
 
 func BenchmarkGEMMW8A8(b *testing.B) {
 	for _, s := range gemmShapes {
-		b.Run(fmt.Sprintf("%s/untiled", s.name), func(b *testing.B) { benchGEMM(b, false, s.M, s.N, s.K) })
-		b.Run(fmt.Sprintf("%s/tiled", s.name), func(b *testing.B) { benchGEMM(b, true, s.M, s.N, s.K) })
+		b.Run(fmt.Sprintf("%s/untiled", s.name), func(b *testing.B) { benchGEMM(b, "untiled", s.M, s.N, s.K) })
+		b.Run(fmt.Sprintf("%s/tiled", s.name), func(b *testing.B) { benchGEMM(b, "tiled", s.M, s.N, s.K) })
+		b.Run(fmt.Sprintf("%s/reg", s.name), func(b *testing.B) { benchGEMM(b, "reg", s.M, s.N, s.K) })
 	}
 }
