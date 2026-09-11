@@ -484,8 +484,13 @@ analysis kept predicting load-reduction wins that do not exist on arm64.
 
 ## The three kinds of open item (so "open" is actionable)
 
-- **(a) genuinely open** — nothing measured against it yet. (e.g. the VNNI `MatmulBTW4A8`
-  variant, waiting on VNNI hardware.)
+- **(a) genuinely open** — nothing measured against it yet. (The VNNI
+  `MatmulBTW4A8` variant used to be the example here; it SHIPPED on 2026-08-26 —
+  `dot_w4a8_avx512vnni_amd64.s`, +1.23-1.28x on a cloud Xeon — so it belongs in
+  (c), hardware-gated for VERIFICATION rather than for existence. Corrected per
+  audit §4. Note also that `w4a8TileRows` deliberately DECLINES on a VNNI host:
+  the VNNI kernel folds through two f32 accumulators where the AVX2 one uses
+  one, so letting the M>1 tile run there would make the result depend on M.)
 - **(b) deferred WITH measurement** — built or profiled, the number says "not now": item
   23 (packedFill m-blocking, a wash-risk restructure for a sub-gap win); softmax-scale
   fusion §4.4 (revisit after SIMD `expF32`).

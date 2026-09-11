@@ -74,8 +74,10 @@ On top of the dot kernels, `linalg` provides:
   fix (b), which fuses the same widen into the pack so the full f32 matrix never lands.
 - Dispatch knobs: `SetParallelThreshold` (MAC count to parallelize above) and
   `SetParallelWidth` (cap fan-out shards, for P/E straggler control) — both
-  numerically inert (output columns are partitioned). `pool.go` is the optional
-  per-`Workspace` spin-then-park worker pool.
+  numerically inert (output columns are partitioned). (`pool.go`, the optional
+  per-`Workspace` spin-then-park worker pool this used to name, was PULLED —
+  see perf-dead-ends §8.1. `workspace.go` spawns per call, and since audit M-08
+  hands the shards out from an atomic counter rather than one fixed slice each.)
 
 **2. `encoder/` — the encoder's matmul orchestration.** `encoder/linalg.go` is now
 thin: `matmulBTInto` dispatches small shapes to a naive in-package loop and large ones
@@ -334,7 +336,13 @@ the checkpoint is absent (CI), and run when `testdata/encoder-model` is present.
      achieves **16.62 GMAC/s hot** (L1-resident) and **15.90 GMAC/s cold**
      (streaming 55.7 MB, forcing real DRAM reads) — cold is only **1.05× slower
      than hot**, at 9.94 GB/s against this box's ~51 GB/s DDR4-3200 peak. Neither
-     regime is memory-bound; the kernel is compute-limited at both.
+     regime is memory-bound; the kernel is compute-limited at both — **on ONE
+     THREAD**, which is the qualification this paragraph used to omit. S-08.1
+     later measured that box's read bandwidth directly: it SATURATES AT TWO
+     THREADS (30.5 GB/s) and then declines slightly, and the ~51 GB/s figure is
+     a DDR4-3200 spec ceiling reached at ~60%. So "compute-limited" holds per
+     core and does NOT extend to a fanned-out decode, where 9.94 GB/s per worker
+     crosses the real ceiling by three or four workers.
      Against `dotI8AVX2` (same K, no nibble-unpack prologue, no per-group scale
      fold) at 51.20 GMAC/s hot, `dotW4A8FoldAVX2` is **3.08× slower per MAC** —
      the measured cost of int4's unpack + fold, achieving only ~32% of that
@@ -464,6 +472,25 @@ the checkpoint is absent (CI), and run when `testdata/encoder-model` is present.
    `perf-dead-ends.md` §8.10. No load
    profile currently justifies chasing the memory side further at this kernel's
    real call frequency; revisit only if a profile flags it as a real hot path.
+> **STATUS CORRECTION for items 7-14 (audit M-07, fixed 2026-09-10).** These items
+> read as landed wins, and for a long time the SHIPPED build ran none of them. Two
+> different kernel families have to be kept apart to see why:
+>
+> - The **`simd`-package** kernels these items describe (`linalg/exp_simd.go`) are
+>   Experimental tier, behind `GOEXPERIMENT=simd`. They are NOT in a default build
+>   and never were — aikit is a library and cannot require that flag of importers
+>   (see `docs/task-archsimd-eval.md`). The ratios below are real and still apply
+>   to that build.
+> - The **hand-written NEON/AVX2 contract** kernels (`exp_neon_arm64.s`,
+>   `exp_avx2_amd64.s`) ARE in every build, behind the `*ContractInto` API.
+>
+> `encoder/` and `vision/` called the `*Into` family, which resolves to the scalar
+> loop off `GOEXPERIMENT=simd` — so every softmax, SiLU, GELU and GELU-tanh in a
+> shipped build was scalar, while this document described them as accelerated.
+> They were routed to `*ContractInto` on 2026-09-10 (encoder -15.9%, SigLIP tower
+> -28.7 to -42.7%). The default build now gets the hand-written kernels; the
+> numbers in items 7-14 remain `simd`-package numbers and should be quoted as such.
+
 7. **`SoftmaxRowInto` vectorized via Go 1.27's `simd` package — ✅ DONE
    (item 13, "SIMD expF32"), Experimental tier, `linalg/exp_simd.go`.**
    **Read this framing before quoting a number from this item — it has been a
@@ -987,8 +1014,8 @@ linalg/linalg.go                                Dot*/MatmulBT + SetParallelThres
 linalg/quant.go                                 Q8/Q4/W8A8 matmuls (+ Into/Batch)
 linalg/dequant_i8.go, dequant_i8_{arm64.s,amd64.go}  bulk int8→f32 widen (item 22a)
 linalg/matmul_blocked.go, matmul_blocked_q8.go  packed f32 GEMM + fused-widen Q8 (22b)
-linalg/workspace.go, pool.go                    reusable scratch + spin-park worker pool
-linalg/{dot,dot_amd64,width,quant,batch,pool}_test.go   kernel/parity/bench tests
+linalg/workspace.go                             reusable scratch (pool.go was pulled — dead-ends §8.1)
+linalg/{dot,dot_amd64,width,quant,batch}_test.go   kernel/parity/bench tests
 encoder/linalg.go, linalg_q8.go                 encoder's cache-blocked matmul (uses linalg.Dot*)
 encoder/parallel.go                             single-forward row-parallel (in-flight gate)
 ```

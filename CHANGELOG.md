@@ -9,6 +9,20 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Corrected
+
+Two claims in earlier entries were wrong and are corrected here rather than by rewriting a
+shipped release's text:
+
+- **`ann.FlatI8.QueryBatch` never had "work-stealing goroutine dispatch"** (v1.28.0's
+  `bm25.Index.TopKBatch` entry says the new batch APIs mirror it). It was a serial `Query` loop
+  until audit M-18 in this release routed it through the batched M-row GEMM — which is a
+  batched kernel, not work stealing.
+- **`docs/task-simd-audit.md`'s "every W8A8 caller at M>=4 gets the tile"** was not true of
+  `MatmulBTW8A8Batch`, which carried its own per-pair loop. Audit M-01 in this release makes it
+  true.
+
+
 ### Fixed
 
 **`gpu/anncuda.TopKBatch` batches its uploads and caches its top-k partials — 15.3% (audit

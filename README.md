@@ -208,8 +208,10 @@ fraction of the cost and pure-Go. Reproduce: `scripts/fixtures/prep_beir.py`, th
 aikit runs the transformer paths — the MiniLM bi-encoder and the cross-encoder — in
 pure Go. all-MiniLM-L6-v2 encodes short queries at **~22 texts/sec (≈46 ms/text, single
 thread)**; at the full 256-token context the per-token rate climbs to **~710 tokens/sec
-(≈360 ms/text)** as the larger matmuls amortize per-call overhead — the regime aikit's
-cache-blocked GEMM (`linalg.MatmulBT`) accelerates. All on CPU with no ONNX Runtime, no
+(≈360 ms/text)**. The gain is mostly PARALLELISM, not per-call amortization: at
+256 tokens every linear clears `parallelThreshold` and row-splits across cores
+(`encoder/parallel.go`), where a short query does not and really is single-threaded.
+The cache-blocked GEMM (`linalg.MatmulBT`) is what each core then runs. All on CPU with no ONNX Runtime, no
 GPU, `CGO_ENABLED=0`; concurrent encoding scales ~linearly across cores. (Primary dense retrieval uses Model2Vec static embeddings —
 microseconds per text, the table above; the transformer path is the higher-fidelity
 reranking/embedding step over a shortlist.) Measure it: `cd benchmarks && GOWORK=off go

@@ -96,8 +96,14 @@ incomplete for a cross-backend claim, it's impossible. Consequences:
   **structural**, and the policy is settled (see *Where the benchmarks live*): no
   GPU number is CI-gated — cross-machine numbers *cannot* be, since Metal and CUDA
   never co-reside — so **all** GPU rows are a **documented periodic pass** on
-  self-hosted M-series + NVIDIA runners. Only the pure-Go `CGO_ENABLED=0` no-regression
-  guard (§5) stays in default CI.
+  self-hosted M-series + NVIDIA runners.
+
+  NOT YET TRUE of §5's guard, and stated here so the plan is not mistaken for the
+  state: default CI has ONE benchmark job (`perf benchmarks`), it runs two
+  benchmarks at `-benchtime=1x` and asserts NOTHING about timing — deliberately,
+  since a shared runner cannot resolve the percentages that matter. The
+  no-regression comparison is `tools/perfgate`, which runs on a known box by hand
+  and whose VERDICT `releasegate` now requires in the CHANGELOG (audit G-04).
 
 ### 5. Re-run CPU as a contemporaneous baseline + a no-regression gate
 Collect the CPU SIMD numbers on the *same boxes and harness build* the GPU runs
