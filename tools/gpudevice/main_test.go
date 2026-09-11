@@ -110,3 +110,30 @@ func TestCountTopLevel_allSkippedGivesZeroRan(t *testing.T) {
 		t.Errorf("ran=%d skip=%d, want ran=0 skip=2", ran, skip)
 	}
 }
+
+// TestDeviceVerdict_allSkipIsNotGreen is audit G-07: a module that ran but
+// skipped every test must not be counted in the pasted "N/N green" line.
+func TestDeviceVerdict_allSkipIsNotGreen(t *testing.T) {
+	// No skips: all applicable modules are green.
+	if s, ok := deviceVerdict(5, nil, "abc1234", "box", "metal", "today"); !ok ||
+		!strings.Contains(s, "5/5 applicable gpu modules green") {
+		t.Errorf("clean run: ok=%v s=%q", ok, s)
+	}
+	// Two all-skip modules: green is 3/5, and the line must say so rather than
+	// claiming 5/5 as it used to.
+	s, ok := deviceVerdict(5, []string{"gpu/visionmetal", "gpu/qwenmetal"}, "abc1234", "box", "metal", "today")
+	if !ok {
+		t.Fatalf("a partially-skipped run should still pass: %q", s)
+	}
+	if !strings.Contains(s, "3/5 applicable gpu modules green") {
+		t.Errorf("want 3/5 green, got %q", s)
+	}
+	if !strings.Contains(s, "NOT counted green") || !strings.Contains(s, "gpu/visionmetal") {
+		t.Errorf("verdict must name the skipped modules: %q", s)
+	}
+	// Everything skipped: not a pass at all.
+	if s, ok := deviceVerdict(2, []string{"a", "b"}, "abc1234", "box", "metal", "today"); ok ||
+		!strings.Contains(s, "every test skipped") {
+		t.Errorf("all-skip run should be inconclusive: ok=%v s=%q", ok, s)
+	}
+}

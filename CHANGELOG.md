@@ -11,6 +11,16 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**`gpudevice`'s pasted verdict no longer counts an all-skip module as green (audit G-07).** The
+per-module row already printed SKIPPED and a NOTE listed them, but the VERDICT line — the part
+that ends up in a tag message and gets read months later — said "N/N applicable gpu modules
+green" counting them. A module whose every test skipped for an absent fixture is evidence of
+nothing about that module. The line now reports green-vs-applicable separately, names the
+skipped modules, and returns INCONCLUSIVE when nothing exercised a device at all. This was not
+hypothetical: on the day it was written `gpu/visionmetal` ran **0** tests and `gpu/qwenmetal`
+**1**, both for missing `testdata` fixtures, and the suite printed `ok`.
+
+
 **`perfgate` and `releasegate` hardened so the gate can actually fail (audit G-01..G-06).** The
 audit's point was not that the gate was wrong but that it could not lose: it measured one kernel
 family at one M, re-derived its floor every run, and exited 0 when it had measured nothing.

@@ -112,7 +112,21 @@ func run() int {
 		fmt.Printf("The verdict names %s and the tree is not %s. Commit, then re-run before tagging.\n", p.Commit, p.Commit)
 		return 2
 	}
-	fmt.Println(gate.Verdict(gate.OK, fmt.Sprintf("%d/%d applicable gpu modules green at %s (%s, backend:%s, %s)", applic, applic, p.Commit, box, backend, p.Date)))
+	// A SKIP IS NOT A PASS, in the VERDICT LINE too (audit G-07). The per-module
+	// row already said SKIPPED and a NOTE already listed them, but the pasted
+	// verdict counted them as green — and the verdict is the part that ends up
+	// in a tag message and gets read later. A module whose every test skipped
+	// for a missing fixture is evidence of nothing about that module.
+	//
+	// Measured on this repo the day this was written: gpu/visionmetal ran 0
+	// tests and gpu/qwenmetal ran 1, both for absent testdata fixtures, while
+	// the suite printed ok and this line would have called them green.
+	summary, ok := deviceVerdict(applic, skipped, p.Commit, box, backend, p.Date)
+	if !ok {
+		fmt.Println(gate.Verdict(gate.Inconclusive, summary))
+		return 2
+	}
+	fmt.Println(gate.Verdict(gate.OK, summary))
 	fmt.Printf("         %d of %d not applicable on this platform.\n", rep.NA, rep.Total)
 	fmt.Printf("Paste that line into the tag message. It covers ONLY backend:%s — a gpu/ tag\n", backend)
 	fmt.Println("needs the other platform's verdict line too.")
@@ -204,4 +218,28 @@ func countTopLevel(out string) (ran, skip int) {
 		}
 	}
 	return
+}
+
+// deviceVerdict builds the pasted verdict line and reports whether it is a pass.
+//
+// An all-skip module is NOT green (audit G-07). The per-module row already said
+// SKIPPED and a NOTE already listed them, but the verdict counted them toward
+// "N/N green" — and the verdict is the part that ends up in a tag message and
+// gets read months later. A module whose every test skipped for an absent
+// fixture is evidence of nothing about that module.
+//
+// Measured on this repo the day this was written: gpu/visionmetal ran 0 tests
+// and gpu/qwenmetal 1, both for missing testdata fixtures, while the suite
+// printed ok and this line would have called them green.
+func deviceVerdict(applicable int, skipped []string, commit, box, backend, date string) (string, bool) {
+	green := applicable - len(skipped)
+	if green <= 0 {
+		return fmt.Sprintf("0/%d applicable gpu modules actually exercised a device at %s — every test skipped (%s)",
+			applicable, commit, strings.Join(skipped, " ")), false
+	}
+	s := fmt.Sprintf("%d/%d applicable gpu modules green at %s (%s, backend:%s, %s)", green, applicable, commit, box, backend, date)
+	if len(skipped) > 0 {
+		s += fmt.Sprintf(" — %d ran but skipped every test (%s), NOT counted green", len(skipped), strings.Join(skipped, " "))
+	}
+	return s, true
 }
