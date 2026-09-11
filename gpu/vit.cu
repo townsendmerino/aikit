@@ -193,6 +193,29 @@ extern "C" __global__ void gelu_tanh(float* __restrict__ x, int n)
     x[g] = (float)(0.5 * v * (1.0 + tanh(c * (v + 0.044715 * v * v * v))));
 }
 
+// ATTN_KTILE / ATTN_MAXHD size the attention kernel's shared K stage (audit
+// M-14). 16 rows x 128 dims x 4 B = 8 KB, on top of the np*4 B dynamic score
+// row and the reduction scratch — comfortably inside a 48 KB block budget even
+// at np=4096. ATTN_MAXHD is a ceiling, not an assumption: a larger head dim
+// takes the unstaged path.
+#define ATTN_KTILE 16
+#define ATTN_MAXHD 128
+
+// ATTN_STAGE_SHARED_MAX caps the shared memory a block may use before staging
+// is declined. The score row is DYNAMIC shared of np*4 bytes, so at large np the
+// extra 8 KB tile costs a block of occupancy per SM and the staging stops
+// paying. Measured on an RTX 2070 SUPER, staged vs unstaged:
+//
+//     np=729   -31.4%     np=2048  -30.0%
+//     np=1024  -33.8%     np=3072   -9.0%
+//     np=1024  -36.6% (qwen, hd=80) np=4096  +11.1%   <- inverts
+//
+// 20 KB admits everything up to np=3072 (12 KB + 8 KB) and excludes np=4096
+// (16 KB + 8 KB). The threshold is in BYTES rather than patches because the
+// mechanism is the shared budget, not the patch count — a different hd or a
+// different score dtype moves the crossover and this moves with it.
+#define ATTN_STAGE_SHARED_MAX 20480
+
 // attention: bidirectional multi-head self-attention over np patches, ONE BLOCK per
 // (head, query). The block stages that query's np scores in dynamic shared memory,
 // softmaxes them (max-subtract, double-accumulated sum — softmaxRow), then each thread
@@ -213,14 +236,55 @@ extern "C" __global__ void attention(
     extern __shared__ float sc[];
 
     const float* qi = q + (long)i * hidden + off;
-    // scores[j] = dot(q_i, k_j) * scale
-    for (int j = threadIdx.x; j < np; j += blockDim.x) {
-        const float* kj = k + (long)j * hidden + off;
-        float acc = 0.f;
-        for (int d = 0; d < hd; d++) acc += qi[d] * kj[d];
-        sc[j] = acc * scale;
+
+    // scores[j] = dot(q_i, k_j) * scale, with K STAGED THROUGH SHARED MEMORY
+    // (audit M-14).
+    //
+    // The direct form — thread j walking k + j*hidden + off — has adjacent
+    // threads reading addresses `hidden` floats apart, so every lane of a warp
+    // touches a DIFFERENT cache line and uses hd of the 32 floats it pulls in.
+    // Staging a KTILE-row tile cooperatively makes the global reads contiguous
+    // (consecutive t -> consecutive d within a row) and the dot then reads from
+    // shared. The query vector is staged too: every thread in the block reads
+    // the same qi[d], which is a broadcast from shared instead of np/blockDim
+    // redundant global loads.
+    //
+    // BIT-IDENTICAL: each dot still accumulates d ASCENDING over the same
+    // values, and no reduction order changes. Only where the operands are read
+    // from moves. The softmax max/sum trees below are untouched — their width
+    // is a bit-identity dependency, as this file notes, not a tuning knob.
+    //
+    // hd > ATTN_MAXHD, or a shared budget that staging would push past, falls
+    // back to the direct form rather than silently truncating or regressing; no
+    // shipped tower is near the hd ceiling (so400m 72, Qwen 80).
+    __shared__ float qs[ATTN_MAXHD];
+    __shared__ float ks[ATTN_KTILE][ATTN_MAXHD];
+    if (hd <= ATTN_MAXHD && (long)np * 4 + ATTN_KTILE * ATTN_MAXHD * 4 <= ATTN_STAGE_SHARED_MAX) {
+        for (int d = threadIdx.x; d < hd; d += blockDim.x) qs[d] = qi[d];
+        __syncthreads();
+        for (int j0 = 0; j0 < np; j0 += ATTN_KTILE) {
+            int cnt = min(ATTN_KTILE, np - j0);
+            for (int t = threadIdx.x; t < cnt * hd; t += blockDim.x) {
+                int jj = t / hd, dd = t - jj * hd;
+                ks[jj][dd] = k[(long)(j0 + jj) * hidden + off + dd];
+            }
+            __syncthreads();
+            for (int jj = threadIdx.x; jj < cnt; jj += blockDim.x) {
+                float acc = 0.f;
+                for (int d = 0; d < hd; d++) acc += qs[d] * ks[jj][d];
+                sc[j0 + jj] = acc * scale;
+            }
+            __syncthreads();
+        }
+    } else {
+        for (int j = threadIdx.x; j < np; j += blockDim.x) {
+            const float* kj = k + (long)j * hidden + off;
+            float acc = 0.f;
+            for (int d = 0; d < hd; d++) acc += qi[d] * kj[d];
+            sc[j] = acc * scale;
+        }
+        __syncthreads();
     }
-    __syncthreads();
 
     // row max, then exp/sum in double — both reduced through shared memory.
     __shared__ float smax[LNBLOCK];

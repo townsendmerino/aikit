@@ -11,6 +11,33 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**CUDA ViT attention stages K and Q through shared memory — 32-37% at real tower shapes
+(audit M-14, CUDA half).** The score loop had thread `j` walking `k + j*hidden + off`, so
+adjacent lanes read addresses `hidden` floats apart: every lane of a warp touched a different
+cache line and used `hd` of the 32 floats it pulled in. K is now staged a `KTILE`-row tile at a
+time with contiguous cooperative loads, and the query vector — which every thread in the block
+reads identically — is staged once and broadcast from shared. Measured on `nvidia-rtx2070s`:
+so400m/np729 **-31.9%**, so400m/np1024 **-34.1%**, qwen/np1024 **-36.8%**.
+
+Bit-identical: each dot still accumulates d ASCENDING over the same values, and the softmax
+max/sum reduction trees — whose width this file documents as a bit-identity dependency rather
+than a tuning knob — are untouched. Only where the operands are read from moves.
+
+Staging is DECLINED above a shared-memory budget, because it stops paying there and a first
+version regressed: the score row is dynamic shared of np*4 bytes, so at large np the extra 8 KB
+tile costs a block of occupancy per SM. Measured staged-vs-unstaged across np: -31.4% at 729,
+-30.0% at 2048, **-9.0% at 3072, +11.1% at 4096** — it inverts. The gate is expressed in bytes
+rather than patches, since the mechanism is the shared budget; np=4096 now measures -0.5%
+(neutral, staging declined) instead of +11%.
+
+`BenchmarkCUDAAttention` is new — this kernel had no benchmark, which is why the finding sat
+unmeasured. NOT DONE: the Metal half (`gpu/metal_vit.go`) and the query-tiling the audit
+actually asks for. Full query tiling needs QTILE x np scores resident, which does not fit
+shared memory at these np — that is why the kernel is one block per query in the first place,
+and getting past it means an online/flash-style softmax, which re-associates the sum and is a
+numerics decision rather than a refactor.
+
+
 **`gpu/annmetal`'s batched score GEMM gets the SIMD-group-per-row QTILE shape — 2.0x at skinny
 M, and the dead end it retests does NOT overturn (audit M-16).** The batch path ran the 16x16
 byte-tiled kernel: one output per thread, byte-granular threadgroup staging — the same shape
