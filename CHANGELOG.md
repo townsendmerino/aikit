@@ -11,6 +11,33 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**arm64 gets a 4-row W4A8 tile on the CANONICAL layout — 1.93x (audit M-02).** S-01 gave amd64 a
+layout-free 4-row tile inside the canonical span (1.65-1.90x), but arm64's half of S-01 was
+scoped to the ROW4 layout and reachable only through `WeightMat.MatmulBTW4A8Into`. Every caller
+without a repacked tensor — paged MoE experts, any tensor that declined the repack (K%32, N%4),
+`MatmulBTW4A8Batch` at M>1, and the uniform `WeightMat.MatmulBTInto` — kept running the M=1 GEMV
+once per (row, column) pair. New NEON kernel `dotW4A8Tile4RowSDOT`: one weight group unpacked
+ONCE (AND/USHR/ZIP1/ZIP2/SUB/SUB) and the group scale broadcast once, with four activation rows'
+SDOT pairs run against them into four f32 accumulators.
+
+Measured on `apple-m1pro`, benchstat `-count=8 -benchtime=2s`, K=1536 N=2048: M=4 **-61.2%**,
+M=8 **-46.0%**, M=32 **-54.5%**, M=128 **-61.1%**, geomean **-48.1%** (1.93x, all p=0.000). M=1
+— where the tile declines — moves +1.9%, below the harness floor.
+
+Bit-identical to `dotW4A8FoldSDOT` by construction, which is the design constraint rather than a
+nice property: each row runs the identical instruction sequence in the identical order, and
+nothing is shared between rows except the unpacked weights and the scale broadcast, neither of
+which enters a reduction. `TestMatmulBTW4A8_MConsistent` forbids the result depending on M and
+goinfer's speculative verify relies on that. Three new tests pin it: the tile is LOAD-BEARING
+(it engages and writes non-zero — a silently-declining kernel would leave every other test
+passing against the old span), bit-exact against `dotW4A8FoldSDOT` at K values straddling the
+group boundary, and the zero-activation-row shortcut is preserved.
+
+Unlike amd64 this needs no VNNI-style exclusion: that one exists because `dotW4A8` prefers a
+differently-folding VNNI kernel at M=1, so an AVX2-fold tile would make the result M-dependent.
+arm64 has one canonical kernel and this reproduces it exactly.
+
+
 **amd64 Q8 encoder no longer widens the whole int8 weight matrix to f32 on every matmul call —
 2.07x (audit M-23).** The int8 weight path widened the entire `[N,K]` matrix into a pooled `deqW`
 buffer per call — up to 9.4 MB written and read straight back, O(N*K) and INDEPENDENT of
