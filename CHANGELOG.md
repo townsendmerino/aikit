@@ -11,6 +11,30 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**amd64 gets the AVX2 f64 acc64 attention kernels — AV 4.8x, QK 1.15x (audit M-11).** S-04's
+arm64 half landed the NEON lane-per-output ports in v1.33.0; the amd64 half stayed pure Go, so
+at depth 8k the f64 attention was the token on a 3700X. `avAcc64AVX32` folds a 32-dim V block
+into 8 YMM f64 accumulators and `qkAcc64AVX4` computes four keys' dots one key per lane.
+Measured on `nvidia-rtx2070s` (Ryzen 7 3700X), benchstat `-count=6`: **AV -78.9%/-79.1%/-79.2%**
+at depth 130/2048/8192, **QK -9.7%/-13.3%/-12.5%**, geomean **-57.0%** (all p=0.002).
+
+The split between the two is the audit's own diagnosis confirmed: the AV block kept its
+accumulators in MEMORY and ran at ~40% of its bound, so it had the headroom; QK was already at
+80% of its scalar issue bound and gains correspondingly little. QK's modest figure is also a
+property of this port — a YMM holds four f64, and with one key per lane the four keys' dims must
+be gathered a lane at a time (`VINSERTPS`), where arm64 does sixteen keys. A wider or
+transposing form is the obvious follow-up.
+
+Bit-identical to the Go reference, and the reason is worth stating because it is what permits
+FMA at all: `acc += w * float64(v[d])` on amd64 is a separate multiply and add (Go does not fuse
+below `GOAMD64=v3`) while `VFMADD231PD` rounds once — but both operands come from float32, so
+the product needs at most 48 mantissa bits against float64's 53 and is EXACT. The rounding FMA
+skips never happens. `TestMatmulAVAcc64_exactMatchesStrided` and
+`TestMatmulQKAcc64_exactMatchesStrided` pass on amd64, plus three new tests: both kernels are
+LOAD-BEARING (they engage rather than silently declining) and each is bit-exact against the Go
+block it replaces.
+
+
 **arm64 gets a 4-row W4A8 tile on the CANONICAL layout — 1.93x (audit M-02).** S-01 gave amd64 a
 layout-free 4-row tile inside the canonical span (1.65-1.90x), but arm64's half of S-01 was
 scoped to the ROW4 layout and reachable only through `WeightMat.MatmulBTW4A8Into`. Every caller

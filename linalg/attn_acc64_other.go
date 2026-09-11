@@ -1,12 +1,10 @@
-//go:build !arm64
+//go:build !arm64 && !amd64
 
 package linalg
 
 // No vector port of the acc64 attention kernels on this arch: the Go kernels
-// run every dim and every key. (The lane-per-output argument in
-// attn_acc64_arm64.s holds for AVX2 too — the products are exact in f64 there
-// as well — but no amd64 kernel has been written; that is task-simd-audit.md
-// S-04's open amd64 half.)
+// run every dim and every key. arm64 has the NEON ports (attn_acc64_arm64.s)
+// and amd64 the AVX2 ones (attn_acc64_amd64.s, audit M-11).
 
 func avAcc64Blocks(srow, vals, drow []float32, nKeys, hd, headOff, rowStride int) int { return 0 }
 
