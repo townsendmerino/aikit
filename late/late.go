@@ -55,16 +55,62 @@ type Hit struct {
 // natural result of an empty inner-max loop, the same "degenerate input,
 // defined output" posture as embed.L2Normalize's zero-vector case.
 func MaxSim(query, doc [][]float32) float64 {
+	// EIGHT doc tokens per kernel call (audit M-20). This is the one-vs-many
+	// shape linalg.Dot8x4 exists for: the query strip is held in registers and
+	// amortized across 8 document rows instead of re-streamed per row, which is
+	// what a Dot-per-pair loop does. Flat and HNSW already score this way (item
+	// 15, 2.05-2.82x there); late was still calling the single-row Dot for every
+	// (query token x doc token) pair.
+	//
+	// NOT bit-identical to the per-pair Dot: the 8-row kernel accumulates in a
+	// different order, so a score can move by ~1 float32 ULP — the same
+	// reassociation tradeoff Flat and HNSW document. Here it can in principle
+	// also change WHICH token wins a near-tie in the max, but the two scores are
+	// within a ULP of each other by construction, so the sum moves by at most
+	// that. TestMaxSim_batchedMatchesPerPair gates it.
 	var sum float64
+	var sums [32]float32
 	for _, q := range query {
+		d := len(q)
+		n4 := d / 4
+		tailStart := n4 * 4
 		var best float32
-		for j, d := range doc {
-			// j==0 unconditionally takes the first candidate: cosine similarity
-			// can be negative, so seeding best at 0 would wrongly floor a doc
-			// whose every token is a poor match at "no match" instead of its
-			// true (negative) best.
-			if s := linalg.Dot(q, d); j == 0 || s > best {
-				best = s
+		// seen replaces the old `j == 0` test: cosine can be negative, so best
+		// must take the FIRST candidate unconditionally rather than being floored
+		// at zero. With the rows visited in groups that index test no longer
+		// identifies the first one.
+		seen := false
+		j := 0
+		for ; d > 0 && j+8 <= len(doc); j += 8 {
+			d0, d1, d2, d3 := doc[j], doc[j+1], doc[j+2], doc[j+3]
+			d4, d5, d6, d7 := doc[j+4], doc[j+5], doc[j+6], doc[j+7]
+			if len(d0) != d || len(d1) != d || len(d2) != d || len(d3) != d ||
+				len(d4) != d || len(d5) != d || len(d6) != d || len(d7) != d {
+				for k := range 8 { // ragged group — defensive, as Flat and HNSW do
+					if s := linalg.Dot(q, doc[j+k]); !seen || s > best {
+						best, seen = s, true
+					}
+				}
+				continue
+			}
+			linalg.Dot8x4(&q[0], &d0[0], &d1[0], &d2[0], &d3[0], &d4[0], &d5[0], &d6[0], &d7[0], n4, &sums)
+			group := [8][]float32{d0, d1, d2, d3, d4, d5, d6, d7}
+			for k := range 8 {
+				// Each row's dot is spread across its 4-lane block; sum the block,
+				// then add the d%4 scalar tail — the same fold Flat uses.
+				b := k * 4
+				sc := sums[b] + sums[b+1] + sums[b+2] + sums[b+3]
+				for kk := tailStart; kk < d; kk++ {
+					sc += q[kk] * group[k][kk]
+				}
+				if !seen || sc > best {
+					best, seen = sc, true
+				}
+			}
+		}
+		for ; j < len(doc); j++ {
+			if s := linalg.Dot(q, doc[j]); !seen || s > best {
+				best, seen = s, true
 			}
 		}
 		sum += float64(best)

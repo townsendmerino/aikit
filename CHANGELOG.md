@@ -11,6 +11,18 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**`late.MaxSim` scores eight document tokens per kernel call — 2.4x (audit M-20).** Late
+interaction is the one-vs-many shape `linalg.Dot8x4` exists for, but `MaxSim` was calling the
+single-row `linalg.Dot` once per (query token x doc token) pair, re-streaming the query strip
+every time. `Flat` and HNSW already score this way. Measured on `apple-m1pro`, benchstat
+`-count=6`, nQ=32 d=128: nDoc=64 **-65.6%**, nDoc=256 **-56.8%**, nDoc=1024 **-50.2%**, geomean
+**-58.0%** (all p=0.002). The `late` package had no benchmark at all, which is why this sat
+unmeasured; `BenchmarkMaxSim` is new. Not bit-identical — the 8-row kernel reassociates, so a
+score can move ~1 float32 ULP, the same tradeoff `Flat` and HNSW document for the same kernel.
+`TestMaxSim_batchedMatchesPerPair` gates it against the per-pair reference across dims and
+document lengths that straddle both the 8-row group and the 4-lane tail.
+
+
 **`gpudevice`'s pasted verdict no longer counts an all-skip module as green (audit G-07).** The
 per-module row already printed SKIPPED and a NOTE listed them, but the VERDICT line — the part
 that ends up in a tag message and gets read months later — said "N/N applicable gpu modules
