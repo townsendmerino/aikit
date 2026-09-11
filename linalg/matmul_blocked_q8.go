@@ -1,5 +1,7 @@
 package linalg
 
+import "sync"
+
 // Fused int8-weight blocked GEMM: dst[M,N] = a[M,K] · dequant(bQ,bScales)[N,K]ᵀ,
 // widening each int8 weight to f32 INSIDE the b-panel pack instead of materializing
 // the whole [N,K] f32 matrix first (perf-campaign item 22 fix (b)).
@@ -35,7 +37,12 @@ package linalg
 // (L=8→512, −25% at L=8 down to −2% at L=512 on an M1 Pro) — so there is no K or M
 // threshold here; the parallel axis, chosen upstream, is what keeps it a win.
 func FusedQ8Applies(K, N int) bool {
-	return HasFusedQ8Kernel && N%8 == 0
+	if has2x8Kernel {
+		return HasFusedQ8Kernel && N%8 == 0
+	}
+	// Off arm64 the fusion is the N-STRIP form (fusedQ8Strip), which reuses
+	// blockedFill unchanged and so places no constraint on N (audit M-23).
+	return HasFusedQ8Kernel
 }
 
 // kBlockFusedQ8 picks the k-tile so the fused reduction order matches the reference
@@ -43,7 +50,11 @@ func FusedQ8Applies(K, N int) bool {
 // unpacked blockedFill at kBlockDefault; at/above it runs packedFill at packKBlockFor.
 // Mirroring both keeps the f32 accumulation order — and thus the bits — identical.
 func kBlockFusedQ8(K int) int {
-	if K >= packKThreshold {
+	// Mirror the REFERENCE's condition exactly, has2x8Kernel included:
+	// blockedFill only takes the packed path when has2x8Kernel is true (see its
+	// gate), so off arm64 the reference is always the unpacked kBlockDefault
+	// path and the fused form must match that to stay bit-identical.
+	if has2x8Kernel && K >= packKThreshold {
 		return packKBlockFor(K)
 	}
 	return kBlockDefault
@@ -66,7 +77,7 @@ func checkMatmulBTQ8(name string, la, lbq, lbs, ldst, M, K, N int) {
 func MatmulBTQ8FusedInto(dst, a []float32, bQ []int8, bScales []float32, M, K, N int) {
 	checkMatmulBTQ8("MatmulBTQ8FusedInto", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	zeroSpanF32(dst[:M*N])
-	packedFillQ8(a, bQ, bScales, dst, M, K, N, 0, N, kBlockFusedQ8(K))
+	fillQ8(a, bQ, bScales, dst, M, K, N, 0, N, kBlockFusedQ8(K))
 }
 
 // MatmulBTQ8Fused is the column-parallel sibling (mirrors MatmulBT), for a lone forward
@@ -77,7 +88,7 @@ func MatmulBTQ8Fused(dst, a []float32, bQ []int8, bScales []float32, M, K, N int
 	zeroSpanF32(dst[:M*N])
 	kb := kBlockFusedQ8(K)
 	parallelCols(M*N*K, N, func(j0, j1 int) {
-		packedFillQ8(a, bQ, bScales, dst, M, K, N, j0, j1, kb)
+		fillQ8(a, bQ, bScales, dst, M, K, N, j0, j1, kb)
 	})
 }
 
@@ -164,3 +175,81 @@ func packedFillQ8Tail(a []float32, bQ []int8, bScales []float32, dst []float32, 
 		}
 	}
 }
+
+// fillQ8 dispatches the fused int8-weight fill to the form that matches this
+// architecture's f32 reference, so both stay bit-identical to
+// DequantizeRowsInt8Into + MatmulBTInto on their own arch.
+//
+// arm64 packs 8 b-rows into a low-stride tile and runs Dot2x8/Dot8x4 over it,
+// mirroring blockedFill's packed path. Off arm64 blockedFill never packs — its
+// pack gate is has2x8Kernel — so the packed form would neither match the
+// reference's reduction order nor use a real kernel (Dot2x8 is the scalar
+// fallback there). fusedQ8Strip is the form that does match.
+func fillQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N, nStart, nEnd, kBlock int) {
+	if has2x8Kernel {
+		packedFillQ8(a, bQ, bScales, dst, M, K, N, nStart, nEnd, kBlock)
+		return
+	}
+	fusedQ8Strip(a, bQ, bScales, dst, M, K, N, nStart, nEnd, kBlock)
+}
+
+// fusedQ8StripCols is how many weight ROWS are widened at a time by
+// fusedQ8Strip. It MUST be a multiple of nBlockDefault: blockedFill tiles its
+// column range in nBlock steps from nStart, so a strip that is a whole number
+// of n-tiles produces exactly the tiles the full-width call would, and hence
+// exactly its accumulation order.
+//
+// 256 rows x K=3072 x 4 B = 3 MB — past L1 but comfortably L2-resident, against
+// the 9.4 MB a full [N,K] widen of that shape materializes. That is the whole
+// point: the widened weights must live in cache, not in DRAM.
+const fusedQ8StripCols = 8 * nBlockDefault
+
+// fusedQ8Strip is the off-arm64 fusion (audit M-23): widen the weights one
+// N-strip at a time and run the ORDINARY blockedFill over each strip, instead
+// of widening the entire [N,K] matrix into a pooled buffer first.
+//
+// WHY THIS SHAPE. The encoder's amd64 Q8 path widened every int8 weight matrix
+// to f32 on every matmul call — O(N*K) independent of sequence length, ~113M
+// weights per forward per worker, up to 9.4 MB per matmul written and then read
+// straight back. The f32 tile only ever needs to be as large as the block the
+// GEMM is about to consume, so the fix is the buffer's LIFETIME, not the
+// arithmetic.
+//
+// BIT-IDENTICAL, by reusing blockedFill rather than reimplementing it:
+//
+//   - the widened values are the same, from the same dequantRowInt8 the
+//     reference's DequantizeRowsInt8Into uses;
+//   - dst is sliced at the strip's first column and N is kept as the row
+//     STRIDE, so blockedFill's dst[i*N+n] lands on exactly the element the
+//     full-width call would write;
+//   - the strip is a whole number of nBlock tiles, so the n-tiling, and with it
+//     the m- and k-tiling inside each tile, is identical to the full-width
+//     call's.
+//
+// It also needs no new kernel: the same blockRows3x4 / Dot8x4 / Dot4x4 path the
+// f32 GEMM already runs on amd64 does the arithmetic.
+func fusedQ8Strip(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N, nStart, nEnd, kBlock int) {
+	if nEnd <= nStart {
+		return
+	}
+	bufp := fusedQ8StripPool.Get().(*[]float32)
+	defer fusedQ8StripPool.Put(bufp)
+	need := fusedQ8StripCols * K
+	if cap(*bufp) < need {
+		*bufp = make([]float32, need)
+	}
+	w := (*bufp)[:need]
+
+	for n0 := nStart; n0 < nEnd; n0 += fusedQ8StripCols {
+		n1 := min(n0+fusedQ8StripCols, nEnd)
+		rows := n1 - n0
+		for r := range rows {
+			dequantRowInt8(w[r*K:(r+1)*K], bQ[(n0+r)*K:(n0+r+1)*K], bScales[n0+r])
+		}
+		// dst[n0:] with N still the row stride puts column (n-n0) of this call
+		// at absolute column n — see the bit-identity note above.
+		blockedFill(a, w[:rows*K], dst[n0:], M, K, N, 0, rows, mBlockDefault, nBlockDefault, kBlock)
+	}
+}
+
+var fusedQ8StripPool = sync.Pool{New: func() any { b := make([]float32, 0); return &b }}

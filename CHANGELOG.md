@@ -11,6 +11,35 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**amd64 Q8 encoder no longer widens the whole int8 weight matrix to f32 on every matmul call —
+2.07x (audit M-23).** The int8 weight path widened the entire `[N,K]` matrix into a pooled `deqW`
+buffer per call — up to 9.4 MB written and read straight back, O(N*K) and INDEPENDENT of
+sequence length, ~113M weights per forward per worker. arm64 has avoided this since item 22 by
+widening inside the b-panel pack, but that form runs `Dot2x8`, which off arm64 is the scalar
+fallback, so amd64 kept the dequant-then-GEMM path.
+
+The amd64 form is `fusedQ8Strip`: widen ONE N-STRIP at a time (256 rows, ~3 MB — L2-resident
+rather than DRAM) and run the ordinary `blockedFill` over it, which on amd64 is the
+`blockRows3x4`/`Dot8x4` path the f32 GEMM already uses. No new kernel. Measured on
+`nvidia-rtx2070s` (Ryzen 7 3700X), benchstat `-count=6`: L80 wqkv **-61.1%**, L80 fc11
+**-62.7%**, L80 fc2 **-63.1%**, L80 outproj **-43.6%**, L512 fc11 **-12.6%**, geomean
+**-51.7%** — the gradient across L is the mechanism, since the widen does not amortize with
+sequence length.
+
+Bit-identical, and by reuse rather than by argument: `fusedQ8Strip` calls `blockedFill` itself,
+slices `dst` at the strip's first column while keeping `N` as the row stride, and sizes the
+strip as a whole number of `nBlock` tiles — so the n/m/k tiling, and therefore the accumulation
+order, is exactly the full-width call's. `TestMatmulBTQ8Fused_bitIdentical` passes on amd64
+against `DequantizeRowsInt8Into + MatmulBTInto`, which is precisely the path amd64 took before,
+so encoder output is unchanged bit-for-bit; its companion `TestMatmulBTQ8Fused_mutationDetected`
+confirms that gate is not vacuous.
+
+NOTE the audit prescribed a different fix — "the W8A8 path the arm64 build already takes". That
+would have been wrong twice over: arm64 takes a fused WEIGHT-ONLY path, not W8A8, and W8A8
+quantizes activations, which this file records as having fallen below the 0.97 reranker bar.
+Taking it literally would have traded a correctness bar for speed.
+
+
 **Matmul fan-out hands out work dynamically instead of one fixed shard per worker — 11.5%
 (audit M-08).** `parallelSpawnCols` split the output columns into one equal shard per worker, so
 the slowest-STARTING worker set the barrier for all of them. S-02 measured the mechanism on
