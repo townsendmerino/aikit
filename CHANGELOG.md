@@ -11,6 +11,23 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**`gpu/anncuda.TopKBatch` batches its uploads and caches its top-k partials — 15.3% (audit
+M-17).** The small-batch path did four separate synchronous host→device transfers (two `SetU32`
+round-trips plus two `Upload`s, each of which synchronizes on both sides since this release's
+C-01 fix), and `launchTopK` allocated AND FREED its `partIdx`/`partVal`/`pBuf` on every call —
+on the path whose entire problem is per-call fixed cost. The `topkScratch` struct already had
+`pIdx`/`pVal`/`pBuf` fields for exactly this and nothing used them. Now: one `UploadBatch` for
+all four transfers, and cached partials for batches at or below the scratch width (wide batches
+still allocate per call, so a one-off cannot pin them for the process's life — the same rule the
+score matrix follows).
+
+Measured on `nvidia-rtx2070s`, dim 256 k=10: N=200k/M=1 **-21.3%**, M=4 -16.1%, M=8 -17.3%;
+N=500k/M=1 -12.3%, M=4 -13.2%, M=8 -11.2%; geomean **-15.3%** (all p=0.002). The audit put the
+avoidable round-trips at "roughly half" of the 0.409 ms single-query path; measured it is 15-21%,
+so that estimate was high — recorded as measured rather than as predicted. `BenchmarkTopKBatch`
+is new; this module had no benchmark, which is why the figure was counted from the call sequence.
+
+
 **`gpu/enccuda` stages small transfers through pinned memory on the queue's stream — up to 30.5%
 (audit M-15).** The matmul path called blocking `gpu.Upload` twice from PAGEABLE memory, then
 `Sync`, then a blocking `Download` — and since this release's C-01 fix each `Upload` also

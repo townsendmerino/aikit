@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"math"
 	"sync"
+	"unsafe"
 
 	"github.com/townsendmerino/aikit/ann"
 	gpu "github.com/townsendmerino/aikit/gpu"
@@ -478,17 +479,38 @@ func (x *cudaI8Index) launchTopK(scoreBuf, idxBuf, valBuf, mBuf, kBuf gpu.Buffer
 			gpu.Arg(mBuf), gpu.Arg(x.nbuf), gpu.Arg(kBuf))
 	}
 	w := topkPlan(k)
-	// Partials: k candidates per (query, chunk). Small next to the score matrix this
-	// is selecting from — M*parts*k against M*N — so it is allocated per call rather
-	// than cached, like the rest of TopKBatch's scratch.
-	partIdx := gpu.NewBufferLenOf[int32](x.b.dev, M*parts*k)
-	partVal := x.b.dev.NewBufferLen(M * parts * k)
-	pBuf := gpu.NewBufferOf(x.b.dev, []uint32{uint32(parts * k)})
-	defer func() {
-		for _, b := range []gpu.Buffer{partIdx, partVal, pBuf} {
-			x.b.dev.ReleaseBuf(b)
+	// Partials: k candidates per (query, chunk), M*parts*k against the M*N score
+	// matrix they select from.
+	//
+	// CACHED for small batches (audit M-17). These were allocated and freed on
+	// EVERY call — three device allocations, one of them an upload, and three
+	// frees — on the path whose whole problem is per-call fixed cost. The
+	// topkScratch struct already had pIdx/pVal/pBuf fields for exactly this and
+	// nothing used them. Large batches still allocate per call, so a one-off
+	// wide batch cannot pin its partials for the process's life, which is the
+	// same rule the score matrix follows.
+	var partIdx, partVal, pBuf gpu.Buffer
+	if M <= topkScratchMaxM {
+		t := &x.tk
+		t.pIdx = x.growBuf(t.pIdx, M*parts*k, func(n int) gpu.Buffer { return gpu.NewBufferLenOf[int32](x.b.dev, n) })
+		t.pVal = x.growBuf(t.pVal, M*parts*k, x.b.dev.NewBufferLen)
+		t.pBuf = x.growBuf(t.pBuf, 1, func(int) gpu.Buffer { return gpu.NewBufferOf(x.b.dev, []uint32{0}) })
+		// One element, so growBuf never resizes it; parts varies with M and N so
+		// it is rewritten per call.
+		if err := t.pBuf.SetU32(uint32(parts * k)); err != nil {
+			return err
 		}
-	}()
+		partIdx, partVal, pBuf = t.pIdx, t.pVal, t.pBuf
+	} else {
+		partIdx = gpu.NewBufferLenOf[int32](x.b.dev, M*parts*k)
+		partVal = x.b.dev.NewBufferLen(M * parts * k)
+		pBuf = gpu.NewBufferOf(x.b.dev, []uint32{uint32(parts * k)})
+		defer func() {
+			for _, b := range []gpu.Buffer{partIdx, partVal, pBuf} {
+				x.b.dev.ReleaseBuf(b)
+			}
+		}()
+	}
 	if err := x.b.q.Launch(x.b.topkSplit[w], gpu.LaunchConfig{
 		GridX: uint32(parts), GridY: uint32(M), GridZ: 1, BlockX: block, BlockY: 1, BlockZ: 1,
 	}, gpu.Arg(scoreBuf), gpu.Arg(partIdx), gpu.Arg(partVal),
@@ -605,18 +627,25 @@ func (x *cudaI8Index) TopKBatch(queries [][]float32, k int) (hits [][]ann.Hit, e
 		t.val = x.growBuf(t.val, M*k, x.b.dev.NewBufferLen)
 		t.mBuf = x.growBuf(t.mBuf, 1, func(int) gpu.Buffer { return gpu.NewBufferOf(x.b.dev, []uint32{uint32(M)}) })
 		t.kBuf = x.growBuf(t.kBuf, 1, func(int) gpu.Buffer { return gpu.NewBufferOf(x.b.dev, []uint32{uint32(k)}) })
-		// The scalars are one element each, so growBuf never resizes them — they have
-		// to be rewritten every call instead.
-		if err := t.mBuf.SetU32(uint32(M)); err != nil {
-			return nil, err
-		}
-		if err := t.kBuf.SetU32(uint32(k)); err != nil {
-			return nil, err
-		}
-		if err := gpu.Upload(t.qi8, qi8); err != nil {
-			return nil, err
-		}
-		if err := gpu.Upload(t.qscale, qscale); err != nil {
+		// ONE BATCHED UPLOAD for all four host→device transfers (audit M-17).
+		//
+		// This was two SetU32 round-trips plus two separate gpu.Upload calls —
+		// four synchronous transfers, and since this release's C-01 fix each
+		// Upload synchronizes on BOTH sides of its copy, so the scalars alone
+		// cost more than the query data they accompany. UploadBatch issues every
+		// copy and synchronizes ONCE, so the guarantee a caller gets is
+		// identical and only the cost is amortized.
+		//
+		// The scalars are one element each, so growBuf never resizes them; they
+		// still have to be rewritten every call, which is why they are in the
+		// batch rather than set at allocation.
+		mv, kv := uint32(M), uint32(k)
+		if err := gpu.UploadBatch([]gpu.HostCopy{
+			{Dst: t.qi8, Src: unsafe.Slice((*byte)(unsafe.Pointer(unsafe.SliceData(qi8))), len(qi8))},
+			{Dst: t.qscale, Src: unsafe.Slice((*byte)(unsafe.Pointer(unsafe.SliceData(qscale))), len(qscale)*4)},
+			{Dst: t.mBuf, Src: unsafe.Slice((*byte)(unsafe.Pointer(&mv)), 4)},
+			{Dst: t.kBuf, Src: unsafe.Slice((*byte)(unsafe.Pointer(&kv)), 4)},
+		}); err != nil {
 			return nil, err
 		}
 		qi8Buf, qscaleBuf, scoreBuf = t.qi8, t.qscale, t.score

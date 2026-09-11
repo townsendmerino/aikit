@@ -382,7 +382,9 @@ func TestCUDATopK_tieBreak(t *testing.T) {
 // newTestIndex builds a backend + index directly, so the decline paths can be
 // exercised on the concrete type. Reaching them through FlatI8 is not possible — the
 // index is unexported there — and asserting nothing would make this test vacuous.
-func newTestIndex(t *testing.T, vecs [][]float32) *cudaI8Index {
+// newTestIndex takes testing.TB so benchmarks can reuse it (audit M-17 added
+// the first anncuda benchmark; this package had none).
+func newTestIndex(t testing.TB, vecs [][]float32) *cudaI8Index {
 	t.Helper()
 	dev, err := gpu.CreateSystemDefaultDevice()
 	if err != nil {
