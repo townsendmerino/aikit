@@ -54,6 +54,13 @@ excluded from that promise and may change in any release until it graduates.
   test, `TestFMAPeakAMD64_empirical`, fails under QEMU (it infers a clock speed from measured
   GFLOPS, and TCG emulation runs nowhere near real clock rates) — not a regression, not gated by
   this change, excluded from the run with `-skip`.
+  <br>**Acceptance bar, pre-registered before nobara measures it.** The tile exists so a
+  split-half-only tensor can serve M>1 without falling behind canonical, not to speed prefill up.
+  In a 4-row tile the nibble unpack is already amortized over four activation rows, so the two
+  VPUNPCK per group the M=1 kernel deletes are worth roughly a quarter as much per MAC here;
+  expect the tile within a few percent of the canonical tile, possibly inside the spread. Bar: at
+  M≥4, not slower than the canonical tile beyond the run's spread; at M=1, the existing +2.1%
+  decode at zero extra RSS (goinfer L5's measurement, on the same box).
   <br>**Measurement and tag: pending nvidia-rtx2070s.** nobara was unreachable all session
   (ssh timeout), so no perfgate pass/fail line is recorded in this section on purpose — the
   release gate's evidence check requires one (or a documented exception, spelled out fully so it

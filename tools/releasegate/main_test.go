@@ -153,6 +153,48 @@ func TestCheckChangelog_missingFile(t *testing.T) {
 	}
 }
 
+// TestCheckPerfEvidence_proseSayingVerdictFails is the regression pin for the
+// gate-that-cannot-fail bug found 2026-09-11 (see checkPerfEvidence's own
+// comment): a section containing the WORDS "perfgate" and "verdict"/
+// "exception" only in ordinary prose — explicitly saying no measurement has
+// been taken yet — must still FAIL, because there is no real
+// "`perfgate` VERDICT: ..." line or "PERFGATE EXCEPTION" blockquote at the
+// structural position RELEASING.md defines. The old strings.Contains check
+// passed this exact shape of text.
+func TestCheckPerfEvidence_proseSayingVerdictFails(t *testing.T) {
+	root := t.TempDir()
+	writeChangelog(t, root, "# Changelog\n\n## [1.4.0]\n\n"+
+		"Measurement pending nvidia-rtx2070s: no perfgate verdict is recorded here on purpose, "+
+		"and there is no explicit exception either — nobara was unreachable this session.\n\n"+
+		"[1.4.0]: https://example.com/compare/v1.3.0...v1.4.0\n")
+	c := checkPerfEvidence(root, "1.4.0")
+	if c.Outcome != gate.Fail {
+		t.Fatalf("Outcome = %v, want Fail — prose mentioning \"perfgate\"/\"verdict\" is not a recorded result", c.Outcome)
+	}
+	if !strings.Contains(c.Field("msg"), "no perfgate VERDICT line") {
+		t.Errorf("msg = %q, want it to name what is missing", c.Field("msg"))
+	}
+}
+
+// TestCheckPerfEvidence_realVerdictLinePasses is the positive twin: a section
+// carrying the actual convention every shipped release has used — a line
+// starting with the literal "`perfgate` VERDICT: " token — passes, even
+// though the surrounding paragraph ALSO uses the word "perfgate" and
+// "verdict" in prose (proving the fix is about POSITION, not merely
+// requiring the token to appear more than once).
+func TestCheckPerfEvidence_realVerdictLinePasses(t *testing.T) {
+	root := t.TempDir()
+	writeChangelog(t, root, "# Changelog\n\n## [1.4.0]\n\n"+
+		"Ran the perf gate on a real box; see below for the verdict it reached.\n\n"+
+		"`perfgate` VERDICT: PASS — no regression vs v1.3.0 above each shape's floor — 10/10 shapes resolve "+
+		"the 5.0% class.\n\n"+
+		"[1.4.0]: https://example.com/compare/v1.3.0...v1.4.0\n")
+	c := checkPerfEvidence(root, "1.4.0")
+	if c.Outcome != gate.OK {
+		t.Fatalf("Outcome = %v, want OK; msg=%q", c.Outcome, c.Field("msg"))
+	}
+}
+
 // TestCheckChangelog_versionIsRegexEscaped confirms a version string containing regex
 // metacharacters (a plausible pre-release tag, e.g. "1.4.0-rc.1") is matched LITERALLY, not
 // interpreted as a pattern — regexp.QuoteMeta's job, pinned so a future edit that drops it

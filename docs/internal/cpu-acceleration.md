@@ -251,6 +251,13 @@ tolerance. Tests assert exact equality.
   speed from measured GFLOPS and TCG emulation runs nowhere near real
   clock rates, not a regression). The perfgate VERDICT/measurement itself
   still needs real hardware and is recorded as pending in the CHANGELOG.
+  <br>**Acceptance bar, pre-registered before nobara measures it.** The tile exists so a
+  split-half-only tensor can serve M>1 without falling behind canonical, not to speed prefill up.
+  In a 4-row tile the nibble unpack is already amortized over four activation rows, so the two
+  VPUNPCK per group the M=1 kernel deletes are worth roughly a quarter as much per MAC here;
+  expect the tile within a few percent of the canonical tile, possibly inside the spread. Bar: at
+  M≥4, not slower than the canonical tile beyond the run's spread; at M=1, the existing +2.1%
+  decode at zero extra RSS (goinfer L5's measurement, on the same box).
 
 ### AVX2 kernel numbers (Ryzen 7 3700X, `-bench 'Dot'`, MB/s)
 

@@ -304,11 +304,37 @@ func firstLine(s string) string {
 // introduced in v1.35.0 decayed to silence over three releases, which is what
 // an unenforced convention does.
 //
+// perfgateVerdictLine matches the real perfgate result line the CHANGELOG
+// convention uses — e.g. "`perfgate` VERDICT: PASS — no regression vs
+// v1.40.0 above each shape's floor — 33/45 shapes resolve the 5.0% class"
+// (every real entry to date: v1.38.0, v1.39.0, v1.39.1, v1.40.0 all use this
+// exact prefix). Anchored to the START of a line so prose that merely
+// mentions the words "perfgate" and "verdict" elsewhere in the section
+// cannot satisfy it. This is the fix for a real gate-that-cannot-fail bug
+// found 2026-09-11: the release-prep author wrote a "measurement pending
+// nvidia-rtx2070s" sentence for a still-unmeasured perfgate run that itself
+// happened to contain both substrings ("no perfgate VERDICT is recorded
+// here... an explicit EXCEPTION"), and the old strings.Contains check —
+// "perfgate" anywhere AND ("VERDICT" or "EXCEPTION") anywhere, independently
+// — read that as a real result and passed. A prose sentence EXPLAINING that
+// no verdict exists yet must not be indistinguishable from one.
+var perfgateVerdictLine = regexp.MustCompile("(?m)^`perfgate` VERDICT: (PASS|FAIL|INCONCLUSIVE)\\b")
+
+// perfgateExceptionLine matches the documented-exception form (the PERFGATE
+// EXCEPTION blockquote v1.40.0 introduced for a known false-positive VERDICT
+// FAIL) — RELEASING.md step 2b's "or record an explicit EXCEPTION". Same
+// line-start anchoring, same reasoning.
+var perfgateExceptionLine = regexp.MustCompile(`(?m)^>\s*\*\*PERFGATE EXCEPTION:`)
+
 // The gpu module's tag-evidence workflow already requires a VERDICT: line in
 // the tag message; this is the root module's equivalent, checked against the
 // CHANGELOG section where this repo actually records its gates. Deliberately
 // NOT a check that perfgate passed — that is perfgate's job and its exit code.
-// This checks only that the question was asked and answered in the open.
+// This checks only that the question was asked and answered in the open, AT
+// the structural position RELEASING.md defines (its own line, the literal
+// `perfgate` VERDICT: token or the PERFGATE EXCEPTION blockquote) — not
+// merely somewhere in the section's prose. See perfgateVerdictLine's own
+// comment for why that distinction is load-bearing, not pedantry.
 func checkPerfEvidence(root, ver string) gate.Cell {
 	data, err := os.ReadFile(filepath.Join(root, "CHANGELOG.md"))
 	if err != nil {
@@ -320,12 +346,13 @@ func checkPerfEvidence(root, ver string) gate.Cell {
 		return gate.Cell{Name: "perf-evidence", Outcome: gate.OK,
 			Fields: []gate.Field{{Key: "section", State: "absent (reported by changelog check)"}}}
 	}
-	hasVerdict := strings.Contains(sec, "perfgate") &&
-		(strings.Contains(sec, "VERDICT") || strings.Contains(sec, "EXCEPTION"))
+	hasVerdict := perfgateVerdictLine.MatchString(sec) || perfgateExceptionLine.MatchString(sec)
 	if !hasVerdict {
 		return failMsg("perf-evidence", fmt.Sprintf(
-			"CHANGELOG [%s] has no perfgate VERDICT or EXCEPTION line — run `go run -C tools ./perfgate <prev-tag>` "+
-				"and paste its VERDICT, or record an explicit EXCEPTION saying why this release does not need one", ver))
+			"CHANGELOG [%s] has no perfgate VERDICT line (its own line, exactly "+
+				"\"`perfgate` VERDICT: PASS|FAIL|INCONCLUSIVE — ...\") or PERFGATE EXCEPTION blockquote — "+
+				"run `go run -C tools ./perfgate <prev-tag>` and paste its VERDICT line verbatim, or record "+
+				"an explicit EXCEPTION saying why this release does not need one", ver))
 	}
 	fmt.Println("release-gate: perfgate VERDICT/EXCEPTION recorded for v" + ver)
 	return gate.Cell{Name: "perf-evidence", Outcome: gate.OK,
