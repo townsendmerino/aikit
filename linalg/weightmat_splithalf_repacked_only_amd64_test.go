@@ -74,9 +74,46 @@ func TestWeightMatSplitHalf_repackedOnlyMatchesCanonical(t *testing.T) {
 	}
 }
 
+// oldRepackSplitHalfReference reimplements RepackW4A8SplitHalf's documented
+// transform independently ("byte i holds weight i (low nibble) and weight
+// i+16 (high), within each 32-wide group") rather than by calling
+// RepackInt4SplitHalfRow — audit M-22's refactor (9b8defd) factored
+// RepackW4A8SplitHalf's own row body OUT into RepackInt4SplitHalfRow, the
+// same function RepackInt4SplitHalfInPlace now calls, so RepackW4A8SplitHalf
+// alone is no longer an independent reference (unlike row4's
+// repackSplitHalf4RowBlock, which stayed a separate, untouched function —
+// split-half had no such surviving twin to fall back on, so this rebuilds
+// the transform from the doc's own description instead).
+func oldRepackSplitHalfReference(packed []byte, rows, cols, group int) []byte {
+	bpr := cols / 2
+	nib := func(row []byte, k int) byte {
+		b := row[k/2]
+		if k%2 == 0 {
+			return b & 0x0F
+		}
+		return b >> 4
+	}
+	out := make([]byte, len(packed))
+	for r := 0; r < rows; r++ {
+		row := packed[r*bpr : (r+1)*bpr]
+		dst := out[r*bpr : (r+1)*bpr]
+		for g := 0; g < cols/group; g++ {
+			gk, ob := g*group, g*(group/2)
+			for i := 0; i < group/2; i++ {
+				dst[ob+i] = nib(row, gk+i) | (nib(row, gk+i+group/2) << 4)
+			}
+		}
+	}
+	return out
+}
+
 // TestRepackInt4SplitHalfInPlace_matchesOutOfPlace is step 3's byte-for-byte
 // gate: the in-place result must equal RepackW4A8SplitHalf's out-of-place
-// output for the same canonical input.
+// output AND an independent reference (oldRepackSplitHalfReference) built
+// from the layout's own documented description rather than shared code —
+// RepackW4A8SplitHalf alone is not a sufficient reference since audit M-22
+// refactored it to share RepackInt4SplitHalfRow with
+// RepackInt4SplitHalfInPlace itself.
 func TestRepackInt4SplitHalfInPlace_matchesOutOfPlace(t *testing.T) {
 	if !vnniDeclineCheck(t) {
 		return
@@ -89,6 +126,7 @@ func TestRepackInt4SplitHalfInPlace_matchesOutOfPlace(t *testing.T) {
 	q4, q4s := quantizeInt4Random(rng, 8, 1536, group)
 
 	want := RepackW4A8SplitHalf(cloneBytes(q4), 8, 1536, group)
+	oldWant := oldRepackSplitHalfReference(cloneBytes(q4), 8, 1536, group)
 
 	w, ok := RepackInt4SplitHalfInPlace(q4, cloneFloats(q4s), 8, 1536, group)
 	if !ok {
@@ -99,7 +137,10 @@ func TestRepackInt4SplitHalfInPlace_matchesOutOfPlace(t *testing.T) {
 	}
 	for i := range want {
 		if w.q4SplitHalf[i] != want[i] {
-			t.Fatalf("split-half byte %d: in-place %d, out-of-place %d", i, w.q4SplitHalf[i], want[i])
+			t.Fatalf("split-half byte %d: in-place %d, out-of-place (RepackW4A8SplitHalf) %d", i, w.q4SplitHalf[i], want[i])
+		}
+		if w.q4SplitHalf[i] != oldWant[i] {
+			t.Fatalf("split-half byte %d: in-place %d, independent reference %d", i, w.q4SplitHalf[i], oldWant[i])
 		}
 	}
 	// q4s is retained UNCHANGED (shared scales, not repacked) — assert that
