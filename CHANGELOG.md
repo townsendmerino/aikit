@@ -11,6 +11,33 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+**Metal ViT forward batches a layer into ONE command buffer, and quantises the shared activation
+once — 38.5% at the small tower (audit M-13).** Every op was its own `Queue.Run1D`/`Run2D`:
+commit, wait, drain a pool — about 24 per layer, roughly 290 per forward. Q/K/V additionally
+re-quantised the SAME normed activation three times, because `proj` owned its quantise step.
+`ForwardPatches` now opens one `gpu.Encoder` per layer and appends every dispatch to it, so a
+forward costs **14** command buffers instead of ~290, and the shared activation is quantised
+once and bound three times (6 `QuantRows` dispatches per layer become 4).
+
+Measured on `apple-m1pro`: hidden=512/np=196 **169.6ms -> 104.2ms (-38.5%)**, hidden=768/np=576
+880.0 -> 808.6 (-8.1%). The gradient is the mechanism — a fixed per-commit cost amortizes as the
+ops get bigger — and it is why the small tower gains most.
+
+Two pieces of infrastructure the audit named as blockers: `gpu.Encoder` gained `Dispatch2D` (the
+tiled-GEMM shape, which the 1-D `Dispatch` cannot express — note it takes THREADGROUP counts,
+like `Queue.Run2D`, not thread counts), and `visionmetal` replaced its three SHARED scalar slots
+with a per-dispatch ring. The shared slots were only ever safe because each `Run1D` committed
+AND WAITED, so a scalar was consumed before the next write; inside one command buffer nothing
+waits between dispatches and every dispatch would have seen the last value written. The ring
+panics rather than wrapping if a buffer exceeds it, because silently reusing a slot feeds one
+dispatch another's argument — a wrong answer, not a crash.
+
+Bit-identical, checked rather than argued: the GPU≡CPU parity delta is **8.34e-07 before and
+after**, and `TestVisionMetal_repeatable` still reports four forwards on reused scratch as
+bit-identical. As with M-16, this does not flip the crossover — Metal is still slower than the
+CPU tower here (0.46x and 0.33x), it is just less slow.
+
+
 **CUDA ViT attention stages K and Q through shared memory — 32-37% at real tower shapes
 (audit M-14, CUDA half).** The score loop had thread `j` walking `k + j*hidden + off`, so
 adjacent lanes read addresses `hidden` floats apart: every lane of a warp touched a different

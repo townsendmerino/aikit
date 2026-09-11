@@ -70,11 +70,17 @@ type encoder struct {
 	mid, mlp, out      gpu.Buffer
 	qi8, qs            gpu.Buffer // quantized activation + per-row scale
 
-	// Reusable scalar buffers (Metal has no by-value kernel arg): three uint32 slots
-	// and two float slots, rewritten before each dispatch. Safe to reuse because each
-	// Run1D commits and waits, so a scalar is fully consumed before it is overwritten.
-	s0, s1, s2       gpu.Buffer
-	epsBuf, scaleBuf gpu.Buffer
+	// PER-DISPATCH scalar slots (audit M-13). Metal has no by-value kernel arg, so
+	// every int argument is a one-word buffer. This used to be three shared slots
+	// rewritten before each dispatch, which was safe only because each Run1D
+	// committed AND WAITED — the scalar was fully consumed before the next write.
+	// Batching a layer into one command buffer removes that guarantee: every
+	// dispatch in the buffer would see the LAST value written. So each dispatch
+	// now takes its own slot from this ring, reset once per command buffer.
+	iv     []gpu.Buffer // uint32 slots
+	ivNext int
+	fv     []gpu.Buffer // float32 slots (eps, attention scale)
+	fvNext int
 
 	cpp int
 	mu  sync.Mutex
@@ -133,8 +139,18 @@ func newEncoder(w vision.GPUWeights) (enc *encoder, err error) {
 	wide := max(inter, hidden)
 	e.qi8 = gpu.NewBufferOf(dev, make([]int8, np*wide))
 	e.qs = f32(np)
-	e.s0, e.s1, e.s2 = gpu.NewBufferOf(dev, []uint32{0}), gpu.NewBufferOf(dev, []uint32{0}), gpu.NewBufferOf(dev, []uint32{0})
-	e.epsBuf, e.scaleBuf = gpu.NewBufferOf(dev, []float32{0}), gpu.NewBufferOf(dev, []float32{0})
+	// Enough slots for a whole batched layer: ~24 dispatches x up to 3 ints each,
+	// plus headroom. Reset per command buffer, so this is a ceiling on ONE
+	// buffer's dispatches, not on the forward.
+	const ivSlots, fvSlots = 128, 16
+	e.iv = make([]gpu.Buffer, ivSlots)
+	for i := range e.iv {
+		e.iv[i] = gpu.NewBufferOf(dev, []uint32{0})
+	}
+	e.fv = make([]gpu.Buffer, fvSlots)
+	for i := range e.fv {
+		e.fv[i] = gpu.NewBufferOf(dev, []float32{0})
+	}
 	return e, nil
 }
 
@@ -145,68 +161,98 @@ func vitTG(n int) int {
 	return gpu.ViTBlock
 }
 
-func (e *encoder) setI(b gpu.Buffer, v int) { b.SetU32(uint32(int32(v))) }
+// u32 takes the next uint32 slot, writes v, and returns it. Panics rather than
+// wrapping if a command buffer exceeds the ring: silently reusing a slot would
+// feed one dispatch another's argument, which is a wrong ANSWER, not a crash.
+func (e *encoder) u32(v int) gpu.Buffer {
+	if e.ivNext >= len(e.iv) {
+		panic("visionmetal: uint32 scalar slots exhausted in one command buffer")
+	}
+	b := e.iv[e.ivNext]
+	e.ivNext++
+	b.SetU32(uint32(int32(v)))
+	return b
+}
 
-// The dispatch helpers below are all called under ForwardPatches's LockOSThread. Each
-// is one Run1D (or Run1DTG) — the same op sequence as the CUDA launches, with the
-// scalar buffers rewritten per call.
+// f32 is u32's float sibling.
+func (e *encoder) f32(v float32) gpu.Buffer {
+	if e.fvNext >= len(e.fv) {
+		panic("visionmetal: float scalar slots exhausted in one command buffer")
+	}
+	b := e.fv[e.fvNext]
+	e.fvNext++
+	b.Floats()[0] = v
+	return b
+}
 
-func (e *encoder) gemmF32(a, b, c gpu.Buffer, M, N, K int) {
-	e.setI(e.s0, M)
-	e.setI(e.s1, N)
-	e.setI(e.s2, K)
+// resetSlots rewinds the rings; call once per command buffer.
+func (e *encoder) resetSlots() { e.ivNext, e.fvNext = 0, 0 }
+
+// The dispatch helpers below ENCODE into a caller-supplied command buffer
+// (audit M-13). They used to be one Queue.Run1D/Run2D each — one command
+// buffer, one commit, one wait, per op — which is ~24 commit+waits per layer
+// and a commit floor of roughly 160 ms per so400m image before any arithmetic.
+// Now ForwardPatches opens one Encoder per layer and these append to it, so a
+// layer costs one commit and one wait.
+//
+// Each takes its scalar arguments from the per-dispatch slot ring (u32/f32),
+// not from shared slots: within one command buffer nothing waits between
+// dispatches, so a shared slot would hand every dispatch the last value
+// written.
+
+func (e *encoder) gemmF32(enc *gpu.Encoder, a, b, c gpu.Buffer, M, N, K int) {
 	p, gx, gy, tgx, tgy := e.k.GEMMF32Plan(M, N, K) // aligned → sg_big, else sg
-	e.q.Run2D(p, gx, gy, tgx, tgy, a, b, c, e.s0, e.s1, e.s2)
+	enc.Dispatch2D(p, gx, gy, tgx, tgy, a, b, c, e.u32(M), e.u32(N), e.u32(K))
 }
 
-func (e *encoder) addBias(x, bias gpu.Buffer, rows, dim int) {
-	e.setI(e.s0, rows)
-	e.setI(e.s1, dim)
-	e.q.Run1D(e.k.AddBias, rows*dim, vitTG(rows*dim), x, bias, e.s0, e.s1)
+func (e *encoder) addBias(enc *gpu.Encoder, x, bias gpu.Buffer, rows, dim int) {
+	enc.Dispatch(e.k.AddBias, rows*dim, vitTG(rows*dim), x, bias, e.u32(rows), e.u32(dim))
 }
 
-func (e *encoder) addVec(x, v gpu.Buffer, n int) {
-	e.setI(e.s0, n)
-	e.q.Run1D(e.k.AddVec, n, vitTG(n), x, v, e.s0)
+func (e *encoder) addVec(enc *gpu.Encoder, x, v gpu.Buffer, n int) {
+	enc.Dispatch(e.k.AddVec, n, vitTG(n), x, v, e.u32(n))
 }
 
-func (e *encoder) norm(x, w, b, out gpu.Buffer, rows, dim int) {
-	e.setI(e.s0, rows)
-	e.setI(e.s1, dim)
-	e.epsBuf.Floats()[0] = e.w.Eps
-	e.q.Run1D(e.k.LayerNorm, rows*gpu.ViTBlock, gpu.ViTBlock, x, w, b, out, e.s0, e.s1, e.epsBuf)
+func (e *encoder) norm(enc *gpu.Encoder, x, w, b, out gpu.Buffer, rows, dim int) {
+	enc.Dispatch(e.k.LayerNorm, rows*gpu.ViTBlock, gpu.ViTBlock, x, w, b, out,
+		e.u32(rows), e.u32(dim), e.f32(e.w.Eps))
 }
 
-func (e *encoder) gelu(x gpu.Buffer, n int) {
-	e.setI(e.s0, n)
-	e.q.Run1D(e.k.GELUTanh, n, vitTG(n), x, e.s0)
+func (e *encoder) gelu(enc *gpu.Encoder, x gpu.Buffer, n int) {
+	enc.Dispatch(e.k.GELUTanh, n, vitTG(n), x, e.u32(n))
 }
 
-func (e *encoder) attn(q, k, v, out gpu.Buffer, np, nH, hd int, scale float32) {
-	e.setI(e.s0, np)
-	e.setI(e.s1, nH)
-	e.setI(e.s2, hd)
-	e.scaleBuf.Floats()[0] = scale
-	e.q.Run1DTG(e.k.Attention, np*nH*gpu.ViTBlock, gpu.ViTBlock, np*4,
-		q, k, v, out, e.s0, e.s1, e.s2, e.scaleBuf)
+func (e *encoder) attn(enc *gpu.Encoder, q, k, v, out gpu.Buffer, np, nH, hd int, scale float32) {
+	enc.DispatchTG(e.k.Attention, np*nH*gpu.ViTBlock, gpu.ViTBlock, np*4,
+		q, k, v, out, e.u32(np), e.u32(nH), e.u32(hd), e.f32(scale))
 }
 
-// proj runs one int8 projection: quantize(src[M,K]) → W8A8 matmul against m[N,K] →
-// += bias[N], into dst[M,N]. The quantized activation reuses the shared scratch, so
-// projections must not interleave — they don't, the forward is sequential.
-func (e *encoder) proj(src gpu.Buffer, m mat, bias, dst gpu.Buffer, M int) {
+// quantRows quantizes src[M,K] into the shared qi8/qs scratch.
+//
+// SPLIT OUT OF proj so q/k/v can share ONE quantisation (audit M-13). They all
+// project the SAME normed activation, and proj used to re-quantise it for each,
+// so a layer ran three identical QuantRows dispatches where one serves all
+// three. Bit-identical by definition — it is the same kernel on the same input,
+// run once instead of thrice.
+func (e *encoder) quantRows(enc *gpu.Encoder, src gpu.Buffer, M, K int) {
+	enc.Dispatch(e.k.QuantRows, M*gpu.ViTBlock, gpu.ViTBlock, src, e.qi8, e.qs, e.u32(M), e.u32(K))
+}
+
+// projQuantized is proj without the quantise step: the caller has already put
+// the activation in qi8/qs.
+func (e *encoder) projQuantized(enc *gpu.Encoder, m mat, bias, dst gpu.Buffer, M int) {
 	K, N := m.cols, m.rows
-	e.setI(e.s0, M)
-	e.setI(e.s1, K)
-	e.q.Run1D(e.k.QuantRows, M*gpu.ViTBlock, gpu.ViTBlock, src, e.qi8, e.qs, e.s0, e.s1)
-	e.setI(e.s0, M)
-	e.setI(e.s1, N)
-	e.setI(e.s2, K)
 	gx, gy, tgx, tgy := gpu.TileDims(M, N)
-	e.q.Run2D(e.k.GEMMW8A8Tiled, gx, gy, tgx, tgy, e.qi8, e.qs, m.q, m.s, dst, e.s0, e.s1, e.s2)
-	e.setI(e.s0, M)
-	e.setI(e.s1, N)
-	e.q.Run1D(e.k.AddBias, M*N, vitTG(M*N), dst, bias, e.s0, e.s1)
+	enc.Dispatch2D(e.k.GEMMW8A8Tiled, gx, gy, tgx, tgy,
+		e.qi8, e.qs, m.q, m.s, dst, e.u32(M), e.u32(N), e.u32(K))
+	enc.Dispatch(e.k.AddBias, M*N, vitTG(M*N), dst, bias, e.u32(M), e.u32(N))
+}
+
+// proj is quantise + projQuantized, for the projections that do not share an
+// activation with a sibling.
+func (e *encoder) proj(enc *gpu.Encoder, src gpu.Buffer, m mat, bias, dst gpu.Buffer, M int) {
+	e.quantRows(enc, src, M, m.cols)
+	e.projQuantized(enc, m, bias, dst, M)
 }
 
 // ForwardPatches runs the resident SigLIP forward on im2col patches [np*(C*P*P)]
@@ -226,30 +272,60 @@ func (e *encoder) ForwardPatches(patches []float32) ([]float32, error) {
 	defer runtime.UnlockOSThread()
 
 	copy(e.patches.Floats(), patches) // UMA upload (zero-copy view)
+
+	// ONE COMMAND BUFFER PER LAYER (audit M-13). Each op used to be its own
+	// Queue.Run1D/Run2D — commit, wait, drain a pool — about 24 per layer, a
+	// commit floor of roughly 160 ms per so400m image before any arithmetic
+	// happened. runBatch opens an Encoder, lets the caller append every dispatch
+	// of a layer, then commits and waits ONCE.
+	runBatch := func(fn func(enc *gpu.Encoder)) error {
+		e.resetSlots()
+		enc := e.q.Begin()
+		fn(enc)
+		enc.End()
+		return enc.Err()
+	}
+
 	// patch embed: h = patches[np,cpp]·patchW[hidden,cpp]ᵀ + patchB + posEmb
-	e.gemmF32(e.patches, e.patchW, e.h, np, hidden, e.cpp)
-	e.addBias(e.h, e.patchB, np, hidden)
-	e.addVec(e.h, e.posEmb, np*hidden)
+	if err := runBatch(func(enc *gpu.Encoder) {
+		e.gemmF32(enc, e.patches, e.patchW, e.h, np, hidden, e.cpp)
+		e.addBias(enc, e.h, e.patchB, np, hidden)
+		e.addVec(enc, e.h, e.posEmb, np*hidden)
+	}); err != nil {
+		return nil, fmt.Errorf("visionmetal: patch embed: %w", err)
+	}
 
 	scale := float32(1.0 / math.Sqrt(float64(hd)))
 	for i := range e.layers {
 		L := &e.layers[i]
-		// attention block (pre-LN, residual)
-		e.norm(e.h, L.ln1w, L.ln1b, e.n1, np, hidden)
-		e.proj(e.n1, L.qw, L.qb, e.qa, np)
-		e.proj(e.n1, L.kw, L.kb, e.ka, np)
-		e.proj(e.n1, L.vw, L.vb, e.va, np)
-		e.attn(e.qa, e.ka, e.va, e.att, np, nH, hd, scale)
-		e.proj(e.att, L.ow, L.ob, e.o, np)
-		e.addVec(e.h, e.o, np*hidden)
-		// MLP block (pre-LN, residual): fc2(geluTanh(fc1(x)))
-		e.norm(e.h, L.ln2w, L.ln2b, e.n2, np, hidden)
-		e.proj(e.n2, L.fc1w, L.fc1b, e.mid, np)
-		e.gelu(e.mid, np*inter)
-		e.proj(e.mid, L.fc2w, L.fc2b, e.mlp, np)
-		e.addVec(e.h, e.mlp, np*hidden)
+		if err := runBatch(func(enc *gpu.Encoder) {
+			// attention block (pre-LN, residual)
+			e.norm(enc, e.h, L.ln1w, L.ln1b, e.n1, np, hidden)
+			// q/k/v all project the SAME normed activation, so quantise it ONCE
+			// and bind the result three times rather than running three
+			// identical QuantRows dispatches.
+			e.quantRows(enc, e.n1, np, L.qw.cols)
+			e.projQuantized(enc, L.qw, L.qb, e.qa, np)
+			e.projQuantized(enc, L.kw, L.kb, e.ka, np)
+			e.projQuantized(enc, L.vw, L.vb, e.va, np)
+			e.attn(enc, e.qa, e.ka, e.va, e.att, np, nH, hd, scale)
+			e.proj(enc, e.att, L.ow, L.ob, e.o, np)
+			e.addVec(enc, e.h, e.o, np*hidden)
+			// MLP block (pre-LN, residual): fc2(geluTanh(fc1(x)))
+			e.norm(enc, e.h, L.ln2w, L.ln2b, e.n2, np, hidden)
+			e.proj(enc, e.n2, L.fc1w, L.fc1b, e.mid, np)
+			e.gelu(enc, e.mid, np*inter)
+			e.proj(enc, e.mid, L.fc2w, L.fc2b, e.mlp, np)
+			e.addVec(enc, e.h, e.mlp, np*hidden)
+		}); err != nil {
+			return nil, fmt.Errorf("visionmetal: layer %d: %w", i, err)
+		}
 	}
-	e.norm(e.h, e.postLNw, e.postLNb, e.out, np, hidden)
+	if err := runBatch(func(enc *gpu.Encoder) {
+		e.norm(enc, e.h, e.postLNw, e.postLNb, e.out, np, hidden)
+	}); err != nil {
+		return nil, fmt.Errorf("visionmetal: post-LN: %w", err)
+	}
 
 	dst := make([]float32, np*hidden)
 	copy(dst, e.out.Floats()) // UMA download (the last Run1D already waited)
