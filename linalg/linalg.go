@@ -252,7 +252,9 @@ func parallelSpawnCols(N, workers int, fn func(j0, j1 int)) {
 	var next atomic.Int64
 	var wg sync.WaitGroup
 	for range workers {
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			for {
 				j0 := int(next.Add(int64(grain))) - grain
 				if j0 >= N {
@@ -260,7 +262,7 @@ func parallelSpawnCols(N, workers int, fn func(j0, j1 int)) {
 				}
 				fn(j0, min(j0+grain, N))
 			}
-		})
+		}()
 	}
 	wg.Wait()
 }

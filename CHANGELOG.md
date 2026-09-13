@@ -11,6 +11,26 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [1.42.0] — 2026-09-12
 
+### Fixed
+
+- **`linalg.parallelSpawnCols`: revert the `sync.WaitGroup.Go` (Go 1.25) migration — it costs a
+  real allocation, caught by CI going red on this release's own prep commit.** `d295ba5` ("go fix:
+  modernize loop and concurrency idioms") replaced the manual `wg.Add(1); go func(){ defer
+  wg.Done(); ... }()` with `wg.Go(func(){ ... })`, described as mechanical/no-semantic-change and
+  verified only by `go build`/`go vet`/`go test` — none of which catch an allocation-count
+  regression. `stdlib`'s `WaitGroup.Go` wraps the caller's closure in its own internal
+  `go func(){ defer wg.Done(); f() }()`, and under `-race` that wrapper costs one additional heap
+  allocation per call to `parallelSpawnCols` (not per worker spawned — confirmed by direct
+  measurement, not assumed: `TestMatmulBTQ8Into_parallelScratchPooled`'s `AllocsPerRun` went from
+  7.0 to 8.0, workers held fixed, on both `nvidia-rtx2070s` (linux/amd64) and CI's linux/arm64
+  runner). Reverted to the manual pattern; confirmed on `nvidia-rtx2070s` (real hardware, not
+  QEMU): the original `wg.Go` code fails `TestMatmulBTQ8Into_parallelScratchPooled` deterministically
+  (3/3 runs) at `GOMAXPROCS=4` under `-race`, the revert passes deterministically (3/3 runs) under
+  the same conditions; full `go test ./linalg/... -race` green after the revert (128 PASS / 9 SKIP
+  / 0 FAIL). Caught before the tag, not after: CI went red on both the `d295ba5` push and this
+  release's own prep-commit push, which is what sent this investigation looking for the cause
+  rather than re-running the gate until it happened to go green.
+
 ### Added
 
 - **`linalg`: split-half int4 now serves M>1 — a split-half-only `WeightMat` can serve prefill,
