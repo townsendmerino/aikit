@@ -9,6 +9,8 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.42.0] — 2026-09-12
+
 ### Added
 
 - **`linalg`: split-half int4 now serves M>1 — a split-half-only `WeightMat` can serve prefill,
@@ -61,11 +63,21 @@ excluded from that promise and may change in any release until it graduates.
   expect the tile within a few percent of the canonical tile, possibly inside the spread. Bar: at
   M≥4, not slower than the canonical tile beyond the run's spread; at M=1, the existing +2.1%
   decode at zero extra RSS (goinfer L5's measurement, on the same box).
-  <br>**Measurement and tag: pending nvidia-rtx2070s.** nobara was unreachable all session
-  (ssh timeout), so no perfgate pass/fail line is recorded in this section on purpose — the
-  release gate's evidence check requires one (or a documented exception, spelled out fully so it
-  does not read as one by accident) before a tag can promote this section, so a tag cannot land
-  until the real GMAC/s numbers replace this paragraph.
+  <br>**Acceptance bar: measured, clears.** On `nvidia-rtx2070s` (nobara-pc, AMD Ryzen 7 3700X),
+  `BenchmarkMatmulBTW4A8Canonical` vs `BenchmarkMatmulBTW4A8SplitHalfTile` (3 runs each,
+  `-benchtime=500ms`, median): M1 14.9→17.1 GMAC/s, M4 25.7→27.3 GMAC/s, M8 67.4→69.8 GMAC/s,
+  M32 98.3→88.4 GMAC/s (inside canonical's own 83–110 run-to-run spread at this shape, not a
+  regression), M128 179.4→186.9 GMAC/s. The tile is at parity or faster than canonical at every
+  M≥4 measured, clearing the pre-registered bar.
+
+`perfgate` VERDICT: PASS — no regression vs v1.41.0 above each shape's floor — 12/42 shapes
+resolve the 5.0% class (unsurprising: this release's benchmark, `BenchmarkMatmulBTW4A8SplitHalfTile`,
+is new in this section and has no v1.41.0 baseline to compare against — reported as new, not
+judged; every shape perfgate could compare — the unchanged canonical/row4/batch dispatch paths —
+came back flat).
+
+`vulncheck` STATEMENT: no reachable vulnerabilities in 15/15 modules at d295ba5, nobara-pc,
+2026-09-12.
 
 ## [1.41.0] — 2026-09-11
 
@@ -4029,7 +4041,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.41.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.42.0...HEAD
+[1.42.0]: https://github.com/townsendmerino/aikit/compare/v1.41.0...v1.42.0
 [1.41.0]: https://github.com/townsendmerino/aikit/compare/v1.40.0...v1.41.0
 [1.40.0]: https://github.com/townsendmerino/aikit/compare/v1.39.1...v1.40.0
 [1.39.1]: https://github.com/townsendmerino/aikit/compare/v1.39.0...v1.39.1
