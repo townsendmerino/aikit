@@ -90,13 +90,14 @@ excluded from that promise and may change in any release until it graduates.
   regression), M128 179.4→186.9 GMAC/s. The tile is at parity or faster than canonical at every
   M≥4 measured, clearing the pre-registered bar.
 
-`perfgate` VERDICT: PASS — no regression vs v1.41.0 above each shape's floor — 12/42 shapes
+`perfgate` VERDICT: PASS — no regression vs v1.41.0 above each shape's floor — 9/42 shapes
 resolve the 5.0% class (unsurprising: this release's benchmark, `BenchmarkMatmulBTW4A8SplitHalfTile`,
 is new in this section and has no v1.41.0 baseline to compare against — reported as new, not
 judged; every shape perfgate could compare — the unchanged canonical/row4/batch dispatch paths —
-came back flat).
+came back flat). Measured on `nvidia-rtx2070s` (nobara-pc) at `34f7790`, the tree including the
+`parallelSpawnCols` revert above.
 
-`vulncheck` STATEMENT: no reachable vulnerabilities in 15/15 modules at d295ba5, nobara-pc,
+`vulncheck` STATEMENT: no reachable vulnerabilities in 15/15 modules at 34f7790, nobara-pc,
 2026-09-12.
 
 ## [1.41.0] — 2026-09-11
