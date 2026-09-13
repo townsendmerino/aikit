@@ -9,6 +9,25 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`gpu.Queue.Run1DBatchTG` (and its `Run1DTG` twin, which delegates to it) allocated an
+  `NSAutoreleasePool` without pinning the calling goroutine to its OS thread first — the one G22
+  guard every sibling dispatch helper (`Run1D`, `Run2D`, `Run1DBatch`) already carries.** An
+  `NSAutoreleasePool` is per-OS-thread; if Go migrates the goroutine between the pool's alloc and
+  its drain, draining on a different thread than the one that pushed it is undefined behaviour —
+  observed elsewhere in this codebase as an intermittent SIGSEGV (fault 0x10) inside
+  `objc_msgSend`, with the crash site moving between runs. The only production caller
+  (`qwenmetal.ForwardViT`) happened to pin the OS thread for its whole forward already, masking
+  the gap; a caller that does not (goinfer's own Metal batch-k benchmark harnesses, and
+  `gpu`'s own `metal_vit_test.go`, which had grown a manual `run1dTG` wrapper specifically to work
+  around this) was exposed to it. Found via goinfer's `docs/audit-metal-2026-09-12.md` C-05.
+  Fixed by adding the same two lines (`runtime.LockOSThread()` / `defer
+  runtime.UnlockOSThread()`) every sibling has — `LockOSThread` nests, so an already-pinned caller
+  (`ForwardViT`) is unaffected. Verified: `go test ./gpu/` green (`TestMetal_vitAttentionSeg`
+  exercises `Run1DTG` on the exact kernel `ForwardViT` dispatches), `go vet -tags metal ./gpu/...`
+  and `gofmt` clean.
+
 ## [1.42.0] — 2026-09-12
 
 ### Fixed

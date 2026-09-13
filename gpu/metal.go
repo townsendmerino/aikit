@@ -951,6 +951,17 @@ func (q Queue) Run1DBatch(p Pipeline, n, tg, reps int, bufs ...Buffer) {
 // with a `threadgroup T* x [[threadgroup(0)]]` param sized per-Dispatch — batch-k stages only
 // what k needs, preserving occupancy).
 func (q Queue) Run1DBatchTG(p Pipeline, n, tg, reps, tgBytes int, bufs ...Buffer) {
+	// G22: pin the OS thread for the pool's whole lifetime. An NSAutoreleasePool is
+	// PER-OS-THREAD, and Go may migrate a goroutine between any two calls — draining
+	// a pool on a thread other than the one that pushed it is undefined behaviour,
+	// and shows up as an intermittent SIGSEGV (fault 0x10) inside objc_msgSend.
+	// Consumers that already pin are unaffected: LockOSThread nests. Missed here
+	// originally — every sibling helper (Run1D, Run2D, Run1DBatch) pins; this one
+	// didn't, and Run1DTG delegates straight to it (goinfer audit-metal-2026-09-12.md
+	// C-05; qwenmetal.ForwardViT's own caller-side pin masked it in production).
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
 	pool := objc.ID(objc.GetClass("NSAutoreleasePool")).Send(selAlloc).Send(selInit)
 	defer pool.Send(selDrain)
 	cb := q.id.Send(selCommandBuffer)
