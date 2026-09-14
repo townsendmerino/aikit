@@ -25,6 +25,7 @@ var (
 	selRequestResidency = objc.RegisterName("requestResidency")
 	selEndResidency     = objc.RegisterName("endResidency")
 	selAddResidencySet  = objc.RegisterName("addResidencySet:")
+	selUseResidencySet  = objc.RegisterName("useResidencySet:")
 	// selCommit ("commit") and selAlloc/selInit/selRelease are declared in metal.go — reused here.
 )
 
@@ -106,4 +107,19 @@ func (rs ResidencySet) EndResidency() { rs.id.Send(selEndResidency) }
 
 // AddResidencySet attaches the set to this command queue: every command buffer committed on the
 // queue references it, so the driver skips per-commit residency validation for its allocations.
+//
+// This is QUEUE-scoped, not per-command-buffer: EVERY command buffer on the queue carries the
+// whole set in its referenced list, even one that never touches any allocation in it. Measured
+// cost (goinfer audit-metal-2026-09-12.md M-14): a phase that never touches a ~3 GB paged-MoE slot
+// pool still pays ~2.07 ms/CB of GPU-idle-in-wait validating a set it doesn't reference, ~62
+// ms/token summed across a decode step's command buffers. UseResidencySet (below) is the
+// per-encoder alternative — attach it only to the command buffers that actually touch the set.
 func (q Queue) AddResidencySet(rs ResidencySet) { q.id.Send(selAddResidencySet, rs.id) }
+
+// UseResidencySet attaches the set to THIS Encoder's command buffer only (macOS 15+'s
+// MTLCommandEncoder.useResidencySet:, a per-encoder alternative to Queue.AddResidencySet's
+// queue-wide attach — M-14, audit-metal-2026-09-12.md). Call once per Encoder, before End(); has
+// no effect on any other command buffer the queue commits. Prefer this over AddResidencySet
+// whenever only SOME of a queue's command buffers actually touch the set's allocations — a phase
+// that never references it stops paying to carry an irrelevant set in its own referenced list.
+func (e *Encoder) UseResidencySet(rs ResidencySet) { e.enc.Send(selUseResidencySet, rs.id) }
