@@ -28,6 +28,28 @@ excluded from that promise and may change in any release until it graduates.
   exercises `Run1DTG` on the exact kernel `ForwardViT` dispatches), `go vet -tags metal ./gpu/...`
   and `gofmt` clean.
 
+- **`gpu/qwenmetal`'s ForwardViT batches a block into ONE command buffer, ported from
+  `gpu/visionmetal`'s own M-13 fix.** Every op was its own `Queue.Run1D`/`Run1DTG`/`Run2D` —
+  commit, wait, drain a pool — 17-22 dispatches per block, 544-704 over a 32-block tower, a submit
+  floor of roughly 136-176 ms/image before any arithmetic (≥ the CPU tower's own recorded 157 ms).
+  `ForwardViT` now opens one `gpu.Encoder` per block (patch embed gets its own) and appends every
+  dispatch to it, so a forward costs one command buffer per block instead of 17-22. The three
+  shared scalar buffers (`s0`/`s1`/`s2`/`epsBuf`/`scaleBuf`, safe only because each `Run1D`
+  committed and waited before the next write) are replaced with visionmetal's per-dispatch ring
+  (`iv`/`fv`, reset once per command buffer) — a shared slot would hand every dispatch in a batch
+  the LAST value written, not its own. Found via goinfer's `docs/audit-metal-2026-09-12.md` M-15.
+  Batching is scoped per BLOCK, not per whole forward: the conditional `segS`/`segE` host
+  re-upload (window vs. full attention bounds) must land before the command buffer containing
+  that block's `AttentionSeg` dispatch opens, so a per-block boundary is the only safe
+  granularity. Verified with a deliberate TDD check (temporarily dropping the ring reset):
+  `TestQwenMetal_parityWithCPU` immediately panicked on ring exhaustion rather than silently
+  corrupting results — confirming the panic-on-exhaustion design actually fires; restored, green.
+  `go test -tags metal -race ./gpu/qwenmetal/...` green (`TestQwenMetal_parityWithCPU`: cosine
+  1.000000000 vs CPU on both ViT and merged output; `TestQwenMetal_repeatable`: 4 forwards on
+  reused scratch bit-identical; `TestQwenMetal_fixtureExercisesBothAttentionKinds` confirms the
+  fixture genuinely exercises both window and full attention, so the segS/segE scoping is real
+  coverage, not vacuous), `go vet -tags metal`, `gofmt`, and staticcheck all clean.
+
 ### Added
 
 - **`gpu.Device.CurrentAllocatedSize()`: the device's actual native GPU-side allocation, in
