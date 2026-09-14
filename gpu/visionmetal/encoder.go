@@ -111,6 +111,23 @@ func newEncoder(w vision.GPUWeights) (enc *encoder, err error) {
 		dev.ReleaseObjects()
 		return nil, fmt.Errorf("visionmetal: degenerate tower (np=%d hidden=%d inter=%d)", np, hidden, inter)
 	}
+	// Threadgroup-memory budget check (audit C-06, mirroring qwenmetal's own C-02 fix —
+	// qwenmetal/encoder.go's attnThreadgroupBytes guards the SAME shared kernel, gpu.ViT's
+	// `attention`). The kernel stages a per-query score row in DYNAMIC threadgroup memory
+	// (np*4 bytes — one float per patch, metal_vit.go's `sc [[threadgroup(0)]]`) on top of its
+	// two STATIC threadgroup arrays (smax/ssum, ViTBlock floats each). A dispatch whose total
+	// exceeds the device maximum (~32 KiB on Apple GPUs) aborts the command buffer, and
+	// waitUntilCompleted returns cleanly from an abort: e.att simply keeps the previous layer's
+	// contents and Forward returns a plausible, wrong hidden state — metal.go's own doc records
+	// this as "silently tolerates ... over-budget threadgroup memory ... status Completed".
+	// Unlike qwenmetal's per-image patch count (checked per ForwardViT call), this tower's np is
+	// FIXED at build time (w.NumPatches), so the check belongs here, once, rather than per
+	// forward. Not a shipped shape today (so400m/896 = 4,096 patches, well under the limit), but
+	// a wider image resolution would hit it silently without this.
+	if need, have := attnThreadgroupBytes(np), dev.MaxThreadgroupMemoryLength(); need > have {
+		dev.ReleaseObjects()
+		return nil, fmt.Errorf("visionmetal: ViT attention needs %d B of threadgroup memory for %d patches but the device allows %d — this tower's resolution exceeds what Metal supports", need, np, have)
+	}
 	cpp := w.NumChannels * w.PatchSize * w.PatchSize
 
 	e := &encoder{dev: dev, q: dev.NewCommandQueue(), k: kern, w: w, cpp: cpp}
@@ -153,6 +170,15 @@ func newEncoder(w vision.GPUWeights) (enc *encoder, err error) {
 	}
 	return e, nil
 }
+
+// attnThreadgroupBytes is the threadgroup memory one Attention dispatch needs for np patches:
+// the dynamic per-query score row the caller binds at index 0 (np floats), plus the kernel's two
+// STATIC threadgroup arrays, smax[LNBLOCK] and ssum[LNBLOCK], which are ViTBlock floats each
+// (gpu/metal_vit.go, `attention`). Mirrors qwenmetal/encoder.go's identical helper for the SAME
+// shared kernel — duplicated rather than shared because qwenmetal and visionmetal are separate Go
+// modules. Counting the static pair matters: against a 32 KiB device budget the extra 2 KiB
+// brings the real np limit down from 8,192 (the dynamic term alone) to 7,680.
+func attnThreadgroupBytes(np int) int { return np*4 + 2*gpu.ViTBlock*4 }
 
 func vitTG(n int) int {
 	if n < gpu.ViTBlock {
