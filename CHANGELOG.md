@@ -28,6 +28,23 @@ excluded from that promise and may change in any release until it graduates.
   exercises `Run1DTG` on the exact kernel `ForwardViT` dispatches), `go vet -tags metal ./gpu/...`
   and `gofmt` clean.
 
+### Added
+
+- **`gpu.Device.CurrentAllocatedSize()`: the device's actual native GPU-side allocation, in
+  bytes.** Added so a leak test can assert on real freed memory instead of this package's own
+  ledger. `Device.LedgerLen()` counts entries in `allocs`/`objs`, which `ReleaseAll`/
+  `ReleaseObjects` clear unconditionally *before* sending `release` to each id — a leak test
+  asserting only `LedgerLen()==0` after `Close` cannot distinguish "every buffer was actually
+  released" from "the release loop silently did nothing," since both leave the Go-side slice
+  empty. `CurrentAllocatedSize` reads `MTLDevice.currentAllocatedSize` directly, independent of
+  this package's own tracking and immune to macOS's page compression (unlike RSS). Found via
+  goinfer's `docs/audit-metal-2026-09-12.md` G-06. Verified with a deliberate TDD check: with
+  `ReleaseAll`'s release loop temporarily removed to simulate a real leak, the existing
+  `TestLedger_buffers` (asserting `LedgerLen()==0`) still passed — confirming it cannot catch this
+  class of bug — while the new `TestCurrentAllocatedSize_reflectsRealAllocation` correctly failed;
+  restored, both green. `go test -tags metal ./gpu/...` green (34 pass / 0 fail / 3 skip), `go vet
+  -tags metal ./gpu/...` and `gofmt` clean.
+
 ## [1.42.0] — 2026-09-12
 
 ### Fixed

@@ -83,6 +83,42 @@ func TestLedger_objects(t *testing.T) {
 	d.ReleaseObjects()
 }
 
+// TestCurrentAllocatedSize_reflectsRealAllocation proves CurrentAllocatedSize tracks the
+// device's actual native allocation, independent of this package's own ledger — the gap
+// LedgerLen cannot cover (goinfer audit-metal-2026-09-12 G-06): ReleaseAll/ReleaseObjects
+// clear allocs/objs to nil BEFORE sending release to each id, not because those releases
+// succeeded, so a leak test asserting only LedgerLen()==0 cannot distinguish "everything was
+// actually freed" from "the release loop silently did nothing." This grows and shrinks real
+// GPU memory and checks MTLDevice's own reported total moves with it.
+func TestCurrentAllocatedSize_reflectsRealAllocation(t *testing.T) {
+	d := newLeakDevice(t)
+	defer d.ReleaseObjects()
+
+	base := d.CurrentAllocatedSize()
+
+	const n, bytesPerBuf = 8, 1 << 20 // 8 x 1 MiB
+	bufs := make([]Buffer, n)
+	for i := range bufs {
+		bufs[i] = d.NewBufferBytes(bytesPerBuf)
+	}
+	grown := d.CurrentAllocatedSize()
+	if want := base + uint64(n*bytesPerBuf); grown < want {
+		t.Fatalf("CurrentAllocatedSize after %d x %d-byte allocs = %d, want >= %d (base %d)",
+			n, bytesPerBuf, grown, want, base)
+	}
+
+	d.ReleaseAll()
+	after := d.CurrentAllocatedSize()
+	if after >= grown {
+		t.Fatalf("CurrentAllocatedSize after ReleaseAll = %d, want < %d (the grown value) — "+
+			"release did not actually free device memory even though it would (LedgerLen()==0)", after, grown)
+	}
+	if after > base+bytesPerBuf { // allocator/alignment slack, not an exact match to base
+		t.Errorf("CurrentAllocatedSize after ReleaseAll = %d, want close to base %d — real memory not fully released", after, base)
+	}
+	_ = bufs // referenced only for the alloc calls above; ReleaseAll already freed them
+}
+
 // TestLedger_perDeviceIsolation: MTLCreateSystemDefaultDevice +1-retains the shared
 // system device per call, so each *Device owns an independent ledger and retain.
 // Closing one must leave the other's ledger and device id intact (M24).

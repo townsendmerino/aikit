@@ -63,6 +63,7 @@ var (
 	selName               = objc.RegisterName("name")
 	selMaxTgMem           = objc.RegisterName("maxThreadgroupMemoryLength") // device tile-memory limit (bytes)
 	selThreadExecWidth    = objc.RegisterName("threadExecutionWidth")       // pipeline SIMD-group width
+	selCurrentAllocSize   = objc.RegisterName("currentAllocatedSize")       // actual GPU-side bytes (goinfer audit-metal-2026-09-12 G-06)
 )
 
 // nsString wraps a Go string as an autoreleased NSString.
@@ -160,6 +161,19 @@ func (d *Device) Name() string { return goString(d.id.Send(selName)) }
 // and decline (goinfer audit M-11). Integer return → objc.Send[uintptr] (arm64 x0 path).
 func (d *Device) MaxThreadgroupMemoryLength() int {
 	return int(objc.Send[uintptr](d.id, selMaxTgMem))
+}
+
+// CurrentAllocatedSize is the device's actual current GPU-side allocation, in bytes — the real
+// Metal-reported number, not this package's own bookkeeping (goinfer audit-metal-2026-09-12 G-06).
+// LedgerLen counts entries in allocs/objs, which ReleaseAll/ReleaseObjects clear unconditionally
+// BEFORE sending release to each id: a leak test asserting LedgerLen()==0 after Close cannot
+// distinguish "every buffer was actually released" from "the release loop silently did nothing" —
+// both leave the Go-side slice empty. CurrentAllocatedSize reads MTLDevice's own live allocation
+// total instead, so it reflects whether the underlying native memory was actually freed,
+// independent of this package's tracking and immune to macOS's page compression (unlike RSS —
+// see close_leak_test.go's own comment on why RSS is unreliable in both directions here).
+func (d *Device) CurrentAllocatedSize() uint64 {
+	return uint64(objc.Send[uintptr](d.id, selCurrentAllocSize))
 }
 
 // CompileLibrary compiles MSL `src` at languageVersion `ver` — with the landmine
