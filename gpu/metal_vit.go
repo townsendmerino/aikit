@@ -419,6 +419,103 @@ kernel void gemm_w8a8_tiled(
     if (m < M && n < N) C[(uint)m * (uint)N + (uint)n] = (float)acc * aScale[m] * bScale[n];
 }
 
+// gemm_w8a8_reg — the register-blocked, packed-word-staged twin of gemm_w8a8_tiled
+// (M-15, audit-metal-2026-09-12.md), porting CUDA's already-shipped gemm_w8a8_reg
+// (vit.cu, audit M-12). gemm_w8a8_tiled computes ONE output per thread with
+// byte-granular threadgroup staging — 32 threadgroup loads per 4 MACs, LSU-bound
+// rather than MAC-bound, the exact shape CUDA's own M-12 measured at 7% of its dp4a
+// roof and retired from the ANN path; the retirement never reached the ViT path.
+//
+// Two changes, both mirroring gemm_w8a8_reg's CUDA playbook:
+//
+//   PACKED-WORD STAGING. Threadgroup memory holds int (four packed int8 lanes), not
+//   char, so one load feeds a whole 4-lane MAC instead of four char loads feeding a
+//   quarter of one. A/B are read through an int* view — K/4 words per row — which is
+//   why K%4 is required; Metal buffer allocations are word-aligned.
+//
+//   4×4 REGISTER BLOCKING. Each thread owns a 4×4 micro-tile, so the 8 shared words it
+//   loads per k-word-step feed 16 4-lane MACs instead of 1 — the same ratio win CUDA's
+//   dp4a version gets. MSL has no simdgroup_matrix int8 form and no hardware dp4a
+//   intrinsic (unlike gemm_f32_sg/sg_big above, which use simdgroup_matrix — f32 only),
+//   so dp4a_manual below unpacks each packed word via arithmetic right-shift
+//   (sign-extending each byte) and sums the four lane products in scalar registers —
+//   this still cuts threadgroup-memory TRAFFIC 4× per word loaded and amortizes each
+//   load over 4 uses in each dimension via the register tile, even without a hardware
+//   4-way MAC instruction. The shift-based unpack matches how the bytes were packed:
+//   both CPU and Apple GPU are little-endian, so element 0 of the original int8 array
+//   is the LOW byte of the reinterpreted word, same as CUDA's convention.
+//
+// K steps 16 elements (IBK=4 words), not 64: SigLIP-so400m's intermediate width (4304)
+// is a multiple of 16 but not of 64, so a K%64 kernel would miss the MLP projections
+// that are most of a ViT's work — the same reasoning gemm_w8a8_reg's own comment gives.
+//
+// The epilogue is byte-for-byte gemm_w8a8_tiled's: an exact int32 accumulator scaled by
+// aScale[m]*bScale[n] in the same order. int32 addition is associative (no overflow at
+// ViT shapes: K·127² ≈ 1.9e7 ≪ 2³¹), so re-chunking K into words/steps cannot change the
+// sum — this kernel and gemm_w8a8_tiled agree bit-for-bit regardless of grouping, and
+// GEMMW8A8Plan can route between them freely.
+//
+// Requires only K%16==0 (IBK words of four int8). M and N are free: edge tiles stage
+// zeros and skip their stores, so the inner loop stays unguarded for any M, N — matters
+// because an M%64/N%64 requirement would have excluded SigLIP-so400m's MLP projections
+// (N=4304, not a multiple of 64).
+#define IBM 64
+#define IBN 64
+#define IBK 4
+#define IBTM 4
+#define IBTN 4
+
+inline int dp4a_manual(int a, int b, int acc) {
+    int a0 = a << 24 >> 24, a1 = a << 16 >> 24, a2 = a << 8 >> 24, a3 = a >> 24;
+    int b0 = b << 24 >> 24, b1 = b << 16 >> 24, b2 = b << 8 >> 24, b3 = b >> 24;
+    return acc + a0 * b0 + a1 * b1 + a2 * b2 + a3 * b3;
+}
+
+kernel void gemm_w8a8_reg(
+    device const int* Aw [[buffer(0)]], device const float* aScale [[buffer(1)]],
+    device const int* Bw [[buffer(2)]], device const float* bScale [[buffer(3)]],
+    device float* C [[buffer(4)]],
+    constant int& M [[buffer(5)]], constant int& N [[buffer(6)]], constant int& K [[buffer(7)]],
+    uint2 tgpos [[threadgroup_position_in_grid]], uint2 tid2 [[thread_position_in_threadgroup]])
+{
+    threadgroup int As[IBK][IBM + 1];
+    threadgroup int Bs[IBK][IBN + 1];
+    int kw = K >> 2;
+    int m0 = (int)tgpos.y * IBM, n0 = (int)tgpos.x * IBN;
+    int tid = (int)tid2.y * 16 + (int)tid2.x; // 0..255
+    int lr = tid >> 2, lc = tid & 3;          // 64 rows x 4 k-words per pass
+
+    int acc[IBTM][IBTN];
+    for (int i = 0; i < IBTM; i++)
+        for (int j = 0; j < IBTN; j++) acc[i][j] = 0;
+
+    for (int k0 = 0; k0 < kw; k0 += IBK) {
+        // Edge tiles are handled by STAGING ZEROS, not by bounds-checking the inner
+        // loop — see the kernel comment above for why.
+        As[lc][lr] = (m0 + lr < M) ? Aw[(uint)(m0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
+        Bs[lc][lr] = (n0 + lr < N) ? Bw[(uint)(n0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (int kk = 0; kk < IBK; kk++) {
+            int a[IBTM], b[IBTN];
+            for (int i = 0; i < IBTM; i++) a[i] = As[kk][(int)tid2.y * IBTM + i];
+            for (int j = 0; j < IBTN; j++) b[j] = Bs[kk][(int)tid2.x * IBTN + j];
+            for (int i = 0; i < IBTM; i++)
+                for (int j = 0; j < IBTN; j++) acc[i][j] = dp4a_manual(a[i], b[j], acc[i][j]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    for (int i = 0; i < IBTM; i++) {
+        int m = m0 + (int)tid2.y * IBTM + i;
+        if (m >= M) continue;
+        for (int j = 0; j < IBTN; j++) {
+            int n = n0 + (int)tid2.x * IBTN + j;
+            if (n < N) C[(uint)m * (uint)N + (uint)n] = (float)acc[i][j] * aScale[m] * bScale[n];
+        }
+    }
+}
+
 kernel void gemm_f32_tiled(
     device const float* A [[buffer(0)]], device const float* B [[buffer(1)]], device float* C [[buffer(2)]],
     constant int& M [[buffer(3)]], constant int& N [[buffer(4)]], constant int& K [[buffer(5)]],
@@ -569,6 +666,10 @@ const (
 	KernelGEMMW8A8Tiled = "gemm_w8a8_tiled"
 	KernelGEMMF32Tiled  = "gemm_f32_tiled"
 
+	// KernelGEMMW8A8Reg is the register-blocked, packed-word int8 GEMM (identical name
+	// to the CUDA side's gemm_w8a8_reg). Pick it via GEMMW8A8Plan.
+	KernelGEMMW8A8Reg = "gemm_w8a8_reg"
+
 	// KernelGEMMF32SG is the production f32 GEMM on simdgroup_matrix (Metal-only; CUDA has
 	// no analogue in this kernel set). Same signature as gemm_f32_tiled. Launch with SGDims.
 	KernelGEMMF32SG = "gemm_f32_sg"
@@ -619,6 +720,37 @@ func TileDims(M, N int) (gx, gy, tgx, tgy int) {
 	return (N + GEMMTile - 1) / GEMMTile, (M + GEMMTile - 1) / GEMMTile, GEMMTile, GEMMTile
 }
 
+// IntRegBlock/IntRegK are gemm_w8a8_reg's per-threadgroup output-tile width and K-step
+// in ELEMENTS (IBK words of four int8); together they form the kernel's alignment
+// requirement. Named to match cuda_vit.go's identical constants.
+//
+// 16 rather than 64 is deliberate: SigLIP-so400m's intermediate width is 4304, a
+// multiple of 16 but NOT of 64, so a K%64 kernel would have missed the MLP projections
+// that are most of a ViT's work.
+const (
+	IntRegBlock = 64
+	IntRegK     = 16
+)
+
+// GEMMW8A8Plan picks the int8 GEMM kernel and its Run2D geometry for a shape M×N×K — the
+// int8 analogue of GEMMF32Plan, and the Metal twin of cuda_vit.go's GEMMW8A8Plan (M-15,
+// audit-metal-2026-09-12.md; ported from CUDA's already-shipped M-12 kernel).
+//
+// It needs only K%16==0: M and N edge tiles stage zeros and skip their stores, so the
+// inner loop stays unguarded while any M and N are accepted — SigLIP-so400m's
+// intermediate width (4304) is a multiple of 16 but not 64, and an M%64/N%64
+// requirement would have excluded the MLP projections, which are most of a ViT's work.
+// A K%16!=0 shape falls back to gemm_w8a8_tiled. Both bind identically (A, aScale, B,
+// bScale, C, M, N, K) and produce identical bits (int32 addition is associative), so a
+// caller only swaps the pipeline and Run2D geometry.
+func (v ViT) GEMMW8A8Plan(M, N, K int) (p Pipeline, gx, gy, tgx, tgy int) {
+	if K%IntRegK == 0 && M > 0 && N > 0 && K > 0 {
+		return v.GEMMW8A8Reg, (N + IntRegBlock - 1) / IntRegBlock, (M + IntRegBlock - 1) / IntRegBlock, IntRegBlock / 4, IntRegBlock / 4
+	}
+	gx, gy, tgx, tgy = TileDims(M, N)
+	return v.GEMMW8A8Tiled, gx, gy, tgx, tgy
+}
+
 // ViTBlock is the threadgroup width the per-row/attention kernels reduce at; it must
 // match vitMSL's LNBLOCK (the static threadgroup reduction arrays are sized to it).
 //
@@ -655,6 +787,11 @@ type ViT struct {
 	GEMMW8A8Tiled Pipeline
 	GEMMF32Tiled  Pipeline
 
+	// GEMMW8A8Reg is the register-blocked, packed-word-staged int8 GEMM. Pick it via
+	// GEMMW8A8Plan, never directly — it requires K%16==0 and has no bounds-checked
+	// fallback path of its own.
+	GEMMW8A8Reg Pipeline
+
 	// Production f32 GEMM on simdgroup_matrix (Metal-only); SGBig is the aligned fast path.
 	GEMMF32SG    Pipeline
 	GEMMF32SGBig Pipeline
@@ -689,6 +826,7 @@ func (d *Device) NewViT() (ViT, error) {
 		{KernelGEMMF32Tiled, &v.GEMMF32Tiled},
 		{KernelGEMMF32SG, &v.GEMMF32SG},
 		{KernelGEMMF32SGBig, &v.GEMMF32SGBig},
+		{KernelGEMMW8A8Reg, &v.GEMMW8A8Reg},
 	} {
 		p, err := d.NewComputePipeline(lib, bind.name)
 		if err != nil {

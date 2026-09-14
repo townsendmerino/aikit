@@ -230,10 +230,11 @@ func uploadSeg(b gpu.Buffer, s []int32) {
 func (e *encoder) proj(enc *gpu.Encoder, src gpu.Buffer, m mat, bias, dst gpu.Buffer, M int) {
 	K, N := m.cols, m.rows
 	if m.quant {
-		// W8A8 stays on the tiled kernel — simdgroup_matrix has no int8 form.
-		tgxg, tgyg, ttx, tty := gpu.TileDims(M, N)
+		// W8A8 has no simdgroup_matrix form; GEMMW8A8Plan picks the register-blocked
+		// fast path when K%16==0 (M-15), else the bounds-checked tiled fallback.
 		enc.Dispatch(e.k.QuantRows, M*gpu.ViTBlock, gpu.ViTBlock, src, e.qi8, e.qs, e.u32(M), e.u32(K))
-		enc.Dispatch2D(e.k.GEMMW8A8Tiled, tgxg, tgyg, ttx, tty, e.qi8, e.qs, m.a, m.b, dst, e.u32(M), e.u32(N), e.u32(K))
+		p, gx, gy, tgx, tgy := e.k.GEMMW8A8Plan(M, N, K)
+		enc.Dispatch2D(p, gx, gy, tgx, tgy, e.qi8, e.qs, m.a, m.b, dst, e.u32(M), e.u32(N), e.u32(K))
 	} else {
 		p, gx, gy, tgx, tgy := e.k.GEMMF32Plan(M, N, K) // aligned → sg_big, else sg
 		enc.Dispatch2D(p, gx, gy, tgx, tgy, src, m.a, dst, e.u32(M), e.u32(N), e.u32(K))

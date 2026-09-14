@@ -50,6 +50,39 @@ excluded from that promise and may change in any release until it graduates.
   fixture genuinely exercises both window and full attention, so the segS/segE scoping is real
   coverage, not vacuous), `go vet -tags metal`, `gofmt`, and staticcheck all clean.
 
+- **`gpu.gemm_w8a8_reg`: register-blocked, packed-word int8 GEMM for Metal, porting CUDA's
+  already-shipped `gemm_w8a8_reg` (audit M-12).** `gemm_w8a8_tiled` computes one output per
+  thread with byte-granular threadgroup staging — 32 threadgroup loads per 4 MACs, the same
+  LSU-bound shape CUDA's own M-12 measured at 7% of its dp4a roof and retired from the ANN path;
+  the retirement never reached the ViT path, where every int8 projection still ran it. The new
+  kernel stages packed `int` words (four int8 lanes) instead of `char`, and each thread owns a
+  4×4 register micro-tile, so the 8 shared words loaded per k-step feed 16 four-lane MACs instead
+  of 1. MSL has neither a `simdgroup_matrix` int8 form nor a hardware dp4a intrinsic (unlike
+  CUDA), so a `dp4a_manual` helper unpacks each packed word via arithmetic right-shift
+  (sign-extending each byte, matching the little-endian packing both platforms share) and sums
+  the four lane products in scalar registers — still a 4× cut in threadgroup-memory traffic per
+  operand loaded even without a hardware 4-way MAC. `GEMMW8A8Plan` (the Metal twin of
+  `cuda_vit.go`'s function of the same name) routes to it when `K%16==0` (M and N free — edge
+  tiles stage zeros and skip their stores, so SigLIP-so400m's N=4304 MLP width, a multiple of 16
+  but not 64, still takes the fast path); everything else falls back to `gemm_w8a8_tiled`. Wired
+  into both `gpu/visionmetal` and `gpu/qwenmetal`'s int8 projections in place of the previously
+  hardcoded tiled kernel. Found via goinfer's `docs/audit-metal-2026-09-12.md` M-15 (second of
+  three fixes that finding names).
+  <br>Bit-identical to `gemm_w8a8_tiled` by the same argument as CUDA's kernel: the accumulator
+  is int32 and integer addition is associative, so re-chunking K into words/steps cannot change
+  the sum, regardless of grouping. New `TestMetal_gemmW8A8Reg` mirrors
+  `cuda_vit_w8a8reg_test.go`'s structure exactly: routing correctness across 8 aligned/misaligned
+  shapes (the kernel has no bounds checks, so a routing bug is out-of-bounds device access), then
+  bit-exact equality vs `gemm_w8a8_tiled` on 6 shapes including the real so400m MLP shape
+  `{100, 4304, 1152}` (both edges ragged). Verified with a deliberate TDD check: temporarily
+  removing the sign-extension from `dp4a_manual` (an `& 0xFF` unsigned unpack instead of the
+  arithmetic-shift sign-extending one) made the test fail immediately with a large numeric
+  mismatch; restored, green. `go test -tags metal -race ./gpu/...` green (34 tests, including the
+  whole-tower `TestVisionMetal_parityWithCPU`/`TestQwenMetal_parityWithCPU` at unchanged cosine
+  1.000000000 — confirming the new kernel is bit-identical in production use, not just in the
+  synthetic unit test), `go vet -tags metal`, `gofmt`, and staticcheck all clean across the root
+  `gpu` module and both `qwenmetal`/`visionmetal` submodules.
+
 ### Added
 
 - **`gpu.Device.CurrentAllocatedSize()`: the device's actual native GPU-side allocation, in

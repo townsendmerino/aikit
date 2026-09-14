@@ -268,8 +268,8 @@ func (e *encoder) quantRows(enc *gpu.Encoder, src gpu.Buffer, M, K int) {
 // the activation in qi8/qs.
 func (e *encoder) projQuantized(enc *gpu.Encoder, m mat, bias, dst gpu.Buffer, M int) {
 	K, N := m.cols, m.rows
-	gx, gy, tgx, tgy := gpu.TileDims(M, N)
-	enc.Dispatch2D(e.k.GEMMW8A8Tiled, gx, gy, tgx, tgy,
+	p, gx, gy, tgx, tgy := e.k.GEMMW8A8Plan(M, N, K) // M-15: register-blocked fast path when K%16==0
+	enc.Dispatch2D(p, gx, gy, tgx, tgy,
 		e.qi8, e.qs, m.q, m.s, dst, e.u32(M), e.u32(N), e.u32(K))
 	enc.Dispatch(e.k.AddBias, M*N, vitTG(M*N), dst, bias, e.u32(M), e.u32(N))
 }
