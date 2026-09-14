@@ -424,6 +424,22 @@ func (d *Device) NewBufferLen(nFloats int) Buffer {
 	return d.MustBuf(d.id.Send(selNewBufferLen, uintptr(nFloats*4), uintptr(0)), nFloats, "len")
 }
 
+// mtlResourceHazardTrackingModeUntracked is MTLResourceHazardTrackingModeUntracked (1<<8) —
+// Metal's own bit, not derived from anything in this binding.
+const mtlResourceHazardTrackingModeUntracked = 1 << 8
+
+// newBufferLenUntracked is NewBufferLen with hazard tracking disabled — the M-16 probe's own
+// allocator (goinfer audit-metal-2026-09-12.md: every buffer this binding allocates is hazard-
+// tracked by default, options=0, which the tree's own record prices as PART of a ~3.8 µs/dispatch
+// GPU-side floor across a decode token's ~310 dispatches). MEASURED NEGATIVE
+// (hazard_tracking_probe_test.go, interleaved runs): untracked vs tracked GPU-busy time is
+// 99.6%/100.4%/100.4% across three runs — noise, not a lever. Kept unexported: it has no
+// consumer, and giving a proven-dead-end 0.4%-of-nothing lever permanent exported surface is worse
+// than re-adding two lines if this is ever revisited on different hardware.
+func (d *Device) newBufferLenUntracked(nFloats int) Buffer {
+	return d.MustBuf(d.id.Send(selNewBufferLen, uintptr(nFloats*4), uintptr(mtlResourceHazardTrackingModeUntracked)), nFloats, "len-untracked")
+}
+
 // NewBufferBytes allocates an uninitialized shared MTLBuffer of n BYTES (n is the
 // element count for the returned Buffer). For consumers that size a buffer in raw
 // bytes rather than float32s — the device-layer primitive goinfer's kernels reach
