@@ -83,6 +83,38 @@ excluded from that promise and may change in any release until it graduates.
   synthetic unit test), `go vet -tags metal`, `gofmt`, and staticcheck all clean across the root
   `gpu` module and both `qwenmetal`/`visionmetal` submodules.
 
+- **`gpu.attention_tiled`: query-tiled, online-softmax attention for Metal (audit
+  M-15's third and last fix) — built and verified standalone, deliberately NOT wired into any
+  production forward.** The existing `attention` kernel re-reads the FULL K and V arrays from
+  device memory once PER QUERY (one threadgroup per (head,query)) — ≈4.2 TB/image at SigLIP
+  so400m's np=4096. A naive query tile still needs an `AT_QTILE×np` score matrix resident, which
+  is why `attention` is one threadgroup per query in the first place and does not fit threadgroup
+  memory at ViT patch counts — the only way past that is an ONLINE (flash-attention-style)
+  softmax: process K/V in `AT_KTILE`-sized chunks, keeping a running max/sum/weighted-V
+  accumulator per query, rescaling by `exp(old_max-new_max)` whenever a chunk raises the max. This
+  RE-ASSOCIATES the softmax sum — mathematically the same result, not bit-identical to the
+  untiled kernel's single-pass reduction. `AT_QTILE`(32) queries share one threadgroup, each on
+  its own thread, running its own recurrence serially over `hd`; `AT_KTILE`(16)/`AT_MAXHD`(128,
+  mirroring CUDA's own `ATTN_KTILE`/`ATTN_MAXHD` staging-kernel constants) bound the static K/V
+  staging arrays (16 KiB total, comfortably under budget) — a tower with `hd > AT_MAXHD` cannot
+  use this kernel; `AttentionTiledEligible`/`AttentionTiledDispatch` are the Go-side contract
+  callers must check before dispatching.
+  <br>**Deliberately not wired into `gpu/visionmetal` or `gpu/qwenmetal`'s production `attn` call.**
+  The audit finding's own Fix text calls out "re-baseline the ViT parity gate" as an explicit,
+  separate step — wiring this in changes the whole tower's parity-gate baseline, which needs its
+  own measurement pass on real hardware and shapes, not a decision folded into the kernel landing
+  silently. Found via goinfer's `docs/audit-metal-2026-09-12.md` M-15.
+  <br>New `TestMetal_vitAttentionTiled` (float64 CPU reference, shapes chosen to exercise both the
+  ragged last query-tile and the ragged last K-chunk, plus `hd == AT_MAXHD` exactly): measured
+  worst Δ 5.36e-07 — tighter than the untiled kernel's own stated 5e-5 bound despite the extra
+  re-association, at these shapes; gated at 1e-4 (2x the untiled bound) for real margin on a
+  different draw. `TestMetal_vitAttentionTiled_matchesUntiled` compares directly against
+  production `attention` on identical inputs (both on Metal): worst Δ 4.47e-07. Verified with a
+  deliberate TDD check: removing the running-accumulator rescale (the classic flash-attention
+  ordering bug — updating the sum/max before rescaling the OLD accumulator instead of after) made
+  the test fail immediately at Δ 0.735; restored, green. `go test -tags metal -race ./gpu/...`
+  green (37 tests), `go vet -tags metal`, `gofmt`, and staticcheck all clean.
+
 ### Added
 
 - **`gpu.Device.CurrentAllocatedSize()`: the device's actual native GPU-side allocation, in

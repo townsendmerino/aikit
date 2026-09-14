@@ -220,6 +220,124 @@ kernel void attention(
     }
 }
 
+// attention_tiled — query-tiled, online-softmax (flash-attention-style) bidirectional
+// self-attention (M-15, audit-metal-2026-09-12.md). attention above re-reads the FULL
+// K and V arrays from device memory once PER QUERY (one threadgroup per (head,query)) —
+// ≈4.2 TB/image at so400m's np=4096 against a 37.7 MB/layer minimum. This groups
+// AT_QTILE queries into ONE threadgroup so a K/V chunk, once staged into threadgroup
+// memory, is reused across every query in the tile instead of being re-read from device
+// memory once per query.
+//
+// A naive query tile would still need an AT_QTILE×np score matrix resident (staging K/V
+// alone does not help if every query still needs its WHOLE row before it can normalize)
+// — that is why attention is one threadgroup per query in the first place, and an
+// AT_QTILE×np buffer does not fit threadgroup memory at ViT patch counts. The way past
+// that is an ONLINE softmax: process K/V in AT_KTILE-sized chunks, keeping a running max
+// (m), running sum (l), and running weighted-V accumulator (acc[hd]) PER QUERY, rescaling
+// the running sum/accumulator by exp(old_max-new_max) whenever a new chunk raises the
+// max. This RE-ASSOCIATES the softmax sum — the same normalized result mathematically,
+// but not bit-identical to attention's single-pass max-subtract-whole-row reduction.
+// See metal_vit_test.go for the (freshly derived, necessarily looser) tolerance this
+// needs against the float64 CPU reference, and its own comment for why a fresh bar is
+// the right response to a re-association rather than a red flag.
+//
+// One thread per query (not a cooperative reduction across the whole threadgroup, unlike
+// attention): AT_QTILE threads per threadgroup, each running its own online-softmax
+// recurrence serially over hd — simpler to get right than splitting one query's work
+// across threads, at some cost to per-query parallelism; a documented, deliberately
+// deferred tuning opportunity, not a correctness concern.
+//
+// AT_MAXHD bounds hd for the STATIC K/V staging arrays below (16 KiB total at
+// AT_KTILE=16 — comfortably under the ~32 KiB Apple GPU threadgroup budget, so unlike
+// the dynamic-memory kernels elsewhere in this file this needs no runtime budget check
+// for the allocation itself). A tower with hd > AT_MAXHD cannot use this kernel at all —
+// see AttentionTiledEligible below, which callers MUST check before dispatching this
+// rather than after a silent wrong answer or an out-of-bounds write into Ks/Vs.
+//
+// NOT WIRED into any production forward as of this commit: this kernel is verified
+// standalone (metal_vit_w8a8reg_test.go's sibling — see TestMetal_vitAttentionTiled) but
+// deliberately not yet swapped into gpu/visionmetal's or gpu/qwenmetal's attn call —
+// doing so changes the whole tower's parity-gate baseline, which the Fix text this
+// implements ("re-baseline the ViT parity gate") calls out as its own explicit,
+// deliberate step, not something to fold into the kernel's own landing. Wiring it in is
+// a separate decision, on real hardware, with the tower's actual np/hd shapes measured
+// against the untiled kernel first.
+#define AT_MAXHD 128
+#define AT_KTILE 16
+#define AT_QTILE 32
+
+kernel void attention_tiled(
+    device const float* q [[buffer(0)]], device const float* k [[buffer(1)]], device const float* v [[buffer(2)]],
+    device float* out [[buffer(3)]],
+    constant int& np [[buffer(4)]], constant int& nH [[buffer(5)]], constant int& hd [[buffer(6)]],
+    constant float& scale [[buffer(7)]],
+    uint tid [[thread_position_in_threadgroup]], uint blk [[threadgroup_position_in_grid]],
+    uint tgsz [[threads_per_threadgroup]])
+{
+    threadgroup float Ks[AT_KTILE][AT_MAXHD];
+    threadgroup float Vs[AT_KTILE][AT_MAXHD];
+
+    int tilesPerHead = (np + AT_QTILE - 1) / AT_QTILE;
+    int h = (int)blk / tilesPerHead;
+    int tileIdx = (int)blk % tilesPerHead;
+    int qStart = tileIdx * AT_QTILE;
+    int i = qStart + (int)tid;
+    int hidden = nH * hd, off = h * hd;
+    bool active = i < np; // the last tile in a head is ragged when np % AT_QTILE != 0
+
+    float m = -3.402823466e+38f;
+    float l = 0.0f;
+    float acc[AT_MAXHD];
+    for (int d = 0; d < hd; d++) acc[d] = 0.0f;
+
+    for (int k0 = 0; k0 < np; k0 += AT_KTILE) {
+        int chunk = min(AT_KTILE, np - k0);
+        // Cooperative stage: every thread in the threadgroup participates regardless of
+        // active, since the staged chunk serves every query in the tile.
+        for (int idx = (int)tid; idx < chunk * hd; idx += (int)tgsz) {
+            int kk = idx / hd, d = idx % hd;
+            Ks[kk][d] = k[(uint)(k0 + kk) * (uint)hidden + (uint)off + (uint)d];
+            Vs[kk][d] = v[(uint)(k0 + kk) * (uint)hidden + (uint)off + (uint)d];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        if (active) {
+            device const float* qi = q + (uint)i * (uint)hidden + (uint)off;
+            float s[AT_KTILE];
+            float blockMax = -3.402823466e+38f;
+            for (int kk = 0; kk < chunk; kk++) {
+                float dot = 0.0f;
+                for (int d = 0; d < hd; d++) dot += qi[d] * Ks[kk][d];
+                float sv = dot * scale;
+                s[kk] = sv;
+                if (sv > blockMax) blockMax = sv;
+            }
+            float newMax = max(m, blockMax);
+            float corr = exp(m - newMax);
+            l *= corr;
+            for (int d = 0; d < hd; d++) acc[d] *= corr;
+            float blockSum = 0.0f;
+            for (int kk = 0; kk < chunk; kk++) {
+                float e = exp(s[kk] - newMax);
+                blockSum += e;
+                for (int d = 0; d < hd; d++) acc[d] += e * Vs[kk][d];
+            }
+            l += blockSum;
+            m = newMax;
+        }
+        // Barrier unconditional (even for inactive threads): the NEXT iteration's stage
+        // above overwrites Ks/Vs, and every thread — active or not — participates in
+        // that stage, so every thread must reach this point before any thread proceeds.
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    if (active) {
+        device float* oi = out + (uint)i * (uint)hidden + (uint)off;
+        float inv = 1.0f / l;
+        for (int d = 0; d < hd; d++) oi[d] = acc[d] * inv;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Qwen2.5-VL ViT additions (Phase 3) — the Metal mirror of vit.cu's Qwen section,
 // the five kernels Qwen needs on top of the shared SigLIP set. Written against
@@ -655,6 +773,11 @@ const (
 	KernelGELUTanh  = "gelu_tanh"
 	KernelAttention = "attention"
 
+	// KernelAttentionTiled is the query-tiled online-softmax kernel (M-15). Dispatch via
+	// AttentionTiledDispatch, and only when AttentionTiledEligible(hd) — not wired into
+	// any production forward yet, see the kernel's own doc comment.
+	KernelAttentionTiled = "attention_tiled"
+
 	// --- Qwen2.5-VL additions (identical names to the CUDA side) ---
 	KernelRMSNorm      = "rmsnorm"
 	KernelRopeQK       = "rope_qk"
@@ -751,6 +874,30 @@ func (v ViT) GEMMW8A8Plan(M, N, K int) (p Pipeline, gx, gy, tgx, tgy int) {
 	return v.GEMMW8A8Tiled, gx, gy, tgx, tgy
 }
 
+// AttnTiledMaxHD/AttnTiledKTile/AttnTiledQTile mirror attention_tiled's AT_MAXHD/AT_KTILE/
+// AT_QTILE (M-15) — kept in sync by hand, like GEMMTile/SGBlock above mirror their own
+// kernels' #defines elsewhere in this file.
+const (
+	AttnTiledMaxHD = 128
+	AttnTiledKTile = 16
+	AttnTiledQTile = 32
+)
+
+// AttentionTiledEligible reports whether attention_tiled can serve a tower with this
+// head dim: its K/V staging arrays are sized statically for hd <= AttnTiledMaxHD. A wider
+// hd MUST use the untiled `attention` kernel instead — this is not a fallback the kernel
+// itself performs, callers must check it themselves before dispatching.
+func AttentionTiledEligible(hd int) bool { return hd > 0 && hd <= AttnTiledMaxHD }
+
+// AttentionTiledDispatch returns the Run1D geometry (n, tg) for attention_tiled at a
+// given (np, nH). Callers MUST check AttentionTiledEligible(hd) first — an ineligible hd
+// dispatched anyway is an out-of-bounds write into the kernel's fixed-size Ks/Vs arrays,
+// not a graceful decline.
+func AttentionTiledDispatch(np, nH int) (n, tg int) {
+	tilesPerHead := (np + AttnTiledQTile - 1) / AttnTiledQTile
+	return nH * tilesPerHead * AttnTiledQTile, AttnTiledQTile
+}
+
 // ViTBlock is the threadgroup width the per-row/attention kernels reduce at; it must
 // match vitMSL's LNBLOCK (the static threadgroup reduction arrays are sized to it).
 //
@@ -775,6 +922,10 @@ type ViT struct {
 	LayerNorm Pipeline
 	GELUTanh  Pipeline
 	Attention Pipeline
+
+	// AttentionTiled is the query-tiled online-softmax kernel (M-15) — see its own doc
+	// comment in vitMSL. Not wired into any production forward yet.
+	AttentionTiled Pipeline
 
 	// Qwen2.5-VL additions.
 	RMSNorm      Pipeline
@@ -817,6 +968,7 @@ func (d *Device) NewViT() (ViT, error) {
 		{KernelLayerNorm, &v.LayerNorm},
 		{KernelGELUTanh, &v.GELUTanh},
 		{KernelAttention, &v.Attention},
+		{KernelAttentionTiled, &v.AttentionTiled},
 		{KernelRMSNorm, &v.RMSNorm},
 		{KernelRopeQK, &v.RopeQK},
 		{KernelAttentionSeg, &v.AttentionSeg},
