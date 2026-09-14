@@ -573,8 +573,8 @@ const (
 	// no analogue in this kernel set). Same signature as gemm_f32_tiled. Launch with SGDims.
 	KernelGEMMF32SG = "gemm_f32_sg"
 
-	// KernelGEMMF32SGBig is the aligned (M%64==0, N%64==0, K%8==0) fast path: 64×64 tile,
-	// direct device loads, no staging/barriers/bounds. Pick it via GEMMF32Plan.
+	// KernelGEMMF32SGBig is the aligned (M%32==0, N%32==0, K%8==0) fast path: 32×32 tile
+	// (SGBigBlock), direct device loads, no staging/barriers/bounds. Pick it via GEMMF32Plan.
 	KernelGEMMF32SGBig = "gemm_f32_sg_big"
 )
 
