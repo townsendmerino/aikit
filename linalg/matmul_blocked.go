@@ -77,10 +77,19 @@ func blockedFill(a, b, dst []float32, M, K, N, nStart, nEnd, mBlock, nBlock, kBl
 	// M=8..256, N=768/1024/3072, real and robust — this is bge-large-en-v1.5/bge-m3/
 	// mxbai-embed-large-v1's exact hidden_size, so their QKV/output/FFN-in projections all
 	// hit this. The rest of the gap (K=1152..1920) was ALSO measured and is NOT the same
-	// case: those K values pack into one 1024 tile plus a small non-power-of-two remainder
-	// that pays copy overhead for little or no benefit (flat to -6%, several not
-	// statistically significant) — so this stays a single named exception, not a general
-	// "round up to the nearest power of two" rule. See linalg/matmul_blocked_pack_bench_test.go.
+	// case, though NOT for the reason first written here: K=1152/1280's remainder chunks
+	// (128, 256) ARE themselves powers of two and DO get packStridePad, yet still only
+	// return flat-to-6% (several not statistically significant) — so it is not "missing
+	// the pad on an odd remainder." Tried routing that remainder through the plain
+	// unpacked path instead (packedFillLeftoverSplit, matmul_blocked_leftover_bench_test.go)
+	// on the theory that a small chunk's fixed per-chunk overhead (buffer copy setup, a
+	// second Dot2x8/Dot8x4 dispatch round) was the cost, not the pad's absence —
+	// MEASURED NEGATIVE: a wash against plain full-packing at 4 of 7 K values, a real but
+	// tiny win at 2 (K=1408 -0.9%, K=1664 -2.1%), and worse at one (K=1920 +2.4%). So the
+	// K=1152..1920 range stays a real, if modest, ceiling regardless of how the remainder
+	// chunk is handled — this stays a single named K==1024 exception, not a general
+	// "round up to the nearest power of two" or "split the remainder" rule.
+	// See linalg/matmul_blocked_pack_bench_test.go and matmul_blocked_leftover_bench_test.go.
 	if has2x8Kernel && (K >= packKThreshold || K == 1024) && nEnd-nStart >= 8 {
 		packedFill(a, b, dst, M, K, N, nStart, nEnd, packKBlockFor(K))
 		return
