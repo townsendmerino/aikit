@@ -259,11 +259,13 @@ func dequantIQ2SBlock(raw []byte, sb int, out []float32) {
 			sg := signs[k]
 			o := out[sub*16+pair*8:]
 			for j := range 8 {
+				// Branchless: iq2sGrid is documented sign-free magnitudes (embed/iq_grids.go),
+				// so v is always >=0 here — XORing the sign bit into the float32 bits is
+				// IEEE-754-exact negation, bit-identical to `if signBit { v = -v }`. See
+				// TestDequantIQ2SBlock_branchlessIsBitIdentical.
 				v := db * float32(g[j])
-				if (sg>>j)&1 != 0 {
-					v = -v
-				}
-				o[j] = v
+				signBit := uint32((sg>>j)&1) << 31
+				o[j] = math.Float32frombits(math.Float32bits(v) ^ signBit)
 			}
 		}
 	}
@@ -282,17 +284,27 @@ func dequantIQ3SBlock(raw []byte, sb int, out []float32) {
 	qh := raw[base+66 : base+74]
 	signs := raw[base+74 : base+106]
 	scales := raw[base+106 : base+110]
-	for p := range 256 {
-		sub := p / 32
+	// Restructured from a flat 256-iteration loop over p (audit note: db only takes
+	// 8 distinct values and idx only 64, so the flat form recomputed each 8x/4x more
+	// often than needed). No reduction here — every out[p] is an independent lookup,
+	// so nesting the loop differently changes nothing about any single output's value.
+	for sub := range 8 {
 		sc := int((scales[sub/2] >> (4 * (sub & 1))) & 0x0F)
 		db := d * float32(1+2*sc)
-		m := p / 4 // grid-index number (0..63)
-		idx := int(qs[m]) | int((qh[m/8]>>(m&7))&1)<<8
-		v := db * float32(iq3sGrid[idx*4+p%4])
-		if (signs[p/8]>>(p&7))&1 != 0 {
-			v = -v
+		for gridChunk := range 8 { // 8 grid chunks of 4 elems = 32 elems/sub-block
+			m := sub*8 + gridChunk
+			idx := int(qs[m]) | int((qh[m/8]>>(m&7))&1)<<8
+			grid := iq3sGrid[idx*4 : idx*4+4]
+			pBase := sub*32 + gridChunk*4
+			sg := signs[pBase/8] // pBase is a multiple of 4 within an 8-aligned byte; loop-invariant across i
+			for i := range 4 {
+				// Branchless: iq3sGrid is documented sign-free magnitudes, so v>=0 here —
+				// same bit-identity argument as IQ2_S above.
+				v := db * float32(grid[i])
+				signBit := uint32((sg>>((pBase&7)+i))&1) << 31
+				out[pBase+i] = math.Float32frombits(math.Float32bits(v) ^ signBit)
+			}
 		}
-		out[p] = v
 	}
 }
 
@@ -306,7 +318,11 @@ func dequantQ4KBlock(raw []byte, sb int, out []float32) {
 	dmin := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))
 	scales := raw[base+4 : base+16]
 	qs := raw[base+16 : base+144]
-	yi := 0
+	// Direct index (base2+l) instead of an accumulated yi counter, PLUS reslicing
+	// out to a constant length/cap — same fix and same verification method as
+	// dequantQ5KBlock/dequantQ2KBlock/dequantQ3KBlock (missed in the first pass;
+	// found by checking every dequant*Block for the same yi pattern afterward).
+	out = out[:256:256]
 	for j := range 4 { // four 64-element groups
 		is := 2 * j
 		sc1, m1 := q4kScaleMin(is+0, scales)
@@ -314,13 +330,12 @@ func dequantQ4KBlock(raw []byte, sb int, out []float32) {
 		d1, off1 := d*float32(sc1), dmin*float32(m1)
 		d2, off2 := d*float32(sc2), dmin*float32(m2)
 		q := qs[j*32 : j*32+32]
+		base2 := j * 64
 		for l := range 32 {
-			out[yi] = d1*float32(q[l]&0x0F) - off1
-			yi++
+			out[base2+l] = d1*float32(q[l]&0x0F) - off1
 		}
 		for l := range 32 {
-			out[yi] = d2*float32(q[l]>>4) - off2
-			yi++
+			out[base2+32+l] = d2*float32(q[l]>>4) - off2
 		}
 	}
 }
@@ -349,8 +364,16 @@ func dequantQ5KBlock(raw []byte, sb int, out []float32) {
 	scales := raw[base+4 : base+16]
 	qh := raw[base+16 : base+48]
 	qs := raw[base+48 : base+176]
-	yi := 0
 	u1, u2 := byte(1), byte(2)
+	// Direct index (base2+l) instead of an accumulated yi counter, PLUS reslicing
+	// out to a constant length/cap: yi was a plain running total, which BCE cannot
+	// bound against len(out) at all; a direct j*64+l index is closer but the prove
+	// pass still can't combine "j<4" and "l<32" into "j*64+l<256" on its own — it
+	// needs len(out) itself to be the literal constant 256, which this reslice
+	// gives it (confirmed via -gcflags="-d=ssa/check_bce/debug=1": the out[...]
+	// checks are gone only with both changes together). Panics if out is shorter
+	// than 256, same as an out-of-bounds write would have anyway.
+	out = out[:256:256]
 	for j := range 4 { // four 64-element groups
 		is := 2 * j
 		sc1, m1 := q4kScaleMin(is+0, scales)
@@ -358,21 +381,20 @@ func dequantQ5KBlock(raw []byte, sb int, out []float32) {
 		d1, off1 := d*float32(sc1), dmin*float32(m1)
 		d2, off2 := d*float32(sc2), dmin*float32(m2)
 		ql := qs[j*32 : j*32+32]
+		base2 := j * 64
 		for l := range 32 {
 			var h float32
 			if qh[l]&u1 != 0 {
 				h = 16
 			}
-			out[yi] = d1*(float32(ql[l]&0x0F)+h) - off1
-			yi++
+			out[base2+l] = d1*(float32(ql[l]&0x0F)+h) - off1
 		}
 		for l := range 32 {
 			var h float32
 			if qh[l]&u2 != 0 {
 				h = 16
 			}
-			out[yi] = d2*(float32(ql[l]>>4)+h) - off2
-			yi++
+			out[base2+32+l] = d2*(float32(ql[l]>>4)+h) - off2
 		}
 		u1 <<= 2
 		u2 <<= 2
@@ -391,24 +413,29 @@ func dequantQ2KBlock(raw []byte, sb int, out []float32) {
 	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+80:]))
 	dmin := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+82:]))
 
-	yi, is := 0, 0
+	is := 0
+	// Direct index (base+l / base+16+l) instead of an accumulated yi counter,
+	// PLUS reslicing out to a constant length/cap — same reasoning and same
+	// verification method as dequantQ5KBlock: BCE cannot combine n<2 and g<4 into
+	// "n*128+g*32+l<256" from range bounds alone, only once len(out) itself is
+	// the literal constant 256.
+	out = out[:256:256]
 	for n := range 2 { // two 128-element halves
 		qb := n * 32 // qs advances by 32 each half
 		shift := uint(0)
-		for range 4 {
+		for g := range 4 {
+			base := n*128 + g*32
 			sc := scales[is]
 			is++
 			dl, ml := d*float32(sc&0x0F), dmin*float32(sc>>4)
 			for l := range 16 {
-				out[yi] = dl*float32((qs[qb+l]>>shift)&3) - ml
-				yi++
+				out[base+l] = dl*float32((qs[qb+l]>>shift)&3) - ml
 			}
 			sc = scales[is]
 			is++
 			dl, ml = d*float32(sc&0x0F), dmin*float32(sc>>4)
 			for l := range 16 {
-				out[yi] = dl*float32((qs[qb+l+16]>>shift)&3) - ml
-				yi++
+				out[base+16+l] = dl*float32((qs[qb+l+16]>>shift)&3) - ml
 			}
 			shift += 2
 		}
@@ -452,12 +479,19 @@ func dequantQ3KBlock(raw []byte, sb int, out []float32) {
 		sc[4*i+3] = int8(v >> 24)
 	}
 
-	yi, is := 0, 0
+	is := 0
 	m := byte(1)
+	// Direct index (outBase+l / outBase+16+l) instead of an accumulated yi
+	// counter, PLUS reslicing out to a constant length/cap — same reasoning and
+	// verification as dequantQ5KBlock/dequantQ2KBlock. Named outBase, not base,
+	// to avoid shadowing this function's raw-offset `base` above (unused past
+	// this point, but shadowing it here was needlessly confusing to read).
+	out = out[:256:256]
 	for n := range 2 { // two 128-element halves
 		qb := n * 32 // q advances by 32 each half
 		shift := uint(0)
-		for range 4 {
+		for g := range 4 {
+			outBase := n*128 + g*32
 			dl := dAll * float32(int(sc[is])-32)
 			is++
 			for l := range 16 {
@@ -465,8 +499,7 @@ func dequantQ3KBlock(raw []byte, sb int, out []float32) {
 				if hm[l]&m != 0 {
 					sub = 0
 				}
-				out[yi] = dl * (float32((q[qb+l]>>shift)&3) - sub)
-				yi++
+				out[outBase+l] = dl * (float32((q[qb+l]>>shift)&3) - sub)
 			}
 			dl = dAll * float32(int(sc[is])-32)
 			is++
@@ -475,8 +508,7 @@ func dequantQ3KBlock(raw []byte, sb int, out []float32) {
 				if hm[l+16]&m != 0 {
 					sub = 0
 				}
-				out[yi] = dl * (float32((q[qb+l+16]>>shift)&3) - sub)
-				yi++
+				out[outBase+16+l] = dl * (float32((q[qb+l+16]>>shift)&3) - sub)
 			}
 			shift += 2
 			m <<= 1
