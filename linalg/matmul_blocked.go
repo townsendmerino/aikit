@@ -50,14 +50,38 @@ func blockedFill(a, b, dst []float32, M, K, N, nStart, nEnd, mBlock, nBlock, kBl
 	// Large K: pack b's 8-row groups into a contiguous low-stride buffer first. At large
 	// K the 8 b-rows a Dot2x8 reads simultaneously sit K·4 bytes apart and collide in L1
 	// cache sets (associativity conflicts) — packing them ~kBlock·4 apart kills that,
-	// lifting K=4096 prefill 46%→68% and the encoder's own K=3072 fc2 +15%. Packing copies
-	// the same b values in the same order, so it stays BIT-IDENTICAL to the unpacked path
-	// (verified against the encoder golden parity). Below packKThreshold the copy cost
-	// isn't worth it (K=768 b-rows are already close), so those keep the unpacked path.
-	// has2x8Kernel gates packing to arm64: packedFill runs Dot2x8/Dot8x4 over the packed
-	// buffer, and Dot2x8 is the NEON asm only on arm64 (the scalar fallback elsewhere would
-	// be slower than amd64's AVX2 unpacked path). The AVX2 packed path waits on §2.4.
-	if has2x8Kernel && K >= packKThreshold && nEnd-nStart >= 8 {
+	// lifting K=4096 prefill 46%→68% and the encoder's own K=3072 fc2 +15%. Below
+	// packKThreshold the copy cost isn't worth it (K=768 b-rows are already close), so
+	// those keep the unpacked path. has2x8Kernel gates packing to arm64: packedFill runs
+	// Dot2x8/Dot8x4 over the packed buffer, and Dot2x8 is the NEON asm only on arm64 (the
+	// scalar fallback elsewhere would be slower than amd64's AVX2 unpacked path). The AVX2
+	// packed path waits on §2.4.
+	//
+	// BIT-IDENTICAL claim, corrected: packing is bit-identical to the unpacked path only
+	// when packKBlockFor(K) == kBlockDefault (768) — i.e. K%768==0 (K=1536, 3072, ...),
+	// where packing changes nothing but memory layout, not k-tiling (verified: 0/65536
+	// mismatched bits at K=1536 and K=3072, TestAdHoc-style check in
+	// matmul_blocked_pack_bench_test.go). For K%768!=0 (packKBlockFor returns 1024 —
+	// this ALREADY includes today's K=2048 and K=4096, not just the K==1024 case added
+	// below), the pack tile is a DIFFERENT width than the unpacked path's 768, so the two
+	// accumulate K in a different grouping — numerically equivalent (a few ULP, nowhere
+	// near the encoder's own 5e-3/0.9999 cosine parity bar) but not bit-for-bit. The
+	// original comment here overstated this for the K%768!=0 cases already in production;
+	// corrected 2026-09-14 rather than left to mislead the next reader.
+	//
+	// K==1024 is a deliberate exception below packKThreshold, not a rounding error: it is
+	// the ONE K in [768,2048) whose single pack tile (packKBlockFor(1024)=1024) is itself
+	// an exact power of two, which is what makes packedFill's anti-conflict stride pad
+	// (packStridePad) fire at all — the pad, not packing per se, is where the win lives.
+	// Measured on an M1 Pro (benchstat, n=5, p=0.008 throughout): -30.8% to -33.7% across
+	// M=8..256, N=768/1024/3072, real and robust — this is bge-large-en-v1.5/bge-m3/
+	// mxbai-embed-large-v1's exact hidden_size, so their QKV/output/FFN-in projections all
+	// hit this. The rest of the gap (K=1152..1920) was ALSO measured and is NOT the same
+	// case: those K values pack into one 1024 tile plus a small non-power-of-two remainder
+	// that pays copy overhead for little or no benefit (flat to -6%, several not
+	// statistically significant) — so this stays a single named exception, not a general
+	// "round up to the nearest power of two" rule. See linalg/matmul_blocked_pack_bench_test.go.
+	if has2x8Kernel && (K >= packKThreshold || K == 1024) && nEnd-nStart >= 8 {
 		packedFill(a, b, dst, M, K, N, nStart, nEnd, packKBlockFor(K))
 		return
 	}
