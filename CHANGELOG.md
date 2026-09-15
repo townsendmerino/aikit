@@ -9,6 +9,16 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.43.0] — 2026-09-14
+
+`perfgate` VERDICT: PASS — no regression vs v1.42.0 above each shape's floor — 23/45 shapes
+resolve the 5.0% class (Apple M1 Pro, `./linalg`, 6 visits, interleaved working tree vs v1.42.0).
+
+STATEMENT: INCOMPLETE — 11 clean, 0 vulnerable, 4 unscanned, of 15 (Apple M1 Pro/darwin). The 4
+unscanned are `gpu/anncuda`/`gpu/enccuda`/`gpu/qwencuda`/`gpu/visioncuda` — CUDA-only submodules
+`govulncheck` cannot analyze without a Linux+CUDA toolchain; matches this repo's own precedent
+(v1.25.0 shipped the same "11 clean/0 vulnerable/4 unscanned" pattern for the same reason).
+
 ### Fixed
 
 - **`gpu.Queue.Run1DBatchTG` (and its `Run1DTG` twin, which delegates to it) allocated an
@@ -131,6 +141,44 @@ excluded from that promise and may change in any release until it graduates.
   class of bug — while the new `TestCurrentAllocatedSize_reflectsRealAllocation` correctly failed;
   restored, both green. `go test -tags metal ./gpu/...` green (34 pass / 0 fail / 3 skip), `go vet
   -tags metal ./gpu/...` and `gofmt` clean.
+
+### Changed
+
+- **`embed`'s GGUF dequant kernels: branchless IQ2_S/IQ3_S sign handling, a real bounds-check
+  fix for Q4_K/Q5_K/Q2_K/Q3_K.** IQ2_S/IQ3_S now XOR the sign bit into the float32 bits instead
+  of branching — `iq2sGrid`/`iq3sGrid` are documented sign-free magnitudes, so the product is
+  always ≥0 and this is IEEE-754-exact negation, bit-identical to the branchy form. IQ3_S was
+  also restructured from a flat 256-iteration loop into sub/gridChunk/i nesting, removing
+  redundant per-element recomputation (`db` 8× more often than needed, the grid index 4× more).
+  Separately, Q4_K/Q5_K/Q2_K/Q3_K replaced an accumulated output-index counter with direct index
+  arithmetic plus reslicing `dst` to a constant length/cap — confirmed via
+  `-gcflags="-d=ssa/check_bce/debug=1"` that this eliminates the one hot-loop bounds check the
+  counter form defeated (Go's prove pass cannot bound an arbitrary running counter against
+  `len(dst)`, but can bound a direct `j*64+l`-style index once `len(dst)` is a literal constant).
+  Bit-identical to the pre-change kernels (compared as bits, not values, across ragged K and the
+  zero-scale path); `TestIQDequant_matchesReference` (real llama.cpp reference data) and the full
+  `embed` suite unchanged. Measured (Apple M1 Pro, `benchstat` n=5): IQ2_S −58%, IQ3_S −63%,
+  Q5_K −19%, Q3_K −12%, Q4_K −9%, Q2_K −7%.
+
+- **`linalg.MatmulBT`/`MatmulBTInto`: K=1024 now routes through the large-K cache-conflict pack
+  path, below `packKThreshold`(2048).** A fine-grained sweep of K=768..4096 found the packing win
+  isn't a function of raw K size — it's whether K's pack tile is itself an exact power of two
+  (which is what makes the anti-conflict stride pad, `packStridePad`, fire at all). K=1024 and
+  K=2048 (both pure multiples of 1024) show the strongest wins; K values that decompose into one
+  1024-tile plus an awkward remainder (1152..1920) stayed flat to modest even after trying to give
+  that remainder its own simpler code path — so this ships as a single named exception, not a
+  lowered threshold. Confirmed shape-robust (M=8..256, N=768/1024/3072, all `p=0.008`) and against
+  the real public entry point directly (`MatmulBTInto`, stashed/unstashed for a clean before/after):
+  −31.15% (`p=0.008`, `n=5`), matching the internal harness almost exactly. Lands on three real,
+  shipped, parity-gated encoder families whose `hidden_size` is exactly 1024 — their QKV/output/
+  FFN-in projections all use K=hidden: `BAAI/bge-large-en-v1.5`, `BAAI/bge-m3`,
+  `mixedbread-ai/mxbai-embed-large-v1`. K=1024 is not bit-identical to the unpacked path the way
+  K%768==0 cases are (the pack tile width, 1024, differs from the unpacked path's 768, so the two
+  accumulate K in a different grouping) — worst observed delta ~5.5e-5, well inside the encoder's
+  own whole-forward parity bar (5e-3 abs / 0.9999 cosine, `encoder/coverage_bert_test.go`). Also
+  corrected this file's own pre-existing comment, which overclaimed unconditional bit-identity for
+  every packed case — already false for K=2048/4096 (both in production, neither K%768==0), simply
+  never checked because both clear the real tolerance-based gate regardless.
 
 ## [1.42.0] — 2026-09-12
 
@@ -4185,7 +4233,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.42.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.43.0...HEAD
+[1.43.0]: https://github.com/townsendmerino/aikit/compare/v1.42.0...v1.43.0
 [1.42.0]: https://github.com/townsendmerino/aikit/compare/v1.41.0...v1.42.0
 [1.41.0]: https://github.com/townsendmerino/aikit/compare/v1.40.0...v1.41.0
 [1.40.0]: https://github.com/townsendmerino/aikit/compare/v1.39.1...v1.40.0
