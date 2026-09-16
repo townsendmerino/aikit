@@ -258,6 +258,56 @@ tolerance. Tests assert exact equality.
   expect the tile within a few percent of the canonical tile, possibly inside the spread. Bar: at
   M≥4, not slower than the canonical tile beyond the run's spread; at M=1, the existing +2.1%
   decode at zero extra RSS (goinfer L5's measurement, on the same box).
+- **`linalg.MatmulBT`/`MatmulBTInto`: K=1024 packing exception, dequant BCE hints — shipped
+  v1.43.0.** Full numbers in CHANGELOG `[1.43.0]`; summary here since it's a real dispatch-rule
+  change, not just a kernel tweak. The large-K pack path's win turned out to hinge on whether K's
+  pack tile is itself a power of two (what makes `packStridePad`'s anti-conflict stride fire) —
+  K=1024 wins strongly despite sitting below `packKThreshold`(2048), so it ships as a named
+  exception rather than a lowered threshold; K=1152..1920 (one 1024-tile plus an awkward
+  remainder) stayed flat even with a dedicated leftover code path, so that idea is NOT shipped
+  (`matmul_blocked_leftover_bench_test.go` keeps the measured-negative `packedFillLeftoverSplit` as
+  a record). Real entry point, stashed/unstashed: **−31.15%** (`MatmulBTInto`, `p=0.008 n=5`,
+  `apple-m1pro`). NOT bit-identical to the unpacked path (pack tile width 1024 vs 768 accumulates
+  K in a different grouping) — worst delta ~5.5e-5, inside the encoder's own parity bar. Same
+  release: `embed/gguf_dequant.go`'s Q4_K/Q5_K/Q2_K/Q3_K/IQ2_S/IQ3_S block writers got `s[:n:n]`-
+  style bounds-check-elimination hints on the hot output write — bit-identical, IQ2_S/IQ3_S/Q5_K
+  the biggest movers (−58%/−63%/−19%, `apple-m1pro`, `benchstat` n=5).
+- **`late.MaxSim`: pair query tokens through `Dot2x8` on arm64 — geomean −45.5% latency.** The
+  existing 8-doc-row batching (`Dot8x4`, audit M-20) re-streamed the doc side once per query
+  token; on arm64 two query tokens now share each 8-row kernel call via `Dot2x8` instead (the same
+  2-row×8-col register kernel `matmul_blocked.go`'s packed GEMM uses), so doc reads are amortized
+  across a pair of queries. NOT bit-identical to the per-pair `Dot` — now two independent,
+  compounding ~1-ULP reassociation sources (doc-batching, query-pairing) instead of one;
+  `TestMaxSim_batchedMatchesPerPair` gates it, plus even-query-count and cross-query-contamination
+  checks added with the pairing. Measured (`apple-m1pro`, `BenchmarkMaxSim`, nQ=32, d=128, n=5):
+  nDoc=64/256/1024 all **−43% to −47%** (`p=0.008` throughout), zero allocations before and after.
+- **`linalg.HammingRows`: NEON kernel for arm64, the two real production shapes only.** `words==4`
+  (dim 256, Model2Vec) and `words==12` (dim 768, CodeRankEmbed/BERT) get a hand-written NEON kernel
+  (`hamming_arm64.s`) alongside `hammingRowsGeneric`'s own per-word-count specialization for the
+  same two shapes: `VCNT` processes 16 bytes/instruction vs one `OnesCount64` call per 8, measured
+  **~3×** over the already-specialized generic Go path (`apple-m1pro`, n=100k: 56µs vs 177µs at
+  d256, 163µs vs 535µs at d768). The `.s` file's general (arbitrary-words) entry is NOT dispatched
+  — its 8-bit-per-NEON-lane popcount accumulator overflows silently once `words>=64` (dim>~4032;
+  confirmed via a differential test against `hammingRowsGeneric` with maximally-differing input:
+  words=64 wrapped 4096 to 0) — `hamming_arm64.go`'s dispatcher only calls the NEON path for
+  words==4/12 and falls back to the portable, overflow-free Go path otherwise, with the buggy
+  general path left in the `.s` file annotated as unreachable pending an accumulator fix (periodic
+  widen). A reminder that `bits.OnesCount64` being intrinsified on arm64 (VCNT+VADDV, the reason
+  this file's `!arm64` sibling once said "arm64 needs no assembly here") is not the same claim as
+  "NEON can't beat the intrinsic" — it can, by processing more bytes per instruction than the
+  scalar-per-word intrinsic does.
+- **A manual "unroll-by-4 for bounds-check elimination" pattern, applied broadly across a batch of
+  reviewed changes, measured to do NOTHING on this compiler/hardware in the cases checked.**
+  `ann.scanFlat`/`HNSW.scoreInto`'s fixed 8-iteration sum-fold and `embed.L2Normalize`'s
+  accumulate/normalize loops were unrolled on the theory that a manual bounds hint
+  (`_ = v[n-1]`) lets `prove` drop the per-element check. Checked directly with
+  `-gcflags="-d=ssa/check_bce/debug=1"`, before vs. after: **identical bounds-check counts** —
+  there was nothing to eliminate (the compiler already proved these in-range from the surrounding
+  constant-size array / already-bounded loop var). Benchmarked anyway: no measurable speedup
+  (within ~1-3% noise, one D1024 sample ~11% SLOWER). Reverted rather than shipped as an
+  "optimization"; kept only where a change was independently justified (e.g. `clear()` for a
+  manual zero loop). Record it here so the same idea isn't re-tried assuming a different compiler
+  version changes the answer without re-measuring.
 
 ### AVX2 kernel numbers (Ryzen 7 3700X, `-bench 'Dot'`, MB/s)
 
@@ -1105,7 +1155,9 @@ linalg/quant.go                                 Q8/Q4/W8A8 matmuls (+ Into/Batch
 linalg/dequant_i8.go, dequant_i8_{arm64.s,amd64.go}  bulk int8→f32 widen (item 22a)
 linalg/matmul_blocked.go, matmul_blocked_q8.go  packed f32 GEMM + fused-widen Q8 (22b)
 linalg/workspace.go                             reusable scratch (pool.go was pulled — dead-ends §8.1)
+linalg/hamming_arm64.{go,s}, hamming.go, hamming_other.go  NEON Hamming (words==4/12) + generic
 linalg/{dot,dot_amd64,width,quant,batch}_test.go   kernel/parity/bench tests
+late/late.go                                    MaxSim: Dot8x4 doc-batching + arm64 Dot2x8 query-pairing
 encoder/linalg.go, linalg_q8.go                 encoder's cache-blocked matmul (uses linalg.Dot*)
 encoder/parallel.go                             single-forward row-parallel (in-flight gate)
 ```
