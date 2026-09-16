@@ -30,6 +30,11 @@ func layerNorm(x, weight, bias []float32, L, D int, eps float64) {
 }
 
 func layerNormRows(x, weight, bias []float32, start, end, D int, eps float64) {
+	if D <= 0 {
+		return
+	}
+	_ = weight[D-1]
+	_ = bias[D-1]
 	for i := start; i < end; i++ {
 		row := x[i*D : (i+1)*D]
 		// mean in f64
