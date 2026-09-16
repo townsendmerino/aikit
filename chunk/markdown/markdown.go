@@ -33,6 +33,7 @@
 package markdown
 
 import (
+	"bytes"
 	"path"
 	"strings"
 
@@ -99,6 +100,8 @@ func (c *Chunker) lineFallback(source []byte, language string, chunkSize int) ([
 	return lc.Chunk(source, language, chunkSize)
 }
 
+var newlineByte = []byte{'\n'}
+
 // chunkMarkdown is the core algorithm: scan → section → subdivide.
 func (c *Chunker) chunkMarkdown(source []byte, chunkSize int) []chunk.Chunk {
 	lines := scanLines(source)
@@ -106,29 +109,20 @@ func (c *Chunker) chunkMarkdown(source []byte, chunkSize int) []chunk.Chunk {
 		return nil
 	}
 
-	// Compute setext-promoted boundary set. A setext underline at line N
-	// promotes line N-1 to a heading (only if N-1 is lineText).
-	setextHeadingIdx := map[int]bool{}
-	for i, ln := range lines {
-		if ln.kind == lineSetextUnderline && i > 0 && lines[i-1].kind == lineText {
-			setextHeadingIdx[i-1] = true
-		}
-	}
-
 	// Identify section boundaries: indices where a new section starts.
-	// Index 0 is always a boundary; ATX/setext headings start new sections.
-	boundaries := []int{0}
-	for i, ln := range lines {
-		if i == 0 {
-			continue
-		}
-		if ln.kind == lineHeadingATX || setextHeadingIdx[i] {
+	// Index 0 is always a boundary; ATX headings and setext headings start new sections.
+	// A setext underline at line N promotes line N-1 (if lineText) to a heading.
+	boundaries := make([]int, 1, 16)
+	boundaries[0] = 0
+	for i := 1; i < len(lines); i++ {
+		ln := lines[i]
+		if ln.kind == lineHeadingATX || (ln.kind == lineText && i+1 < len(lines) && lines[i+1].kind == lineSetextUnderline) {
 			boundaries = append(boundaries, i)
 		}
 	}
 
 	// For each section [boundaries[k], boundaries[k+1]), produce chunks.
-	var out []chunk.Chunk
+	out := make([]chunk.Chunk, 0, len(boundaries))
 	for k, startIdx := range boundaries {
 		endIdx := len(lines)
 		if k+1 < len(boundaries) {
@@ -162,13 +156,6 @@ func subdivideSection(source []byte, lines []scannedLine, chunkSize int, baseLin
 		return nil
 	}
 
-	// Find safe-split positions: indices i such that lines[i] is blank,
-	// AND lines[i-1] is not inside an atomic block, AND lines[i+1] is
-	// not inside an atomic block. The aggregator emits one chunk per run
-	// of source between safe splits (and absorbs leading/trailing blank
-	// runs into adjacent chunks).
-	splittable := splittablePositions(lines)
-
 	// prevSplit[i] = the greatest index s ≤ i with splittable[s], else -1. This
 	// O(L) prefix pass replaces the per-i backward rescan below: when a window had
 	// no splittable line (a section whose blank lines are all inside one big fenced
@@ -176,10 +163,16 @@ func subdivideSection(source []byte, lines []scannedLine, chunkSize int, baseLin
 	// and the next i rescanned the whole range, making it Σi ≈ L²/2 (audit #7).
 	// prevSplit[i] > chunkStartIdx is exactly the old loop's "greatest splittable in
 	// (chunkStartIdx, i]" result.
-	prevSplit := make([]int, len(lines))
+	var prevSplitBuf [128]int
+	var prevSplit []int
+	if len(lines) <= len(prevSplitBuf) {
+		prevSplit = prevSplitBuf[:len(lines)]
+	} else {
+		prevSplit = make([]int, len(lines))
+	}
 	last := -1
-	for i := range lines {
-		if splittable[i] {
+	for i, ln := range lines {
+		if ln.kind == lineBlank {
 			last = i
 		}
 		prevSplit[i] = last
@@ -217,23 +210,6 @@ func subdivideSection(source []byte, lines []scannedLine, chunkSize int, baseLin
 	return out
 }
 
-// splittablePositions marks indices in lines where a chunk boundary is
-// safe. A blank line is splittable unless it sits between two lines that
-// are both inside atomic blocks (which can't actually happen since
-// blanks aren't inside atomics — but we keep the check defensive). The
-// real constraint is: don't split immediately after an opening code
-// fence or table-row before its separator. Both naturally hold because
-// blanks inside fenced code are classified lineCodeInside, not lineBlank.
-func splittablePositions(lines []scannedLine) []bool {
-	out := make([]bool, len(lines))
-	for i, ln := range lines {
-		if ln.kind == lineBlank {
-			out[i] = true
-		}
-	}
-	return out
-}
-
 // makeChunk constructs a single chunk.Chunk from a byte range. The
 // File field is left empty (chunk.ChunkFile stamps it). EndLine is
 // derived from the chunk's last byte: a chunk ending with '\n' spans
@@ -241,10 +217,11 @@ func splittablePositions(lines []scannedLine) []bool {
 func makeChunk(source []byte, byteStart, byteEnd, startLine int) chunk.Chunk {
 	text := source[byteStart:byteEnd]
 	endLine := startLine
-	for i := byteStart; i < byteEnd; i++ {
-		if source[i] == '\n' && i+1 < byteEnd {
-			endLine++
-		}
+	n := len(text)
+	if n > 0 && text[n-1] == '\n' {
+		endLine += bytes.Count(text[:n-1], newlineByte)
+	} else if n > 0 {
+		endLine += bytes.Count(text, newlineByte)
 	}
 	// If the chunk ends with a newline, the "last line" count is correct
 	// as-is; if not, we have a partial trailing line that still counts.

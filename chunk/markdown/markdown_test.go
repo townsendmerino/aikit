@@ -383,3 +383,21 @@ func TestMarkdown_FourSpaceIndentedFence(t *testing.T) {
 	}
 	assertByteFidelity(t, src, chunks)
 }
+
+func BenchmarkMarkdownChunker(b *testing.B) {
+	var doc strings.Builder
+	doc.WriteString("---\ntitle: Benchmark\n---\n\n")
+	for i := 0; i < 50; i++ {
+		doc.WriteString(fmt.Sprintf("# Section %d\n\nThis is paragraph 1 of section %d with some text.\n\n", i, i))
+		doc.WriteString("```go\nfunc hello() string {\n\treturn \"world\"\n}\n```\n\n")
+		doc.WriteString("This is paragraph 2 with additional details and explanations.\n\n")
+	}
+	src := []byte(doc.String())
+	c := New()
+	b.SetBytes(int64(len(src)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_, _ = c.Chunk(src, "markdown", 500)
+	}
+}

@@ -62,25 +62,9 @@ func scanLines(source []byte) []scannedLine {
 		return nil
 	}
 
-	// Pass 1: walk the bytes and produce raw [start, end) ranges per line.
-	type lr struct{ start, end int }
-	var ranges []lr
-	{
-		start := 0
-		for i := range source {
-			if source[i] == '\n' {
-				ranges = append(ranges, lr{start, i + 1})
-				start = i + 1
-			}
-		}
-		if start < len(source) {
-			// File doesn't end with a newline — trailing partial line.
-			ranges = append(ranges, lr{start, len(source)})
-		}
-	}
+	nlCount := bytes.Count(source, []byte{'\n'})
+	out := make([]scannedLine, 0, nlCount+1)
 
-	// Pass 2: classify each line with fence + frontmatter state carried forward.
-	out := make([]scannedLine, len(ranges))
 	var (
 		inFence          bool
 		fenceChar        byte
@@ -88,18 +72,30 @@ func scanLines(source []byte) []scannedLine {
 		inFrontmatter    bool
 		frontmatterDelim []byte // "---\n", "---\r\n", "+++\n", "+++\r\n"
 	)
-	for i, r := range ranges {
-		line := source[r.start:r.end]
+
+	start := 0
+	lineIdx := 0
+	for start < len(source) {
+		idx := bytes.IndexByte(source[start:], '\n')
+		var end int
+		if idx >= 0 {
+			end = start + idx + 1
+		} else {
+			end = len(source)
+		}
+
+		line := source[start:end]
 		body := stripTrailingNewline(line)
 
+		var kind lineKind
 		switch {
 		case inFrontmatter:
 			// Inside frontmatter until we see the matching close delim.
 			if isFrontmatterClose(body, frontmatterDelim) {
 				inFrontmatter = false
-				out[i] = scannedLine{lineFrontmatterDelim, r.start, r.end}
+				kind = lineFrontmatterDelim
 			} else {
-				out[i] = scannedLine{lineFrontmatterInside, r.start, r.end}
+				kind = lineFrontmatterInside
 			}
 		case inFence:
 			// Inside a fenced code block. Only a matching close fence
@@ -109,31 +105,35 @@ func scanLines(source []byte) []scannedLine {
 			if fc, fl := detectCodeFence(body); fc != 0 && fc == fenceChar && fl >= fenceLen {
 				inFence = false
 				fenceChar, fenceLen = 0, 0
-				out[i] = scannedLine{lineCodeFence, r.start, r.end}
+				kind = lineCodeFence
 			} else {
-				out[i] = scannedLine{lineCodeInside, r.start, r.end}
+				kind = lineCodeInside
 			}
 		default:
 			// Frontmatter only opens on line 0 and only when the line is
 			// exactly `---` or `+++` (with optional CRLF).
-			if i == 0 && isFrontmatterOpen(body) {
+			if lineIdx == 0 && isFrontmatterOpen(body) {
 				inFrontmatter = true
 				// Store the TRIMMED delimiter: isFrontmatterClose compares the
 				// closing line trimmed, so a raw "--- " (one trailing space, which
 				// editors produce constantly) would never match its own close and
 				// the whole document collapsed into one chunk (audit #8).
-				frontmatterDelim = append([]byte(nil), bytes.TrimRight(body, " \t")...)
-				out[i] = scannedLine{lineFrontmatterDelim, r.start, r.end}
+				frontmatterDelim = bytes.TrimRight(body, " \t")
+				kind = lineFrontmatterDelim
 				break
 			}
 			if fc, fl := detectCodeFence(body); fc != 0 {
 				inFence = true
 				fenceChar, fenceLen = fc, fl
-				out[i] = scannedLine{lineCodeFence, r.start, r.end}
+				kind = lineCodeFence
 				break
 			}
-			out[i] = scannedLine{classifyContentLine(body), r.start, r.end}
+			kind = classifyContentLine(body)
 		}
+
+		out = append(out, scannedLine{kind: kind, start: start, end: end})
+		start = end
+		lineIdx++
 	}
 	return out
 }
@@ -175,7 +175,7 @@ func classifyContentLine(body []byte) lineKind {
 	}
 
 	// Setext underline: only `=`s or only `-`s, with at least one char.
-	if isAllSameNonEmpty(trimmed, '=') || isAllSameNonEmpty(trimmed, '-') {
+	if (trimmed[0] == '=' || trimmed[0] == '-') && isAllSameNonEmpty(trimmed, trimmed[0]) {
 		return lineSetextUnderline
 	}
 
@@ -233,7 +233,7 @@ func detectCodeFence(body []byte) (byte, int) {
 // optional trailing whitespace). Only ever called for line 0.
 func isFrontmatterOpen(body []byte) bool {
 	trimmed := bytes.TrimRight(body, " \t")
-	return bytes.Equal(trimmed, []byte("---")) || bytes.Equal(trimmed, []byte("+++"))
+	return len(trimmed) == 3 && ((trimmed[0] == '-' && trimmed[1] == '-' && trimmed[2] == '-') || (trimmed[0] == '+' && trimmed[1] == '+' && trimmed[2] == '+'))
 }
 
 // isFrontmatterClose reports whether body matches the opening delim
@@ -264,10 +264,10 @@ func isAllSameNonEmpty(s []byte, c byte) bool {
 // `|`, contains another `|`. Doesn't pair with a separator here — the
 // aggregator handles that.
 func isTableRow(trimmed []byte) bool {
-	if len(trimmed) == 0 || trimmed[0] != '|' {
+	if len(trimmed) < 2 || trimmed[0] != '|' {
 		return false
 	}
-	return bytes.Count(trimmed, []byte("|")) >= 2
+	return bytes.IndexByte(trimmed[1:], '|') >= 0
 }
 
 // isTableSeparator reports whether trimmed is the |---|---| separator
@@ -276,8 +276,8 @@ func isTableSeparator(trimmed []byte) bool {
 	if len(trimmed) == 0 {
 		return false
 	}
-	// Must contain at least one `-` (otherwise a row of just `|` would qualify).
-	if !bytes.ContainsRune(trimmed, '-') {
+	// Must contain at least one `-` and at least one `|`.
+	if bytes.IndexByte(trimmed, '-') < 0 || bytes.IndexByte(trimmed, '|') < 0 {
 		return false
 	}
 	for _, b := range trimmed {
@@ -288,8 +288,7 @@ func isTableSeparator(trimmed []byte) bool {
 			return false
 		}
 	}
-	// Must contain at least one `|` to actually look like a table separator.
-	return bytes.ContainsRune(trimmed, '|')
+	return true
 }
 
 // isListMarker reports whether trimmed begins with a list-item marker:
