@@ -74,3 +74,14 @@ func spans(cs []Chunk) [][2]int {
 	}
 	return out
 }
+
+func BenchmarkLineChunker(b *testing.B) {
+	src := mkLines(1000)
+	lc := NewLineChunker()
+	b.SetBytes(int64(len(src)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_ = lc.Chunk("f.go", src)
+	}
+}

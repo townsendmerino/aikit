@@ -167,7 +167,7 @@ func chunkWith(r LanguageRules, src []byte, chunkSize int) []chunk.Chunk {
 		isBoundary[b] = true
 	}
 
-	var boundaries []int // sorted line indices > 0 where a chunk may start
+	boundaries := make([]int, 0, 16) // sorted line indices > 0 where a chunk may start
 	for i := 1; i < n; i++ {
 		if isBoundary[i] {
 			boundaries = append(boundaries, i)
@@ -193,7 +193,7 @@ func chunkWith(r LanguageRules, src []byte, chunkSize int) []chunk.Chunk {
 	// string, which is right for index-everything and wrong for
 	// filter-then-keep-a-few, and no test or benchmark here can tell those apart.
 	// A caller holding three chunks of a 100 MB file would silently hold 100 MB.
-	var out []chunk.Chunk
+	out := make([]chunk.Chunk, 0, len(src)/chunkSize+1)
 	emit := func(a, b int) {
 		out = append(out, chunk.Chunk{
 			StartLine: a + 1,

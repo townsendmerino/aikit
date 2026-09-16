@@ -93,5 +93,5 @@ func BenchmarkChunker_TypeScript(b *testing.B) {
 }
 
 func BenchmarkChunker_Python(b *testing.B) {
-	benchChunk(b, "python", loadFixture(b, "scripts", "encoder_model.py"))
+	benchChunk(b, "python", loadFixture(b, "scripts", "oracle", "encoder_model.py"))
 }

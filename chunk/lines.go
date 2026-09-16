@@ -49,7 +49,7 @@ func (lc *LineChunker) Chunk(file string, source []byte) []Chunk {
 	}
 	n := len(lineStart)
 
-	var chunks []Chunk
+	chunks := make([]Chunk, 0, (n+stride-1)/stride)
 	for i := 0; i < n; i += stride {
 		j := min(i+size, n)
 		a := lineStart[i]
