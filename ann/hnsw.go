@@ -337,7 +337,7 @@ func (h *HNSW) sim(qv queryVec, id int) float64 {
 // scale*h.scales[id] multiply h.sim does per candidate, just applied to
 // DotI8x8's eight raw sums instead of DotI8's one.
 func (h *HNSW) scoreInto(qv queryVec, ids []int, dst []float64) []float64 {
-	dst = dst[:0]
+	dst = slices.Grow(dst[:0], len(ids))
 	if h.scoreUnbatched {
 		for _, id := range ids {
 			dst = append(dst, h.sim(qv, id))
@@ -392,16 +392,24 @@ func (h *HNSW) scoreInto(qv queryVec, ids []int, dst []float64) []float64 {
 			continue
 		}
 		linalg.Dot8x4(&q[0], &v0[0], &v1[0], &v2[0], &v3[0], &v4[0], &v5[0], &v6[0], &v7[0], n4, &sums)
-		group := [8][]float32{v0, v1, v2, v3, v4, v5, v6, v7}
-		for j := range 8 {
-			// Each row's dot is spread across its 4-lane block; sum the block,
-			// then add the d%4 scalar tail — same fold Flat uses.
-			b := j * 4
-			sc := sums[b] + sums[b+1] + sums[b+2] + sums[b+3]
-			for kk := tailStart; kk < d; kk++ {
-				sc += q[kk] * group[j][kk]
+		if tailStart == d {
+			for j := range 8 {
+				b := j * 4
+				sc := sums[b] + sums[b+1] + sums[b+2] + sums[b+3]
+				dst = append(dst, float64(sc))
 			}
-			dst = append(dst, float64(sc))
+		} else {
+			group := [8][]float32{v0, v1, v2, v3, v4, v5, v6, v7}
+			for j := range 8 {
+				// Each row's dot is spread across its 4-lane block; sum the block,
+				// then add the d%4 scalar tail — same fold Flat uses.
+				b := j * 4
+				sc := sums[b] + sums[b+1] + sums[b+2] + sums[b+3]
+				for kk := tailStart; kk < d; kk++ {
+					sc += q[kk] * group[j][kk]
+				}
+				dst = append(dst, float64(sc))
+			}
 		}
 	}
 	for ; i < len(ids); i++ {

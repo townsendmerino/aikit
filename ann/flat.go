@@ -250,17 +250,25 @@ func scanFlat(q []float32, vecs [][]float32, emit func(i int, score float64)) {
 			continue
 		}
 		linalg.Dot8x4(&q[0], &v0[0], &v1[0], &v2[0], &v3[0], &v4[0], &v5[0], &v6[0], &v7[0], n4, &sums)
-		group := [8][]float32{v0, v1, v2, v3, v4, v5, v6, v7}
-		for j := range 8 {
-			// Each row's dot is spread across its 4-lane block (the arm64 kernel
-			// leaves 4 partial sums; the generic puts it all in lane 0 + zeros).
-			// Sum the block, then add the d%4 scalar tail.
-			b := j * 4
-			s := sums[b] + sums[b+1] + sums[b+2] + sums[b+3]
-			for kk := tailStart; kk < d; kk++ {
-				s += q[kk] * group[j][kk]
+		if tailStart == d {
+			for j := range 8 {
+				b := j * 4
+				s := sums[b] + sums[b+1] + sums[b+2] + sums[b+3]
+				emit(i+j, float64(s))
 			}
-			emit(i+j, float64(s))
+		} else {
+			group := [8][]float32{v0, v1, v2, v3, v4, v5, v6, v7}
+			for j := range 8 {
+				// Each row's dot is spread across its 4-lane block (the arm64 kernel
+				// leaves 4 partial sums; the generic puts it all in lane 0 + zeros).
+				// Sum the block, then add the d%4 scalar tail.
+				b := j * 4
+				s := sums[b] + sums[b+1] + sums[b+2] + sums[b+3]
+				for kk := tailStart; kk < d; kk++ {
+					s += q[kk] * group[j][kk]
+				}
+				emit(i+j, float64(s))
+			}
 		}
 	}
 	for ; i < len(vecs); i++ {

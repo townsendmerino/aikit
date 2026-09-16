@@ -188,16 +188,21 @@ func (pf *binaryPrefilter) prefilterHist(qc []uint64, sc *binPrefilterScratch, c
 	}
 	budget := cand - cum
 
-	ids := sc.ids[:0]
+	sc.ids = ensure(sc.ids, cand)
+	ids := sc.ids
+	k := 0
+	tU16 := uint16(t)
 	for i, d := range sc.dists[:pf.n] {
-		switch {
-		case int(d) < t:
-			ids = append(ids, int32(i))
-		case int(d) == t && budget > 0:
-			ids = append(ids, int32(i))
+		if d < tU16 {
+			ids[k] = int32(i)
+			k++
+		} else if d == tU16 && budget > 0 {
+			ids[k] = int32(i)
+			k++
 			budget--
 		}
 	}
+	ids = ids[:k]
 	sc.ids = ids
 	return ids
 }
