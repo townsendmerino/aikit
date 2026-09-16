@@ -44,3 +44,13 @@ func TestTokenizePlain_vsTokenize(t *testing.T) {
 		t.Errorf("expected code Tokenize to split getUserName more than plain: code=%v", code)
 	}
 }
+
+func BenchmarkTokenizePlain(b *testing.B) {
+	text := "The quick brown fox jumps over the lazy dog! Café Über-cool GPT-4 and BM25 search in Go with fast tokenization."
+	b.ReportAllocs()
+	b.SetBytes(int64(len(text)))
+	b.ResetTimer()
+	for b.Loop() {
+		_ = TokenizePlain(text)
+	}
+}
