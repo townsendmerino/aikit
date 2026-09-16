@@ -215,7 +215,8 @@ func foldQuery(q SparseVec, dst []termWeight) []termWeight {
 // map's allocation and hashing cost more than the scan (item 11, second-order) — and a
 // scan preserves first-appearance order by construction.
 func (ix *Index) scoreQuery(q SparseVec) *accum.Accum {
-	order := foldQuery(q, nil)
+	var stackBuf [64]termWeight
+	order := foldQuery(q, stackBuf[:0])
 	a := accum.Get(ix.ndocs)
 	for _, tw := range order {
 		if tw.w == 0 {

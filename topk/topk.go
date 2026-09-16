@@ -95,9 +95,9 @@ func (s *Selector[T]) Push(item T, score float64) bool {
 	if score != score {
 		return false
 	}
-	seq := s.seq
-	s.seq++
 	if len(s.heap) < s.k {
+		seq := s.seq
+		s.seq++
 		s.heap = append(s.heap, scored[T]{item: item, score: score, seq: seq})
 		s.siftUp(len(s.heap) - 1)
 		return true
@@ -109,6 +109,8 @@ func (s *Selector[T]) Push(item T, score float64) bool {
 	if score <= s.heap[0].score {
 		return false
 	}
+	seq := s.seq
+	s.seq++
 	s.heap[0] = scored[T]{item: item, score: score, seq: seq}
 	s.siftDown(0)
 	return true
@@ -169,11 +171,19 @@ type ItemWithScore[T any] struct {
 // in heap-internal order, which is deterministic for a given input
 // sequence but not lexically ordered by item.
 func (s *Selector[T]) Result() []ItemWithScore[T] {
-	out := make([]ItemWithScore[T], len(s.heap))
+	n := len(s.heap)
+	out := make([]ItemWithScore[T], n)
 	// Repeated extract-min would give ascending order — we reverse-fill
 	// the output slice to land descending without a second pass.
-	n := len(s.heap)
-	tmp := make([]scored[T], n)
+	// For k <= 64 (standard retrieval k=10), use a stack scratch slice to
+	// avoid a heap allocation on every Result call.
+	var stackTmp [64]scored[T]
+	var tmp []scored[T]
+	if n <= len(stackTmp) {
+		tmp = stackTmp[:n]
+	} else {
+		tmp = make([]scored[T], n)
+	}
 	copy(tmp, s.heap)
 	for i := n - 1; i >= 0; i-- {
 		minEl := tmp[0]

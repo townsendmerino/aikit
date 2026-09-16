@@ -1,6 +1,7 @@
 package accum
 
 import (
+	"fmt"
 	"math/rand"
 	"slices"
 	"testing"
@@ -77,4 +78,31 @@ func TestAccum_generationReuse(t *testing.T) {
 		t.Fatalf("Touched = %v, want [7] — doc 3 from the prior generation leaked through", b.Touched)
 	}
 	Put(b)
+}
+
+func BenchmarkOrderTouched(b *testing.B) {
+	for _, nTerms := range []int{2, 3, 8, 30} {
+		b.Run(fmt.Sprintf("terms%d", nTerms), func(b *testing.B) {
+			rng := rand.New(rand.NewSource(42))
+			const n = 200_000
+			a := Get(n)
+			defer Put(a)
+			for range nTerms {
+				a.BeginRun()
+				start := rng.Intn(1000)
+				for d := start; d < n; d += 5 + rng.Intn(20) {
+					a.Add(int32(d), 1.0)
+				}
+			}
+			savedTouched := slices.Clone(a.Touched)
+			savedRuns := slices.Clone(a.runs)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				a.Touched = append(a.Touched[:0], savedTouched...)
+				a.runs = append(a.runs[:0], savedRuns...)
+				a.OrderTouched()
+			}
+		})
+	}
 }

@@ -25,7 +25,10 @@
 // stamp costs 4 bytes per doc and cannot be wrong for either caller.
 package accum
 
-import "sync"
+import (
+	"slices"
+	"sync"
+)
 
 // Accum is a pooled scoring accumulator. Scores and Touched are exported for
 // callers to read after OrderTouched; everything else is bookkeeping.
@@ -146,16 +149,31 @@ func (a *Accum) OrderTouched() {
 
 // mergeTwo appends the ascending merge of two ascending slices to dst.
 func mergeTwo(dst, x, y []int32) []int32 {
-	i, j := 0, 0
-	for i < len(x) && j < len(y) {
-		if x[i] <= y[j] {
-			dst = append(dst, x[i])
+	nx, ny := len(x), len(y)
+	if nx == 0 {
+		return append(dst, y...)
+	}
+	if ny == 0 {
+		return append(dst, x...)
+	}
+	orig := len(dst)
+	target := orig + nx + ny
+	dst = slices.Grow(dst, nx+ny)[:target]
+	out := dst[orig:target:target]
+
+	i, j, k := 0, 0, 0
+	for i < nx && j < ny {
+		xi, yj := x[i], y[j]
+		if xi <= yj {
+			out[k] = xi
 			i++
 		} else {
-			dst = append(dst, y[j])
+			out[k] = yj
 			j++
 		}
+		k++
 	}
-	dst = append(dst, x[i:]...)
-	return append(dst, y[j:]...)
+	k += copy(out[k:], x[i:])
+	copy(out[k:], y[j:])
+	return dst
 }
