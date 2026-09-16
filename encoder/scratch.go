@@ -103,6 +103,10 @@ type scratch struct {
 	// widen M times). Pooled, so the 60 matmuls of a forward reuse it. The stored
 	// weights stay int8 (¼ memory); this is transient runtime scratch.
 	deqW []float32
+	// workerScratch holds per-worker headScratch sets for head-parallel attention.
+	// Reused across all 12 layers of a forward and across pooled forwards,
+	// eliminating sync.Pool misses and per-call heap allocations during attention.
+	workerScratch []headScratch
 }
 
 // ensureDeqW sizes the q8 weight-dequant buffer to the largest weight matrix the
@@ -230,21 +234,21 @@ type headScratch struct {
 	qH, kH, vH, ctxHead, scores []float32
 }
 
-var headScratchPool = sync.Pool{New: func() any { return new(headScratch) }}
-
-func getHeadScratch(mOut, headDim, L int) *headScratch {
-	hs := headScratchPool.Get().(*headScratch)
-	hs.qH = ensureF32(hs.qH, mOut*headDim)
-	hs.kH = ensureF32(hs.kH, L*headDim)
-	hs.vH = ensureF32(hs.vH, headDim*L)
-	hs.ctxHead = ensureF32(hs.ctxHead, mOut*headDim)
-	hs.scores = ensureF32(hs.scores, mOut*L)
-	// Reslice to the exact lengths attendOneHead indexes; ensureF32 only
-	// guarantees capacity.
-	hs.qH, hs.kH = hs.qH[:mOut*headDim], hs.kH[:L*headDim]
-	hs.vH, hs.ctxHead = hs.vH[:headDim*L], hs.ctxHead[:mOut*headDim]
-	hs.scores = hs.scores[:mOut*L]
-	return hs
+func (s *scratch) ensureWorkerScratch(w, mOut, headDim, L int) {
+	if cap(s.workerScratch) < w {
+		s.workerScratch = make([]headScratch, w)
+	}
+	s.workerScratch = s.workerScratch[:w]
+	for i := range w {
+		hs := &s.workerScratch[i]
+		hs.qH = ensureF32(hs.qH, mOut*headDim)
+		hs.kH = ensureF32(hs.kH, L*headDim)
+		hs.vH = ensureF32(hs.vH, headDim*L)
+		hs.ctxHead = ensureF32(hs.ctxHead, mOut*headDim)
+		hs.scores = ensureF32(hs.scores, mOut*L)
+		hs.qH, hs.kH = hs.qH[:mOut*headDim], hs.kH[:L*headDim]
+		hs.vH, hs.ctxHead = hs.vH[:headDim*L], hs.ctxHead[:mOut*headDim]
+		hs.scores = hs.scores[:mOut*L]
+	}
 }
 
-func putHeadScratch(hs *headScratch) { headScratchPool.Put(hs) }

@@ -31,3 +31,26 @@ func TestPoolOne(t *testing.T) {
 		t.Errorf("CLS aliased the input: seq[0] = %v", seq[0])
 	}
 }
+
+func BenchmarkPoolOne(b *testing.B) {
+	for _, shape := range []struct {
+		name string
+		L, D int
+	}{
+		{"MiniLM_L128_D384", 128, 384},
+		{"BERT_L512_D768", 512, 768},
+		{"Nomic_L512_D1024", 512, 1024},
+	} {
+		seq := make([]float32, shape.L*shape.D)
+		for i := range seq {
+			seq[i] = float32(i % 100)
+		}
+		b.Run(shape.name, func(b *testing.B) {
+			b.SetBytes(int64(shape.L * shape.D * 4))
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = poolOne(seq, shape.L, shape.D, poolMean)
+			}
+		})
+	}
+}

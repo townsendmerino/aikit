@@ -87,16 +87,42 @@ func poolOne(seq []float32, L, D int, mode pooling) []float32 {
 		return out // degenerate (no tokens) — stable zero vector
 	}
 	if mode == poolMean {
-		acc := make([]float64, D)
-		for i := range L {
-			row := seq[i*D : i*D+D]
-			for j := range D {
-				acc[j] += float64(row[j])
-			}
+		var stackAcc [1024]float64
+		var acc []float64
+		if D <= len(stackAcc) {
+			acc = stackAcc[:D]
+			clear(acc)
+		} else {
+			acc = make([]float64, D)
 		}
-		inv := 1.0 / float64(L)
-		for j := range out {
-			out[j] = float32(acc[j] * inv)
+		if D > 0 {
+			_ = acc[D-1]
+			for i := range L {
+				row := seq[i*D : (i+1)*D]
+				_ = row[D-1]
+				j := 0
+				for ; j+3 < D; j += 4 {
+					acc[j+0] += float64(row[j+0])
+					acc[j+1] += float64(row[j+1])
+					acc[j+2] += float64(row[j+2])
+					acc[j+3] += float64(row[j+3])
+				}
+				for ; j < D; j++ {
+					acc[j] += float64(row[j])
+				}
+			}
+			inv := 1.0 / float64(L)
+			_ = out[D-1]
+			j := 0
+			for ; j+3 < D; j += 4 {
+				out[j+0] = float32(acc[j+0] * inv)
+				out[j+1] = float32(acc[j+1] * inv)
+				out[j+2] = float32(acc[j+2] * inv)
+				out[j+3] = float32(acc[j+3] * inv)
+			}
+			for ; j < D; j++ {
+				out[j] = float32(acc[j] * inv)
+			}
 		}
 		return out
 	}

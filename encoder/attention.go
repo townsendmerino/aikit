@@ -49,6 +49,12 @@ func selfAttention(h []float32, Wqkv, WqkvB, OutProj, OutProjB []float32, heads,
 	Q := s.Q[:L*D]
 	K := s.K[:L*D]
 	V := s.V[:L*D]
+	if L > 0 && D > 0 {
+		_ = qkv[L*3*D-1]
+		_ = Q[L*D-1]
+		_ = K[L*D-1]
+		_ = V[L*D-1]
+	}
 	for i := range L {
 		copy(Q[i*D:(i+1)*D], qkv[i*3*D:i*3*D+D])
 		copy(K[i*D:(i+1)*D], qkv[i*3*D+D:i*3*D+2*D])
@@ -99,13 +105,13 @@ func attentionCore(h []float32, Q, K, V, OutProj, OutProjB []float32, heads, hea
 		// Head-parallel (audit M-05). Each head is an independent computation
 		// over its own slice of Q/K/V writing its own columns of ctx, so this is
 		// bit-identical to the serial loop — no reduction crosses a head.
+		s.ensureWorkerScratch(w, mOut, headDim, L)
 		var wg sync.WaitGroup
 		for wi := range w {
 			wg.Add(1)
 			go func(wi int) {
 				defer wg.Done()
-				hs := getHeadScratch(mOut, headDim, L)
-				defer putHeadScratch(hs)
+				hs := &s.workerScratch[wi]
 				for headIdx := wi; headIdx < heads; headIdx += w {
 					attendOneHead(ctx, Q, K, V, headIdx, headDim, D, L, mOut, scale,
 						hs.qH, hs.kH, hs.vH, hs.ctxHead, hs.scores, s.mm,
@@ -128,8 +134,20 @@ func attentionCore(h []float32, Q, K, V, OutProj, OutProjB []float32, heads, hea
 
 	// Residual: h[:mOut*D] += out (in place), resliced.
 	h = h[:mOut*D]
-	for i := range h {
-		h[i] += out[i]
+	nh := len(h)
+	if nh > 0 {
+		_ = h[nh-1]
+		_ = out[nh-1]
+		i := 0
+		for ; i+3 < nh; i += 4 {
+			h[i+0] += out[i+0]
+			h[i+1] += out[i+1]
+			h[i+2] += out[i+2]
+			h[i+3] += out[i+3]
+		}
+		for ; i < nh; i++ {
+			h[i] += out[i]
+		}
 	}
 	return h
 }
@@ -151,16 +169,59 @@ func attendOneHead(
 	mm func(a, b, dst []float32, M, K, N int),
 	softmax func(scores []float32, scale float32, rows, cols int),
 ) {
+	headOff := headIdx * headDim
 	for i := range L {
-		src := i*D + headIdx*headDim
+		src := i*D + headOff
 		if i < mOut {
 			copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
 		}
 		copy(kH[i*headDim:(i+1)*headDim], K[src:src+headDim])
-		// V transposed: vHT[d, i] = V[i, head, d], folded into the extract so
-		// scores·V can use the A·Bᵀ matmul (which needs Vᵀ as its b operand).
-		for d := range headDim {
-			vHT[d*L+i] = V[src+d]
+	}
+	// V transposed: vHT[d, i] = V[i, head, d], folded into the extract so
+	// scores·V can use the A·Bᵀ matmul (which needs Vᵀ as its b operand).
+	if L%4 == 0 && headDim%4 == 0 && L > 0 && headDim > 0 {
+		_ = V[(L-1)*D+headOff+headDim-1]
+		_ = vHT[(headDim-1)*L+L-1]
+		for i0 := 0; i0 < L; i0 += 4 {
+			for d0 := 0; d0 < headDim; d0 += 4 {
+				s0 := (i0+0)*D + headOff + d0
+				s1 := (i0+1)*D + headOff + d0
+				s2 := (i0+2)*D + headOff + d0
+				s3 := (i0+3)*D + headOff + d0
+
+				v00, v01, v02, v03 := V[s0], V[s0+1], V[s0+2], V[s0+3]
+				v10, v11, v12, v13 := V[s1], V[s1+1], V[s1+2], V[s1+3]
+				v20, v21, v22, v23 := V[s2], V[s2+1], V[s2+2], V[s2+3]
+				v30, v31, v32, v33 := V[s3], V[s3+1], V[s3+2], V[s3+3]
+
+				t0 := (d0+0)*L + i0
+				t1 := (d0+1)*L + i0
+				t2 := (d0+2)*L + i0
+				t3 := (d0+3)*L + i0
+
+				vHT[t0], vHT[t0+1], vHT[t0+2], vHT[t0+3] = v00, v10, v20, v30
+				vHT[t1], vHT[t1+1], vHT[t1+2], vHT[t1+3] = v01, v11, v21, v31
+				vHT[t2], vHT[t2+1], vHT[t2+2], vHT[t2+3] = v02, v12, v22, v32
+				vHT[t3], vHT[t3+1], vHT[t3+2], vHT[t3+3] = v03, v13, v23, v33
+			}
+		}
+	} else {
+		for i := range L {
+			src := i*D + headOff
+			if headDim > 0 {
+				_ = V[src+headDim-1]
+				_ = vHT[(headDim-1)*L+i]
+				d := 0
+				for ; d+3 < headDim; d += 4 {
+					vHT[(d+0)*L+i] = V[src+d+0]
+					vHT[(d+1)*L+i] = V[src+d+1]
+					vHT[(d+2)*L+i] = V[src+d+2]
+					vHT[(d+3)*L+i] = V[src+d+3]
+				}
+				for ; d < headDim; d++ {
+					vHT[d*L+i] = V[src+d]
+				}
+			}
 		}
 	}
 	mm(qH, kH, scores, mOut, headDim, L)
@@ -169,7 +230,7 @@ func attendOneHead(
 	mm(scores, vHT, ctxHead, mOut, L, headDim)
 	// Scatter this head's context into the interleaved ctx[mOut, D].
 	for i := range mOut {
-		dst := i*D + headIdx*headDim
+		dst := i*D + headOff
 		copy(ctx[dst:dst+headDim], ctxHead[i*headDim:(i+1)*headDim])
 	}
 }

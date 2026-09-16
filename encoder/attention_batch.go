@@ -34,6 +34,12 @@ func selfAttentionBatched(h []float32, Wqkv, OutProj []float32, heads, headDim, 
 	Q := s.Q[:BL*D]
 	K := s.K[:BL*D]
 	V := s.V[:BL*D]
+	if BL > 0 && D > 0 {
+		_ = qkv[BL*3*D-1]
+		_ = Q[BL*D-1]
+		_ = K[BL*D-1]
+		_ = V[BL*D-1]
+	}
 	for i := range BL {
 		copy(Q[i*D:(i+1)*D], qkv[i*3*D:i*3*D+D])
 		copy(K[i*D:(i+1)*D], qkv[i*3*D+D:i*3*D+2*D])
@@ -74,13 +80,56 @@ func selfAttentionBatched(h []float32, Wqkv, OutProj []float32, heads, headDim, 
 			qH = qH[:L*headDim]
 			kH = kH[:L*headDim]
 			vHTl := vHT[:headDim*L]
+			headOff := seqOff + headIdx*headDim
 			for i := range L {
-				src := seqOff + i*D + headIdx*headDim
+				src := i*D + headOff
 				copy(qH[i*headDim:(i+1)*headDim], Q[src:src+headDim])
 				copy(kH[i*headDim:(i+1)*headDim], K[src:src+headDim])
-				// V transposed so scores·V can use the A·Bᵀ matmul (needs Vᵀ).
-				for d := range headDim {
-					vHTl[d*L+i] = V[src+d]
+			}
+			// V transposed so scores·V can use the A·Bᵀ matmul (needs Vᵀ).
+			if L%4 == 0 && headDim%4 == 0 && L > 0 && headDim > 0 {
+				_ = V[(L-1)*D+headOff+headDim-1]
+				_ = vHTl[(headDim-1)*L+L-1]
+				for i0 := 0; i0 < L; i0 += 4 {
+					for d0 := 0; d0 < headDim; d0 += 4 {
+						s0 := (i0+0)*D + headOff + d0
+						s1 := (i0+1)*D + headOff + d0
+						s2 := (i0+2)*D + headOff + d0
+						s3 := (i0+3)*D + headOff + d0
+
+						v00, v01, v02, v03 := V[s0], V[s0+1], V[s0+2], V[s0+3]
+						v10, v11, v12, v13 := V[s1], V[s1+1], V[s1+2], V[s1+3]
+						v20, v21, v22, v23 := V[s2], V[s2+1], V[s2+2], V[s2+3]
+						v30, v31, v32, v33 := V[s3], V[s3+1], V[s3+2], V[s3+3]
+
+						t0 := (d0+0)*L + i0
+						t1 := (d0+1)*L + i0
+						t2 := (d0+2)*L + i0
+						t3 := (d0+3)*L + i0
+
+						vHTl[t0], vHTl[t0+1], vHTl[t0+2], vHTl[t0+3] = v00, v10, v20, v30
+						vHTl[t1], vHTl[t1+1], vHTl[t1+2], vHTl[t1+3] = v01, v11, v21, v31
+						vHTl[t2], vHTl[t2+1], vHTl[t2+2], vHTl[t2+3] = v02, v12, v22, v32
+						vHTl[t3], vHTl[t3+1], vHTl[t3+2], vHTl[t3+3] = v03, v13, v23, v33
+					}
+				}
+			} else {
+				for i := range L {
+					src := i*D + headOff
+					if headDim > 0 {
+						_ = V[src+headDim-1]
+						_ = vHTl[(headDim-1)*L+i]
+						d := 0
+						for ; d+3 < headDim; d += 4 {
+							vHTl[(d+0)*L+i] = V[src+d+0]
+							vHTl[(d+1)*L+i] = V[src+d+1]
+							vHTl[(d+2)*L+i] = V[src+d+2]
+							vHTl[(d+3)*L+i] = V[src+d+3]
+						}
+						for ; d < headDim; d++ {
+							vHTl[d*L+i] = V[src+d]
+						}
+					}
 				}
 			}
 
@@ -92,7 +141,7 @@ func selfAttentionBatched(h []float32, Wqkv, OutProj []float32, heads, headDim, 
 			ctxHeadL := ctxHead[:L*headDim]
 			s.mm(scores, vHTl, ctxHeadL, L, L, headDim)
 			for i := range L {
-				dst := seqOff + i*D + headIdx*headDim
+				dst := i*D + headOff
 				copy(ctx[dst:dst+headDim], ctxHeadL[i*headDim:(i+1)*headDim])
 			}
 		}
@@ -102,7 +151,19 @@ func selfAttentionBatched(h []float32, Wqkv, OutProj []float32, heads, headDim, 
 	out := s.out[:BL*D]
 	s.mm(ctx, OutProj, out, BL, D, D)
 	// 6) Residual.
-	for i := range h {
-		h[i] += out[i]
+	nh := len(h)
+	if nh > 0 {
+		_ = h[nh-1]
+		_ = out[nh-1]
+		i := 0
+		for ; i+3 < nh; i += 4 {
+			h[i+0] += out[i+0]
+			h[i+1] += out[i+1]
+			h[i+2] += out[i+2]
+			h[i+3] += out[i+3]
+		}
+		for ; i < nh; i++ {
+			h[i] += out[i]
+		}
 	}
 }

@@ -174,3 +174,32 @@ func TestL2Normalize_zeroSafe(t *testing.T) {
 	}
 	approxEq(t, "post-L2 norm", math.Sqrt(sum), 1.0, 1e-6)
 }
+
+func BenchmarkLayerNorm(b *testing.B) {
+	for _, shape := range []struct {
+		name string
+		L, D int
+	}{
+		{"MiniLM_L128_D384", 128, 384},
+		{"BERT_L512_D768", 512, 768},
+		{"Large_L512_D1024", 512, 1024},
+	} {
+		x := make([]float32, shape.L*shape.D)
+		for i := range x {
+			x[i] = float32(i%100) * 0.1
+		}
+		weight := make([]float32, shape.D)
+		bias := make([]float32, shape.D)
+		for i := range weight {
+			weight[i] = 1.0
+			bias[i] = 0.1
+		}
+		b.Run(shape.name, func(b *testing.B) {
+			b.SetBytes(int64(shape.L * shape.D * 4))
+			b.ReportAllocs()
+			for b.Loop() {
+				layerNorm(x, weight, bias, shape.L, shape.D, 1e-12)
+			}
+		})
+	}
+}

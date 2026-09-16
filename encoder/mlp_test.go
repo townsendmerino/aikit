@@ -102,3 +102,26 @@ func TestGeluMLP_tanhDispatch(t *testing.T) {
 		}
 	}
 }
+
+func BenchmarkAddRowBias(b *testing.B) {
+	for _, tc := range []struct {
+		name string
+		M, N int
+	}{
+		{"M512_N768", 512, 768},
+		{"M512_N3072", 512, 3072},
+	} {
+		dst := make([]float32, tc.M*tc.N)
+		bias := make([]float32, tc.N)
+		for i := range bias {
+			bias[i] = float32(i%100) * 0.01
+		}
+		b.Run(tc.name, func(b *testing.B) {
+			b.SetBytes(int64(tc.M * tc.N * 4))
+			b.ReportAllocs()
+			for b.Loop() {
+				addRowBias(dst, bias, tc.M, tc.N)
+			}
+		})
+	}
+}

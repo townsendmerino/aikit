@@ -55,14 +55,36 @@ func swigluMLP(h []float32, Fc11, Fc12, Fc2 []float32, D, intermediate, L int, s
 		g := gate[lo:hi]
 		linalg.SiLUContractInto(g, g)
 		v := val[lo:hi]
-		for i := range v {
-			v[i] *= g[i]
+		n := len(v)
+		if n > 0 {
+			_ = g[n-1]
+			i := 0
+			for ; i+3 < n; i += 4 {
+				v[i+0] *= g[i+0]
+				v[i+1] *= g[i+1]
+				v[i+2] *= g[i+2]
+				v[i+3] *= g[i+3]
+			}
+			for ; i < n; i++ {
+				v[i] *= g[i]
+			}
 		}
 	})
 	mid := s.mid[:L*D]
 	s.mm(val, Fc2, mid, L, intermediate, D)
-	for i := range h {
-		h[i] += mid[i]
+	nh := len(h)
+	if nh > 0 {
+		_ = mid[nh-1]
+		i := 0
+		for ; i+3 < nh; i += 4 {
+			h[i+0] += mid[i+0]
+			h[i+1] += mid[i+1]
+			h[i+2] += mid[i+2]
+			h[i+3] += mid[i+3]
+		}
+		for ; i < nh; i++ {
+			h[i] += mid[i]
+		}
 	}
 	// Lens §4.2 (column-block gate into val[:, j0:j1], dropping the [L,I] gate buffer
 	// to one jb-wide tile) was built and measured out on arm64: latency-neutral on
@@ -75,12 +97,21 @@ func swigluMLP(h []float32, Fc11, Fc12, Fc2 []float32, D, intermediate, L int, s
 // A nil bias is a no-op, which is how the bias-free Nomic checkpoints
 // (CodeRankEmbed, nomic-embed-text-v1.5) keep their exact previous arithmetic.
 func addRowBias(dst, bias []float32, M, N int) {
-	if bias == nil {
+	if bias == nil || N <= 0 {
 		return
 	}
+	_ = bias[N-1]
 	for i := range M {
 		row := dst[i*N : (i+1)*N]
-		for j := range N {
+		_ = row[N-1]
+		j := 0
+		for ; j+3 < N; j += 4 {
+			row[j+0] += bias[j+0]
+			row[j+1] += bias[j+1]
+			row[j+2] += bias[j+2]
+			row[j+3] += bias[j+3]
+		}
+		for ; j < N; j++ {
 			row[j] += bias[j]
 		}
 	}
@@ -110,8 +141,19 @@ func geluMLP(h, fc1, fc1b, fc2, fc2b []float32, D, intermediate, L int, tanh boo
 	out := s.mid[:L*D] // reuse the SwiGLU fc2-output buffer
 	s.mm(inner, fc2, out, L, intermediate, D)
 	addRowBias(out, fc2b, L, D)
-	for i := range h {
-		h[i] += out[i]
+	nh := len(h)
+	if nh > 0 {
+		_ = out[nh-1]
+		i := 0
+		for ; i+3 < nh; i += 4 {
+			h[i+0] += out[i+0]
+			h[i+1] += out[i+1]
+			h[i+2] += out[i+2]
+			h[i+3] += out[i+3]
+		}
+		for ; i < nh; i++ {
+			h[i] += out[i]
+		}
 	}
 }
 

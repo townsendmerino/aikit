@@ -108,9 +108,7 @@ func matmulBTNaiveInto(a, b, dst []float32, M, K, N int) {
 }
 
 func zeroF32Slice(s []float32) {
-	for i := range s {
-		s[i] = 0
-	}
+	clear(s)
 }
 
 // matmulBTBlocked allocates dst and runs the shared linalg blocked GEMM into it. The
@@ -128,12 +126,21 @@ func matmulBTBlocked(a, b []float32, M, K, N int) []float32 {
 // matmulBT so the hot, no-bias path (all CodeRankEmbed weights have
 // no bias) stays tight.
 func addBias(dst []float32, bias []float32, M, N int) {
-	if bias == nil {
+	if bias == nil || N <= 0 {
 		return
 	}
+	_ = bias[N-1]
 	for i := range M {
 		row := dst[i*N : (i+1)*N]
-		for n := range N {
+		_ = row[N-1]
+		n := 0
+		for ; n+3 < N; n += 4 {
+			row[n+0] += bias[n+0]
+			row[n+1] += bias[n+1]
+			row[n+2] += bias[n+2]
+			row[n+3] += bias[n+3]
+		}
+		for ; n < N; n++ {
 			row[n] += bias[n]
 		}
 	}
