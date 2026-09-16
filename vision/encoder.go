@@ -219,9 +219,7 @@ func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 	h := make([]float32, np*hidden)
 	linalg.MatmulBT(patches, e.patchW, h, np, cpp, hidden)
 	addBias(h, e.patchB, np, hidden)
-	for i := range h {
-		h[i] += e.posEmb[i]
-	}
+	addResidual(h, e.posEmb)
 
 	// Allocate every per-layer scratch buffer ONCE (all layers share one shape) and
 	// reuse across the layer loop. The old code re-make'd n1/att/o/n2/mid/mlp plus
@@ -242,9 +240,7 @@ func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 		}
 		lw.ow.MatmulBTInto(&s.ws, s.att, s.o, np)
 		addBias(s.o, lw.ob, np, hidden)
-		for i := range h {
-			h[i] += s.o[i]
-		}
+		addResidual(h, s.o)
 		// MLP block (pre-LN, residual): fc2(geluTanh(fc1(x)))
 		layerNormInto(s.n2, h, lw.ln2w, lw.ln2b, np, hidden, c.LayerNormEps)
 		lw.fc1w.MatmulBTInto(&s.ws, s.n2, s.mid, np)
@@ -252,9 +248,7 @@ func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 		geluTanh(s.mid)
 		lw.fc2w.MatmulBTInto(&s.ws, s.mid, s.mlp, np)
 		addBias(s.mlp, lw.fc2b, np, hidden)
-		for i := range h {
-			h[i] += s.mlp[i]
-		}
+		addResidual(h, s.mlp)
 	}
 	return layerNorm(h, e.postLNw, e.postLNb, np, hidden, c.LayerNormEps), nil
 }
@@ -421,22 +415,55 @@ func layerNormInto(out, x, w, b []float32, rows, dim int, eps float64) {
 }
 
 func layerNormRows(out, x, w, b []float32, start, end, dim int, eps float64) {
+	if dim <= 0 {
+		return
+	}
+	_ = w[dim-1]
+	_ = b[dim-1]
+	dim4 := dim &^ 3
 	for r := start; r < end; r++ {
 		xr := x[r*dim : r*dim+dim]
+		_ = xr[dim-1]
 		var mean float64
-		for _, val := range xr {
-			mean += float64(val)
+		d := 0
+		for ; d < dim4; d += 4 {
+			mean += float64(xr[d+0])
+			mean += float64(xr[d+1])
+			mean += float64(xr[d+2])
+			mean += float64(xr[d+3])
+		}
+		for ; d < dim; d++ {
+			mean += float64(xr[d])
 		}
 		mean /= float64(dim)
 		var variance float64
-		for _, val := range xr {
-			d := float64(val) - mean
-			variance += d * d
+		d = 0
+		for ; d < dim4; d += 4 {
+			d0 := float64(xr[d+0]) - mean
+			d1 := float64(xr[d+1]) - mean
+			d2 := float64(xr[d+2]) - mean
+			d3 := float64(xr[d+3]) - mean
+			variance += d0 * d0
+			variance += d1 * d1
+			variance += d2 * d2
+			variance += d3 * d3
+		}
+		for ; d < dim; d++ {
+			dv := float64(xr[d]) - mean
+			variance += dv * dv
 		}
 		variance /= float64(dim)
 		inv := 1.0 / math.Sqrt(variance+eps)
 		dst := out[r*dim : r*dim+dim]
-		for d := range dim {
+		_ = dst[dim-1]
+		d = 0
+		for ; d < dim4; d += 4 {
+			dst[d+0] = float32((float64(xr[d+0])-mean)*inv)*w[d+0] + b[d+0]
+			dst[d+1] = float32((float64(xr[d+1])-mean)*inv)*w[d+1] + b[d+1]
+			dst[d+2] = float32((float64(xr[d+2])-mean)*inv)*w[d+2] + b[d+2]
+			dst[d+3] = float32((float64(xr[d+3])-mean)*inv)*w[d+3] + b[d+3]
+		}
+		for ; d < dim; d++ {
 			dst[d] = float32((float64(xr[d])-mean)*inv)*w[d] + b[d]
 		}
 	}
@@ -459,10 +486,41 @@ func geluTanh(x []float32) {
 }
 
 func addBias(x, bias []float32, rows, dim int) {
+	if bias == nil || dim <= 0 || rows <= 0 {
+		return
+	}
+	_ = bias[dim-1]
+	dim4 := dim &^ 3
 	for r := range rows {
 		dst := x[r*dim : r*dim+dim]
-		for d := range dim {
+		_ = dst[dim-1]
+		d := 0
+		for ; d < dim4; d += 4 {
+			dst[d+0] += bias[d+0]
+			dst[d+1] += bias[d+1]
+			dst[d+2] += bias[d+2]
+			dst[d+3] += bias[d+3]
+		}
+		for ; d < dim; d++ {
 			dst[d] += bias[d]
 		}
+	}
+}
+
+func addResidual(h, delta []float32) {
+	nh := len(h)
+	if nh == 0 {
+		return
+	}
+	_ = delta[nh-1]
+	nh4 := nh &^ 3
+	for i := 0; i < nh4; i += 4 {
+		h[i+0] += delta[i+0]
+		h[i+1] += delta[i+1]
+		h[i+2] += delta[i+2]
+		h[i+3] += delta[i+3]
+	}
+	for i := nh4; i < nh; i++ {
+		h[i] += delta[i]
 	}
 }

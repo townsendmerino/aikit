@@ -104,17 +104,25 @@ func gemma4ResizeToHWC01(img image.Image, targetH, targetW int) []float32 {
 	m := newXMap(targetW, sw)
 	for dy := range targetH {
 		y0, y1, fy := yTap(dy, targetH, sh)
+		row0 := y0 * stride
+		row1 := y1 * stride
+		outRowBase := dy * targetW * 3
 		for dx := range targetW {
 			x0, x1, fx := m.x0[dx], m.x1[dx], m.fx[dx]
+			off0 := row0 + x0*4
+			off1 := row0 + x1*4
+			off2 := row1 + x0*4
+			off3 := row1 + x1*4
+			outBase := outRowBase + dx*3
 			for c := range 3 {
-				p00 := float64(nr.Pix[y0*stride+x0*4+c])
-				p01 := float64(nr.Pix[y0*stride+x1*4+c])
-				p10 := float64(nr.Pix[y1*stride+x0*4+c])
-				p11 := float64(nr.Pix[y1*stride+x1*4+c])
+				p00 := float64(nr.Pix[off0+c])
+				p01 := float64(nr.Pix[off1+c])
+				p10 := float64(nr.Pix[off2+c])
+				p11 := float64(nr.Pix[off3+c])
 				top := p00 + (p01-p00)*fx
 				bot := p10 + (p11-p10)*fx
 				v := float32((top + (bot-top)*fy) / 255.0)
-				out[(dy*targetW+dx)*3+c] = v
+				out[outBase+c] = v
 			}
 		}
 	}
@@ -132,6 +140,7 @@ func gemma4Unfold(hwc []float32, targetH, targetW, patchSize int) ([]float32, []
 	gridH, gridW := targetH/patchSize, targetW/patchSize
 	n := gridH * gridW
 	patchDim := patchSize * patchSize * 3
+	rowLen := patchSize * 3
 	patches := make([]float32, n*patchDim)
 	positionIDs := make([][2]int, n)
 	for py := range gridH {
@@ -139,15 +148,11 @@ func gemma4Unfold(hwc []float32, targetH, targetW, patchSize int) ([]float32, []
 			idx := py*gridW + px
 			positionIDs[idx] = [2]int{px, py}
 			dst := patches[idx*patchDim : (idx+1)*patchDim]
-			k := 0
 			for ry := range patchSize {
 				srcY := py*patchSize + ry
-				rowBase := srcY * targetW * 3
-				for rx := range patchSize {
-					srcBase := rowBase + (px*patchSize+rx)*3
-					dst[k], dst[k+1], dst[k+2] = hwc[srcBase], hwc[srcBase+1], hwc[srcBase+2]
-					k += 3
-				}
+				srcBase := (srcY*targetW + px*patchSize) * 3
+				dstBase := ry * rowLen
+				copy(dst[dstBase:dstBase+rowLen], hwc[srcBase:srcBase+rowLen])
 			}
 		}
 	}

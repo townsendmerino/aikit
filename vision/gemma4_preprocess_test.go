@@ -74,3 +74,17 @@ func TestGemma4Preprocess_rejectsUnsupportedBudget(t *testing.T) {
 		t.Fatal("expected an error for max_soft_tokens=100 (not one of {70,140,280,560,1120})")
 	}
 }
+
+func BenchmarkGemma4Unfold(b *testing.B) {
+	const targetH, targetW, patchSize = 864, 672, 16
+	hwc := make([]float32, targetH*targetW*3)
+	for i := range hwc {
+		hwc[i] = float32(i%100) * 0.01
+	}
+	b.SetBytes(int64(targetH * targetW * 3 * 4))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		_, _ = gemma4Unfold(hwc, targetH, targetW, patchSize)
+	}
+}

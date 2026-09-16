@@ -234,17 +234,25 @@ func resizeNormalize(nr *image.NRGBA, out []float32, cfg Config) {
 	m := newXMap(size, sw)
 	for dy := range size {
 		y0, y1, fy := yTap(dy, size, sh)
+		row0 := y0 * stride
+		row1 := y1 * stride
+		outRowBase := dy * size
 		for dx := range size {
 			x0, x1, fx := m.x0[dx], m.x1[dx], m.fx[dx]
+			off0 := row0 + x0*4
+			off1 := row0 + x1*4
+			off2 := row1 + x0*4
+			off3 := row1 + x1*4
+			outBase := outRowBase + dx
 			for c := range 3 {
-				p00 := float64(nr.Pix[y0*stride+x0*4+c])
-				p01 := float64(nr.Pix[y0*stride+x1*4+c])
-				p10 := float64(nr.Pix[y1*stride+x0*4+c])
-				p11 := float64(nr.Pix[y1*stride+x1*4+c])
+				p00 := float64(nr.Pix[off0+c])
+				p01 := float64(nr.Pix[off1+c])
+				p10 := float64(nr.Pix[off2+c])
+				p11 := float64(nr.Pix[off3+c])
 				top := p00 + (p01-p00)*fx
 				bot := p10 + (p11-p10)*fx
 				v := float32((top + (bot-top)*fy) / 255.0) // → [0,1]
-				out[c*plane+dy*size+dx] = (v - cfg.Mean[c]) / cfg.Std[c]
+				out[c*plane+outBase] = (v - cfg.Mean[c]) / cfg.Std[c]
 			}
 		}
 	}

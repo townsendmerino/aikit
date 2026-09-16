@@ -357,14 +357,10 @@ func (e *QwenVisionEncoder) computeViTHidden(pixelValues []float32, gridTHW [][3
 		}
 		b.projw.MatmulBT(att, o, nPatches)
 		addBias(o, b.projb, nPatches, hidden)
-		for i := range hWin {
-			hWin[i] += o[i]
-		}
+		addResidual(hWin, o)
 		rmsNormInto(n2, hWin, b.norm2w, nPatches, hidden)
 		e.mlpInto(mlpOut, n2, b, nPatches, s)
-		for i := range hWin {
-			hWin[i] += mlpOut[i]
-		}
+		addResidual(hWin, mlpOut)
 	}
 
 	// de-window back to original patch order (merge-unit granularity).
@@ -580,10 +576,26 @@ func (e *QwenVisionEncoder) mlpInto(down, x []float32, b *qwenBlock, seq int, s 
 	up := s.up[:seq*inter]
 	b.upw.MatmulBT(x, up, seq)
 	addBias(up, b.upb, seq, inter)
-	silu(gate)
-	for i := range gate {
-		gate[i] *= up[i]
-	}
+	n := len(gate)
+	parallelChunks(n, func(lo, hi int) {
+		g := gate[lo:hi]
+		linalg.SiLUContractInto(g, g)
+		u := up[lo:hi]
+		k := len(g)
+		if k > 0 {
+			_ = u[k-1]
+			i := 0
+			for ; i+3 < k; i += 4 {
+				g[i+0] *= u[i+0]
+				g[i+1] *= u[i+1]
+				g[i+2] *= u[i+2]
+				g[i+3] *= u[i+3]
+			}
+			for ; i < k; i++ {
+				g[i] *= u[i]
+			}
+		}
+	})
 	b.downw.MatmulBT(gate, down, seq)
 	addBias(down, b.downb, seq, hidden)
 }
@@ -708,16 +720,42 @@ func rmsNormInto(out, x, w []float32, rows, dim int) {
 }
 
 func rmsNormRows(out, x, w []float32, start, end, dim int) {
+	if dim <= 0 {
+		return
+	}
+	_ = w[dim-1]
 	const eps = 1e-6
+	dim4 := dim &^ 3
 	for r := start; r < end; r++ {
 		xr := x[r*dim : r*dim+dim]
+		_ = xr[dim-1]
 		var ss float64
-		for _, v := range xr {
-			ss += float64(v) * float64(v)
+		d := 0
+		for ; d < dim4; d += 4 {
+			v0 := float64(xr[d+0])
+			v1 := float64(xr[d+1])
+			v2 := float64(xr[d+2])
+			v3 := float64(xr[d+3])
+			ss += v0 * v0
+			ss += v1 * v1
+			ss += v2 * v2
+			ss += v3 * v3
+		}
+		for ; d < dim; d++ {
+			v := float64(xr[d])
+			ss += v * v
 		}
 		inv := 1.0 / math.Sqrt(ss/float64(dim)+eps)
 		dst := out[r*dim : r*dim+dim]
-		for d := range dim {
+		_ = dst[dim-1]
+		d = 0
+		for ; d < dim4; d += 4 {
+			dst[d+0] = float32(float64(xr[d+0])*inv) * w[d+0]
+			dst[d+1] = float32(float64(xr[d+1])*inv) * w[d+1]
+			dst[d+2] = float32(float64(xr[d+2])*inv) * w[d+2]
+			dst[d+3] = float32(float64(xr[d+3])*inv) * w[d+3]
+		}
+		for ; d < dim; d++ {
 			dst[d] = float32(float64(xr[d])*inv) * w[d]
 		}
 	}

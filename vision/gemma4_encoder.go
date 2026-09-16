@@ -319,16 +319,12 @@ func (e *Gemma4Encoder) Forward(patches []float32, positionIDs [][2]int) ([]floa
 			return nil, err
 		}
 		rmsNormWInto(s.attNormed, s.att, lw.postAttnNormW, np, hidden, c.RMSNormEps)
-		for i := range h {
-			h[i] += s.attNormed[i]
-		}
+		addResidual(h, s.attNormed)
 
 		rmsNormWInto(s.n2, h, lw.preFFNNormW, np, hidden, c.RMSNormEps)
 		e.mlpInto(s.mlpOut, s.n2, lw, np, s)
 		rmsNormWInto(s.mlpNormed, s.mlpOut, lw.postFFNNormW, np, hidden, c.RMSNormEps)
-		for i := range h {
-			h[i] += s.mlpNormed[i]
-		}
+		addResidual(h, s.mlpNormed)
 	}
 
 	pooled, _, _, err := e.averagePool(h, positionIDs, np)
@@ -574,14 +570,26 @@ func (e *Gemma4Encoder) attentionInto(att, x []float32, lw *gemma4EncLayer, np, 
 func (e *Gemma4Encoder) mlpInto(down, x []float32, lw *gemma4EncLayer, np int, s *gemma4EncScratch) {
 	inter := e.Cfg.IntermediateSize
 	gateIn, upIn := append([]float32(nil), x...), append([]float32(nil), x...)
-	lw.gateProj.matmulInto(&s.ws, gateIn, s.gate[:np*inter], np)
-	lw.upProj.matmulInto(&s.ws, upIn, s.up[:np*inter], np)
-	geluTanh(s.gate[:np*inter])
-	prod := make([]float32, np*inter)
-	for i := range prod {
-		prod[i] = s.gate[i] * s.up[i]
+	gate := s.gate[:np*inter]
+	up := s.up[:np*inter]
+	lw.gateProj.matmulInto(&s.ws, gateIn, gate, np)
+	lw.upProj.matmulInto(&s.ws, upIn, up, np)
+	geluTanh(gate)
+	n := len(gate)
+	if n > 0 {
+		_ = up[n-1]
+		i := 0
+		for ; i+3 < n; i += 4 {
+			gate[i+0] *= up[i+0]
+			gate[i+1] *= up[i+1]
+			gate[i+2] *= up[i+2]
+			gate[i+3] *= up[i+3]
+		}
+		for ; i < n; i++ {
+			gate[i] *= up[i]
+		}
 	}
-	lw.downProj.matmulInto(&s.ws, prod, down, np)
+	lw.downProj.matmulInto(&s.ws, gate, down, np)
 }
 
 // rmsNormHeadInto normalizes each head_dim-wide head slice of x independently
@@ -596,22 +604,57 @@ func rmsNormHeadInto(x []float32, w []float32, rows, hidden, nH, hd int, eps flo
 }
 
 func rmsNormHeadRows(x []float32, w []float32, start, end, hidden, nH, hd int, eps float64) {
+	if hd <= 0 {
+		return
+	}
+	if w != nil {
+		_ = w[hd-1]
+	}
+	hd4 := hd &^ 3
 	for r := start; r < end; r++ {
 		base := r * hidden
 		for hIdx := range nH {
 			off := base + hIdx*hd
 			seg := x[off : off+hd]
+			_ = seg[hd-1]
 			var ss float64
-			for _, v := range seg {
-				ss += float64(v) * float64(v)
+			d := 0
+			for ; d < hd4; d += 4 {
+				v0 := float64(seg[d+0])
+				v1 := float64(seg[d+1])
+				v2 := float64(seg[d+2])
+				v3 := float64(seg[d+3])
+				ss += v0 * v0
+				ss += v1 * v1
+				ss += v2 * v2
+				ss += v3 * v3
+			}
+			for ; d < hd; d++ {
+				v := float64(seg[d])
+				ss += v * v
 			}
 			inv := 1.0 / math.Sqrt(ss/float64(hd)+eps)
-			for d := range hd {
-				v := float32(float64(seg[d]) * inv)
-				if w != nil {
-					v *= w[d]
+			d = 0
+			if w != nil {
+				for ; d < hd4; d += 4 {
+					seg[d+0] = float32(float64(seg[d+0])*inv) * w[d+0]
+					seg[d+1] = float32(float64(seg[d+1])*inv) * w[d+1]
+					seg[d+2] = float32(float64(seg[d+2])*inv) * w[d+2]
+					seg[d+3] = float32(float64(seg[d+3])*inv) * w[d+3]
 				}
-				seg[d] = v
+				for ; d < hd; d++ {
+					seg[d] = float32(float64(seg[d])*inv) * w[d]
+				}
+			} else {
+				for ; d < hd4; d += 4 {
+					seg[d+0] = float32(float64(seg[d+0]) * inv)
+					seg[d+1] = float32(float64(seg[d+1]) * inv)
+					seg[d+2] = float32(float64(seg[d+2]) * inv)
+					seg[d+3] = float32(float64(seg[d+3]) * inv)
+				}
+				for ; d < hd; d++ {
+					seg[d] = float32(float64(seg[d]) * inv)
+				}
 			}
 		}
 	}
@@ -628,16 +671,42 @@ func rmsNormWInto(dst, x, w []float32, rows, dim int, eps float64) {
 }
 
 func rmsNormWRows(dst, x, w []float32, start, end, dim int, eps float64) {
+	if dim <= 0 {
+		return
+	}
+	_ = w[dim-1]
+	dim4 := dim &^ 3
 	for r := start; r < end; r++ {
 		xr := x[r*dim : r*dim+dim]
+		_ = xr[dim-1]
 		var ss float64
-		for _, v := range xr {
-			ss += float64(v) * float64(v)
+		d := 0
+		for ; d < dim4; d += 4 {
+			v0 := float64(xr[d+0])
+			v1 := float64(xr[d+1])
+			v2 := float64(xr[d+2])
+			v3 := float64(xr[d+3])
+			ss += v0 * v0
+			ss += v1 * v1
+			ss += v2 * v2
+			ss += v3 * v3
+		}
+		for ; d < dim; d++ {
+			v := float64(xr[d])
+			ss += v * v
 		}
 		inv := 1.0 / math.Sqrt(ss/float64(dim)+eps)
-		d := dst[r*dim : r*dim+dim]
-		for i := range dim {
-			d[i] = float32(float64(xr[i])*inv) * w[i]
+		dSlice := dst[r*dim : r*dim+dim]
+		_ = dSlice[dim-1]
+		d = 0
+		for ; d < dim4; d += 4 {
+			dSlice[d+0] = float32(float64(xr[d+0])*inv) * w[d+0]
+			dSlice[d+1] = float32(float64(xr[d+1])*inv) * w[d+1]
+			dSlice[d+2] = float32(float64(xr[d+2])*inv) * w[d+2]
+			dSlice[d+3] = float32(float64(xr[d+3])*inv) * w[d+3]
+		}
+		for ; d < dim; d++ {
+			dSlice[d] = float32(float64(xr[d])*inv) * w[d]
 		}
 	}
 }
@@ -652,16 +721,41 @@ func rmsNormUnscaledInto(dst, x []float32, rows, dim int, eps float64) {
 }
 
 func rmsNormUnscaledRows(dst, x []float32, start, end, dim int, eps float64) {
+	if dim <= 0 {
+		return
+	}
+	dim4 := dim &^ 3
 	for r := start; r < end; r++ {
 		xr := x[r*dim : r*dim+dim]
+		_ = xr[dim-1]
 		var ss float64
-		for _, v := range xr {
-			ss += float64(v) * float64(v)
+		d := 0
+		for ; d < dim4; d += 4 {
+			v0 := float64(xr[d+0])
+			v1 := float64(xr[d+1])
+			v2 := float64(xr[d+2])
+			v3 := float64(xr[d+3])
+			ss += v0 * v0
+			ss += v1 * v1
+			ss += v2 * v2
+			ss += v3 * v3
+		}
+		for ; d < dim; d++ {
+			v := float64(xr[d])
+			ss += v * v
 		}
 		inv := 1.0 / math.Sqrt(ss/float64(dim)+eps)
-		d := dst[r*dim : r*dim+dim]
-		for i := range dim {
-			d[i] = float32(float64(xr[i]) * inv)
+		dSlice := dst[r*dim : r*dim+dim]
+		_ = dSlice[dim-1]
+		d = 0
+		for ; d < dim4; d += 4 {
+			dSlice[d+0] = float32(float64(xr[d+0]) * inv)
+			dSlice[d+1] = float32(float64(xr[d+1]) * inv)
+			dSlice[d+2] = float32(float64(xr[d+2]) * inv)
+			dSlice[d+3] = float32(float64(xr[d+3]) * inv)
+		}
+		for ; d < dim; d++ {
+			dSlice[d] = float32(float64(xr[d]) * inv)
 		}
 	}
 }
