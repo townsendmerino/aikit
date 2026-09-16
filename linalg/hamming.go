@@ -62,12 +62,50 @@ func HammingRows(q, codes []uint64, words, n int, dst []uint16) {
 // so the inner loop is where all the time goes: two loads, an XOR and a
 // popcount per word.
 func hammingRowsGeneric(q, codes []uint64, words, n int, dst []uint16) {
-	for i := range n {
-		row := codes[i*words : (i+1)*words : (i+1)*words]
-		s := 0
-		for j, c := range row {
-			s += bits.OnesCount64(c ^ q[j])
+	if n <= 0 || words <= 0 {
+		return
+	}
+	dst = dst[:n:n]
+	c := codes[: n*words : n*words]
+	switch words {
+	case 4:
+		q0, q1, q2, q3 := q[0], q[1], q[2], q[3]
+		for i := range n {
+			base := i * 4
+			s := bits.OnesCount64(c[base+0]^q0) +
+				bits.OnesCount64(c[base+1]^q1) +
+				bits.OnesCount64(c[base+2]^q2) +
+				bits.OnesCount64(c[base+3]^q3)
+			dst[i] = uint16(s)
 		}
-		dst[i] = uint16(s)
+	case 12:
+		q0, q1, q2, q3 := q[0], q[1], q[2], q[3]
+		q4, q5, q6, q7 := q[4], q[5], q[6], q[7]
+		q8, q9, q10, q11 := q[8], q[9], q[10], q[11]
+		for i := range n {
+			base := i * 12
+			s := bits.OnesCount64(c[base+0]^q0) +
+				bits.OnesCount64(c[base+1]^q1) +
+				bits.OnesCount64(c[base+2]^q2) +
+				bits.OnesCount64(c[base+3]^q3) +
+				bits.OnesCount64(c[base+4]^q4) +
+				bits.OnesCount64(c[base+5]^q5) +
+				bits.OnesCount64(c[base+6]^q6) +
+				bits.OnesCount64(c[base+7]^q7) +
+				bits.OnesCount64(c[base+8]^q8) +
+				bits.OnesCount64(c[base+9]^q9) +
+				bits.OnesCount64(c[base+10]^q10) +
+				bits.OnesCount64(c[base+11]^q11)
+			dst[i] = uint16(s)
+		}
+	default:
+		for i := range n {
+			base := i * words
+			s := 0
+			for j, qj := range q {
+				s += bits.OnesCount64(c[base+j] ^ qj)
+			}
+			dst[i] = uint16(s)
+		}
 	}
 }
