@@ -131,9 +131,7 @@ func attendTileFused(
 	for i := range kt {
 		mRun[i], lRun[i] = float32(math.Inf(-1)), 0
 	}
-	for i := range kt * hd {
-		acc[i] = 0
-	}
+	clear(acc[:kt*hd])
 	// The widest bound any row in this tile needs: past it every row is masked, so the whole
 	// remaining key range is skippable. This is the block-skip that causality buys, and it is worth
 	// nothing on the LAST tile of a prompt and a great deal on the first.
@@ -165,9 +163,7 @@ func attendTileFused(
 			row := sBlk[i*n : i*n+n]
 			a0, a1 := max(lo[i], k0), min(hi[i], k1-1) // this row's allowed sub-range in the block
 			if a0 > a1 {
-				for j := range row {
-					row[j] = 0
-				}
+				clear(row)
 				continue
 			}
 			j0, j1 := a0-k0, a1-k0
@@ -195,9 +191,7 @@ func attendTileFused(
 			}
 			corr := float32(math.Exp(float64(mRun[i] - mNew)))
 			var sum float64
-			for j := range j0 {
-				row[j] = 0
-			}
+			clear(row[:j0])
 			if contractExp {
 				// Batched through the contract kernel rather than element-by-element:
 				// that is what reaches the NEON/AVX2 exp at all. Three cheap passes
@@ -218,9 +212,7 @@ func attendTileFused(
 					sum += e
 				}
 			}
-			for j := j1 + 1; j < n; j++ {
-				row[j] = 0
-			}
+			clear(row[j1+1 : n])
 			lRun[i] = lRun[i]*corr + float32(sum)
 			mRun[i] = mNew
 			if corr != 1 {
@@ -239,9 +231,7 @@ func attendTileFused(
 		av := acc[i*hd : (i+1)*hd]
 		o := ch[i*hd : i*hd+hd]
 		if lRun[i] == 0 { // no key in range — leave the row zero, as a masked path does
-			for d := range o {
-				o[d] = 0
-			}
+			clear(o)
 			continue
 		}
 		inv := 1 / lRun[i]

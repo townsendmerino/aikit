@@ -56,10 +56,16 @@ func SoftmaxRowScaledContractInto(dst, src []float32, scale float32) {
 	if len(src) == 0 {
 		return
 	}
-	for i, v := range src {
-		dst[i] = v * scale
+	m := src[0] * scale
+	dst[0] = m
+	for i := 1; i < len(src); i++ {
+		v := src[i] * scale
+		dst[i] = v
+		if v > m {
+			m = v
+		}
 	}
-	softmaxContractImpl(dst, dst)
+	softmaxContractWithMaxImpl(dst, dst, m)
 }
 
 // SiLUContractInto writes x/(1+e^-x) elementwise under the contract.

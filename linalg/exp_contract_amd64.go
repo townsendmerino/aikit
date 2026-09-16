@@ -76,8 +76,7 @@ func siluContractImpl(dst, src []float32) {
 }
 
 func softmaxContractImpl(dst, src []float32) {
-	if !hasAVX2 || len(src) == 0 {
-		softmaxRowContract(dst, src)
+	if len(src) == 0 {
 		return
 	}
 	m := src[0]
@@ -85,6 +84,14 @@ func softmaxContractImpl(dst, src []float32) {
 		if v > m {
 			m = v
 		}
+	}
+	softmaxContractWithMaxImpl(dst, src, m)
+}
+
+func softmaxContractWithMaxImpl(dst, src []float32, m float32) {
+	if !hasAVX2 || len(src) == 0 {
+		softmaxRowContractWithMax(dst, src, m)
+		return
 	}
 	// dst doubles as scratch. Safe when dst aliases src: each index is read
 	// before it is written.
@@ -118,8 +125,15 @@ func softmaxContractImpl(dst, src []float32) {
 		return
 	}
 	inv := float32(1 / sum)
-	for i := range dst {
-		dst[i] *= inv
+	d := 0
+	for ; d+3 < len(dst); d += 4 {
+		dst[d+0] *= inv
+		dst[d+1] *= inv
+		dst[d+2] *= inv
+		dst[d+3] *= inv
+	}
+	for ; d < len(dst); d++ {
+		dst[d] *= inv
 	}
 }
 

@@ -24,6 +24,10 @@ func expContractImpl(dst, src []float32) {
 
 func softmaxContractImpl(dst, src []float32) { softmaxRowContractNEON(dst, src) }
 
+func softmaxContractWithMaxImpl(dst, src []float32, m float32) {
+	softmaxRowContractNEONWithMax(dst, src, m)
+}
+
 func siluContractImpl(dst, src []float32) {
 	n4 := len(src) &^ 3
 	if n4 > 0 {

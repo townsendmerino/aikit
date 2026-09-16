@@ -135,3 +135,38 @@ func TestContractDispatch_inPlace(t *testing.T) {
 		}
 	}
 }
+
+func TestSoftmaxRowScaledContractInto_bitIdenticalToUnfused(t *testing.T) {
+	rng := rand.New(rand.NewPCG(0x73c, 0x19))
+	scale := float32(0.125)
+	for _, n := range []int{1, 2, 3, 4, 7, 8, 15, 16, 17, 128, 512, 1023, 2048} {
+		src := make([]float32, n)
+		for i := range src {
+			src[i] = float32(rng.NormFloat64() * 6)
+		}
+		got := make([]float32, n)
+		SoftmaxRowScaledContractInto(got, src, scale)
+
+		want := make([]float32, n)
+		for i, v := range src {
+			want[i] = v * scale
+		}
+		SoftmaxRowContractInto(want, want)
+
+		for i := range got {
+			if math.Float32bits(got[i]) != math.Float32bits(want[i]) {
+				t.Fatalf("n=%d i=%d: fused scaled %v (%08x) != unfused %v (%08x)",
+					n, i, got[i], math.Float32bits(got[i]), want[i], math.Float32bits(want[i]))
+			}
+		}
+
+		// Also check in-place: dst == src
+		inplace := append([]float32(nil), src...)
+		SoftmaxRowScaledContractInto(inplace, inplace, scale)
+		for i := range got {
+			if math.Float32bits(inplace[i]) != math.Float32bits(want[i]) {
+				t.Fatalf("in-place n=%d i=%d: %v != %v", n, i, inplace[i], want[i])
+			}
+		}
+	}
+}

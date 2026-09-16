@@ -87,6 +87,35 @@ func BenchmarkSoftmaxRowKernels(b *testing.B) {
 	})
 }
 
+// BenchmarkSoftmaxRowScaled measures the fused scale+max pass against the
+// two-pass unfused baseline (separate multiply pass followed by SoftmaxRowContractInto).
+func BenchmarkSoftmaxRowScaled(b *testing.B) {
+	const n = 2048
+	rng := rand.New(rand.NewPCG(9, 9))
+	src := make([]float32, n)
+	for i := range src {
+		src[i] = float32(rng.NormFloat64() * 8)
+	}
+	dst := make([]float32, n)
+	const scale = float32(0.125)
+
+	b.Run("fused", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			SoftmaxRowScaledContractInto(dst, src, scale)
+		}
+	})
+	b.Run("unfused_two_pass", func(b *testing.B) {
+		b.SetBytes(int64(n) * 4)
+		for b.Loop() {
+			for i, v := range src {
+				dst[i] = v * scale
+			}
+			SoftmaxRowContractInto(dst, dst)
+		}
+	})
+}
+
 // BenchmarkSiLUKernels is the SwiGLU half of the S-06 step-2 speed row. The
 // goinfer_f64 arm is a transcription of decoder/rmsnorm.go's silu, which is what
 // the MLP actually calls today and therefore the comparison that matters.

@@ -149,6 +149,16 @@ func softmaxRowContract(dst, src []float32) {
 			m = v
 		}
 	}
+	softmaxRowContractWithMax(dst, src, m)
+}
+
+func softmaxRowContractWithMax(dst, src []float32, m float32) {
+	if len(dst) != len(src) {
+		panic("linalg: softmaxRowContract length mismatch")
+	}
+	if len(src) == 0 {
+		return
+	}
 	var p [4]float64
 	for i, v := range src {
 		d := v - m
@@ -168,8 +178,15 @@ func softmaxRowContract(dst, src []float32) {
 		return
 	}
 	inv := float32(1 / sum)
-	for i := range dst {
-		dst[i] *= inv
+	d := 0
+	for ; d+3 < len(dst); d += 4 {
+		dst[d+0] *= inv
+		dst[d+1] *= inv
+		dst[d+2] *= inv
+		dst[d+3] *= inv
+	}
+	for ; d < len(dst); d++ {
+		dst[d] *= inv
 	}
 }
 

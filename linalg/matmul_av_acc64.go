@@ -78,6 +78,7 @@ func MatmulAVAcc64(scores, vals, dst []float32, acc []float64, M, nKeys, hd, hea
 			for s := range nKeys {
 				w := float64(srow[s])
 				v := vals[headOff+s*rowStride+d0 : headOff+s*rowStride+d0+16 : headOff+s*rowStride+d0+16]
+				_ = v[15]
 				a0 += w * float64(v[0])
 				a1 += w * float64(v[1])
 				a2 += w * float64(v[2])
@@ -95,6 +96,7 @@ func MatmulAVAcc64(scores, vals, dst []float32, acc []float64, M, nKeys, hd, hea
 				a14 += w * float64(v[14])
 				a15 += w * float64(v[15])
 			}
+			_ = drow[d0+15]
 			drow[d0+0], drow[d0+1], drow[d0+2], drow[d0+3] = float32(a0), float32(a1), float32(a2), float32(a3)
 			drow[d0+4], drow[d0+5], drow[d0+6], drow[d0+7] = float32(a4), float32(a5), float32(a6), float32(a7)
 			drow[d0+8], drow[d0+9], drow[d0+10], drow[d0+11] = float32(a8), float32(a9), float32(a10), float32(a11)

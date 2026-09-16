@@ -41,6 +41,17 @@ func MatmulQKAcc64(a, bMat, dst []float32, M, K, N, bOff, rowStride int) {
 			r6 := bMat[base+6*rowStride : base+6*rowStride+K]
 			r7 := bMat[base+7*rowStride : base+7*rowStride+K]
 			var s0, s1, s2, s3, s4, s5, s6, s7 float64
+			if K > 0 {
+				_ = r0[K-1]
+				_ = r1[K-1]
+				_ = r2[K-1]
+				_ = r3[K-1]
+				_ = r4[K-1]
+				_ = r5[K-1]
+				_ = r6[K-1]
+				_ = r7[K-1]
+			}
+			_ = drow[j+7]
 			for d := range K {
 				qd := float64(arow[d])
 				s0 += qd * float64(r0[d])

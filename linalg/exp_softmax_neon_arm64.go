@@ -36,6 +36,16 @@ func softmaxRowContractNEON(dst, src []float32) {
 			m = v
 		}
 	}
+	softmaxRowContractNEONWithMax(dst, src, m)
+}
+
+func softmaxRowContractNEONWithMax(dst, src []float32, m float32) {
+	if len(dst) != len(src) {
+		panic("linalg: softmaxRowContractNEON length mismatch")
+	}
+	if len(src) == 0 {
+		return
+	}
 	var p [4]float64
 	n4 := len(src) &^ 3
 	if n4 > 0 {
@@ -59,7 +69,14 @@ func softmaxRowContractNEON(dst, src []float32) {
 		return
 	}
 	inv := float32(1 / sum)
-	for i := range dst {
-		dst[i] *= inv
+	d := 0
+	for ; d+3 < len(dst); d += 4 {
+		dst[d+0] *= inv
+		dst[d+1] *= inv
+		dst[d+2] *= inv
+		dst[d+3] *= inv
+	}
+	for ; d < len(dst); d++ {
+		dst[d] *= inv
 	}
 }

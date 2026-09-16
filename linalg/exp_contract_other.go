@@ -7,8 +7,11 @@ package linalg
 // — which is the entire point of the contract and the reason these are not left
 // as a faster-but-different fallback.
 
-func expContractImpl(dst, src []float32)      { expContractScalarInto(dst, src) }
-func softmaxContractImpl(dst, src []float32)  { softmaxRowContract(dst, src) }
+func expContractImpl(dst, src []float32)     { expContractScalarInto(dst, src) }
+func softmaxContractImpl(dst, src []float32) { softmaxRowContract(dst, src) }
+func softmaxContractWithMaxImpl(dst, src []float32, m float32) {
+	softmaxRowContractWithMax(dst, src, m)
+}
 func siluContractImpl(dst, src []float32)     { siluContractScalarInto(dst, src) }
 func geluTanhContractImpl(dst, src []float32) { geluTanhScalarInto(dst, src) }
 func geluContractImpl(dst, src []float32)     { geluScalarInto(dst, src) }
