@@ -72,6 +72,8 @@ func dequantQ8_0Block(raw []byte, blk int, out []float32) {
 	base := blk * 34
 	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+34]
+	out = out[:32:32]
+	qs = qs[:32:32]
 	for i := range 32 {
 		out[i] = float32(int8(qs[i])) * d
 	}
@@ -84,6 +86,8 @@ func dequantQ4_0Block(raw []byte, blk int, out []float32) {
 	base := blk * 18
 	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+18]
+	out = out[:32:32]
+	qs = qs[:16:16]
 	for i := range 16 {
 		v := qs[i]
 		out[i] = float32(int(v&0x0F)-8) * d
@@ -100,6 +104,8 @@ func dequantQ5_0Block(raw []byte, blk int, out []float32) {
 	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qh := binary.LittleEndian.Uint32(raw[base+2:])
 	qs := raw[base+6 : base+22]
+	out = out[:32:32]
+	qs = qs[:16:16]
 	for j := range 16 {
 		xh0 := byte(((qh >> uint(j)) << 4) & 0x10) // bit j → bit 4
 		xh1 := byte((qh >> uint(j+12)) & 0x10)     // bit j+16 → bit 4
@@ -120,11 +126,12 @@ func dequantQ6KBlock(raw []byte, sb int, out []float32) {
 	qh := raw[base+128 : base+192]
 	sc := raw[base+192 : base+208] // int8 scales
 	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+208:]))
+	out = out[:256:256]
 	for chunk := range 2 {
 		n0 := chunk * 128
-		qlo := ql[chunk*64:]
-		qho := qh[chunk*32:]
-		sco := sc[chunk*8:]
+		qlo := ql[chunk*64 : chunk*64+64]
+		qho := qh[chunk*32 : chunk*32+32]
+		sco := sc[chunk*8 : chunk*8+8]
 		// Hoist d·scale out of the element loop (audit M-24). `is` takes only two
 		// values across the 32 iterations, so this recomputed the same eight
 		// products 16 times each — four f32 multiplies per output element, on a
@@ -166,6 +173,8 @@ func dequantIQ4NLBlock(raw []byte, blk int, out []float32) {
 	base := blk * 18
 	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+18]
+	out = out[:32:32]
+	qs = qs[:16:16]
 	for j := range 16 {
 		out[j] = d * float32(kvaluesIQ4NL[qs[j]&0x0F])
 		out[j+16] = d * float32(kvaluesIQ4NL[qs[j]>>4])
@@ -206,6 +215,8 @@ func dequantMXFP4Block(raw []byte, blk int, out []float32) {
 	base := blk * 17
 	d := e8m0ToF32Half(raw[base])
 	qs := raw[base+1 : base+17]
+	out = out[:32:32]
+	qs = qs[:16:16]
 	for j := range 16 {
 		out[j] = d * float32(mxfp4KValues[qs[j]&0x0F])
 		out[j+16] = d * float32(mxfp4KValues[qs[j]>>4])
@@ -224,14 +235,15 @@ func dequantIQ4XSBlock(raw []byte, sb int, out []float32) {
 	scalesH := binary.LittleEndian.Uint16(raw[base+2:])
 	scalesL := raw[base+4 : base+8]
 	qs := raw[base+8 : base+136]
+	out = out[:256:256]
 	for ib := range 8 { // eight 32-element sub-blocks
 		ls := int((scalesL[ib/2]>>(4*(ib%2)))&0x0F) | int((scalesH>>(2*ib))&3)<<4
 		dl := d * float32(ls-32)
 		q := qs[ib*16 : ib*16+16]
-		o := out[ib*32 : ib*32+32]
+		base2 := ib * 32
 		for j := range 16 {
-			o[j] = dl * float32(kvaluesIQ4NL[q[j]&0x0F])
-			o[j+16] = dl * float32(kvaluesIQ4NL[q[j]>>4])
+			out[base2+j] = dl * float32(kvaluesIQ4NL[q[j]&0x0F])
+			out[base2+j+16] = dl * float32(kvaluesIQ4NL[q[j]>>4])
 		}
 	}
 }
