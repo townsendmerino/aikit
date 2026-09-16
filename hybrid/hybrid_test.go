@@ -66,6 +66,64 @@ func TestRetriever_emptyShortlist(t *testing.T) {
 	}
 }
 
+// fakeDense/fakeLexical let a test hand a Retriever a ranking that repeats a
+// key — DenseIndex/LexicalIndex are caller-supplied interfaces (see the
+// package doc), and this repo's own ann/bm25 implementations happen never to
+// do this, so a real corpus can't exercise it.
+type fakeDense struct{ hits []ann.Hit }
+
+func (f fakeDense) Query(q []float32, k int) []ann.Hit { return f.hits }
+
+type fakeLexical struct{ res []bm25.Result }
+
+func (f fakeLexical) TopK(q []string, k int) []bm25.Result { return f.res }
+
+// TestRetriever_dedupsRepeatedKeyWithinOneRanking pins the RRF contract this
+// package inlines from fuse.RRFWeighted: a single ranking repeating a key
+// must accumulate into ONE fused entry (summing both rank contributions),
+// not two entries splitting the score. Checked at both the linear-scan
+// (<=64 total) and hashmap (>64 total) branch, since they're separate code
+// paths with independent dedup logic.
+func TestRetriever_dedupsRepeatedKeyWithinOneRanking(t *testing.T) {
+	t.Run("small", func(t *testing.T) {
+		den := fakeDense{hits: []ann.Hit{{Index: 5, Score: 0.9}, {Index: 7, Score: 0.5}, {Index: 5, Score: 0.1}}}
+		lex := fakeLexical{}
+		r := New(den, lex)
+		got := r.Query(nil, nil, 10)
+
+		want := fuse.RRF(fuse.DefaultK,
+			fuse.Keys(den.hits, func(h ann.Hit) int { return h.Index }),
+			fuse.Keys(lex.res, func(res bm25.Result) int { return res.Doc }),
+		)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("Query = %v, want %v (hand-wired fuse.RRF, which dedups every ranking)", got, want)
+		}
+	})
+	t.Run("large", func(t *testing.T) {
+		hits := make([]ann.Hit, 40)
+		for i := range hits {
+			hits[i] = ann.Hit{Index: i + 100, Score: 1}
+		}
+		hits[39].Index = hits[0].Index // repeat the first key at the end
+		lexRes := make([]bm25.Result, 30)
+		for i := range lexRes {
+			lexRes[i] = bm25.Result{Doc: i + 200}
+		}
+		den := fakeDense{hits: hits}
+		lex := fakeLexical{res: lexRes}
+		r := New(den, lex)
+		got := r.Query(nil, nil, 100) // total 70 > 64: exercises the hashmap branch
+
+		want := fuse.RRF(fuse.DefaultK,
+			fuse.Keys(den.hits, func(h ann.Hit) int { return h.Index }),
+			fuse.Keys(lex.res, func(res bm25.Result) int { return res.Doc }),
+		)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("Query = %v, want %v (hand-wired fuse.RRF, which dedups every ranking)", got, want)
+		}
+	})
+}
+
 func TestRetriever_noLexicalMatch(t *testing.T) {
 	dense, lexical := testCorpus()
 	r := New(dense, lexical)

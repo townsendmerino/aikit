@@ -30,6 +30,8 @@
 package hybrid
 
 import (
+	"slices"
+
 	"github.com/townsendmerino/aikit/ann"
 	"github.com/townsendmerino/aikit/bm25"
 	"github.com/townsendmerino/aikit/fuse"
@@ -82,8 +84,80 @@ func (r *Retriever) Query(queryVec []float32, queryTokens []string, shortlist in
 	}
 	den := r.Dense.Query(queryVec, shortlist)
 	lex := r.Lexical.TopK(queryTokens, shortlist)
-	return fuse.RRF(fuse.DefaultK,
-		fuse.Keys(den, func(h ann.Hit) int { return h.Index }),
-		fuse.Keys(lex, func(res bm25.Result) int { return res.Doc }),
-	)
+	total := len(den) + len(lex)
+	out := make([]fuse.Result[int], 0, total)
+	k := fuse.DefaultK
+
+	if total <= 64 {
+		// Small shortlist fast-path: linear scan avoids map allocation entirely.
+		//
+		// Both loops below must dedup against out, not just against each other:
+		// DenseIndex/LexicalIndex are caller-supplied interfaces (see the doc
+		// comment above), not guaranteed duplicate-free the way this repo's own
+		// ann/bm25 implementations happen to be — a single ranking repeating a
+		// key would otherwise get two entries here, splitting its score instead
+		// of summing it (fuse.RRFWeighted, which this inlines, dedups every
+		// ranking the same way).
+		for rank0, h := range den {
+			key := h.Index
+			found := false
+			for i := range out {
+				if out[i].Key == key {
+					out[i].Score += 1.0 / (k + float64(rank0+1))
+					found = true
+					break
+				}
+			}
+			if !found {
+				out = append(out, fuse.Result[int]{Key: key, Score: 1.0 / (k + float64(rank0+1))})
+			}
+		}
+		for rank0, res := range lex {
+			key := res.Doc
+			found := false
+			for i := range out {
+				if out[i].Key == key {
+					out[i].Score += 1.0 / (k + float64(rank0+1))
+					found = true
+					break
+				}
+			}
+			if !found {
+				out = append(out, fuse.Result[int]{Key: key, Score: 1.0 / (k + float64(rank0+1))})
+			}
+		}
+	} else {
+		// Large shortlist: hashmap lookup. Same dedup requirement as the small
+		// path above, for both rankings.
+		pos := make(map[int]int, total)
+		for rank0, h := range den {
+			key := h.Index
+			if i, ok := pos[key]; ok {
+				out[i].Score += 1.0 / (k + float64(rank0+1))
+			} else {
+				pos[key] = len(out)
+				out = append(out, fuse.Result[int]{Key: key, Score: 1.0 / (k + float64(rank0+1))})
+			}
+		}
+		for rank0, res := range lex {
+			key := res.Doc
+			if i, ok := pos[key]; ok {
+				out[i].Score += 1.0 / (k + float64(rank0+1))
+			} else {
+				pos[key] = len(out)
+				out = append(out, fuse.Result[int]{Key: key, Score: 1.0 / (k + float64(rank0+1))})
+			}
+		}
+	}
+
+	slices.SortStableFunc(out, func(a, b fuse.Result[int]) int {
+		switch {
+		case a.Score > b.Score:
+			return -1
+		case a.Score < b.Score:
+			return 1
+		}
+		return 0
+	})
+	return out
 }
