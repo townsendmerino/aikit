@@ -14,6 +14,45 @@ import "fmt"
 // dst=the live array, src=the scratch — same hazard and same fix as
 // RepackInt4Row4Quad's (the row4 arm64 twin), just at row granularity
 // instead of quad, since split-half does not interleave rows.
+// repackSplitHalfGroup repacks 16 bytes (32 canonical nibbles) into split-half order.
+// Both dg and sg must have len >= 16.
+func repackSplitHalfGroup(dg, sg []byte) {
+	_ = sg[15]
+	_ = dg[15]
+
+	s0, s8 := sg[0], sg[8]
+	dg[0] = (s0 & 0x0F) | ((s8 & 0x0F) << 4)
+	dg[1] = (s0 >> 4) | (s8 & 0xF0)
+
+	s1, s9 := sg[1], sg[9]
+	dg[2] = (s1 & 0x0F) | ((s9 & 0x0F) << 4)
+	dg[3] = (s1 >> 4) | (s9 & 0xF0)
+
+	s2, s10 := sg[2], sg[10]
+	dg[4] = (s2 & 0x0F) | ((s10 & 0x0F) << 4)
+	dg[5] = (s2 >> 4) | (s10 & 0xF0)
+
+	s3, s11 := sg[3], sg[11]
+	dg[6] = (s3 & 0x0F) | ((s11 & 0x0F) << 4)
+	dg[7] = (s3 >> 4) | (s11 & 0xF0)
+
+	s4, s12 := sg[4], sg[12]
+	dg[8] = (s4 & 0x0F) | ((s12 & 0x0F) << 4)
+	dg[9] = (s4 >> 4) | (s12 & 0xF0)
+
+	s5, s13 := sg[5], sg[13]
+	dg[10] = (s5 & 0x0F) | ((s13 & 0x0F) << 4)
+	dg[11] = (s5 >> 4) | (s13 & 0xF0)
+
+	s6, s14 := sg[6], sg[14]
+	dg[12] = (s6 & 0x0F) | ((s14 & 0x0F) << 4)
+	dg[13] = (s6 >> 4) | (s14 & 0xF0)
+
+	s7, s15 := sg[7], sg[15]
+	dg[14] = (s7 & 0x0F) | ((s15 & 0x0F) << 4)
+	dg[15] = (s7 >> 4) | (s15 & 0xF0)
+}
+
 func RepackInt4SplitHalfRow(dst, src []byte, K int) {
 	if K%32 != 0 {
 		panic(fmt.Sprintf("linalg: RepackInt4SplitHalfRow requires K a multiple of 32, got %d", K))
@@ -21,18 +60,10 @@ func RepackInt4SplitHalfRow(dst, src []byte, K int) {
 	bpr := K / 2
 	requireLen("RepackInt4SplitHalfRow", "dst", len(dst), bpr)
 	requireLen("RepackInt4SplitHalfRow", "src", len(src), bpr)
-	nib := func(row []byte, k int) byte {
-		b := row[k/2]
-		if k%2 == 0 {
-			return b & 0x0F
-		}
-		return b >> 4
-	}
-	for g := 0; g < K/32; g++ {
-		gk, ob := g*32, g*16
-		for i := range 16 {
-			dst[ob+i] = nib(src, gk+i) | (nib(src, gk+i+16) << 4)
-		}
+	nGroups := K / 32
+	for g := 0; g < nGroups; g++ {
+		ob := g * 16
+		repackSplitHalfGroup(dst[ob:ob+16], src[ob:ob+16])
 	}
 }
 

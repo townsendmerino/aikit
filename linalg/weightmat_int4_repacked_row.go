@@ -23,6 +23,10 @@ package linalg
 // TestWeightMatRow_row4MatchesCanonical.
 func dequantizeRowFromRow4(q4Row4 []byte, q4Row4Scales []float32, cols, i int, dst []float32) {
 	const groupSize = 32
+	if cols <= 0 {
+		return
+	}
+	_ = dst[cols-1]
 	nGroups := (cols + groupSize - 1) / groupSize
 	bpr := (cols + 1) / 2
 	q, r := i/4, i%4
@@ -33,15 +37,25 @@ func dequantizeRowFromRow4(q4Row4 []byte, q4Row4Scales []float32, cols, i int, d
 		gk := g * groupSize
 		end := min(gk+groupSize, cols)
 		chunk := q4Row4[quadBase+g*64+r*16 : quadBase+g*64+r*16+16]
-		for k := gk; k < end; k++ {
-			kl := k - gk
-			var nib byte
-			if kl < 16 {
-				nib = chunk[kl] & 0x0F
-			} else {
-				nib = chunk[kl-16] >> 4
+		_ = chunk[15]
+		if end-gk == groupSize {
+			for kl := 0; kl < 16; kl++ {
+				dst[gk+kl] = float32(int(chunk[kl]&0x0F)-8) * s
 			}
-			dst[k] = float32(int(nib)-8) * s
+			for kl := 0; kl < 16; kl++ {
+				dst[gk+16+kl] = float32(int(chunk[kl]>>4)-8) * s
+			}
+		} else {
+			for k := gk; k < end; k++ {
+				kl := k - gk
+				var nib byte
+				if kl < 16 {
+					nib = chunk[kl] & 0x0F
+				} else {
+					nib = chunk[kl-16] >> 4
+				}
+				dst[k] = float32(int(nib)-8) * s
+			}
 		}
 	}
 }
@@ -59,6 +73,10 @@ func dequantizeRowFromRow4(q4Row4 []byte, q4Row4Scales []float32, cols, i int, d
 // TestWeightMatRow_splitHalfMatchesCanonical.
 func dequantizeRowFromSplitHalf(q4SplitHalf []byte, scales []float32, cols, i int, dst []float32) {
 	const groupSize = 32
+	if cols <= 0 {
+		return
+	}
+	_ = dst[cols-1]
 	nGroups := (cols + groupSize - 1) / groupSize
 	bpr := (cols + 1) / 2
 	row := q4SplitHalf[i*bpr : (i+1)*bpr]
@@ -68,15 +86,26 @@ func dequantizeRowFromSplitHalf(q4SplitHalf []byte, scales []float32, cols, i in
 		gk := g * groupSize
 		end := min(gk+groupSize, cols)
 		ob := g * 16
-		for k := gk; k < end; k++ {
-			kl := k - gk
-			var nib byte
-			if kl < 16 {
-				nib = row[ob+kl] & 0x0F
-			} else {
-				nib = row[ob+kl-16] >> 4
+		chunk := row[ob : ob+16]
+		_ = chunk[15]
+		if end-gk == groupSize {
+			for kl := 0; kl < 16; kl++ {
+				dst[gk+kl] = float32(int(chunk[kl]&0x0F)-8) * s
 			}
-			dst[k] = float32(int(nib)-8) * s
+			for kl := 0; kl < 16; kl++ {
+				dst[gk+16+kl] = float32(int(chunk[kl]>>4)-8) * s
+			}
+		} else {
+			for k := gk; k < end; k++ {
+				kl := k - gk
+				var nib byte
+				if kl < 16 {
+					nib = chunk[kl] & 0x0F
+				} else {
+					nib = chunk[kl-16] >> 4
+				}
+				dst[k] = float32(int(nib)-8) * s
+			}
 		}
 	}
 }

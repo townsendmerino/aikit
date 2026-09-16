@@ -56,9 +56,35 @@ func SoftmaxRowScaledContractInto(dst, src []float32, scale float32) {
 	if len(src) == 0 {
 		return
 	}
+	n := len(src)
+	_ = src[n-1]
+	_ = dst[n-1]
 	m := src[0] * scale
 	dst[0] = m
-	for i := 1; i < len(src); i++ {
+	i := 1
+	for ; i+3 < n; i += 4 {
+		v0 := src[i+0] * scale
+		v1 := src[i+1] * scale
+		v2 := src[i+2] * scale
+		v3 := src[i+3] * scale
+		dst[i+0] = v0
+		dst[i+1] = v1
+		dst[i+2] = v2
+		dst[i+3] = v3
+		if v0 > m {
+			m = v0
+		}
+		if v1 > m {
+			m = v1
+		}
+		if v2 > m {
+			m = v2
+		}
+		if v3 > m {
+			m = v3
+		}
+	}
+	for ; i < n; i++ {
 		v := src[i] * scale
 		dst[i] = v
 		if v > m {

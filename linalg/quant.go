@@ -140,9 +140,7 @@ func QuantizeRowInt8(row []float32, q []int8) (scale float32) {
 // Used for the tied embedding lookup when the table is stored int8.
 func DequantizeRowInt8(q []int8, scale float32, dst []float32) {
 	checkDequantInt8(q, dst)
-	for j, c := range q {
-		dst[j] = float32(c) * scale
-	}
+	dequantRowInt8(dst, q, scale)
 }
 
 // MatmulBTQ8 computes dst[M,N] = a[M,K] · bᵀ where b is the [N,K] matrix stored
@@ -582,16 +580,28 @@ func QuantizeGroupsInt4(w []float32, rows, cols, group int) (packed []byte, scal
 // without buffering the whole f32 matrix. packed is assumed zeroed on entry (a
 // fresh per-row slice).
 func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales []float32) {
+	if cols <= 0 {
+		return
+	}
 	nGroups := (cols + group - 1) / group
+	_ = scales[nGroups-1]
+	_ = row[cols-1]
+	_ = packed[(cols-1)/2]
 	for g := range nGroups {
 		ks := g * group
 		ke := min(ks+group, cols)
+		if ke > ks {
+			_ = row[ke-1]
+			_ = packed[(ke-1)/2]
+		}
 		var maxAbs float32
 		for k := ks; k < ke; k++ {
-			if v := row[k]; v > maxAbs {
+			v := row[k]
+			if v < 0 {
+				v = -v
+			}
+			if v > maxAbs {
 				maxAbs = v
-			} else if -v > maxAbs {
-				maxAbs = -v
 			}
 		}
 		s := float32(1)
@@ -600,20 +610,45 @@ func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales 
 		}
 		scales[g] = s
 		inv := 1.0 / s
-		for k := ks; k < ke; k++ {
+		k := ks
+		if k&1 == 1 && k < ke {
 			q := int(math.Round(float64(row[k] * inv)))
 			if q > 7 {
 				q = 7
 			} else if q < -7 {
 				q = -7
 			}
-			nib := byte(q + 8) // [1,15]; 8 = zero
+			nib := byte(q + 8)
 			bi := k / 2
-			if k&1 == 0 {
-				packed[bi] = (packed[bi] &^ 0x0F) | (nib & 0x0F)
-			} else {
-				packed[bi] = (packed[bi] &^ 0xF0) | (nib << 4)
+			packed[bi] = (packed[bi] &^ 0xF0) | (nib << 4)
+			k++
+		}
+		for ; k+1 < ke; k += 2 {
+			q0 := int(math.Round(float64(row[k] * inv)))
+			if q0 > 7 {
+				q0 = 7
+			} else if q0 < -7 {
+				q0 = -7
 			}
+			q1 := int(math.Round(float64(row[k+1] * inv)))
+			if q1 > 7 {
+				q1 = 7
+			} else if q1 < -7 {
+				q1 = -7
+			}
+			packed[k/2] = (byte(q0+8) & 0x0F) | (byte(q1+8) << 4)
+		}
+		if k < ke {
+			q := int(math.Round(float64(row[k] * inv)))
+			if q > 7 {
+				q = 7
+			} else if q < -7 {
+				q = -7
+			}
+			nib := byte(q + 8)
+			bi := k / 2
+			packed[bi] = (packed[bi] &^ 0x0F) | (nib & 0x0F)
+			k++
 		}
 	}
 }
@@ -623,6 +658,13 @@ func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales 
 // embedding lookup when the table is stored int4.
 func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []float32) {
 	checkDequantInt4(packed, scales, group, cols, dst)
+	if cols <= 0 {
+		return
+	}
+	_ = dst[cols-1]
+	_ = packed[(cols-1)/2]
+	nGroups := (cols + group - 1) / group
+	_ = scales[nGroups-1]
 	// Group-outer / element-inner, nibble pairs unrolled.
 	//
 	// The flat form — `dst[k] = float32(int(nib)-8) * scales[k/group]` — costs a
@@ -646,6 +688,10 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 	for g := 0; k < cols; g++ {
 		s := scales[g]
 		end := min(k+group, cols)
+		if end > k {
+			_ = dst[end-1]
+			_ = packed[(end-1)/2]
+		}
 		// A group may START on an odd k when `group` is odd, in which case this
 		// element is the HIGH nibble of a byte whose low nibble belongs to the
 		// PREVIOUS group — and a different scale. Peel it so the pair loop can assume
@@ -655,6 +701,20 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 			k++
 		}
 		// k even: both nibbles of packed[k/2] belong to this group.
+		for ; k+7 < end; k += 8 {
+			b0 := packed[k/2]
+			b1 := packed[k/2+1]
+			b2 := packed[k/2+2]
+			b3 := packed[k/2+3]
+			dst[k] = float32(int(b0&0x0F)-8) * s
+			dst[k+1] = float32(int(b0>>4)-8) * s
+			dst[k+2] = float32(int(b1&0x0F)-8) * s
+			dst[k+3] = float32(int(b1>>4)-8) * s
+			dst[k+4] = float32(int(b2&0x0F)-8) * s
+			dst[k+5] = float32(int(b2>>4)-8) * s
+			dst[k+6] = float32(int(b3&0x0F)-8) * s
+			dst[k+7] = float32(int(b3>>4)-8) * s
+		}
 		for ; k+1 < end; k += 2 {
 			b := packed[k/2]
 			dst[k] = float32(int(b&0x0F)-8) * s

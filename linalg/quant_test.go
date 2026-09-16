@@ -415,3 +415,39 @@ func BenchmarkDequantizeRowInt4(b *testing.B) {
 		DequantizeRowInt4(packed, scales, group, cols, dst)
 	}
 }
+
+func BenchmarkQuantizeGroupInt4Row(b *testing.B) {
+	cols, group := dequantBenchParams()
+	row := make([]float32, cols)
+	for i := range row {
+		row[i] = float32(i*7%100-50) * 0.01
+	}
+	nGroups, bpr := groupsFor(cols, group)
+	packed := make([]byte, bpr)
+	scales := make([]float32, nGroups)
+	b.SetBytes(int64(cols * 4))
+	b.ResetTimer()
+	for range b.N {
+		QuantizeGroupInt4Row(row, cols, group, packed, scales)
+	}
+}
+
+func BenchmarkDequantizeRowInt8(b *testing.B) {
+	const cols = 4096
+	q := make([]int8, cols)
+	for i := range q {
+		q[i] = int8(i*7%256 - 128)
+	}
+	dst := make([]float32, cols)
+	b.SetBytes(int64(cols))
+	b.Run("scalar", func(b *testing.B) {
+		for b.Loop() {
+			dequantRowInt8Scalar(dst, q, 0.01)
+		}
+	})
+	b.Run("vectorized", func(b *testing.B) {
+		for b.Loop() {
+			DequantizeRowInt8(q, 0.01, dst)
+		}
+	})
+}

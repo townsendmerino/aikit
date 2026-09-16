@@ -31,8 +31,29 @@ func softmaxRowContractNEON(dst, src []float32) {
 		return
 	}
 	m := src[0]
-	for _, v := range src[1:] {
-		if v > m {
+	n := len(src)
+	_ = src[n-1]
+	i := 1
+	for ; i+3 < n; i += 4 {
+		v0 := src[i+0]
+		v1 := src[i+1]
+		v2 := src[i+2]
+		v3 := src[i+3]
+		if v0 > m {
+			m = v0
+		}
+		if v1 > m {
+			m = v1
+		}
+		if v2 > m {
+			m = v2
+		}
+		if v3 > m {
+			m = v3
+		}
+	}
+	for ; i < n; i++ {
+		if v := src[i]; v > m {
 			m = v
 		}
 	}
@@ -69,14 +90,22 @@ func softmaxRowContractNEONWithMax(dst, src []float32, m float32) {
 		return
 	}
 	inv := float32(1 / sum)
-	d := 0
-	for ; d+3 < len(dst); d += 4 {
-		dst[d+0] *= inv
-		dst[d+1] *= inv
-		dst[d+2] *= inv
-		dst[d+3] *= inv
-	}
-	for ; d < len(dst); d++ {
-		dst[d] *= inv
+	nd := len(dst)
+	if nd > 0 {
+		_ = dst[nd-1]
+		d := 0
+		for ; d+7 < nd; d += 8 {
+			dst[d+0] *= inv
+			dst[d+1] *= inv
+			dst[d+2] *= inv
+			dst[d+3] *= inv
+			dst[d+4] *= inv
+			dst[d+5] *= inv
+			dst[d+6] *= inv
+			dst[d+7] *= inv
+		}
+		for ; d < nd; d++ {
+			dst[d] *= inv
+		}
 	}
 }

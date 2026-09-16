@@ -24,9 +24,7 @@ const (
 )
 
 func zeroSpanF32(s []float32) {
-	for i := range s {
-		s[i] = 0
-	}
+	clear(s)
 }
 
 // MatmulBTInto computes dst[M,N] = a[M,K]·b[N,K]ᵀ via the cache+register-blocked kernel,

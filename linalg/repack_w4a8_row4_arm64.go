@@ -41,17 +41,8 @@ func repackSplitHalfRow(packed []byte, K int) []byte {
 	if K%32 != 0 {
 		panic("repackSplitHalfRow: K must be a multiple of 32")
 	}
-	nGroups := K / 32
 	out := make([]byte, len(packed))
-	for g := range nGroups {
-		gk := g * 32
-		obase := g * 16
-		for i := range 16 {
-			lo := canonicalNibble(packed, gk+i)
-			hi := canonicalNibble(packed, gk+i+16)
-			out[obase+i] = lo | (hi << 4)
-		}
-	}
+	RepackInt4SplitHalfRow(out, packed, K)
 	return out
 }
 
@@ -80,18 +71,18 @@ func repackSplitHalf4RowBlock(row0, row1, row2, row3 []byte, K int) []byte {
 	}
 	nGroups := K / 32
 	bpr := K / 2
-	sh0 := repackSplitHalfRow(row0, K)
-	sh1 := repackSplitHalfRow(row1, K)
-	sh2 := repackSplitHalfRow(row2, K)
-	sh3 := repackSplitHalfRow(row3, K)
+	requireLen("repackSplitHalf4RowBlock", "row0", len(row0), bpr)
+	requireLen("repackSplitHalf4RowBlock", "row1", len(row1), bpr)
+	requireLen("repackSplitHalf4RowBlock", "row2", len(row2), bpr)
+	requireLen("repackSplitHalf4RowBlock", "row3", len(row3), bpr)
 	out := make([]byte, 4*bpr)
 	for g := range nGroups {
 		base := g * 16
 		obase := g * 64
-		copy(out[obase:obase+16], sh0[base:base+16])
-		copy(out[obase+16:obase+32], sh1[base:base+16])
-		copy(out[obase+32:obase+48], sh2[base:base+16])
-		copy(out[obase+48:obase+64], sh3[base:base+16])
+		repackSplitHalfGroup(out[obase:obase+16], row0[base:base+16])
+		repackSplitHalfGroup(out[obase+16:obase+32], row1[base:base+16])
+		repackSplitHalfGroup(out[obase+32:obase+48], row2[base:base+16])
+		repackSplitHalfGroup(out[obase+48:obase+64], row3[base:base+16])
 	}
 	return out
 }
@@ -153,18 +144,17 @@ func RepackInt4Row4Quad(dst, src []byte, K int) {
 	requireLen("RepackInt4Row4Quad", "dst", len(dst), 4*bpr)
 	requireLen("RepackInt4Row4Quad", "src", len(src), 4*bpr)
 	nGroups := K / 32
+	r0 := src[0*bpr : 1*bpr]
+	r1 := src[1*bpr : 2*bpr]
+	r2 := src[2*bpr : 3*bpr]
+	r3 := src[3*bpr : 4*bpr]
 	for g := range nGroups {
-		gk := g * 32
+		gb := g * 16
 		obase := g * 64
-		for r := range 4 {
-			row := src[r*bpr : (r+1)*bpr]
-			rbase := obase + r*16
-			for i := range 16 {
-				lo := canonicalNibble(row, gk+i)
-				hi := canonicalNibble(row, gk+i+16)
-				dst[rbase+i] = lo | (hi << 4)
-			}
-		}
+		repackSplitHalfGroup(dst[obase:obase+16], r0[gb:gb+16])
+		repackSplitHalfGroup(dst[obase+16:obase+32], r1[gb:gb+16])
+		repackSplitHalfGroup(dst[obase+32:obase+48], r2[gb:gb+16])
+		repackSplitHalfGroup(dst[obase+48:obase+64], r3[gb:gb+16])
 	}
 }
 
