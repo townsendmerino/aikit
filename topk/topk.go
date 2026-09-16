@@ -77,6 +77,21 @@ func New[T any](k int) *Selector[T] {
 	}
 }
 
+// Reset clears the selector for a new sequence of pushes with capacity k,
+// reusing the allocated backing array whenever possible.
+func (s *Selector[T]) Reset(k int) {
+	if k < 0 {
+		panic("topk.Reset: k must be non-negative")
+	}
+	s.k = k
+	s.seq = 0
+	if cap(s.heap) < k {
+		s.heap = make([]scored[T], 0, k)
+	} else {
+		s.heap = s.heap[:0]
+	}
+}
+
 // Push offers (item, score) to the selector. If the heap hasn't reached
 // capacity, item is added. Otherwise item replaces the current minimum
 // iff score > min_score (strict; ties favor the older item per the
@@ -170,13 +185,17 @@ type ItemWithScore[T any] struct {
 // group. Result then sorts strictly by score; equal-score items emerge
 // in heap-internal order, which is deterministic for a given input
 // sequence but not lexically ordered by item.
-func (s *Selector[T]) Result() []ItemWithScore[T] {
+// Extract invokes fn on each retained item in descending score order without allocating
+// an intermediate slice of ItemWithScore.
+func (s *Selector[T]) Extract(fn func(i int, item T, score float64)) {
 	n := len(s.heap)
-	out := make([]ItemWithScore[T], n)
+	if n == 0 {
+		return
+	}
 	// Repeated extract-min would give ascending order — we reverse-fill
-	// the output slice to land descending without a second pass.
+	// the output to land descending without a second pass.
 	// For k <= 64 (standard retrieval k=10), use a stack scratch slice to
-	// avoid a heap allocation on every Result call.
+	// avoid a heap allocation on every Extract call.
 	var stackTmp [64]scored[T]
 	var tmp []scored[T]
 	if n <= len(stackTmp) {
@@ -190,8 +209,30 @@ func (s *Selector[T]) Result() []ItemWithScore[T] {
 		tmp[0] = tmp[len(tmp)-1]
 		tmp = tmp[:len(tmp)-1]
 		siftDownSlice(tmp, 0)
-		out[i] = ItemWithScore[T]{Item: minEl.item, Score: minEl.score}
+		fn(i, minEl.item, minEl.score)
 	}
+}
+
+// Result returns the retained items in descending-score order. May be
+// shorter than k if Push was called fewer than k times. Returned slice
+// is freshly allocated; safe for callers to retain or mutate.
+//
+// Sort cost is O(K log K) — by construction K is small (typically 10
+// for ken's search), so this is cheap relative to the N pushes that
+// fed the heap.
+//
+// Tie-breaking on Result: the heap's internal ordering on ties is not
+// defined, but because Push uses strict > (see Push comment), the
+// retained K items at the tie boundary are the first-seen of any tied
+// group. Result then sorts strictly by score; equal-score items emerge
+// in heap-internal order, which is deterministic for a given input
+// sequence but not lexically ordered by item.
+func (s *Selector[T]) Result() []ItemWithScore[T] {
+	n := len(s.heap)
+	out := make([]ItemWithScore[T], n)
+	s.Extract(func(i int, item T, score float64) {
+		out[i] = ItemWithScore[T]{Item: item, Score: score}
+	})
 	return out
 }
 
@@ -219,12 +260,15 @@ func (s *Selector[T]) siftDown(i int) { siftDownSlice(s.heap, i) }
 func siftDownSlice[T any](heap []scored[T], i int) {
 	n := len(heap)
 	for {
-		l, r := 2*i+1, 2*i+2
+		l := 2*i + 1
+		if l >= n {
+			return
+		}
 		smallest := i
-		if l < n && heapLess(heap[l], heap[smallest]) {
+		if heapLess(heap[l], heap[smallest]) {
 			smallest = l
 		}
-		if r < n && heapLess(heap[r], heap[smallest]) {
+		if r := l + 1; r < n && heapLess(heap[r], heap[smallest]) {
 			smallest = r
 		}
 		if smallest == i {

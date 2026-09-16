@@ -31,10 +31,15 @@ package sparse
 
 import (
 	"slices"
+	"sync"
 
 	"github.com/townsendmerino/aikit/internal/accum"
 	"github.com/townsendmerino/aikit/topk"
 )
+
+var selPool = sync.Pool{
+	New: func() any { return topk.New[int](64) },
+}
 
 // SparseVec is a sparse vector over a term space (e.g. a SPLADE expansion over a
 // BERT vocabulary): Terms holds term ids and Weights the parallel weights, so
@@ -138,7 +143,10 @@ func (ix *Index) Query(q SparseVec, k int) []Hit {
 	// Selection over the TOUCHED SET in ascending doc order — the order the old
 	// full-corpus range produced, so topk's first-seen-wins tie-break retains the
 	// same items.
-	sel := topk.New[int](k)
+	sel := selPool.Get().(*topk.Selector[int])
+	sel.Reset(k)
+	defer selPool.Put(sel)
+
 	th := sel.Threshold()
 	for _, d := range a.Touched {
 		if s := a.Scores[d]; s > 0 && s > th {
@@ -146,14 +154,13 @@ func (ix *Index) Query(q SparseVec, k int) []Hit {
 			th = sel.Threshold()
 		}
 	}
-	items := sel.Result()
+	out := make([]Hit, sel.Len())
+	sel.Extract(func(i int, item int, score float64) {
+		out[i] = Hit{Index: item, Score: score}
+	})
 	// Stable secondary sort by ascending doc id to honor the tie-break contract
 	// (the heap only orders by score).
-	slices.SortFunc(items, topk.ItemCmp[int])
-	out := make([]Hit, len(items))
-	for j, s := range items {
-		out[j] = Hit{Index: s.Item, Score: s.Score}
-	}
+	slices.SortFunc(out, hitCmp)
 	return out
 }
 
@@ -222,9 +229,14 @@ func (ix *Index) scoreQuery(q SparseVec) *accum.Accum {
 		if tw.w == 0 {
 			continue
 		}
+		postings := ix.postings[tw.term]
+		if len(postings) == 0 {
+			continue
+		}
 		a.BeginRun()
-		for _, p := range ix.postings[tw.term] {
-			a.Add(p.doc, tw.w*float64(p.w))
+		twW := tw.w
+		for _, p := range postings {
+			a.Add(p.doc, twW*float64(p.w))
 		}
 	}
 	a.OrderTouched()
