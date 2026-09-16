@@ -26,9 +26,7 @@ func L2Normalize(v []float32) []float32 {
 	}
 	norm := math.Sqrt(sq)
 	if norm < l2NormEps {
-		for i := range v {
-			v[i] = 0
-		}
+		clear(v)
 		return v
 	}
 	for i, x := range v {
