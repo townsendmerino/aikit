@@ -9,6 +9,71 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.45.0] — 2026-09-17
+
+`perfgate` VERDICT: PASS — no regression vs v1.44.0 above each shape's floor — 21/45 shapes
+resolve the 5.0% class (Apple M1 Pro, `./linalg`, 6 visits, interleaved working tree vs
+v1.44.0).
+
+STATEMENT: 16 clean, 0 vulnerable, 0 unscanned, of 16. `tools/vulncheck` alone reports 12
+clean/0 vulnerable/4 unscanned (Apple M1 Pro/darwin) — the 4 are `gpu/anncuda`/`gpu/enccuda`/
+`gpu/qwencuda`/`gpu/visioncuda`, gated out by their `//go:build linux` tag on darwin (not a
+CUDA-toolchain requirement — see v1.44.0's identical finding). Cross-checked on real Linux
+hardware this release too (`nobara-pc`, linux/amd64, fresh clone at `faf2432`, matching HEAD
+exactly): all four build clean and `govulncheck ./...` reports "No vulnerabilities found" —
+relevant since `gpu/visioncuda` was itself touched this release (gofmt + an errcheck
+exclusion, `dde15c0`). New this release: `gpu/webgpu` scans CLEAN directly (no build-tag
+gate — it has no dependency on the root module or `gpu`).
+
+### Added
+
+- **`gpu/webgpu`: a WGSL compute shader library** (tiled f32/W8A8 GEMM, workgroup
+  LayerNorm/RMSNorm, GELU/SiLU, online-softmax attention) — shader source only, structurally
+  tested (online-softmax shape, micro-tile accumulators, fused-reduction norms), no
+  dependency on the root module or `gpu`. The original submission paired these shaders with
+  a `Backend` that registered itself via `encoder.RegisterBackend("webgpu")` but only ever
+  called the CPU `linalg.MatmulBT` — a stub silently claiming GPU dispatch, and a second
+  registration point contradicting `encoder/backend.go`'s documented architecture that the
+  real dispatch backend lives only in the opt-in `goinfer/gpu` module. Stripped before
+  landing; this ships as source for `goinfer/gpu` or a future real dispatch layer to consume,
+  not as a working backend.
+- **`gpu`: `attention_tiled`/`attention_seg_tiled` wired into `visioncuda`/`qwencuda`'s (CUDA)
+  and `visionmetal`/`qwenmetal`'s (Metal) production `attn()` dispatch**, gated on
+  `AttentionTiledEligible(hd)` plus the measured `AttentionTiledMinNP=3072` np/seq crossover
+  (RTX 2070 SUPER: 352ms vs 416ms tiled-vs-untiled). The original submission applied the
+  crossover only at the CUDA ViT call site and switched the other three purely on head-dim
+  eligibility, which would have routinely picked the kernel documented as slower for Qwen's
+  sub-3072 window-attention segments — fixed before landing. CUDA side re-validated on real
+  RTX 2070 SUPER hardware after the fix: parity/repeatability/graph-capture suites all green,
+  cosine 1.0.
+
+### Fixed
+
+- **The Metal half of the tiled-attention wiring above didn't compile.** `gpu/visionmetal`
+  and `gpu/qwenmetal` reference `gpu.AttentionTiledMinNP`, but that constant existed only in
+  `gpu/cuda_vit.go` (`//go:build linux`) — undefined on darwin, the only platform Metal runs
+  on. Caught by CI (cgo-free build, golangci-lint, govulncheck package loading all red) and
+  fixed by mirroring the constant into `gpu/metal_vit.go` (`//go:build darwin`); same push
+  also caught gofmt drift left over the original submission's full diff (`cuda_vit.go` and
+  three test files) and an errcheck finding on `visioncuda/encoder.go`'s CUDA-graph teardown
+  discard (same release-not-flush shape `gpu/cuda.go`'s own `Graph.Close` already gets an
+  exclusion for), fixed the same way.
+- **Reusing CUDA's crossover on Metal would have shipped a real regression.** Once the build
+  fix above landed, the tower-level parity gates and the standalone kernel test that
+  `attention_tiled`'s own doc comment said still needed running on real Apple hardware were
+  run for the first time: parity is clean (SigLIP cosine 1.0, worst Δ 9.54e-07; Qwen cosine
+  1.0, worst Δ 1.13e-06 / 5.91e-08) and the kernel itself is correct in isolation (Δ 5.36e-07
+  vs double-precision CPU, Δ 4.47e-07 vs production Metal attention) — but a new
+  `BenchmarkMetalAttention` (mirroring the existing CUDA one, since nothing measured the
+  Metal crossover before this) found `attention_tiled` **slower** than untiled `attention` at
+  every shape tested, np=729 through np=4096 (1.46–1.85×, `apple-m1pro`) — the opposite of
+  CUDA, where it wins above np=3072. As wired, any Metal tower with np≥3072 would have
+  silently dispatched to the slower kernel. Added `AttentionTiledEnabledOnMetal` (`false`,
+  with the measurement in its doc comment) and gated both Metal call sites on it —
+  `attention_tiled` is never dispatched on Metal now, pending a real shape where it wins. The
+  kernel and `AttentionTiledEligible`/`AttentionTiledDispatch` are unaffected and stay tested;
+  only the dispatch decision changes. CUDA's wiring is untouched.
+
 ## [1.44.0] — 2026-09-16
 
 `perfgate` VERDICT: PASS — no regression vs v1.43.0 above each shape's floor — 13/45 shapes
@@ -4336,7 +4401,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.44.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.45.0...HEAD
+[1.45.0]: https://github.com/townsendmerino/aikit/compare/v1.44.0...v1.45.0
 [1.44.0]: https://github.com/townsendmerino/aikit/compare/v1.43.0...v1.44.0
 [1.43.0]: https://github.com/townsendmerino/aikit/compare/v1.42.0...v1.43.0
 [1.42.0]: https://github.com/townsendmerino/aikit/compare/v1.41.0...v1.42.0
