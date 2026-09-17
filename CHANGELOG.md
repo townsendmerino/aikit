@@ -9,6 +9,39 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.45.1] — 2026-09-17
+
+> **PERFGATE EXCEPTION: no perfgate run for this release.** The entire diff from v1.45.0 is
+> one line in `tools/consumergate/classify.go` (a build-time module-classification map) —
+> zero production code changed, so v1.45.0's own perfgate PASS still describes the current
+> tree exactly. Re-running the interleaved A/B benchmark would measure the same binary twice.
+
+STATEMENT: 16 clean, 0 vulnerable, 0 unscanned, of 16 — unchanged from v1.45.0. `tools/vulncheck`
+alone reports 12 clean/0 vulnerable/4 unscanned (Apple M1 Pro/darwin; the same
+`gpu/*cuda` darwin-GOOS gate as every prior release). This release's entire diff is one line
+in `tools/consumergate/classify.go`, touching none of the 4 gated modules or anything
+affecting their dependency graph, so v1.45.0's real-Linux-hardware cross-check
+(`nobara-pc`, all four build clean, `govulncheck` reports no vulnerabilities) still applies
+unchanged and was not re-run.
+
+### Fixed
+
+- **`tools/consumergate` failed the `v1.45.0` tag** (`consumer-resolution` workflow, both
+  macos and ubuntu legs) — `bb9f045` added `gpu/webgpu` without registering it in
+  `classify.go`'s published/internal map, so `classifyTree`'s enumeration correctly refused
+  to call an unclassified module a pass (the mechanism working as designed: "every go.mod
+  must be listed... so it cannot skip the gate"). `release-gate` had already gone green on
+  that push since it doesn't run `consumergate` — that check is the separate tag-only
+  workflow, so this surfaced only after the tag was already pushed. `v1.45.0` is immutable;
+  per this repo's own convention for exactly this situation (RELEASING.md's gpu-submodule
+  section: "a red run cannot unpublish an immutable tag... the fix is a follow-up tag"),
+  fixing forward here rather than moving the tag. `gpu/webgpu` is classified `published` —
+  its own commit message says it's meant for `goinfer/gpu` or a future dispatch layer to
+  consume, the same role the eight existing GPU backend modules play, even though (unlike
+  those eight) it has no dependency on `aikit`/`aikit/gpu` and sits outside the `gpupins`
+  pin invariant entirely. Verified: `go run -C tools ./consumergate --tag v1.45.0` passes
+  locally with the fix applied — the exact command and tag the tag workflow failed on.
+
 ## [1.45.0] — 2026-09-17
 
 `perfgate` VERDICT: PASS — no regression vs v1.44.0 above each shape's floor — 21/45 shapes
@@ -4401,7 +4434,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.45.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.45.1...HEAD
+[1.45.1]: https://github.com/townsendmerino/aikit/compare/v1.45.0...v1.45.1
 [1.45.0]: https://github.com/townsendmerino/aikit/compare/v1.44.0...v1.45.0
 [1.44.0]: https://github.com/townsendmerino/aikit/compare/v1.43.0...v1.44.0
 [1.43.0]: https://github.com/townsendmerino/aikit/compare/v1.42.0...v1.43.0
