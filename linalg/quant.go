@@ -648,7 +648,6 @@ func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales 
 			nib := byte(q + 8)
 			bi := k / 2
 			packed[bi] = (packed[bi] &^ 0x0F) | (nib & 0x0F)
-			k++
 		}
 	}
 }

@@ -9,6 +9,109 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.44.0] — 2026-09-16
+
+`perfgate` VERDICT: PASS — no regression vs v1.43.0 above each shape's floor — 13/45 shapes
+resolve the 5.0% class (Apple M1 Pro, `./linalg`, 6 visits, interleaved working tree vs v1.43.0;
+first attempt came back INCONCLUSIVE — 2 apparent regressions in `BenchmarkSiLUKernels` did not
+reproduce on the gate's own second-measurement check — re-run clean).
+
+STATEMENT: 15 clean, 0 vulnerable, 0 unscanned, of 15. `tools/vulncheck` alone reports 11
+clean/0 vulnerable/4 unscanned (Apple M1 Pro/darwin) — the 4 are `gpu/anncuda`/`gpu/enccuda`/
+`gpu/qwencuda`/`gpu/visioncuda`, whose `//go:build linux` tag `govulncheck` can't even resolve
+packages under on darwin (matches v1.43.0's identical pattern). Cross-checked on real Linux
+hardware this release (`nobara-pc`, linux/amd64, go1.26.5, govulncheck@v1.7.0, fresh clone at
+`93ab0e2`): all four build clean and `govulncheck ./...` reports "No vulnerabilities found" in
+every one — they were never actually unscannable, only unreachable from a darwin-only gate.
+No CUDA toolkit involved or needed: all four are pure Go (`purego` CUDA-driver bindings +
+embedded precompiled PTX), so the GOOS tag was the only barrier.
+
+### Fixed
+
+- **`hybrid.Retriever.Query`'s inlined RRF fast-path lost score-summing for a key repeated
+  within a single input ranking.** The rewrite that replaced `fuse.RRF`/`fuse.Keys` with an
+  inlined accumulate-by-key loop (avoiding the closure/interface overhead of `fuse.Keys` per
+  hit) checked for an existing entry before appending in the `lex` loop but not in the `den`
+  loop, in both the small (linear-scan, total≤64) and large (hashmap) branch — so a ranking
+  that repeats a key got two entries with its score split across them instead of one summed
+  entry. `DenseIndex`/`LexicalIndex` are caller-supplied interfaces (not guaranteed
+  duplicate-free the way this repo's own `ann`/`bm25` implementations happen to be), so this
+  was reachable for any caller's own index type, silently. Fixed to mirror the `lex` loop's
+  existing-key check in both branches; added `TestRetriever_dedupsRepeatedKeyWithinOneRanking`
+  (both branch sizes, checked against hand-wired `fuse.RRF`) — nothing previously exercised
+  this shape.
+
+### Changed
+
+A large batch of Gemini-suggested kernel/allocation optimizations across the compute path,
+reviewed file-by-file (build+vet+full suite, plus targeted bit-identity/differential tests
+against pre-diff references for every change that reorders arithmetic or touches packed-byte
+addressing) before merge. Two proposed changes were re-benchmarked and reverted after showing
+zero measured effect (see `docs/internal/cpu-acceleration.md`'s "unroll-by-4 for bounds-check
+elimination" negative-result note); everything below shipped.
+
+- **`late.MaxSim`: pair query tokens through `Dot2x8` on arm64.** Doc reads are now amortized
+  across a pair of queries instead of once per query. NOT bit-identical to the per-pair `Dot`
+  (a second, compounding ~1-ULP reassociation source alongside the existing 8-doc-row
+  batching); `TestMaxSim_batchedMatchesPerPair` gates it, plus new even-query-count and
+  cross-query-contamination checks. Measured (`apple-m1pro`, `BenchmarkMaxSim`, nQ=32, d=128,
+  n=5): nDoc=64/256/1024 all **−43% to −47%** latency (`p=0.008`), zero allocations before and
+  after.
+- **`linalg.HammingRows`: NEON kernel for arm64, for the two real production shapes
+  (`words==4`/dim 256, `words==12`/dim 768).** Measured **~3×** over the already
+  word-count-specialized generic Go path (`apple-m1pro`, n=100k: 56µs vs 177µs at d256, 163µs
+  vs 535µs at d768). Caught and fixed a real bug during review: the `.s` file's general
+  (arbitrary-words) entry overflows its 8-bit-per-NEON-lane popcount accumulator once
+  `words>=64` (dim>~4032) — confirmed via a differential test with maximally-differing input
+  (words=64 wrapped 4096 to 0) — so the dispatcher only calls the NEON path for words==4/12 and
+  falls back to the portable, overflow-free Go path otherwise; the buggy general path is left
+  in place but annotated unreachable pending an accumulator fix.
+- **`bm25.TokenizePlain`: byte-level rewrite** (256-entry ASCII lookup table, stack buffer for
+  short lowercased tokens), avoiding `strings.Builder` for the common case. Verified
+  bit-identical to the previous rune-ranging implementation across 20k randomized fuzz cases
+  plus targeted edge cases (64-byte stack/heap boundary, invalid UTF-8, ASCII↔non-ASCII
+  transitions within a token).
+- **`chunk`: single-pass markdown scanner, exact line-start precompute.** `scanner.go`'s
+  two-pass range-then-classify scan merges into one pass; `markdown.go`'s setext-boundary
+  detection and `prevSplit`/`splittable` computation each merge into one pass (the latter with
+  a stack-buffer fallback); `lines.go` replaces append-based `lineStart` with an exact upfront
+  count. Verified against the pre-diff logic via ~9M combined fuzz executions, zero
+  discrepancies. Also drops `splittablePositions`, dead since `prevSplit` was inlined.
+- **`embed.DequantizeRowInt8`, `linalg.QuantizeGroupInt4Row`/`DequantizeRowInt4`: restructured
+  int4/int8 (de)quant.** `QuantizeGroupInt4Row`'s nibble-packing loop splits into
+  peel-odd-start/paired-write/trailing-single phases instead of one per-element
+  read-modify-write; `DequantizeRowInt4` gains an 8-wide unrolled fast path. Verified
+  bit-identical to the pre-diff version across 13 group sizes (including odd) × 20 column
+  counts, plus a round-trip through both functions together. `DequantizeRowInt8` now delegates
+  to the existing `dequantRowInt8` dispatcher instead of duplicating its loop.
+- **`linalg`: int4 repack family (`RepackInt4SplitHalfRow`, `RepackInt4Row4Quad`,
+  `repackSplitHalf4RowBlock`) now share one `repackSplitHalfGroup` primitive** instead of each
+  inlining `canonicalNibble`-based nibble extraction (and `repackSplitHalf4RowBlock` drops an
+  intermediate per-row buffer + copy). Verified bit-identical to the old logic: 5000
+  randomized trials on the group primitive plus row-level checks at 5 K values.
+- **`linalg`: fused softmax scale+max.** `SoftmaxRowScaledContractInto` finds the post-scale
+  max during the same pass that applies the scale, instead of a separate pass followed by
+  softmax re-scanning for max; every `softmaxRowContract*` variant (generic, AVX2, NEON) splits
+  into "find max" + a "...WithMax" entry point. Verified bit-identical to the unfused two-pass
+  form across sizes 1..2048, including in-place aliasing.
+- **`encoder`: per-worker attention scratch.** The head-parallel fan-out now indexes a
+  per-forward `scratch.workerScratch` slice instead of round-tripping each worker's buffers
+  through a package-level `sync.Pool` (the old pool path, now unreachable, removed). Verified
+  bit-exact against the serial path under `-race` across worker counts that don't evenly
+  divide the head count.
+- **`ann`, `internal/accum`, `sparse`, `topk`, `chunk`, `encoder`, `vision`: assorted
+  bounds-check-elimination hints, `clear()` builtin swaps, 4-wide unrolls of order-preserving
+  reductions (RoPE, LayerNorm/RMSNorm, MLP bias/residual, mean pooling), and allocation
+  reductions** (`topk.Selector.Reset`/`Extract` + pooling in `sparse.Index.Query`,
+  `internal/accum.mergeTwo`'s direct-index merge, stack-buffer scratch in `sparse.scoreQuery`
+  and `bm25.TokenizePlain`). All verified bit-identical/behavior-preserving against the
+  existing suite plus targeted differential tests where the existing suite didn't already
+  cover the change tightly (see individual commits for specifics per file).
+- **`docs/internal/cpu-acceleration.md`** updated with the K=1024/dequant (already in
+  `[1.43.0]`), `late.MaxSim`, and Hamming NEON entries, plus the unroll-for-BCE negative
+  result. **`docs/gemini-optimizations-2026-09-16.md`** added: the source optimization-wave
+  summary, corrected against two entries that didn't survive review (see above).
+
 ## [1.43.0] — 2026-09-14
 
 `perfgate` VERDICT: PASS — no regression vs v1.42.0 above each shape's floor — 23/45 shapes
@@ -4233,7 +4336,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.43.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.44.0...HEAD
+[1.44.0]: https://github.com/townsendmerino/aikit/compare/v1.43.0...v1.44.0
 [1.43.0]: https://github.com/townsendmerino/aikit/compare/v1.42.0...v1.43.0
 [1.42.0]: https://github.com/townsendmerino/aikit/compare/v1.41.0...v1.42.0
 [1.41.0]: https://github.com/townsendmerino/aikit/compare/v1.40.0...v1.41.0

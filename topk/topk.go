@@ -171,20 +171,6 @@ type ItemWithScore[T any] struct {
 	Score float64
 }
 
-// Result returns the retained items in descending-score order. May be
-// shorter than k if Push was called fewer than k times. Returned slice
-// is freshly allocated; safe for callers to retain or mutate.
-//
-// Sort cost is O(K log K) — by construction K is small (typically 10
-// for ken's search), so this is cheap relative to the N pushes that
-// fed the heap.
-//
-// Tie-breaking on Result: the heap's internal ordering on ties is not
-// defined, but because Push uses strict > (see Push comment), the
-// retained K items at the tie boundary are the first-seen of any tied
-// group. Result then sorts strictly by score; equal-score items emerge
-// in heap-internal order, which is deterministic for a given input
-// sequence but not lexically ordered by item.
 // Extract invokes fn on each retained item in descending score order without allocating
 // an intermediate slice of ItemWithScore.
 func (s *Selector[T]) Extract(fn func(i int, item T, score float64)) {

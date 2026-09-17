@@ -766,12 +766,6 @@ func rmsNormRows(out, x, w []float32, start, end, dim int) {
 // rope_scalar.go / rope_simd.go (build-tag dispatched on GOEXPERIMENT=simd);
 // this doc comment is the canonical one for both.
 
-func silu(x []float32) {
-	parallelChunks(len(x), func(lo, hi int) {
-		linalg.SiLUContractInto(x[lo:hi], x[lo:hi])
-	})
-}
-
 // geluErf is the exact (erf) GELU — nn.GELU() default, what the patch merger uses
 // (distinct from SigLIP's gelu-tanh).
 func geluErf(x []float32) {
