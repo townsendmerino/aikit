@@ -251,4 +251,3 @@ func (s *scratch) ensureWorkerScratch(w, mOut, headDim, L int) {
 		hs.scores = hs.scores[:mOut*L]
 	}
 }
-
