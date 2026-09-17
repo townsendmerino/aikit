@@ -675,6 +675,23 @@ func TestCUDA_vitAttentionSeg(t *testing.T) {
 		t.Fatalf("attention_seg worst Δ %.3g", dm)
 	}
 
+	outTiled := NewBufferLenOf[float32](d, seq*hidden)
+	if err := q.Launch(v.AttentionSegTiled, AttentionSegTiledLaunchConfig(seq, nH),
+		Arg(dq), Arg(outTiled), Arg(dss), Arg(dse),
+		ArgValue(int32(seq)), ArgValue(int32(nH)), ArgValue(int32(hd)), ArgValue(scale)); err != nil {
+		t.Fatalf("Launch AttentionSegTiled: %v", err)
+	}
+	if err := q.Sync(); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+	gotTiled := make([]float32, seq*hidden)
+	if err := Download(outTiled, gotTiled); err != nil {
+		t.Fatalf("Download: %v", err)
+	}
+	if dm := maxAbsDiff(gotTiled, want); dm > 1e-4 {
+		t.Fatalf("attention_seg_tiled worst Δ %.3g", dm)
+	}
+
 	one := make([]int32, seq)
 	oneEnd := make([]int32, seq)
 	for i := range seq {

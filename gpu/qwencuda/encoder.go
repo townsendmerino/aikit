@@ -170,6 +170,14 @@ func (e *encoder) proj(src gpu.Buffer, m mat, bias, dst gpu.Buffer, M int) error
 			gpu.ArgValue(int32(M)), gpu.ArgValue(int32(K))); err != nil {
 			return err
 		}
+		if bias.Len() > 0 {
+			gp, gc := e.k.GEMMW8A8BiasPlan(M, N, K)
+			if gp != (gpu.Pipeline{}) {
+				return e.q.Launch(gp, gc,
+					gpu.Arg(e.qi8), gpu.Arg(e.qs), gpu.Arg(m.a), gpu.Arg(m.b), gpu.Arg(bias), gpu.Arg(dst),
+					gpu.ArgValue(int32(M)), gpu.ArgValue(int32(N)), gpu.ArgValue(int32(K)))
+			}
+		}
 		// GEMMW8A8Plan takes the register-blocked int8 kernel on aligned shapes
 		// and gemm_w8a8_tiled otherwise (audit M-12). Identical bits either way,
 		// so this is a pure dispatch change.
@@ -180,6 +188,14 @@ func (e *encoder) proj(src gpu.Buffer, m mat, bias, dst gpu.Buffer, M int) error
 			return err
 		}
 	} else {
+		if bias.Len() > 0 {
+			gp, gcfg := e.k.GEMMF32BiasPlan(M, N, K)
+			if gp != (gpu.Pipeline{}) {
+				return e.q.Launch(gp, gcfg,
+					gpu.Arg(src), gpu.Arg(m.a), gpu.Arg(bias), gpu.Arg(dst),
+					gpu.ArgValue(int32(M)), gpu.ArgValue(int32(N)), gpu.ArgValue(int32(K)))
+			}
+		}
 		gp, gcfg := e.k.GEMMF32Plan(M, N, K)
 		if err := e.q.Launch(gp, gcfg,
 			gpu.Arg(src), gpu.Arg(m.a), gpu.Arg(dst),
@@ -192,6 +208,37 @@ func (e *encoder) proj(src gpu.Buffer, m mat, bias, dst gpu.Buffer, M int) error
 	}
 	return e.q.Launch(e.k.AddBias, gpu.Grid1D(M*N, 256),
 		gpu.Arg(dst), gpu.Arg(bias), gpu.ArgValue(int32(M)), gpu.ArgValue(int32(N)))
+}
+
+// projBiasAdd runs a projection with fused bias and residual addition:
+// residual[M,N] += src[M,K] · w[N,K]ᵀ + bias.
+func (e *encoder) projBiasAdd(src gpu.Buffer, m mat, bias, residual gpu.Buffer, M int) error {
+	K, N := m.cols, m.rows
+	if m.quant && bias.Len() > 0 {
+		gp, gc := e.k.GEMMW8A8BiasAddPlan(M, N, K)
+		if gp != (gpu.Pipeline{}) {
+			if err := e.q.Launch(e.k.QuantRows, gpu.RowGrid(M),
+				gpu.Arg(src), gpu.Arg(e.qi8), gpu.Arg(e.qs),
+				gpu.ArgValue(int32(M)), gpu.ArgValue(int32(K))); err != nil {
+				return err
+			}
+			return e.q.Launch(gp, gc,
+				gpu.Arg(e.qi8), gpu.Arg(e.qs), gpu.Arg(m.a), gpu.Arg(m.b), gpu.Arg(bias), gpu.Arg(residual),
+				gpu.ArgValue(int32(M)), gpu.ArgValue(int32(N)), gpu.ArgValue(int32(K)))
+		}
+	} else if !m.quant && bias.Len() > 0 {
+		gp, gcfg := e.k.GEMMF32BiasAddPlan(M, N, K)
+		if gp != (gpu.Pipeline{}) {
+			return e.q.Launch(gp, gcfg,
+				gpu.Arg(src), gpu.Arg(m.a), gpu.Arg(bias), gpu.Arg(residual),
+				gpu.ArgValue(int32(M)), gpu.ArgValue(int32(N)), gpu.ArgValue(int32(K)))
+		}
+	}
+	if err := e.proj(src, m, bias, e.projOut, M); err != nil {
+		return err
+	}
+	return e.q.Launch(e.k.AddVec, gpu.Grid1D(M*N, 256),
+		gpu.Arg(residual), gpu.Arg(e.projOut), gpu.ArgValue(int32(M*N)))
 }
 
 func (e *encoder) rms(src, w, dst gpu.Buffer, rows, dim int) error {
@@ -306,17 +353,22 @@ func (e *encoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32
 			gpu.ArgValue(int32(n)), gpu.ArgValue(int32(nH)), gpu.ArgValue(int32(hd))); err != nil {
 			return nil, err
 		}
-		if err := e.q.Launch(e.k.AttentionSeg, gpu.SegAttentionGrid(n, nH, maxSeg),
-			gpu.Arg(e.qkv), gpu.Arg(e.att), gpu.Arg(segS), gpu.Arg(segE),
-			gpu.ArgValue(int32(n)), gpu.ArgValue(int32(nH)), gpu.ArgValue(int32(hd)),
-			gpu.ArgValue(scale)); err != nil {
-			return nil, err
+		if gpu.AttentionTiledEligible(hd) && n >= gpu.AttentionTiledMinNP {
+			if err := e.q.Launch(e.k.AttentionSegTiled, gpu.AttentionSegTiledLaunchConfig(n, nH),
+				gpu.Arg(e.qkv), gpu.Arg(e.att), gpu.Arg(segS), gpu.Arg(segE),
+				gpu.ArgValue(int32(n)), gpu.ArgValue(int32(nH)), gpu.ArgValue(int32(hd)),
+				gpu.ArgValue(scale)); err != nil {
+				return nil, err
+			}
+		} else {
+			if err := e.q.Launch(e.k.AttentionSeg, gpu.SegAttentionGrid(n, nH, maxSeg),
+				gpu.Arg(e.qkv), gpu.Arg(e.att), gpu.Arg(segS), gpu.Arg(segE),
+				gpu.ArgValue(int32(n)), gpu.ArgValue(int32(nH)), gpu.ArgValue(int32(hd)),
+				gpu.ArgValue(scale)); err != nil {
+				return nil, err
+			}
 		}
-		if err := e.proj(e.att, B.projw, B.projb, e.projOut, n); err != nil {
-			return nil, err
-		}
-		if err := e.q.Launch(e.k.AddVec, gpu.Grid1D(n*H, 256),
-			gpu.Arg(e.h), gpu.Arg(e.projOut), gpu.ArgValue(int32(n*H))); err != nil {
+		if err := e.projBiasAdd(e.att, B.projw, B.projb, e.h, n); err != nil {
 			return nil, err
 		}
 		// --- gated SiLU MLP ---
@@ -333,11 +385,7 @@ func (e *encoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32
 			gpu.Arg(e.gate), gpu.Arg(e.up), gpu.ArgValue(int32(n*I))); err != nil {
 			return nil, err
 		}
-		if err := e.proj(e.gate, B.downw, B.downb, e.projOut, n); err != nil {
-			return nil, err
-		}
-		if err := e.q.Launch(e.k.AddVec, gpu.Grid1D(n*H, 256),
-			gpu.Arg(e.h), gpu.Arg(e.projOut), gpu.ArgValue(int32(n*H))); err != nil {
+		if err := e.projBiasAdd(e.gate, B.downw, B.downb, e.h, n); err != nil {
 			return nil, err
 		}
 	}

@@ -157,3 +157,120 @@ func TestVisionCUDA_repeatable(t *testing.T) {
 	}
 	t.Log("4 forwards on reused scratch: bit-identical")
 }
+
+// TestVisionCUDA_graphCapture verifies that the whole-tower CUDA Graph captured at
+// initialization time is instantiated and replays BIT-IDENTICALLY to direct dispatch.
+func TestVisionCUDA_graphCapture(t *testing.T) {
+	e := loadTower(t)
+	defer e.Close()
+	w, err := e.GPUWeights()
+	if err != nil {
+		t.Fatalf("GPUWeights: %v", err)
+	}
+	enc, err := newEncoder(w)
+	if err != nil {
+		t.Fatalf("newEncoder: %v", err)
+	}
+	defer enc.Close()
+
+	if enc.graph == nil {
+		t.Fatal("enc.graph is nil; whole-tower CUDA Graph capture did not instantiate")
+	}
+	t.Log("whole-tower CUDA Graph captured successfully")
+
+	patches := make([]float32, w.NumPatches*enc.cpp)
+	for i := range patches {
+		patches[i] = float32(i%100) * 0.01
+	}
+
+	// 1. Run with graph replay
+	outGraph, err := enc.ForwardPatches(patches)
+	if err != nil {
+		t.Fatalf("ForwardPatches with graph: %v", err)
+	}
+
+	// 2. Temporarily disable graph to run manual forwardTower
+	savedGraph := enc.graph
+	enc.graph = nil
+	outDirect, err := enc.ForwardPatches(patches)
+	enc.graph = savedGraph
+	if err != nil {
+		t.Fatalf("ForwardPatches direct: %v", err)
+	}
+
+	if len(outGraph) != len(outDirect) {
+		t.Fatalf("len mismatch: %d vs %d", len(outGraph), len(outDirect))
+	}
+	for i := range outGraph {
+		if outGraph[i] != outDirect[i] {
+			t.Fatalf("elem %d diverged: graph %v != direct %v", i, outGraph[i], outDirect[i])
+		}
+	}
+	t.Log("CUDA Graph replay is BIT-IDENTICAL to direct forwardTower dispatch")
+}
+
+// BenchmarkVisionCUDA_Forward benchmarks steady-state forward passes comparing whole-tower
+// CUDA Graph execution against separate kernel dispatch.
+func BenchmarkVisionCUDA_Forward(b *testing.B) {
+	if _, err := os.Stat(ckpt); err != nil {
+		b.Skipf("no siglip-tiny checkpoint (%v)", err)
+	}
+	e, err := vision.LoadEncoder(ckpt, true)
+	if err != nil {
+		b.Skipf("LoadEncoder: %v", err)
+	}
+	defer e.Close()
+	w, err := e.GPUWeights()
+	if err != nil {
+		b.Fatalf("GPUWeights: %v", err)
+	}
+	enc, err := newEncoder(w)
+	if err != nil {
+		b.Fatalf("newEncoder: %v", err)
+	}
+	defer enc.Close()
+
+	patches := make([]float32, w.NumPatches*enc.cpp)
+	for i := range patches {
+		patches[i] = float32(i%100) * 0.01
+	}
+
+	b.Run("GraphReplay", func(b *testing.B) {
+		if enc.graph == nil {
+			b.Skip("no graph")
+		}
+		// warm up
+		for range 5 {
+			if _, err := enc.ForwardPatches(patches); err != nil {
+				b.Fatalf("warmup: %v", err)
+			}
+		}
+		b.ResetTimer()
+		for range b.N {
+			if _, err := enc.ForwardPatches(patches); err != nil {
+				b.Fatalf("forward: %v", err)
+			}
+		}
+	})
+
+	b.Run("DirectDispatch", func(b *testing.B) {
+		saved := enc.graph
+		enc.graph = nil
+		defer func() { enc.graph = saved }()
+
+		// warm up
+		for range 5 {
+			if _, err := enc.ForwardPatches(patches); err != nil {
+				b.Fatalf("warmup: %v", err)
+			}
+		}
+		b.ResetTimer()
+		for range b.N {
+			if _, err := enc.ForwardPatches(patches); err != nil {
+				b.Fatalf("forward: %v", err)
+			}
+		}
+	})
+}
+
+

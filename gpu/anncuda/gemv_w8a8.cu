@@ -363,6 +363,7 @@ extern "C" __global__ void gemv_w8a8_batch16(
 #define TKREG_MID 16
 #define TKREG_BIG 32
 #define TKREG_HUGE 64
+#define TKREG_GIANT 128
 
 // tkBetter is THE tie-break, in one place: score descending, lower index wins ties, and
 // an empty slot (idx < 0) loses to anything real. Every comparison in the register
@@ -607,16 +608,19 @@ TOPK_REG_ENTRY(topk_rows_r8, TKREG_SMALL, true)
 TOPK_REG_ENTRY(topk_rows_r16, TKREG_MID, false)
 TOPK_REG_ENTRY(topk_rows_r32, TKREG_BIG, false)
 TOPK_REG_ENTRY(topk_rows_r64, TKREG_HUGE, false)
+TOPK_REG_ENTRY(topk_rows_r128, TKREG_GIANT, false)
 
 TOPK_SPLIT_ENTRY(topk_split_r8, TKREG_SMALL, true)
 TOPK_SPLIT_ENTRY(topk_split_r16, TKREG_MID, false)
 TOPK_SPLIT_ENTRY(topk_split_r32, TKREG_BIG, false)
 TOPK_SPLIT_ENTRY(topk_split_r64, TKREG_HUGE, false)
+TOPK_SPLIT_ENTRY(topk_split_r128, TKREG_GIANT, false)
 
 TOPK_MERGE_ENTRY(topk_merge_r8, TKREG_SMALL)
 TOPK_MERGE_ENTRY(topk_merge_r16, TKREG_MID)
 TOPK_MERGE_ENTRY(topk_merge_r32, TKREG_BIG)
 TOPK_MERGE_ENTRY(topk_merge_r64, TKREG_HUGE)
+TOPK_MERGE_ENTRY(topk_merge_r128, TKREG_GIANT)
 
 extern "C" __global__ void topk_rows(
     float* __restrict__ scores,      // [M*N] — MUTATED (winners consumed)

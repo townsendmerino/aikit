@@ -42,6 +42,8 @@ func findNVRTC() (libDir, incDir string) {
 			"/usr/lib64/libnvrtc.so.12",
 			home+"/cuda-toolkit/targets/x86_64-linux/lib/libnvrtc.so.12",
 			home+"/.venv*/lib/python*/site-packages/nvidia/cuda_nvrtc/lib/libnvrtc.so.12",
+			"../*venv*/lib/python*/site-packages/nvidia/cuda_nvrtc/lib/libnvrtc.so.12",
+			"./*venv*/lib/python*/site-packages/nvidia/cuda_nvrtc/lib/libnvrtc.so.12",
 		); so != "" {
 			libDir = filepath.Dir(so)
 		}
@@ -53,6 +55,8 @@ func findNVRTC() (libDir, incDir string) {
 			"/usr/include/cuda_fp16.h",
 			home+"/cuda-toolkit/targets/x86_64-linux/include/cuda_fp16.h",
 			home+"/.venv*/lib/python*/site-packages/nvidia/cuda_runtime/include/cuda_fp16.h",
+			"../*venv*/lib/python*/site-packages/nvidia/cuda_runtime/include/cuda_fp16.h",
+			"./*venv*/lib/python*/site-packages/nvidia/cuda_runtime/include/cuda_fp16.h",
 		); h != "" {
 			incDir = filepath.Dir(h)
 		}

@@ -181,11 +181,23 @@ kernel void attention(
     int h = (int)blk / np, i = (int)blk % np;
     int hidden = nH * hd, off = h * hd;
     device const float* qi = q + (uint)i * (uint)hidden + off;
-    for (int j = tid; j < np; j += tgsz) {
-        device const float* kj = k + (uint)j * (uint)hidden + off;
-        float acc = 0.0f;
-        for (int d = 0; d < hd; d++) acc += qi[d] * kj[d];
-        sc[j] = acc * scale;
+    threadgroup float qs[128];
+    if (hd <= 128) {
+        for (int d = tid; d < hd; d += tgsz) qs[d] = qi[d];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (int j = tid; j < np; j += tgsz) {
+            device const float* kj = k + (uint)j * (uint)hidden + off;
+            float acc = 0.0f;
+            for (int d = 0; d < hd; d++) acc += qs[d] * kj[d];
+            sc[j] = acc * scale;
+        }
+    } else {
+        for (int j = tid; j < np; j += tgsz) {
+            device const float* kj = k + (uint)j * (uint)hidden + off;
+            float acc = 0.0f;
+            for (int d = 0; d < hd; d++) acc += qi[d] * kj[d];
+            sc[j] = acc * scale;
+        }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -254,14 +266,10 @@ kernel void attention(
 // see AttentionTiledEligible below, which callers MUST check before dispatching this
 // rather than after a silent wrong answer or an out-of-bounds write into Ks/Vs.
 //
-// NOT WIRED into any production forward as of this commit: this kernel is verified
-// standalone (metal_vit_w8a8reg_test.go's sibling — see TestMetal_vitAttentionTiled) but
-// deliberately not yet swapped into gpu/visionmetal's or gpu/qwenmetal's attn call —
-// doing so changes the whole tower's parity-gate baseline, which the Fix text this
-// implements ("re-baseline the ViT parity gate") calls out as its own explicit,
-// deliberate step, not something to fold into the kernel's own landing. Wiring it in is
-// a separate decision, on real hardware, with the tower's actual np/hd shapes measured
-// against the untiled kernel first.
+// Wired into gpu/visionmetal's and gpu/qwenmetal's attn calls via
+// AttentionTiledEligible(hd) plus the AttentionTiledMinNP crossover (see cuda_vit.go);
+// verified standalone (metal_vit_w8a8reg_test.go's sibling — see
+// TestMetal_vitAttentionTiled).
 #define AT_MAXHD 128
 #define AT_KTILE 16
 #define AT_QTILE 32
@@ -423,11 +431,23 @@ kernel void attention_seg(
     int hidden = nH * hd, off = h * hd;
     int s0 = segStart[i], s1 = segEnd[i], n = s1 - s0;
     device const float* qi = qkv + (uint)i * 3u * (uint)hidden + off;
-    for (int t = tid; t < n; t += tgsz) {
-        device const float* kj = qkv + (uint)(s0 + t) * 3u * (uint)hidden + (uint)hidden + off;
-        float acc = 0.0f;
-        for (int d = 0; d < hd; d++) acc += qi[d] * kj[d];
-        sc[t] = acc * scale;
+    threadgroup float qs[128];
+    if (hd <= 128) {
+        for (int d = tid; d < hd; d += tgsz) qs[d] = qi[d];
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+        for (int t = tid; t < n; t += tgsz) {
+            device const float* kj = qkv + (uint)(s0 + t) * 3u * (uint)hidden + (uint)hidden + off;
+            float acc = 0.0f;
+            for (int d = 0; d < hd; d++) acc += qs[d] * kj[d];
+            sc[t] = acc * scale;
+        }
+    } else {
+        for (int t = tid; t < n; t += tgsz) {
+            device const float* kj = qkv + (uint)(s0 + t) * 3u * (uint)hidden + (uint)hidden + off;
+            float acc = 0.0f;
+            for (int d = 0; d < hd; d++) acc += qi[d] * kj[d];
+            sc[t] = acc * scale;
+        }
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
@@ -459,6 +479,99 @@ kernel void attention_seg(
         float acc = 0.0f;
         for (int t = 0; t < n; t++) acc += sc[t] * qkv[(uint)(s0 + t) * 3u * (uint)hidden + 2u * (uint)hidden + off + d];
         oi[d] = acc;
+    }
+}
+
+// attention_seg_tiled — query-tiled online-softmax attention restricted to per-patch
+// cu_seqlens segment bounds [segStart[i], segEnd[i]].
+//
+// Unlike attention_seg which stages an entire segment score row in dynamic threadgroup
+// memory (which exceeds Apple Silicon's 32 KiB threadgroup ceiling at maxSeg > 7000),
+// this uses a constant 16 KiB threadgroup allocation (Ks and Vs tiles of AT_KTILE=16),
+// lifting the threadgroup memory limit completely and allowing arbitrarily large images.
+kernel void attention_seg_tiled(
+    device const float* qkv [[buffer(0)]], device float* out [[buffer(1)]],
+    device const int* segStart [[buffer(2)]], device const int* segEnd [[buffer(3)]],
+    constant int& seq [[buffer(4)]], constant int& nH [[buffer(5)]], constant int& hd [[buffer(6)]],
+    constant float& scale [[buffer(7)]],
+    uint tid [[thread_position_in_threadgroup]], uint blk [[threadgroup_position_in_grid]],
+    uint tgsz [[threads_per_threadgroup]])
+{
+    threadgroup float Ks[AT_KTILE][AT_MAXHD];
+    threadgroup float Vs[AT_KTILE][AT_MAXHD];
+
+    int tilesPerHead = (seq + AT_QTILE - 1) / AT_QTILE;
+    int h = (int)blk / tilesPerHead;
+    int tileIdx = (int)blk % tilesPerHead;
+    int qStart = tileIdx * AT_QTILE;
+    int i = qStart + (int)tid;
+    int hidden = nH * hd, off = h * hd;
+    bool active = (i < seq);
+
+    int s0 = active ? segStart[i] : 0;
+    int s1 = active ? segEnd[i] : 0;
+
+    float m = -3.402823466e+38f;
+    float l = 0.0f;
+    float acc[AT_MAXHD];
+    for (int d = 0; d < hd; d++) acc[d] = 0.0f;
+
+    for (int k0 = 0; k0 < seq; k0 += AT_KTILE) {
+        int chunk = min(AT_KTILE, seq - k0);
+        for (int idx = (int)tid; idx < chunk * hd; idx += (int)tgsz) {
+            int kk = idx / hd, d = idx % hd;
+            int kj_idx = k0 + kk;
+            Ks[kk][d] = qkv[(uint)kj_idx * 3u * (uint)hidden + (uint)hidden + (uint)off + (uint)d];
+            Vs[kk][d] = qkv[(uint)kj_idx * 3u * (uint)hidden + 2u * (uint)hidden + (uint)off + (uint)d];
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        if (active) {
+            int chunkStart = k0;
+            int chunkEnd = k0 + chunk;
+            int validStart = max(s0, chunkStart);
+            int validEnd = min(s1, chunkEnd);
+
+            if (validStart < validEnd) {
+                device const float* qi = qkv + (uint)i * 3u * (uint)hidden + off;
+                float s[AT_KTILE];
+                float blockMax = -3.402823466e+38f;
+                for (int kk = 0; kk < chunk; kk++) {
+                    int kIdx = k0 + kk;
+                    if (kIdx >= s0 && kIdx < s1) {
+                        float dot = 0.0f;
+                        for (int d = 0; d < hd; d++) dot += qi[d] * Ks[kk][d];
+                        float sv = dot * scale;
+                        s[kk] = sv;
+                        if (sv > blockMax) blockMax = sv;
+                    }
+                }
+                if (blockMax > -3.402823466e+38f) {
+                    float newMax = max(m, blockMax);
+                    float corr = exp(m - newMax);
+                    l *= corr;
+                    for (int d = 0; d < hd; d++) acc[d] *= corr;
+                    float blockSum = 0.0f;
+                    for (int kk = 0; kk < chunk; kk++) {
+                        int kIdx = k0 + kk;
+                        if (kIdx >= s0 && kIdx < s1) {
+                            float e = exp(s[kk] - newMax);
+                            blockSum += e;
+                            for (int d = 0; d < hd; d++) acc[d] += e * Vs[kk][d];
+                        }
+                    }
+                    l += blockSum;
+                    m = newMax;
+                }
+            }
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    if (active) {
+        device float* oi = out + (uint)i * (uint)hidden + off;
+        float inv = (l > 0.0f) ? (1.0f / l) : 0.0f;
+        for (int d = 0; d < hd; d++) oi[d] = acc[d] * inv;
     }
 }
 
@@ -634,6 +747,101 @@ kernel void gemm_w8a8_reg(
     }
 }
 
+// gemm_w8a8_bias — fused GEMM + bias addition.
+// Writes C[m, n] = (acc * aScale * bScale) + bias[n], eliminating separate add_bias dispatch.
+kernel void gemm_w8a8_bias(
+    device const int* Aw [[buffer(0)]], device const float* aScale [[buffer(1)]],
+    device const int* Bw [[buffer(2)]], device const float* bScale [[buffer(3)]],
+    device const float* bias [[buffer(4)]],
+    device float* C [[buffer(5)]],
+    constant int& M [[buffer(6)]], constant int& N [[buffer(7)]], constant int& K [[buffer(8)]],
+    uint2 tgpos [[threadgroup_position_in_grid]], uint2 tid2 [[thread_position_in_threadgroup]])
+{
+    threadgroup int As[IBK][IBM + 1];
+    threadgroup int Bs[IBK][IBN + 1];
+    int kw = K >> 2;
+    int m0 = (int)tgpos.y * IBM, n0 = (int)tgpos.x * IBN;
+    int tid = (int)tid2.y * 16 + (int)tid2.x;
+    int lr = tid >> 2, lc = tid & 3;
+
+    int acc[IBTM][IBTN];
+    for (int i = 0; i < IBTM; i++)
+        for (int j = 0; j < IBTN; j++) acc[i][j] = 0;
+
+    for (int k0 = 0; k0 < kw; k0 += IBK) {
+        As[lc][lr] = (m0 + lr < M) ? Aw[(uint)(m0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
+        Bs[lc][lr] = (n0 + lr < N) ? Bw[(uint)(n0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (int kk = 0; kk < IBK; kk++) {
+            int a[IBTM], b[IBTN];
+            for (int i = 0; i < IBTM; i++) a[i] = As[kk][(int)tid2.y * IBTM + i];
+            for (int j = 0; j < IBTN; j++) b[j] = Bs[kk][(int)tid2.x * IBTN + j];
+            for (int i = 0; i < IBTM; i++)
+                for (int j = 0; j < IBTN; j++) acc[i][j] = dp4a_manual(a[i], b[j], acc[i][j]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    for (int i = 0; i < IBTM; i++) {
+        int m = m0 + (int)tid2.y * IBTM + i;
+        if (m >= M) continue;
+        for (int j = 0; j < IBTN; j++) {
+            int n = n0 + (int)tid2.x * IBTN + j;
+            if (n < N) C[(uint)m * (uint)N + (uint)n] = (float)acc[i][j] * aScale[m] * bScale[n] + bias[n];
+        }
+    }
+}
+
+// gemm_w8a8_bias_add — fused GEMM + bias + residual addition.
+// Writes residual[m, n] += (acc * aScale * bScale) + bias[n], eliminating both add_bias and add_vec.
+kernel void gemm_w8a8_bias_add(
+    device const int* Aw [[buffer(0)]], device const float* aScale [[buffer(1)]],
+    device const int* Bw [[buffer(2)]], device const float* bScale [[buffer(3)]],
+    device const float* bias [[buffer(4)]],
+    device float* residual [[buffer(5)]],
+    constant int& M [[buffer(6)]], constant int& N [[buffer(7)]], constant int& K [[buffer(8)]],
+    uint2 tgpos [[threadgroup_position_in_grid]], uint2 tid2 [[thread_position_in_threadgroup]])
+{
+    threadgroup int As[IBK][IBM + 1];
+    threadgroup int Bs[IBK][IBN + 1];
+    int kw = K >> 2;
+    int m0 = (int)tgpos.y * IBM, n0 = (int)tgpos.x * IBN;
+    int tid = (int)tid2.y * 16 + (int)tid2.x;
+    int lr = tid >> 2, lc = tid & 3;
+
+    int acc[IBTM][IBTN];
+    for (int i = 0; i < IBTM; i++)
+        for (int j = 0; j < IBTN; j++) acc[i][j] = 0;
+
+    for (int k0 = 0; k0 < kw; k0 += IBK) {
+        As[lc][lr] = (m0 + lr < M) ? Aw[(uint)(m0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
+        Bs[lc][lr] = (n0 + lr < N) ? Bw[(uint)(n0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        for (int kk = 0; kk < IBK; kk++) {
+            int a[IBTM], b[IBTN];
+            for (int i = 0; i < IBTM; i++) a[i] = As[kk][(int)tid2.y * IBTM + i];
+            for (int j = 0; j < IBTN; j++) b[j] = Bs[kk][(int)tid2.x * IBTN + j];
+            for (int i = 0; i < IBTM; i++)
+                for (int j = 0; j < IBTN; j++) acc[i][j] = dp4a_manual(a[i], b[j], acc[i][j]);
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    for (int i = 0; i < IBTM; i++) {
+        int m = m0 + (int)tid2.y * IBTM + i;
+        if (m >= M) continue;
+        for (int j = 0; j < IBTN; j++) {
+            int n = n0 + (int)tid2.x * IBTN + j;
+            if (n < N) {
+                uint idx = (uint)m * (uint)N + (uint)n;
+                residual[idx] += (float)acc[i][j] * aScale[m] * bScale[n] + bias[n];
+            }
+        }
+    }
+}
+
 kernel void gemm_f32_tiled(
     device const float* A [[buffer(0)]], device const float* B [[buffer(1)]], device float* C [[buffer(2)]],
     constant int& M [[buffer(3)]], constant int& N [[buffer(4)]], constant int& K [[buffer(5)]],
@@ -723,6 +931,114 @@ kernel void gemm_f32_sg(
     }
 }
 
+// gemm_f32_bias — production f32 GEMM with fused bias addition on simdgroup_matrix.
+// Writes C[m,n] = Cs[r,c] + bias[n0+c].
+kernel void gemm_f32_bias(
+    device const float* A [[buffer(0)]], device const float* B [[buffer(1)]],
+    device const float* bias [[buffer(2)]], device float* C [[buffer(3)]],
+    constant int& M [[buffer(4)]], constant int& N [[buffer(5)]], constant int& K [[buffer(6)]],
+    uint2 tgpos [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]])
+{
+    threadgroup float As[SGBM][SGBK];
+    threadgroup float Bs[SGBK][SGBN];
+    threadgroup float Cs[SGBM][SGBN];
+    int m0 = (int)tgpos.y * SGBM;
+    int n0 = (int)tgpos.x * SGBN;
+    int sg = (int)tid / 32;
+    int sgr = sg / 2, sgc = sg % 2;
+
+    simdgroup_float8x8 acc[2][2];
+    for (int f = 0; f < 2; f++)
+        for (int g = 0; g < 2; g++)
+            acc[f][g] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+
+    for (int k0 = 0; k0 < K; k0 += SGBK) {
+        for (int idx = (int)tid; idx < SGBM * SGBK; idx += 128) {
+            int r = idx / SGBK, c = idx % SGBK;
+            As[r][c] = (m0 + r < M && k0 + c < K) ? A[(uint)(m0 + r) * (uint)K + (uint)(k0 + c)] : 0.0f;
+        }
+        for (int idx = (int)tid; idx < SGBK * SGBN; idx += 128) {
+            int k = idx / SGBN, n = idx % SGBN;
+            Bs[k][n] = (n0 + n < N && k0 + k < K) ? B[(uint)(n0 + n) * (uint)K + (uint)(k0 + k)] : 0.0f;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        simdgroup_float8x8 a[2], b[2];
+        for (int f = 0; f < 2; f++) simdgroup_load(a[f], &As[sgr * 16 + f * 8][0], SGBK);
+        for (int g = 0; g < 2; g++) simdgroup_load(b[g], &Bs[0][sgc * 16 + g * 8], SGBN);
+        for (int f = 0; f < 2; f++)
+            for (int g = 0; g < 2; g++)
+                simdgroup_multiply_accumulate(acc[f][g], a[f], b[g], acc[f][g]);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    for (int f = 0; f < 2; f++)
+        for (int g = 0; g < 2; g++)
+            simdgroup_store(acc[f][g], &Cs[sgr * 16 + f * 8][sgc * 16 + g * 8], SGBN);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (int idx = (int)tid; idx < SGBM * SGBN; idx += 128) {
+        int r = idx / SGBN, c = idx % SGBN;
+        if (m0 + r < M && n0 + c < N) {
+            uint pos = (uint)(m0 + r) * (uint)N + (uint)(n0 + c);
+            C[pos] = Cs[r][c] + bias[n0 + c];
+        }
+    }
+}
+
+// gemm_f32_bias_add — production f32 GEMM with fused bias and residual addition on simdgroup_matrix.
+// Writes residual[m,n] += Cs[r,c] + bias[n0+c].
+kernel void gemm_f32_bias_add(
+    device const float* A [[buffer(0)]], device const float* B [[buffer(1)]],
+    device const float* bias [[buffer(2)]], device float* residual [[buffer(3)]],
+    constant int& M [[buffer(4)]], constant int& N [[buffer(5)]], constant int& K [[buffer(6)]],
+    uint2 tgpos [[threadgroup_position_in_grid]], uint tid [[thread_index_in_threadgroup]])
+{
+    threadgroup float As[SGBM][SGBK];
+    threadgroup float Bs[SGBK][SGBN];
+    threadgroup float Cs[SGBM][SGBN];
+    int m0 = (int)tgpos.y * SGBM;
+    int n0 = (int)tgpos.x * SGBN;
+    int sg = (int)tid / 32;
+    int sgr = sg / 2, sgc = sg % 2;
+
+    simdgroup_float8x8 acc[2][2];
+    for (int f = 0; f < 2; f++)
+        for (int g = 0; g < 2; g++)
+            acc[f][g] = make_filled_simdgroup_matrix<float, 8, 8>(0.0f);
+
+    for (int k0 = 0; k0 < K; k0 += SGBK) {
+        for (int idx = (int)tid; idx < SGBM * SGBK; idx += 128) {
+            int r = idx / SGBK, c = idx % SGBK;
+            As[r][c] = (m0 + r < M && k0 + c < K) ? A[(uint)(m0 + r) * (uint)K + (uint)(k0 + c)] : 0.0f;
+        }
+        for (int idx = (int)tid; idx < SGBK * SGBN; idx += 128) {
+            int k = idx / SGBN, n = idx % SGBN;
+            Bs[k][n] = (n0 + n < N && k0 + k < K) ? B[(uint)(n0 + n) * (uint)K + (uint)(k0 + k)] : 0.0f;
+        }
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+
+        simdgroup_float8x8 a[2], b[2];
+        for (int f = 0; f < 2; f++) simdgroup_load(a[f], &As[sgr * 16 + f * 8][0], SGBK);
+        for (int g = 0; g < 2; g++) simdgroup_load(b[g], &Bs[0][sgc * 16 + g * 8], SGBN);
+        for (int f = 0; f < 2; f++)
+            for (int g = 0; g < 2; g++)
+                simdgroup_multiply_accumulate(acc[f][g], a[f], b[g], acc[f][g]);
+        threadgroup_barrier(mem_flags::mem_threadgroup);
+    }
+
+    for (int f = 0; f < 2; f++)
+        for (int g = 0; g < 2; g++)
+            simdgroup_store(acc[f][g], &Cs[sgr * 16 + f * 8][sgc * 16 + g * 8], SGBN);
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    for (int idx = (int)tid; idx < SGBM * SGBN; idx += 128) {
+        int r = idx / SGBN, c = idx % SGBN;
+        if (m0 + r < M && n0 + c < N) {
+            uint pos = (uint)(m0 + r) * (uint)N + (uint)(n0 + c);
+            residual[pos] += Cs[r][c] + bias[n0 + c];
+        }
+    }
+}
+
 // gemm_f32_sg_big — the ALIGNED fast path of gemm_f32_sg, same 32×32 tile / 4 simdgroups /
 // 2×2 fragments (so the same low register footprint the general kernel already tunes well),
 // but for shapes with M%32==0, N%32==0, K%8==0 (GEMMF32Plan enforces it, else falls back to
@@ -774,16 +1090,17 @@ const (
 	KernelAttention = "attention"
 
 	// KernelAttentionTiled is the query-tiled online-softmax kernel (M-15). Dispatch via
-	// AttentionTiledDispatch, and only when AttentionTiledEligible(hd) — not wired into
-	// any production forward yet, see the kernel's own doc comment.
+	// AttentionTiledDispatch, and only when AttentionTiledEligible(hd) — see the kernel's
+	// own doc comment.
 	KernelAttentionTiled = "attention_tiled"
 
 	// --- Qwen2.5-VL additions (identical names to the CUDA side) ---
-	KernelRMSNorm      = "rmsnorm"
-	KernelRopeQK       = "rope_qk"
-	KernelAttentionSeg = "attention_seg"
-	KernelSiLUMul      = "silu_mul"
-	KernelGELUErf      = "gelu_erf"
+	KernelRMSNorm           = "rmsnorm"
+	KernelRopeQK            = "rope_qk"
+	KernelAttentionSeg      = "attention_seg"
+	KernelAttentionSegTiled = "attention_seg_tiled"
+	KernelSiLUMul           = "silu_mul"
+	KernelGELUErf           = "gelu_erf"
 
 	// --- tiled GEMMs (throughput; identical names to the CUDA side) ---
 	KernelGEMMW8A8Tiled = "gemm_w8a8_tiled"
@@ -800,6 +1117,20 @@ const (
 	// KernelGEMMF32SGBig is the aligned (M%32==0, N%32==0, K%8==0) fast path: 32×32 tile
 	// (SGBigBlock), direct device loads, no staging/barriers/bounds. Pick it via GEMMF32Plan.
 	KernelGEMMF32SGBig = "gemm_f32_sg_big"
+
+	// KernelGEMMW8A8Bias is gemm_w8a8 with fused bias epilogue: C[m,n] = (Aq·Bq)*aScale*bScale + bias[n].
+	KernelGEMMW8A8Bias = "gemm_w8a8_bias"
+
+	// KernelGEMMW8A8BiasAdd is gemm_w8a8 with fused bias and residual addition:
+	// residual[m,n] += (Aq·Bq)*aScale*bScale + bias[n].
+	KernelGEMMW8A8BiasAdd = "gemm_w8a8_bias_add"
+
+	// KernelGEMMF32Bias is gemm_f32 with fused bias epilogue: C[m,n] = A·B + bias[n].
+	KernelGEMMF32Bias = "gemm_f32_bias"
+
+	// KernelGEMMF32BiasAdd is gemm_f32 with fused bias and residual addition:
+	// residual[m,n] += A·B + bias[n].
+	KernelGEMMF32BiasAdd = "gemm_f32_bias_add"
 )
 
 // SGBlock is gemm_f32_sg's threadgroup output-tile width (must match vitMSL's SGBM/SGBN);
@@ -874,6 +1205,46 @@ func (v ViT) GEMMW8A8Plan(M, N, K int) (p Pipeline, gx, gy, tgx, tgy int) {
 	return v.GEMMW8A8Tiled, gx, gy, tgx, tgy
 }
 
+// GEMMW8A8BiasPlan picks the fused int8 GEMM+bias kernel and Run2D geometry for M×N×K.
+// Returns an empty pipeline if K%IntRegK != 0.
+// Bind signature: (Aw [[0]], aScale [[1]], Bw [[2]], bScale [[3]], bias [[4]], C [[5]], M [[6]], N [[7]], K [[8]]).
+func (v ViT) GEMMW8A8BiasPlan(M, N, K int) (p Pipeline, gx, gy, tgx, tgy int) {
+	if K%IntRegK == 0 && M > 0 && N > 0 && K > 0 {
+		return v.GEMMW8A8Bias, (N + IntRegBlock - 1) / IntRegBlock, (M + IntRegBlock - 1) / IntRegBlock, IntRegBlock / 4, IntRegBlock / 4
+	}
+	return Pipeline{}, 0, 0, 0, 0
+}
+
+// GEMMW8A8BiasAddPlan picks the fused int8 GEMM+bias+residual add kernel and Run2D geometry for M×N×K.
+// Returns an empty pipeline if K%IntRegK != 0.
+// Bind signature: (Aw [[0]], aScale [[1]], Bw [[2]], bScale [[3]], bias [[4]], residual [[5]], M [[6]], N [[7]], K [[8]]).
+func (v ViT) GEMMW8A8BiasAddPlan(M, N, K int) (p Pipeline, gx, gy, tgx, tgy int) {
+	if K%IntRegK == 0 && M > 0 && N > 0 && K > 0 {
+		return v.GEMMW8A8BiasAdd, (N + IntRegBlock - 1) / IntRegBlock, (M + IntRegBlock - 1) / IntRegBlock, IntRegBlock / 4, IntRegBlock / 4
+	}
+	return Pipeline{}, 0, 0, 0, 0
+}
+
+// GEMMF32BiasPlan picks the fused f32 GEMM+bias kernel and Run2D geometry for M×N×K.
+// Bind signature: (A [[0]], B [[1]], bias [[2]], C [[3]], M [[4]], N [[5]], K [[6]]).
+func (v ViT) GEMMF32BiasPlan(M, N, K int) (p Pipeline, gx, gy, tgx, tgy int) {
+	if M > 0 && N > 0 && K > 0 {
+		gx, gy, tgx, tgy = SGDims(M, N)
+		return v.GEMMF32Bias, gx, gy, tgx, tgy
+	}
+	return Pipeline{}, 0, 0, 0, 0
+}
+
+// GEMMF32BiasAddPlan picks the fused f32 GEMM+bias+residual add kernel and Run2D geometry for M×N×K.
+// Bind signature: (A [[0]], B [[1]], bias [[2]], residual [[3]], M [[4]], N [[5]], K [[6]]).
+func (v ViT) GEMMF32BiasAddPlan(M, N, K int) (p Pipeline, gx, gy, tgx, tgy int) {
+	if M > 0 && N > 0 && K > 0 {
+		gx, gy, tgx, tgy = SGDims(M, N)
+		return v.GEMMF32BiasAdd, gx, gy, tgx, tgy
+	}
+	return Pipeline{}, 0, 0, 0, 0
+}
+
 // AttnTiledMaxHD/AttnTiledKTile/AttnTiledQTile mirror attention_tiled's AT_MAXHD/AT_KTILE/
 // AT_QTILE (M-15) — kept in sync by hand, like GEMMTile/SGBlock above mirror their own
 // kernels' #defines elsewhere in this file.
@@ -895,6 +1266,13 @@ func AttentionTiledEligible(hd int) bool { return hd > 0 && hd <= AttnTiledMaxHD
 // not a graceful decline.
 func AttentionTiledDispatch(np, nH int) (n, tg int) {
 	tilesPerHead := (np + AttnTiledQTile - 1) / AttnTiledQTile
+	return nH * tilesPerHead * AttnTiledQTile, AttnTiledQTile
+}
+
+// AttentionSegTiledDispatch returns the Run1D geometry (n, tg) for attention_seg_tiled at a
+// given (seq, nH). Callers MUST check AttentionTiledEligible(hd) first.
+func AttentionSegTiledDispatch(seq, nH int) (n, tg int) {
+	tilesPerHead := (seq + AttnTiledQTile - 1) / AttnTiledQTile
 	return nH * tilesPerHead * AttnTiledQTile, AttnTiledQTile
 }
 
@@ -924,15 +1302,16 @@ type ViT struct {
 	Attention Pipeline
 
 	// AttentionTiled is the query-tiled online-softmax kernel (M-15) — see its own doc
-	// comment in vitMSL. Not wired into any production forward yet.
+	// comment in vitMSL.
 	AttentionTiled Pipeline
 
 	// Qwen2.5-VL additions.
-	RMSNorm      Pipeline
-	RopeQK       Pipeline
-	AttentionSeg Pipeline
-	SiLUMul      Pipeline
-	GELUErf      Pipeline
+	RMSNorm           Pipeline
+	RopeQK            Pipeline
+	AttentionSeg      Pipeline
+	AttentionSegTiled Pipeline
+	SiLUMul           Pipeline
+	GELUErf           Pipeline
 
 	// Tiled GEMMs — same math, staged through threadgroup memory.
 	GEMMW8A8Tiled Pipeline
@@ -946,6 +1325,12 @@ type ViT struct {
 	// Production f32 GEMM on simdgroup_matrix (Metal-only); SGBig is the aligned fast path.
 	GEMMF32SG    Pipeline
 	GEMMF32SGBig Pipeline
+
+	// Fused GEMM epilogues (bias and residual addition)
+	GEMMW8A8Bias    Pipeline
+	GEMMW8A8BiasAdd Pipeline
+	GEMMF32Bias     Pipeline
+	GEMMF32BiasAdd  Pipeline
 }
 
 // NewViT compiles vitMSL on this device and builds every encoder pipeline. The library
@@ -972,6 +1357,7 @@ func (d *Device) NewViT() (ViT, error) {
 		{KernelRMSNorm, &v.RMSNorm},
 		{KernelRopeQK, &v.RopeQK},
 		{KernelAttentionSeg, &v.AttentionSeg},
+		{KernelAttentionSegTiled, &v.AttentionSegTiled},
 		{KernelSiLUMul, &v.SiLUMul},
 		{KernelGELUErf, &v.GELUErf},
 		{KernelGEMMW8A8Tiled, &v.GEMMW8A8Tiled},
@@ -979,6 +1365,10 @@ func (d *Device) NewViT() (ViT, error) {
 		{KernelGEMMF32SG, &v.GEMMF32SG},
 		{KernelGEMMF32SGBig, &v.GEMMF32SGBig},
 		{KernelGEMMW8A8Reg, &v.GEMMW8A8Reg},
+		{KernelGEMMW8A8Bias, &v.GEMMW8A8Bias},
+		{KernelGEMMW8A8BiasAdd, &v.GEMMW8A8BiasAdd},
+		{KernelGEMMF32Bias, &v.GEMMF32Bias},
+		{KernelGEMMF32BiasAdd, &v.GEMMF32BiasAdd},
 	} {
 		p, err := d.NewComputePipeline(lib, bind.name)
 		if err != nil {

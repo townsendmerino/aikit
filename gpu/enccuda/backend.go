@@ -394,8 +394,38 @@ func (b *Backend) gpuMatmulQ8(dst, a []float32, wq []int8, wscales []float32, M,
 	}
 	b.grow(&b.aBuf, &b.aCap, M*K)
 	b.grow(&b.cBuf, &b.cCap, M*N)
-	// The ACTIVATION is uploaded every call — it changes every call. Only the weight
-	// is resident.
+
+	// PINNED STAGING + STREAM-ORDERED COPIES: activation is uploaded, result read back.
+	// Model weight is resident (wb).
+	staged := (M*K + M*N) * 4
+	if staged <= pinnedStageMaxBytes {
+		if err := b.growHost(&b.aHost, &b.aHostCap, M*K*4); err != nil {
+			return err
+		}
+		if err := b.growHostF32(&b.cHost, &b.cHostCap, M*N); err != nil {
+			return err
+		}
+		copy(b.aHost.Slice(), f32Bytes(a[:M*K]))
+		if err := b.q.UploadAsync(b.aBuf, b.aHost); err != nil {
+			return err
+		}
+		gp, gcfg := b.k.GEMMF32Plan(M, N, K)
+		if err := b.q.Launch(gp, gcfg,
+			gpu.Arg(b.aBuf), gpu.Arg(wb), gpu.Arg(b.cBuf),
+			gpu.ArgValue(int32(M)), gpu.ArgValue(int32(N)), gpu.ArgValue(int32(K))); err != nil {
+			return err
+		}
+		if err := b.q.Sync(); err != nil {
+			return err
+		}
+		if err := gpu.ReadToHost(b.cBuf, b.cHost); err != nil {
+			return err
+		}
+		copy(dst[:M*N], b.cHost.Slice()[:M*N])
+		return nil
+	}
+
+	// Blocking fallback for huge payloads (> 1 MiB)
 	if err := gpu.Upload(b.aBuf, a[:M*K]); err != nil {
 		return err
 	}

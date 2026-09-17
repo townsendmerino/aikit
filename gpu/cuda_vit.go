@@ -66,6 +66,10 @@ const (
 	//   (q f32*, k f32*, v f32*, out f32*, np, nH, hd i32, scale f32)
 	KernelAttention = "attention"
 
+	// KernelAttentionTiled is query-tiled, online-softmax bidirectional MHA.
+	// Launch with AttentionTiledLaunchConfig(np, nH); 0 bytes of dynamic shared memory.
+	KernelAttentionTiled = "attention_tiled"
+
 	// --- Qwen2.5-VL additions ---
 
 	// KernelRMSNorm is weight-only RMS normalization (no mean subtraction, no bias).
@@ -85,6 +89,10 @@ const (
 	// dynamic shared memory. segStart/segEnd are PER-PATCH bounds, not cu_seqlens.
 	//   (qkv f32*, out f32*, segStart i32*, segEnd i32*, seq, nH, hd i32, scale f32)
 	KernelAttentionSeg = "attention_seg"
+
+	// KernelAttentionSegTiled is segment-aware query-tiled online-softmax bidirectional MHA.
+	// Launch with AttentionSegTiledLaunchConfig(seq, nH); 0 bytes of dynamic shared memory.
+	KernelAttentionSegTiled = "attention_seg_tiled"
 
 	// KernelSiLUMul computes gate = silu(gate) * up — the gated-MLP activation.
 	//   (gate f32*, up f32*, n i32)
@@ -125,6 +133,22 @@ const (
 	// NOT bit-identical to the untiled kernel — f32 addition reassociates — so it is
 	// gated on a tight relative bound instead. Launch with TileGrid(M, N).
 	KernelGEMMF32Tiled = "gemm_f32_tiled"
+
+	// KernelGEMMW8A8Bias is gemm_w8a8 with fused bias epilogue:
+	// C[m,n] = (Aq·Bq)*aScale*bScale + bias[n].
+	KernelGEMMW8A8Bias = "gemm_w8a8_bias"
+
+	// KernelGEMMW8A8BiasAdd is gemm_w8a8 with fused bias and residual addition:
+	// residual[m,n] += (Aq·Bq)*aScale*bScale + bias[n].
+	KernelGEMMW8A8BiasAdd = "gemm_w8a8_bias_add"
+
+	// KernelGEMMF32Bias is register-blocked f32 GEMM with fused bias addition:
+	// C[m,n] = acc + bias[n].
+	KernelGEMMF32Bias = "gemm_f32_bias"
+
+	// KernelGEMMF32BiasAdd is register-blocked f32 GEMM with fused bias and residual addition:
+	// residual[m,n] += acc + bias[n].
+	KernelGEMMF32BiasAdd = "gemm_f32_bias_add"
 )
 
 // GEMMTile is the tiled GEMMs' tile width; it must match vit.cu's TILE, which sizes
@@ -164,14 +188,16 @@ type ViT struct {
 	AddVec    Pipeline
 	LayerNorm Pipeline
 	GELUTanh  Pipeline
-	Attention Pipeline
+	Attention      Pipeline
+	AttentionTiled Pipeline
 
 	// Qwen2.5-VL additions.
-	RMSNorm      Pipeline
-	RopeQK       Pipeline
-	AttentionSeg Pipeline
-	SiLUMul      Pipeline
-	GELUErf      Pipeline
+	RMSNorm           Pipeline
+	RopeQK            Pipeline
+	AttentionSeg      Pipeline
+	AttentionSegTiled Pipeline
+	SiLUMul           Pipeline
+	GELUErf           Pipeline
 
 	// Tiled GEMMs — same math, staged through shared memory.
 	GEMMW8A8Tiled Pipeline
@@ -180,6 +206,12 @@ type ViT struct {
 	GEMMF32Reg Pipeline
 	// Register-blocked int8 GEMM (aligned fast path). Reach it via GEMMW8A8Plan.
 	GEMMW8A8Reg Pipeline
+
+	// Fused GEMM epilogues (bias and residual addition)
+	GEMMW8A8Bias    Pipeline
+	GEMMW8A8BiasAdd Pipeline
+	GEMMF32Bias     Pipeline
+	GEMMF32BiasAdd  Pipeline
 }
 
 // NewViT loads ViTPTX on this device and builds every encoder pipeline. The module is
@@ -202,15 +234,21 @@ func (d *Device) NewViT() (ViT, error) {
 		{KernelLayerNorm, &v.LayerNorm},
 		{KernelGELUTanh, &v.GELUTanh},
 		{KernelAttention, &v.Attention},
+		{KernelAttentionTiled, &v.AttentionTiled},
 		{KernelRMSNorm, &v.RMSNorm},
 		{KernelRopeQK, &v.RopeQK},
 		{KernelAttentionSeg, &v.AttentionSeg},
+		{KernelAttentionSegTiled, &v.AttentionSegTiled},
 		{KernelSiLUMul, &v.SiLUMul},
 		{KernelGELUErf, &v.GELUErf},
 		{KernelGEMMW8A8Tiled, &v.GEMMW8A8Tiled},
 		{KernelGEMMF32Tiled, &v.GEMMF32Tiled},
 		{KernelGEMMF32Reg, &v.GEMMF32Reg},
 		{KernelGEMMW8A8Reg, &v.GEMMW8A8Reg},
+		{KernelGEMMW8A8Bias, &v.GEMMW8A8Bias},
+		{KernelGEMMW8A8BiasAdd, &v.GEMMW8A8BiasAdd},
+		{KernelGEMMF32Bias, &v.GEMMF32Bias},
+		{KernelGEMMF32BiasAdd, &v.GEMMF32BiasAdd},
 	} {
 		p, err := d.NewComputePipeline(lib, bind.name)
 		if err != nil {
@@ -259,6 +297,71 @@ func AttentionGrid(np, heads int) LaunchConfig {
 		BlockX: ViTBlock, BlockY: 1, BlockZ: 1,
 		SharedMemBytes: uint32(np * 4),
 	}
+}
+
+// AttnTiledMaxHD/AttnTiledKTile/AttnTiledQTile mirror attention_tiled's AT_MAXHD/AT_KTILE/
+// AT_QTILE defines in vit.cu.
+const (
+	AttnTiledMaxHD = 128
+	AttnTiledKTile = 16
+	AttnTiledQTile = 32
+)
+
+// AttentionTiledEligible reports whether attention_tiled can serve a tower with this
+// head dimension.
+func AttentionTiledEligible(hd int) bool {
+	return hd > 0 && hd <= AttnTiledMaxHD
+}
+
+// AttentionTiledLaunchConfig returns the LaunchConfig for attention_tiled at a given shape.
+func AttentionTiledLaunchConfig(np, heads int) LaunchConfig {
+	if np <= 0 || heads <= 0 {
+		return LaunchConfig{}
+	}
+	tilesPerHead := (np + AttnTiledQTile - 1) / AttnTiledQTile
+	return LaunchConfig{
+		GridX:  uint32(heads * tilesPerHead),
+		GridY:  1,
+		GridZ:  1,
+		BlockX: AttnTiledQTile,
+		BlockY: 1,
+		BlockZ: 1,
+	}
+}
+
+// AttentionSegTiledLaunchConfig returns the LaunchConfig for attention_seg_tiled at a given shape.
+func AttentionSegTiledLaunchConfig(seq, heads int) LaunchConfig {
+	if seq <= 0 || heads <= 0 {
+		return LaunchConfig{}
+	}
+	tilesPerHead := (seq + AttnTiledQTile - 1) / AttnTiledQTile
+	return LaunchConfig{
+		GridX:  uint32(heads * tilesPerHead),
+		GridY:  1,
+		GridZ:  1,
+		BlockX: AttnTiledQTile,
+		BlockY: 1,
+		BlockZ: 1,
+	}
+}
+
+
+// AttentionTiledMinNP is the sequence length crossover where attention_tiled begins
+// outperforming attention. At np < 3072, attention's 256-thread-per-query parallelism
+// wins; at np >= 3072, dynamic shared memory (np*4 B) forces block occupancy down on
+// each SM, whereas attention_tiled's fixed 16 KB static allocation and K/V staging
+// amortize memory bandwidth and deliver an 18% speedup (measured on RTX 2070 SUPER:
+// 352 ms vs 416 ms).
+const AttentionTiledMinNP = 3072
+
+// AttentionPlan returns the pipeline and launch config for attention at a given shape,
+// selecting the query-tiled online-softmax kernel when eligible and beneficial, falling
+// back to the untiled kernel otherwise.
+func (v ViT) AttentionPlan(np, heads, hd int) (Pipeline, LaunchConfig) {
+	if AttentionTiledEligible(hd) && np >= AttentionTiledMinNP {
+		return v.AttentionTiled, AttentionTiledLaunchConfig(np, heads)
+	}
+	return v.Attention, AttentionGrid(np, heads)
 }
 
 // TileGrid is the tiled GEMMs' 2-D geometry: one GEMMTile×GEMMTile output tile per
@@ -335,3 +438,57 @@ const (
 	RTM = 4
 	RTN = 4
 )
+
+// GEMMW8A8BiasPlan picks the fused int8 GEMM+bias kernel and launch geometry for M×N×K.
+// Returns an empty pipeline if K is not a multiple of IntRegK (16).
+// Bind signature: (A int8*, aScale f32*, B int8*, bScale f32*, bias f32*, C f32*, M, N, K i32).
+func (v ViT) GEMMW8A8BiasPlan(M, N, K int) (Pipeline, LaunchConfig) {
+	if K%IntRegK == 0 && M > 0 && N > 0 && K > 0 {
+		return v.GEMMW8A8Bias, LaunchConfig{
+			GridX: uint32((N + IntRegBlock - 1) / IntRegBlock), GridY: uint32((M + IntRegBlock - 1) / IntRegBlock), GridZ: 1,
+			BlockX: IntRegBlock / RTN, BlockY: IntRegBlock / RTM, BlockZ: 1,
+		}
+	}
+	return Pipeline{}, LaunchConfig{}
+}
+
+// GEMMW8A8BiasAddPlan picks the fused int8 GEMM+bias+residual add kernel and launch geometry for M×N×K.
+// Returns an empty pipeline if K is not a multiple of IntRegK (16).
+// Bind signature: (A int8*, aScale f32*, B int8*, bScale f32*, bias f32*, residual f32*, M, N, K i32).
+func (v ViT) GEMMW8A8BiasAddPlan(M, N, K int) (Pipeline, LaunchConfig) {
+	if K%IntRegK == 0 && M > 0 && N > 0 && K > 0 {
+		return v.GEMMW8A8BiasAdd, LaunchConfig{
+			GridX: uint32((N + IntRegBlock - 1) / IntRegBlock), GridY: uint32((M + IntRegBlock - 1) / IntRegBlock), GridZ: 1,
+			BlockX: IntRegBlock / RTN, BlockY: IntRegBlock / RTM, BlockZ: 1,
+		}
+	}
+	return Pipeline{}, LaunchConfig{}
+}
+
+// GEMMF32BiasPlan picks the fused f32 GEMM+bias kernel and launch geometry for M×N×K.
+// Returns an empty pipeline if K is not a multiple of RegK (16).
+// Bind signature: (A f32*, B f32*, bias f32*, C f32*, M, N, K i32).
+func (v ViT) GEMMF32BiasPlan(M, N, K int) (Pipeline, LaunchConfig) {
+	if K%RegK == 0 && M > 0 && N > 0 && K > 0 {
+		return v.GEMMF32Bias, LaunchConfig{
+			GridX: uint32((N + RegBlock - 1) / RegBlock), GridY: uint32((M + RegBlock - 1) / RegBlock), GridZ: 1,
+			BlockX: RegBlock / RTN, BlockY: RegBlock / RTM, BlockZ: 1,
+		}
+	}
+	return Pipeline{}, LaunchConfig{}
+}
+
+// GEMMF32BiasAddPlan picks the fused f32 GEMM+bias+residual add kernel and launch geometry for M×N×K.
+// Returns an empty pipeline if K is not a multiple of RegK (16).
+// Bind signature: (A f32*, B f32*, bias f32*, residual f32*, M, N, K i32).
+func (v ViT) GEMMF32BiasAddPlan(M, N, K int) (Pipeline, LaunchConfig) {
+	if K%RegK == 0 && M > 0 && N > 0 && K > 0 {
+		return v.GEMMF32BiasAdd, LaunchConfig{
+			GridX: uint32((N + RegBlock - 1) / RegBlock), GridY: uint32((M + RegBlock - 1) / RegBlock), GridZ: 1,
+			BlockX: RegBlock / RTN, BlockY: RegBlock / RTM, BlockZ: 1,
+		}
+	}
+	return Pipeline{}, LaunchConfig{}
+}
+
+

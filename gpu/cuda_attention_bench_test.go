@@ -47,7 +47,7 @@ func BenchmarkCUDAAttention(b *testing.B) {
 		out := NewBufferLenOf[float32](d, n)
 		scale := float32(1.0 / 8.485)
 
-		b.Run(sh.name, func(b *testing.B) {
+		b.Run(sh.name+"/untiled", func(b *testing.B) {
 			run := func() {
 				if err := q.Launch(v.Attention, AttentionGrid(sh.np, sh.nH),
 					Arg(dq), Arg(dk), Arg(dv), Arg(out),
@@ -67,9 +67,35 @@ func BenchmarkCUDAAttention(b *testing.B) {
 				run()
 			}
 			b.StopTimer()
-			// QK^T + AV = 2 * nH * np^2 * hd MACs.
 			macs := 2.0 * float64(sh.nH) * float64(sh.np) * float64(sh.np) * float64(sh.hd)
 			b.ReportMetric(macs/(b.Elapsed().Seconds()/float64(b.N))/1e9, "GMAC/s")
 		})
+
+		if AttentionTiledEligible(sh.hd) {
+			b.Run(sh.name+"/tiled", func(b *testing.B) {
+				cfg := AttentionTiledLaunchConfig(sh.np, sh.nH)
+				run := func() {
+					if err := q.Launch(v.AttentionTiled, cfg,
+						Arg(dq), Arg(dk), Arg(dv), Arg(out),
+						ArgValue(int32(sh.np)), ArgValue(int32(sh.nH)), ArgValue(int32(sh.hd)),
+						ArgValue(scale)); err != nil {
+						b.Fatalf("Launch: %v", err)
+					}
+					if err := q.Sync(); err != nil {
+						b.Fatalf("Sync: %v", err)
+					}
+				}
+				for range 3 {
+					run()
+				}
+				b.ResetTimer()
+				for range b.N {
+					run()
+				}
+				b.StopTimer()
+				macs := 2.0 * float64(sh.nH) * float64(sh.np) * float64(sh.np) * float64(sh.hd)
+				b.ReportMetric(macs/(b.Elapsed().Seconds()/float64(b.N))/1e9, "GMAC/s")
+			})
+		}
 	}
 }

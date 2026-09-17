@@ -32,13 +32,15 @@ func BenchmarkTopKBatch(b *testing.B) {
 			for m := range queries {
 				queries[m] = vecs[m]
 			}
-			b.Run(fmt.Sprintf("N%d/M%d", n, M), func(b *testing.B) {
-				for b.Loop() {
-					if _, err := idx.TopKBatch(queries, k); err != nil {
-						b.Fatalf("TopKBatch: %v", err)
+			for _, kVal := range []int{10, 100} {
+				b.Run(fmt.Sprintf("N%d/M%d/k%d", n, M, kVal), func(b *testing.B) {
+					for b.Loop() {
+						if _, err := idx.TopKBatch(queries, kVal); err != nil {
+							b.Fatalf("TopKBatch: %v", err)
+						}
 					}
-				}
-			})
+				})
+			}
 		}
 	}
 }

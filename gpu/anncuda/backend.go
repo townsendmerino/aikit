@@ -369,7 +369,7 @@ const batchSmallMaxM = 8
 // An earlier version kept both and gated that they agreed; deriving them makes a
 // mis-pairing impossible to write, which is strictly better than catching it.
 // TestTopKPipelineWidths still ties the derived names to the .cu source.
-var topkWidths = [...]int{8, 16, 32, 64}
+var topkWidths = [...]int{8, 16, 32, 64, 128}
 
 // topkKernelName is the entry point for one (kind, width) pair, where kind is
 // "rows" (one block per query), "split" (many blocks per query) or "merge".

@@ -322,10 +322,114 @@ extern "C" __global__ void attention(
 
     // out[i, off+d] = sum_j softmax[j] * v[j, off+d]
     float* oi = out + (long)i * hidden + off;
-    for (int d = threadIdx.x; d < hd; d += blockDim.x) {
+    if (hd <= ATTN_MAXHD && (long)np * 4 + ATTN_KTILE * ATTN_MAXHD * 4 <= ATTN_STAGE_SHARED_MAX) {
         float acc = 0.f;
-        for (int j = 0; j < np; j++) acc += sc[j] * v[(long)j * hidden + off + d];
-        oi[d] = acc;
+        for (int j0 = 0; j0 < np; j0 += ATTN_KTILE) {
+            int cnt = min(ATTN_KTILE, np - j0);
+            for (int t = threadIdx.x; t < cnt * hd; t += blockDim.x) {
+                int jj = t / hd, dd = t - jj * hd;
+                ks[jj][dd] = v[(long)(j0 + jj) * hidden + off + dd];
+            }
+            __syncthreads();
+            if (threadIdx.x < hd) {
+                for (int jj = 0; jj < cnt; jj++) {
+                    acc += sc[j0 + jj] * ks[jj][threadIdx.x];
+                }
+            }
+            __syncthreads();
+        }
+        if (threadIdx.x < hd) {
+            oi[threadIdx.x] = acc;
+        }
+    } else {
+        for (int d = threadIdx.x; d < hd; d += blockDim.x) {
+            float acc = 0.f;
+            for (int j = 0; j < np; j++) acc += sc[j] * v[(long)j * hidden + off + d];
+            oi[d] = acc;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// attention_tiled — query-tiled, online-softmax (FlashAttention-style)
+// bidirectional multi-head self-attention.
+//
+// Dynamic shared memory: 0 bytes. Static shared memory: 16 KB (Ks and Vs).
+// Staging K and V in shared tiles across AT_QTILE=32 queries amortizes global
+// memory reads by up to 32x.
+// ---------------------------------------------------------------------------
+#define AT_MAXHD 128
+#define AT_KTILE 16
+#define AT_QTILE 32
+
+extern "C" __global__ void attention_tiled(
+    const float* __restrict__ q, const float* __restrict__ k, const float* __restrict__ v,
+    float* __restrict__ out,
+    int np, int nH, int hd, float scale)
+{
+    __shared__ float Ks[AT_KTILE][AT_MAXHD];
+    __shared__ float Vs[AT_KTILE][AT_MAXHD];
+
+    int tilesPerHead = (np + AT_QTILE - 1) / AT_QTILE;
+    int blk = blockIdx.x;
+    int h = blk / tilesPerHead;
+    int tileIdx = blk % tilesPerHead;
+    int qStart = tileIdx * AT_QTILE;
+    int tid = threadIdx.x;
+    int tgsz = blockDim.x; // AT_QTILE = 32
+    int i = qStart + tid;
+    int hidden = nH * hd, off = h * hd;
+    bool active = (i < np);
+
+    float m = -3.402823466e+38f;
+    float l = 0.0f;
+    float acc[AT_MAXHD];
+    #pragma unroll
+    for (int d = 0; d < AT_MAXHD; d++) acc[d] = 0.0f;
+
+    for (int k0 = 0; k0 < np; k0 += AT_KTILE) {
+        int chunk = min(AT_KTILE, np - k0);
+        for (int idx = tid; idx < chunk * hd; idx += tgsz) {
+            int kk = idx / hd, d = idx % hd;
+            Ks[kk][d] = k[(long)(k0 + kk) * hidden + off + d];
+            Vs[kk][d] = v[(long)(k0 + kk) * hidden + off + d];
+        }
+        __syncthreads();
+
+        if (active) {
+            const float* qi = q + (long)i * hidden + off;
+            float s[AT_KTILE];
+            float blockMax = -3.402823466e+38f;
+            #pragma unroll
+            for (int kk = 0; kk < AT_KTILE; kk++) {
+                if (kk < chunk) {
+                    float dot = 0.0f;
+                    for (int d = 0; d < hd; d++) dot += qi[d] * Ks[kk][d];
+                    float sv = dot * scale;
+                    s[kk] = sv;
+                    if (sv > blockMax) blockMax = sv;
+                }
+            }
+            float newMax = fmaxf(m, blockMax);
+            float corr = expf(m - newMax);
+            l *= corr;
+            for (int d = 0; d < hd; d++) acc[d] *= corr;
+            float blockSum = 0.0f;
+            for (int kk = 0; kk < chunk; kk++) {
+                float e = expf(s[kk] - newMax);
+                blockSum += e;
+                for (int d = 0; d < hd; d++) acc[d] += e * Vs[kk][d];
+            }
+            l += blockSum;
+            m = newMax;
+        }
+        __syncthreads();
+    }
+
+    if (active) {
+        float* oi = out + (long)i * hidden + off;
+        float inv = 1.0f / l;
+        for (int d = 0; d < hd; d++) oi[d] = acc[d] * inv;
     }
 }
 
@@ -429,11 +533,23 @@ extern "C" __global__ void attention_seg(
     extern __shared__ float sc[];
 
     const float* qi = qkv + (long)i * 3 * hidden + off;
-    for (int t = threadIdx.x; t < n; t += blockDim.x) {
-        const float* kj = qkv + (long)(s0 + t) * 3 * hidden + hidden + off;
-        float acc = 0.f;
-        for (int d = 0; d < hd; d++) acc += qi[d] * kj[d];
-        sc[t] = acc * scale;
+    __shared__ float qs[ATTN_MAXHD];
+    if (hd <= ATTN_MAXHD) {
+        for (int d = threadIdx.x; d < hd; d += blockDim.x) qs[d] = qi[d];
+        __syncthreads();
+        for (int t = threadIdx.x; t < n; t += blockDim.x) {
+            const float* kj = qkv + (long)(s0 + t) * 3 * hidden + hidden + off;
+            float acc = 0.f;
+            for (int d = 0; d < hd; d++) acc += qs[d] * kj[d];
+            sc[t] = acc * scale;
+        }
+    } else {
+        for (int t = threadIdx.x; t < n; t += blockDim.x) {
+            const float* kj = qkv + (long)(s0 + t) * 3 * hidden + hidden + off;
+            float acc = 0.f;
+            for (int d = 0; d < hd; d++) acc += qi[d] * kj[d];
+            sc[t] = acc * scale;
+        }
     }
     __syncthreads();
 
@@ -475,6 +591,103 @@ extern "C" __global__ void attention_seg(
         float acc = 0.f;
         for (int t = 0; t < n; t++) acc += sc[t] * qkv[(long)(s0 + t) * 3 * hidden + 2 * hidden + off + d];
         oi[d] = acc;
+    }
+}
+
+// attention_seg_tiled: segment-aware query-tiled online-softmax bidirectional MHA.
+//
+// Unlike attention_seg which stages an entire segment score row in dynamic shared
+// memory (which exceeds the 48 KB hardware limit on large images), this uses a
+// constant 16 KB static shared memory allocation (Ks and Vs tiles of AT_KTILE=16),
+// lifting the shared memory limit completely and amortizing K/V loads across
+// AT_QTILE=32 queries by up to 32x.
+extern "C" __global__ void attention_seg_tiled(
+    const float* __restrict__ qkv, float* __restrict__ out,
+    const int* __restrict__ segStart, const int* __restrict__ segEnd,
+    int seq, int nH, int hd, float scale)
+{
+    __shared__ float Ks[AT_KTILE][AT_MAXHD];
+    __shared__ float Vs[AT_KTILE][AT_MAXHD];
+
+    int tilesPerHead = (seq + AT_QTILE - 1) / AT_QTILE;
+    int blk = blockIdx.x;
+    int h = blk / tilesPerHead;
+    int tileIdx = blk % tilesPerHead;
+    int qStart = tileIdx * AT_QTILE;
+    int tid = threadIdx.x;
+    int tgsz = blockDim.x; // AT_QTILE = 32
+    int i = qStart + tid;
+    int hidden = nH * hd, off = h * hd;
+    bool active = (i < seq);
+
+    int s0 = active ? segStart[i] : 0;
+    int s1 = active ? segEnd[i] : 0;
+
+    float m = -3.402823466e+38f;
+    float l = 0.0f;
+    float acc[AT_MAXHD];
+    #pragma unroll
+    for (int d = 0; d < AT_MAXHD; d++) acc[d] = 0.0f;
+
+    for (int k0 = 0; k0 < seq; k0 += AT_KTILE) {
+        int chunk = min(AT_KTILE, seq - k0);
+        for (int idx = tid; idx < chunk * hd; idx += tgsz) {
+            int kk = idx / hd, d = idx % hd;
+            int kj_idx = k0 + kk;
+            Ks[kk][d] = qkv[(long)kj_idx * 3 * hidden + hidden + off + d];
+            Vs[kk][d] = qkv[(long)kj_idx * 3 * hidden + 2 * hidden + off + d];
+        }
+        __syncthreads();
+
+        if (active) {
+            int chunkStart = k0;
+            int chunkEnd = k0 + chunk;
+            int validStart = max(s0, chunkStart);
+            int validEnd = min(s1, chunkEnd);
+
+            if (validStart < validEnd) {
+                const float* qi = qkv + (long)i * 3 * hidden + off;
+                float s[AT_KTILE];
+                float blockMax = -3.402823466e+38f;
+                #pragma unroll
+                for (int kk = 0; kk < AT_KTILE; kk++) {
+                    if (kk < chunk) {
+                        int kIdx = k0 + kk;
+                        if (kIdx >= s0 && kIdx < s1) {
+                            float dot = 0.0f;
+                            for (int d = 0; d < hd; d++) dot += qi[d] * Ks[kk][d];
+                            float sv = dot * scale;
+                            s[kk] = sv;
+                            if (sv > blockMax) blockMax = sv;
+                        }
+                    }
+                }
+                if (blockMax > -3.402823466e+38f) {
+                    float newMax = fmaxf(m, blockMax);
+                    float corr = expf(m - newMax);
+                    l *= corr;
+                    for (int d = 0; d < hd; d++) acc[d] *= corr;
+                    float blockSum = 0.0f;
+                    for (int kk = 0; kk < chunk; kk++) {
+                        int kIdx = k0 + kk;
+                        if (kIdx >= s0 && kIdx < s1) {
+                            float e = expf(s[kk] - newMax);
+                            blockSum += e;
+                            for (int d = 0; d < hd; d++) acc[d] += e * Vs[kk][d];
+                        }
+                    }
+                    l += blockSum;
+                    m = newMax;
+                }
+            }
+        }
+        __syncthreads();
+    }
+
+    if (active) {
+        float* oi = out + (long)i * hidden + off;
+        float inv = (l > 0.0f) ? (1.0f / l) : 0.0f;
+        for (int d = 0; d < hd; d++) oi[d] = acc[d] * inv;
     }
 }
 
@@ -650,6 +863,121 @@ extern "C" __global__ void gemm_w8a8_reg(
     }
 }
 
+// gemm_w8a8_bias — fused GEMM + bias addition.
+// Writes C[m, n] = (acc * aScale * bScale) + bias[n], eliminating separate add_bias kernel.
+extern "C" __global__ void gemm_w8a8_bias(
+    const signed char* __restrict__ A, const float* __restrict__ aScale,
+    const signed char* __restrict__ B, const float* __restrict__ bScale,
+    const float* __restrict__ bias,
+    float* __restrict__ C, int M, int N, int K)
+{
+    __shared__ int As[IBK][IBM + 1];
+    __shared__ int Bs[IBK][IBN + 1];
+    const int* __restrict__ Aw = (const int*)A;
+    const int* __restrict__ Bw = (const int*)B;
+    int kw = K >> 2;
+
+    int tid = threadIdx.y * blockDim.x + threadIdx.x;
+    int m0 = blockIdx.y * IBM, n0 = blockIdx.x * IBN;
+    int lr = tid >> 2, lc = tid & 3;
+
+    int acc[IBTM][IBTN];
+    #pragma unroll
+    for (int i = 0; i < IBTM; i++)
+        #pragma unroll
+        for (int j = 0; j < IBTN; j++) acc[i][j] = 0;
+
+    for (int k0 = 0; k0 < kw; k0 += IBK) {
+        As[lc][lr] = (m0 + lr < M) ? Aw[(long)(m0 + lr) * kw + k0 + lc] : 0;
+        Bs[lc][lr] = (n0 + lr < N) ? Bw[(long)(n0 + lr) * kw + k0 + lc] : 0;
+        __syncthreads();
+
+        #pragma unroll
+        for (int kk = 0; kk < IBK; kk++) {
+            int a[IBTM], b[IBTN];
+            #pragma unroll
+            for (int i = 0; i < IBTM; i++) a[i] = As[kk][threadIdx.y * IBTM + i];
+            #pragma unroll
+            for (int j = 0; j < IBTN; j++) b[j] = Bs[kk][threadIdx.x * IBTN + j];
+            #pragma unroll
+            for (int i = 0; i < IBTM; i++)
+                #pragma unroll
+                for (int j = 0; j < IBTN; j++) acc[i][j] = __dp4a(a[i], b[j], acc[i][j]);
+        }
+        __syncthreads();
+    }
+
+    #pragma unroll
+    for (int i = 0; i < IBTM; i++) {
+        int m = m0 + threadIdx.y * IBTM + i;
+        if (m >= M) continue;
+        #pragma unroll
+        for (int j = 0; j < IBTN; j++) {
+            int n = n0 + threadIdx.x * IBTN + j;
+            if (n < N) C[(long)m * N + n] = (float)acc[i][j] * aScale[m] * bScale[n] + bias[n];
+        }
+    }
+}
+
+// gemm_w8a8_bias_add — fused GEMM + bias + residual addition.
+// Writes residual[m, n] += (acc * aScale * bScale) + bias[n], eliminating both add_bias and add_vec.
+extern "C" __global__ void gemm_w8a8_bias_add(
+    const signed char* __restrict__ A, const float* __restrict__ aScale,
+    const signed char* __restrict__ B, const float* __restrict__ bScale,
+    const float* __restrict__ bias,
+    float* __restrict__ residual, int M, int N, int K)
+{
+    __shared__ int As[IBK][IBM + 1];
+    __shared__ int Bs[IBK][IBN + 1];
+    const int* __restrict__ Aw = (const int*)A;
+    const int* __restrict__ Bw = (const int*)B;
+    int kw = K >> 2;
+
+    int tid = threadIdx.y * blockDim.x + threadIdx.x;
+    int m0 = blockIdx.y * IBM, n0 = blockIdx.x * IBN;
+    int lr = tid >> 2, lc = tid & 3;
+
+    int acc[IBTM][IBTN];
+    #pragma unroll
+    for (int i = 0; i < IBTM; i++)
+        #pragma unroll
+        for (int j = 0; j < IBTN; j++) acc[i][j] = 0;
+
+    for (int k0 = 0; k0 < kw; k0 += IBK) {
+        As[lc][lr] = (m0 + lr < M) ? Aw[(long)(m0 + lr) * kw + k0 + lc] : 0;
+        Bs[lc][lr] = (n0 + lr < N) ? Bw[(long)(n0 + lr) * kw + k0 + lc] : 0;
+        __syncthreads();
+
+        #pragma unroll
+        for (int kk = 0; kk < IBK; kk++) {
+            int a[IBTM], b[IBTN];
+            #pragma unroll
+            for (int i = 0; i < IBTM; i++) a[i] = As[kk][threadIdx.y * IBTM + i];
+            #pragma unroll
+            for (int j = 0; j < IBTN; j++) b[j] = Bs[kk][threadIdx.x * IBTN + j];
+            #pragma unroll
+            for (int i = 0; i < IBTM; i++)
+                #pragma unroll
+                for (int j = 0; j < IBTN; j++) acc[i][j] = __dp4a(a[i], b[j], acc[i][j]);
+        }
+        __syncthreads();
+    }
+
+    #pragma unroll
+    for (int i = 0; i < IBTM; i++) {
+        int m = m0 + threadIdx.y * IBTM + i;
+        if (m >= M) continue;
+        #pragma unroll
+        for (int j = 0; j < IBTN; j++) {
+            int n = n0 + threadIdx.x * IBTN + j;
+            if (n < N) {
+                long idx = (long)m * N + n;
+                residual[idx] += (float)acc[i][j] * aScale[m] * bScale[n] + bias[n];
+            }
+        }
+    }
+}
+
 extern "C" __global__ void gemm_f32_tiled(
     const float* __restrict__ A, const float* __restrict__ B,
     float* __restrict__ C, int M, int N, int K)
@@ -751,3 +1079,126 @@ extern "C" __global__ void gemm_f32_reg(
         for (int j = 0; j < RTN; j++) C[(long)m * N + n0 + threadIdx.x * RTN + j] = acc[i][j];
     }
 }
+
+// gemm_f32_bias — register-blocked f32 GEMM with fused bias addition.
+// Writes C[m, n] = acc + bias[n]. Accepts arbitrary M and N when K is a multiple of 16.
+extern "C" __global__ void gemm_f32_bias(
+    const float* __restrict__ A, const float* __restrict__ B,
+    const float* __restrict__ bias,
+    float* __restrict__ C, int M, int N, int K)
+{
+    __shared__ float As[RBK][RBM + 1];
+    __shared__ float Bs[RBK][RBN + 1];
+    int tid = threadIdx.y * blockDim.x + threadIdx.x; // 0..255
+    int m0 = blockIdx.y * RBM, n0 = blockIdx.x * RBN;
+    int lr = tid / RBK, lc = tid % RBK; // 16 rows x 16 k-cols per pass
+
+    float acc[RTM][RTN];
+    #pragma unroll
+    for (int i = 0; i < RTM; i++)
+        #pragma unroll
+        for (int j = 0; j < RTN; j++) acc[i][j] = 0.f;
+
+    for (int k0 = 0; k0 < K; k0 += RBK) {
+        #pragma unroll
+        for (int i = 0; i < RBM; i += 16) {
+            int r = m0 + lr + i;
+            int c = k0 + lc;
+            As[lc][lr + i] = (r < M && c < K) ? A[(long)r * K + c] : 0.f;
+        }
+        #pragma unroll
+        for (int i = 0; i < RBN; i += 16) {
+            int r = n0 + lr + i;
+            int c = k0 + lc;
+            Bs[lc][lr + i] = (r < N && c < K) ? B[(long)r * K + c] : 0.f;
+        }
+        __syncthreads();
+
+        #pragma unroll
+        for (int kk = 0; kk < RBK; kk++) {
+            float a[RTM], b[RTN];
+            #pragma unroll
+            for (int i = 0; i < RTM; i++) a[i] = As[kk][threadIdx.y * RTM + i];
+            #pragma unroll
+            for (int j = 0; j < RTN; j++) b[j] = Bs[kk][threadIdx.x * RTN + j];
+            #pragma unroll
+            for (int i = 0; i < RTM; i++)
+                #pragma unroll
+                for (int j = 0; j < RTN; j++) acc[i][j] += a[i] * b[j];
+        }
+        __syncthreads();
+    }
+
+    #pragma unroll
+    for (int i = 0; i < RTM; i++) {
+        int m = m0 + threadIdx.y * RTM + i;
+        if (m >= M) continue;
+        #pragma unroll
+        for (int j = 0; j < RTN; j++) {
+            int n = n0 + threadIdx.x * RTN + j;
+            if (n < N) C[(long)m * N + n] = acc[i][j] + bias[n];
+        }
+    }
+}
+
+// gemm_f32_bias_add — register-blocked f32 GEMM with fused bias and residual addition.
+// Writes residual[m, n] += acc + bias[n], eliminating both add_bias and add_vec.
+extern "C" __global__ void gemm_f32_bias_add(
+    const float* __restrict__ A, const float* __restrict__ B,
+    const float* __restrict__ bias,
+    float* __restrict__ residual, int M, int N, int K)
+{
+    __shared__ float As[RBK][RBM + 1];
+    __shared__ float Bs[RBK][RBN + 1];
+    int tid = threadIdx.y * blockDim.x + threadIdx.x; // 0..255
+    int m0 = blockIdx.y * RBM, n0 = blockIdx.x * RBN;
+    int lr = tid / RBK, lc = tid % RBK; // 16 rows x 16 k-cols per pass
+
+    float acc[RTM][RTN];
+    #pragma unroll
+    for (int i = 0; i < RTM; i++)
+        #pragma unroll
+        for (int j = 0; j < RTN; j++) acc[i][j] = 0.f;
+
+    for (int k0 = 0; k0 < K; k0 += RBK) {
+        #pragma unroll
+        for (int i = 0; i < RBM; i += 16) {
+            int r = m0 + lr + i;
+            int c = k0 + lc;
+            As[lc][lr + i] = (r < M && c < K) ? A[(long)r * K + c] : 0.f;
+        }
+        #pragma unroll
+        for (int i = 0; i < RBN; i += 16) {
+            int r = n0 + lr + i;
+            int c = k0 + lc;
+            Bs[lc][lr + i] = (r < N && c < K) ? B[(long)r * K + c] : 0.f;
+        }
+        __syncthreads();
+
+        #pragma unroll
+        for (int kk = 0; kk < RBK; kk++) {
+            float a[RTM], b[RTN];
+            #pragma unroll
+            for (int i = 0; i < RTM; i++) a[i] = As[kk][threadIdx.y * RTM + i];
+            #pragma unroll
+            for (int j = 0; j < RTN; j++) b[j] = Bs[kk][threadIdx.x * RTN + j];
+            #pragma unroll
+            for (int i = 0; i < RTM; i++)
+                #pragma unroll
+                for (int j = 0; j < RTN; j++) acc[i][j] += a[i] * b[j];
+        }
+        __syncthreads();
+    }
+
+    #pragma unroll
+    for (int i = 0; i < RTM; i++) {
+        int m = m0 + threadIdx.y * RTM + i;
+        if (m >= M) continue;
+        #pragma unroll
+        for (int j = 0; j < RTN; j++) {
+            int n = n0 + threadIdx.x * RTN + j;
+            if (n < N) residual[(long)m * N + n] += acc[i][j] + bias[n];
+        }
+    }
+}
+

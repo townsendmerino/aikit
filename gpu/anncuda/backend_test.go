@@ -1023,13 +1023,13 @@ func TestTopKPipelineWidths(t *testing.T) {
 	}
 	// The .cu's #defines must be the numbers the Go side thinks they are.
 	for _, d := range []string{"#define TKREG_SMALL 8", "#define TKREG_MID 16",
-		"#define TKREG_BIG 32", "#define TKREG_HUGE 64"} {
+		"#define TKREG_BIG 32", "#define TKREG_HUGE 64", "#define TKREG_GIANT 128"} {
 		if !bytes.Contains(src, []byte(d)) {
 			t.Errorf("gemv_w8a8.cu has no %q", d)
 		}
 	}
-	if !strings.Contains(fmt.Sprint(topkWidths), "[8 16 32 64]") {
-		t.Errorf("topkWidths %v no longer matches the four TKREG defines above", topkWidths)
+	if !strings.Contains(fmt.Sprint(topkWidths), "[8 16 32 64 128]") {
+		t.Errorf("topkWidths %v no longer matches the five TKREG defines above", topkWidths)
 	}
 
 	// The routing invariant: the narrowest kernel that can hold k, and -1 only above

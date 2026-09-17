@@ -249,6 +249,12 @@ func (e *encoder) gelu(enc *gpu.Encoder, x gpu.Buffer, n int) {
 }
 
 func (e *encoder) attn(enc *gpu.Encoder, q, k, v, out gpu.Buffer, np, nH, hd int, scale float32) {
+	if gpu.AttentionTiledEligible(hd) && np >= gpu.AttentionTiledMinNP {
+		n, tg := gpu.AttentionTiledDispatch(np, nH)
+		enc.Dispatch(e.k.AttentionTiled, n, tg,
+			q, k, v, out, e.u32(np), e.u32(nH), e.u32(hd), e.f32(scale))
+		return
+	}
 	enc.DispatchTG(e.k.Attention, np*nH*gpu.ViTBlock, gpu.ViTBlock, np*4,
 		q, k, v, out, e.u32(np), e.u32(nH), e.u32(hd), e.f32(scale))
 }
@@ -264,21 +270,47 @@ func (e *encoder) quantRows(enc *gpu.Encoder, src gpu.Buffer, M, K int) {
 	enc.Dispatch(e.k.QuantRows, M*gpu.ViTBlock, gpu.ViTBlock, src, e.qi8, e.qs, e.u32(M), e.u32(K))
 }
 
-// projQuantized is proj without the quantise step: the caller has already put
-// the activation in qi8/qs.
+// projQuantized is unfused GEMM + add_bias on already-quantized qi8/qs.
 func (e *encoder) projQuantized(enc *gpu.Encoder, m mat, bias, dst gpu.Buffer, M int) {
 	K, N := m.cols, m.rows
-	p, gx, gy, tgx, tgy := e.k.GEMMW8A8Plan(M, N, K) // M-15: register-blocked fast path when K%16==0
+	p, gx, gy, tgx, tgy := e.k.GEMMW8A8Plan(M, N, K)
 	enc.Dispatch2D(p, gx, gy, tgx, tgy,
 		e.qi8, e.qs, m.q, m.s, dst, e.u32(M), e.u32(N), e.u32(K))
 	enc.Dispatch(e.k.AddBias, M*N, vitTG(M*N), dst, bias, e.u32(M), e.u32(N))
 }
 
-// proj is quantise + projQuantized, for the projections that do not share an
-// activation with a sibling.
-func (e *encoder) proj(enc *gpu.Encoder, src gpu.Buffer, m mat, bias, dst gpu.Buffer, M int) {
-	e.quantRows(enc, src, M, m.cols)
+// projQuantizedBias runs gemm_w8a8_bias on already-quantized activation in qi8/qs.
+func (e *encoder) projQuantizedBias(enc *gpu.Encoder, m mat, bias, dst gpu.Buffer, M int) {
+	K, N := m.cols, m.rows
+	p, gx, gy, tgx, tgy := e.k.GEMMW8A8BiasPlan(M, N, K)
+	if p != (gpu.Pipeline{}) {
+		enc.Dispatch2D(p, gx, gy, tgx, tgy,
+			e.qi8, e.qs, m.q, m.s, bias, dst, e.u32(M), e.u32(N), e.u32(K))
+		return
+	}
+	// Fallback to unfused
 	e.projQuantized(enc, m, bias, dst, M)
+}
+
+// projBias is quantRows + projQuantizedBias.
+func (e *encoder) projBias(enc *gpu.Encoder, src gpu.Buffer, m mat, bias, dst gpu.Buffer, M int) {
+	e.quantRows(enc, src, M, m.cols)
+	e.projQuantizedBias(enc, m, bias, dst, M)
+}
+
+// projBiasAdd quantizes src, then runs gemm_w8a8_bias_add directly accumulating into residual.
+func (e *encoder) projBiasAdd(enc *gpu.Encoder, src gpu.Buffer, m mat, bias, residual gpu.Buffer, M int) {
+	e.quantRows(enc, src, M, m.cols)
+	K, N := m.cols, m.rows
+	p, gx, gy, tgx, tgy := e.k.GEMMW8A8BiasAddPlan(M, N, K)
+	if p != (gpu.Pipeline{}) {
+		enc.Dispatch2D(p, gx, gy, tgx, tgy,
+			e.qi8, e.qs, m.q, m.s, bias, residual, e.u32(M), e.u32(N), e.u32(K))
+		return
+	}
+	// Fallback to unfused
+	e.projQuantized(enc, m, bias, e.o, M)
+	e.addVec(enc, residual, e.o, M*N)
 }
 
 // ForwardPatches runs the resident SigLIP forward on im2col patches [np*(C*P*P)]
@@ -331,18 +363,18 @@ func (e *encoder) ForwardPatches(patches []float32) ([]float32, error) {
 			// and bind the result three times rather than running three
 			// identical QuantRows dispatches.
 			e.quantRows(enc, e.n1, np, L.qw.cols)
-			e.projQuantized(enc, L.qw, L.qb, e.qa, np)
-			e.projQuantized(enc, L.kw, L.kb, e.ka, np)
-			e.projQuantized(enc, L.vw, L.vb, e.va, np)
+			e.projQuantizedBias(enc, L.qw, L.qb, e.qa, np)
+			e.projQuantizedBias(enc, L.kw, L.kb, e.ka, np)
+			e.projQuantizedBias(enc, L.vw, L.vb, e.va, np)
 			e.attn(enc, e.qa, e.ka, e.va, e.att, np, nH, hd, scale)
-			e.proj(enc, e.att, L.ow, L.ob, e.o, np)
-			e.addVec(enc, e.h, e.o, np*hidden)
+			// Fused O projection + bias + residual add directly into h
+			e.projBiasAdd(enc, e.att, L.ow, L.ob, e.h, np)
 			// MLP block (pre-LN, residual): fc2(geluTanh(fc1(x)))
 			e.norm(enc, e.h, L.ln2w, L.ln2b, e.n2, np, hidden)
-			e.proj(enc, e.n2, L.fc1w, L.fc1b, e.mid, np)
+			e.projBias(enc, e.n2, L.fc1w, L.fc1b, e.mid, np)
 			e.gelu(enc, e.mid, np*inter)
-			e.proj(enc, e.mid, L.fc2w, L.fc2b, e.mlp, np)
-			e.addVec(enc, e.h, e.mlp, np*hidden)
+			// Fused FC2 projection + bias + residual add directly into h
+			e.projBiasAdd(enc, e.mid, L.fc2w, L.fc2b, e.h, np)
 		}); err != nil {
 			return nil, fmt.Errorf("visionmetal: layer %d: %w", i, err)
 		}

@@ -233,9 +233,23 @@ func (e *encoder) proj(enc *gpu.Encoder, src gpu.Buffer, m mat, bias, dst gpu.Bu
 		// W8A8 has no simdgroup_matrix form; GEMMW8A8Plan picks the register-blocked
 		// fast path when K%16==0 (M-15), else the bounds-checked tiled fallback.
 		enc.Dispatch(e.k.QuantRows, M*gpu.ViTBlock, gpu.ViTBlock, src, e.qi8, e.qs, e.u32(M), e.u32(K))
+		if bias.Len() > 0 {
+			p, gx, gy, tgx, tgy := e.k.GEMMW8A8BiasPlan(M, N, K)
+			if p != (gpu.Pipeline{}) {
+				enc.Dispatch2D(p, gx, gy, tgx, tgy, e.qi8, e.qs, m.a, m.b, bias, dst, e.u32(M), e.u32(N), e.u32(K))
+				return
+			}
+		}
 		p, gx, gy, tgx, tgy := e.k.GEMMW8A8Plan(M, N, K)
 		enc.Dispatch2D(p, gx, gy, tgx, tgy, e.qi8, e.qs, m.a, m.b, dst, e.u32(M), e.u32(N), e.u32(K))
 	} else {
+		if bias.Len() > 0 {
+			p, gx, gy, tgx, tgy := e.k.GEMMF32BiasPlan(M, N, K)
+			if p != (gpu.Pipeline{}) {
+				enc.Dispatch2D(p, gx, gy, tgx, tgy, src, m.a, bias, dst, e.u32(M), e.u32(N), e.u32(K))
+				return
+			}
+		}
 		p, gx, gy, tgx, tgy := e.k.GEMMF32Plan(M, N, K) // aligned → sg_big, else sg
 		enc.Dispatch2D(p, gx, gy, tgx, tgy, src, m.a, dst, e.u32(M), e.u32(N), e.u32(K))
 	}
@@ -243,6 +257,29 @@ func (e *encoder) proj(enc *gpu.Encoder, src gpu.Buffer, m mat, bias, dst gpu.Bu
 		return
 	}
 	enc.Dispatch(e.k.AddBias, M*N, vitTG(M*N), dst, bias, e.u32(M), e.u32(N))
+}
+
+// projBiasAdd encodes projection with fused bias and residual addition:
+// residual[M,N] += src[M,K] · w[N,K]ᵀ + bias.
+func (e *encoder) projBiasAdd(enc *gpu.Encoder, src gpu.Buffer, m mat, bias, residual gpu.Buffer, M int) {
+	K, N := m.cols, m.rows
+	if m.quant && bias.Len() > 0 {
+		p, gx, gy, tgx, tgy := e.k.GEMMW8A8BiasAddPlan(M, N, K)
+		if p != (gpu.Pipeline{}) {
+			enc.Dispatch(e.k.QuantRows, M*gpu.ViTBlock, gpu.ViTBlock, src, e.qi8, e.qs, e.u32(M), e.u32(K))
+			enc.Dispatch2D(p, gx, gy, tgx, tgy, e.qi8, e.qs, m.a, m.b, bias, residual, e.u32(M), e.u32(N), e.u32(K))
+			return
+		}
+	} else if !m.quant && bias.Len() > 0 {
+		p, gx, gy, tgx, tgy := e.k.GEMMF32BiasAddPlan(M, N, K)
+		if p != (gpu.Pipeline{}) {
+			enc.Dispatch2D(p, gx, gy, tgx, tgy, src, m.a, bias, residual, e.u32(M), e.u32(N), e.u32(K))
+			return
+		}
+	}
+	// Fallback to unfused proj + AddVec
+	e.proj(enc, src, m, bias, e.projOut, M)
+	enc.Dispatch(e.k.AddVec, M*N, vitTG(M*N), residual, e.projOut, e.u32(M*N))
 }
 
 func (e *encoder) rms(enc *gpu.Encoder, src, w, dst gpu.Buffer, rows, dim int) {
@@ -274,11 +311,13 @@ func (e *encoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32
 	//
 	// Both branches of the per-layer dispatch are covered by taking the larger of
 	// the window and full-attention segment bounds.
-	maxSegAny := max(plan.MaxWinSeg, plan.MaxFullSeg)
-	if need, have := attnThreadgroupBytes(maxSegAny), e.dev.MaxThreadgroupMemoryLength(); need > have {
-		return nil, fmt.Errorf("gpu: qwen ViT attention needs %d B of threadgroup memory for %d patches (max segment %d) but the device allows %d — reduce max_pixels", need, n, maxSegAny, have)
-	}
 	H, I, nH, hd := e.w.Hidden, e.w.Inter, e.w.NumHeads, e.w.HeadDim
+	maxSegAny := max(plan.MaxWinSeg, plan.MaxFullSeg)
+	if !gpu.AttentionTiledEligible(hd) {
+		if need, have := attnThreadgroupBytes(maxSegAny), e.dev.MaxThreadgroupMemoryLength(); need > have {
+			return nil, fmt.Errorf("gpu: qwen ViT attention needs %d B of threadgroup memory for %d patches (max segment %d) but the device allows %d — reduce max_pixels", need, n, maxSegAny, have)
+		}
+	}
 	pd := e.w.PatchDim
 	if len(pixelValues) != n*pd {
 		return nil, fmt.Errorf("qwenmetal: pixel_values len %d, want %d", len(pixelValues), n*pd)
@@ -362,17 +401,21 @@ func (e *encoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32
 			e.rms(enc, e.h, B.norm1w, e.n1, n, H)
 			e.proj(enc, e.n1, B.qkvw, B.qkvb, e.qkv, n)
 			enc.Dispatch(e.k.RopeQK, n*nH*(hd/2), vitTG(n*nH*(hd/2)), e.qkv, e.cosB, e.sinB, e.u32(n), e.u32(nH), e.u32(hd))
-			enc.DispatchTG(e.k.AttentionSeg, n*nH*gpu.ViTBlock, gpu.ViTBlock, maxSeg*4,
-				e.qkv, e.att, e.segS, e.segE, e.u32(n), e.u32(nH), e.u32(hd), e.f32(scale))
-			e.proj(enc, e.att, B.projw, B.projb, e.projOut, n)
-			enc.Dispatch(e.k.AddVec, n*H, vitTG(n*H), e.h, e.projOut, e.u32(n*H))
+			if gpu.AttentionTiledEligible(hd) && n >= gpu.AttentionTiledMinNP {
+				nGrid, tg := gpu.AttentionSegTiledDispatch(n, nH)
+				enc.Dispatch(e.k.AttentionSegTiled, nGrid, tg,
+					e.qkv, e.att, e.segS, e.segE, e.u32(n), e.u32(nH), e.u32(hd), e.f32(scale))
+			} else {
+				enc.DispatchTG(e.k.AttentionSeg, n*nH*gpu.ViTBlock, gpu.ViTBlock, maxSeg*4,
+					e.qkv, e.att, e.segS, e.segE, e.u32(n), e.u32(nH), e.u32(hd), e.f32(scale))
+			}
+			e.projBiasAdd(enc, e.att, B.projw, B.projb, e.h, n)
 			// --- gated SiLU MLP ---
 			e.rms(enc, e.h, B.norm2w, e.n2, n, H)
 			e.proj(enc, e.n2, B.gatew, B.gateb, e.gate, n)
 			e.proj(enc, e.n2, B.upw, B.upb, e.up, n)
 			enc.Dispatch(e.k.SiLUMul, n*I, vitTG(n*I), e.gate, e.up, e.u32(n*I))
-			e.proj(enc, e.gate, B.downw, B.downb, e.projOut, n)
-			enc.Dispatch(e.k.AddVec, n*H, vitTG(n*H), e.h, e.projOut, e.u32(n*H))
+			e.projBiasAdd(enc, e.gate, B.downw, B.downb, e.h, n)
 		}); err != nil {
 			return nil, fmt.Errorf("qwenmetal: block %d: %w", li, err)
 		}
