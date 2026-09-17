@@ -249,7 +249,7 @@ func (e *encoder) gelu(enc *gpu.Encoder, x gpu.Buffer, n int) {
 }
 
 func (e *encoder) attn(enc *gpu.Encoder, q, k, v, out gpu.Buffer, np, nH, hd int, scale float32) {
-	if gpu.AttentionTiledEligible(hd) && np >= gpu.AttentionTiledMinNP {
+	if gpu.AttentionTiledEnabledOnMetal && gpu.AttentionTiledEligible(hd) && np >= gpu.AttentionTiledMinNP {
 		n, tg := gpu.AttentionTiledDispatch(np, nH)
 		enc.Dispatch(e.k.AttentionTiled, n, tg,
 			q, k, v, out, e.u32(np), e.u32(nH), e.u32(hd), e.f32(scale))

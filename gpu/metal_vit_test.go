@@ -18,7 +18,7 @@ import (
 // f32 number and the reason. The exact ones (int8 dot, elementwise adds, byte-exact quant)
 // hold the same tight bounds.
 
-func vitSetupM(t *testing.T) (*Device, Queue, ViT) {
+func vitSetupM(t testing.TB) (*Device, Queue, ViT) {
 	t.Helper()
 	d, err := CreateSystemDefaultDevice()
 	if err != nil {

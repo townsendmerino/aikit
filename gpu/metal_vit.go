@@ -1261,10 +1261,23 @@ const (
 func AttentionTiledEligible(hd int) bool { return hd > 0 && hd <= AttnTiledMaxHD }
 
 // AttentionTiledMinNP mirrors cuda_vit.go's constant of the same name (that file is
-// //go:build linux, so darwin needs its own copy): the CUDA-measured np/seq crossover
-// (RTX 2070 SUPER: 352ms vs 416ms tiled-vs-untiled) is reused here pending a
-// Metal-specific measurement — see attention_tiled's own doc comment above.
+// //go:build linux, so darwin needs its own copy) — it is CUDA's measured crossover, kept
+// here only so the two files' exported surfaces match. Do NOT gate a Metal dispatch on it;
+// see AttentionTiledEnabledOnMetal below.
 const AttentionTiledMinNP = 3072
+
+// AttentionTiledEnabledOnMetal is false: the CUDA crossover above does not transfer.
+// BenchmarkMetalAttention on a real M1 Pro found untiled `attention` faster than
+// `attention_tiled` at EVERY shape tested (np=729..4096, the full realistic ViT/Qwen
+// range) — 1.46-1.85x, not close, and not narrowing at the high end the way a real
+// crossover approaching from one side would. CUDA's dynamic-shared-memory occupancy
+// penalty (attention_tiled's own doc comment above) that motivates the tiled kernel
+// there does not describe Apple's unified-memory/threadgroup-memory architecture, so
+// there is no reason to expect np=3072 — or any nearby number — to be Metal's crossover
+// too. Callers MUST check this (not just AttentionTiledEligible) before dispatching
+// attention_tiled. The kernel itself is correct and stays tested
+// (TestMetal_vitAttentionTiled) for whenever a real Metal shape justifies flipping this.
+const AttentionTiledEnabledOnMetal = false
 
 // AttentionTiledDispatch returns the Run1D geometry (n, tg) for attention_tiled at a
 // given (np, nH). Callers MUST check AttentionTiledEligible(hd) first — an ineligible hd

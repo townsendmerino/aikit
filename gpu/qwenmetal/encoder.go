@@ -401,7 +401,7 @@ func (e *encoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32
 			e.rms(enc, e.h, B.norm1w, e.n1, n, H)
 			e.proj(enc, e.n1, B.qkvw, B.qkvb, e.qkv, n)
 			enc.Dispatch(e.k.RopeQK, n*nH*(hd/2), vitTG(n*nH*(hd/2)), e.qkv, e.cosB, e.sinB, e.u32(n), e.u32(nH), e.u32(hd))
-			if gpu.AttentionTiledEligible(hd) && n >= gpu.AttentionTiledMinNP {
+			if gpu.AttentionTiledEnabledOnMetal && gpu.AttentionTiledEligible(hd) && n >= gpu.AttentionTiledMinNP {
 				nGrid, tg := gpu.AttentionSegTiledDispatch(n, nH)
 				enc.Dispatch(e.k.AttentionSegTiled, nGrid, tg,
 					e.qkv, e.att, e.segS, e.segE, e.u32(n), e.u32(nH), e.u32(hd), e.f32(scale))
