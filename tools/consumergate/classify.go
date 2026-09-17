@@ -28,6 +28,7 @@ var published = map[string]bool{
 	rootPath + "/gpu/qwenmetal":    true,
 	rootPath + "/gpu/visioncuda":   true,
 	rootPath + "/gpu/visionmetal":  true,
+	rootPath + "/gpu/webgpu":       true,
 	rootPath + "/chunk/treesitter": true,
 }
 
