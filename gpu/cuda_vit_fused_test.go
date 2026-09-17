@@ -269,4 +269,3 @@ func TestCUDA_gemmF32Bias(t *testing.T) {
 	}
 	t.Log("gemm_f32_bias and gemm_f32_bias_add match unfused gemm+bias and gemm+bias+add across all shapes")
 }
-

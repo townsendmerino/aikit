@@ -181,13 +181,13 @@ const ViTBlock = 256
 
 // ViT holds the compiled encoder kernel pipelines.
 type ViT struct {
-	QuantRows Pipeline
-	GEMMW8A8  Pipeline
-	GEMMF32   Pipeline
-	AddBias   Pipeline
-	AddVec    Pipeline
-	LayerNorm Pipeline
-	GELUTanh  Pipeline
+	QuantRows      Pipeline
+	GEMMW8A8       Pipeline
+	GEMMF32        Pipeline
+	AddBias        Pipeline
+	AddVec         Pipeline
+	LayerNorm      Pipeline
+	GELUTanh       Pipeline
 	Attention      Pipeline
 	AttentionTiled Pipeline
 
@@ -345,7 +345,6 @@ func AttentionSegTiledLaunchConfig(seq, heads int) LaunchConfig {
 	}
 }
 
-
 // AttentionTiledMinNP is the sequence length crossover where attention_tiled begins
 // outperforming attention. At np < 3072, attention's 256-thread-per-query parallelism
 // wins; at np >= 3072, dynamic shared memory (np*4 B) forces block occupancy down on
@@ -490,5 +489,3 @@ func (v ViT) GEMMF32BiasAddPlan(M, N, K int) (Pipeline, LaunchConfig) {
 	}
 	return Pipeline{}, LaunchConfig{}
 }
-
-

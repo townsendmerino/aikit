@@ -142,4 +142,3 @@ func TestCUDA_vitAttentionTiled_matchesUntiled(t *testing.T) {
 		t.Errorf("worst Δ %.3g exceeds 1e-4", worstAll)
 	}
 }
-

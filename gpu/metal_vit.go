@@ -1260,6 +1260,12 @@ const (
 // itself performs, callers must check it themselves before dispatching.
 func AttentionTiledEligible(hd int) bool { return hd > 0 && hd <= AttnTiledMaxHD }
 
+// AttentionTiledMinNP mirrors cuda_vit.go's constant of the same name (that file is
+// //go:build linux, so darwin needs its own copy): the CUDA-measured np/seq crossover
+// (RTX 2070 SUPER: 352ms vs 416ms tiled-vs-untiled) is reused here pending a
+// Metal-specific measurement — see attention_tiled's own doc comment above.
+const AttentionTiledMinNP = 3072
+
 // AttentionTiledDispatch returns the Run1D geometry (n, tg) for attention_tiled at a
 // given (np, nH). Callers MUST check AttentionTiledEligible(hd) first — an ineligible hd
 // dispatched anyway is an out-of-bounds write into the kernel's fixed-size Ks/Vs arrays,

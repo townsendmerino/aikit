@@ -132,6 +132,13 @@ linters:
       - path: gpu/cuda\.go
         linters: [errcheck]
         text: "Error return value of `.*\\.Close` is not checked"
+      # gpu/visioncuda's encoder.Close destroys a captured CUDA graph exec handle on
+      # teardown — same release-not-flush posture as gpu/cuda.go's own Graph.Close
+      # discards above, and encoder.Close() (the vision.ResidentBackend interface method)
+      # has no error return to propagate a failure to.
+      - path: gpu/visioncuda/encoder\.go
+        linters: [errcheck]
+        text: "Error return value of `e\\.graph\\.Close` is not checked"
 
 issues:
   # Show every finding so the cleanup pass can't miss any. Default is 50

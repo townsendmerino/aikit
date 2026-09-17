@@ -272,5 +272,3 @@ func BenchmarkVisionCUDA_Forward(b *testing.B) {
 		}
 	})
 }
-
-
