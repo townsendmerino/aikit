@@ -3,7 +3,7 @@ module github.com/townsendmerino/aikit/gpu/annmetal
 go 1.27.0
 
 require (
-	github.com/townsendmerino/aikit v1.45.1
+	github.com/townsendmerino/aikit v1.46.0
 	github.com/townsendmerino/aikit/gpu v0.33.1
 )
 
