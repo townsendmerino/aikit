@@ -9,6 +9,54 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.46.0] — 2026-09-20
+
+`perfgate` VERDICT: PASS — no regression vs v1.45.1 above each shape's floor — 25/45 shapes
+resolve the 5.0% class (Apple M1 Pro, `./linalg`, 6 visits, interleaved working tree vs
+v1.45.1). This release's new grouped kernels are additive (new files; nothing existing
+changed), so every instrumented shape — including the EXISTING ungrouped
+`BenchmarkMatmulQKAcc64`/`BenchmarkMatmulAVAcc64` (the per-head kernels the new grouped
+ones sit alongside, not replace) — reads flat, as expected; perfgate's fixed instrument set
+does not include the new kernels' own `BenchmarkMatmulQKAVGroupAB`, whose 1.53-2.39×
+grouped-vs-per-head win is reported above under Added instead.
+
+STATEMENT: 16 clean, 0 vulnerable, 0 unscanned, of 16. `tools/vulncheck` alone on this
+release's darwin machine (Apple M1 Pro) reports 12 clean/0 vulnerable/4 unscanned — the 4
+are `gpu/anncuda`/`gpu/enccuda`/`gpu/qwencuda`/`gpu/visioncuda`, whose `//go:build linux`
+tag `govulncheck` cannot resolve packages under on darwin (matches every prior release's
+identical pattern). Cross-checked on real Linux hardware this release (`nobara-pc`,
+linux/amd64, go1.27.0, govulncheck@v1.7.0, fresh fetch of `af926e3`): all four build clean
+and `govulncheck` reports no vulnerabilities in any of the 16 modules.
+
+### Added
+
+- **`linalg.MatmulQKAcc64Group` / `linalg.MatmulAVAcc64Group`** — grouped, float64-accumulating
+  QK/AV attention kernels that share one KV head's K/V load across all `G` query heads instead
+  of reloading it per head (goinfer R13, `docs/tasks/red-october.md`). The pure-Go grouped
+  kernels are the oracle and the fallback for any `G`; arm64 additionally carries a hand-written
+  NEON port for `G=6` (the real GQA group size a 1.5B-class model uses), following the same
+  lane-per-output convention as the existing per-head `attn_acc64_arm64.s` kernels. Gate 1
+  (528+ cases, raw-bit equality against `G` separate per-head calls, `G` in
+  `{1,2,4,6,7,8}`, an adversarial NEON-vs-Go sweep) is green.
+
+  Found and fixed a real bug during development, not shipped: the NEON QK kernel's store-phase
+  narrowing initially reused registers V16/V17 as scratch (copied from the per-head kernel's own
+  convention), but in the grouped kernel those are live accumulators for query `g=4`'s key-pairs
+  0/1 — `g=3`'s store step was silently clobbering `g=4`'s not-yet-read accumulators.
+  Root-caused via progressive isolated-probe bisection (register-choice, zeroing, an isolated
+  FMLA, then increasingly complete replicas of the real instruction sequence) before finding the
+  actual collision; caught by gate 1 before any release, not by a user report.
+
+  `BenchmarkMatmulQKAVGroupAB` (G=6, hd=128, nKV=2): the grouped kernel is **1.53-2.39× faster**
+  than `G` separate per-head calls at depth {130, 2048, 8192} — reversing an earlier pure-Go-only
+  negative result, which undercounted the design because a pure-Go grouped kernel cannot match
+  the existing per-head kernels' hand-tuned NEON register allocation; the win only appears once
+  the grouped kernel is ALSO hand-tuned NEON, not a pure-Go vs. hand-tuned-NEON comparison.
+
+  New surface, tuning-driven (the NEON port's register allocation is hand-tuned per `G`) — listed
+  Experimental in README.md's stability tiers, alongside `MatmulBTAcc64` (the ungrouped `Acc64`
+  kernel it shares its reassociation-error motivation with).
+
 ## [1.45.1] — 2026-09-17
 
 > **PERFGATE EXCEPTION: no perfgate run for this release.** The entire diff from v1.45.0 is
@@ -4435,6 +4483,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.45.1...HEAD
+[1.46.0]: https://github.com/townsendmerino/aikit/compare/v1.45.1...v1.46.0
 [1.45.1]: https://github.com/townsendmerino/aikit/compare/v1.45.0...v1.45.1
 [1.45.0]: https://github.com/townsendmerino/aikit/compare/v1.44.0...v1.45.0
 [1.44.0]: https://github.com/townsendmerino/aikit/compare/v1.43.0...v1.44.0

@@ -397,6 +397,15 @@ no such consumer has surfaced yet.
   package.
 - The concrete chunker structs (`regex.Chunker`, `markdown.Chunker`,
   `treesitter.Chunker`) and their `New()` — prefer `chunk.Get("regex")`.
+- `linalg.MatmulQKAcc64Group` / `linalg.MatmulAVAcc64Group` (v1.46.0) — grouped
+  float64-accumulating QK/AV attention kernels that share one KV head's K/V load
+  across all `G` query heads instead of reloading it per head (the `Acc64`
+  reassociation-error motivation is the same as `MatmulBTAcc64`, above, applied
+  to the grouped shape). The pure-Go path is the oracle and the fallback for any
+  `G`; arm64 additionally carries a hand-written NEON port for `G=6` (a real
+  GQA group size), gated bit-identical against `G` separate per-head calls
+  (528+ adversarial cases). New surface, tuning-driven (the NEON port's register
+  allocation is hand-tuned per `G`), so Experimental like `MatmulBTAcc64`.
 - `chunk/treesitter` — its own opt-in module, **tagged in lockstep with the core
   whenever the submodule itself changes** (`chunk/treesitter/v1.0.0` requires
   `aikit v1.0.0`). When a core release doesn't touch the submodule it gets no new
