@@ -26,8 +26,9 @@ STATEMENT: `tools/vulncheck` on this release's darwin machine (Apple M1 Pro) rep
 **INCOMPLETE — 12 clean, 0 vulnerable, 4 unscanned, of 16** — the 4 are
 `gpu/anncuda`/`gpu/enccuda`/`gpu/qwencuda`/`gpu/visioncuda`, whose `//go:build linux` tag
 `govulncheck` cannot resolve packages under on darwin (the same pattern as every prior release).
-The Linux cross-check (`nobara-pc`, linux/amd64) that completes the statement is recorded in the
-paragraph below it once run against the pushed prep commit.
+Cross-checked on real Linux hardware (`nobara-pc`, linux/amd64, go1.27.0, a fresh worktree of
+the pushed prep commit `63c6060`): all four build and scan clean —
+**STATEMENT: no reachable vulnerabilities in 16/16 modules at 63c6060.**
 
 ### Added
 
