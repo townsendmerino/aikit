@@ -536,7 +536,8 @@ func (h *HostBuffer[T]) Close() error {
 // kernels and dispatch are unchanged; only where the tensor is allocated differs. Close before the
 // owning Device.
 type MappedHostBuffer struct {
-	hb  *HostBuffer[uint8]
+	hb  *HostBuffer[uint8]        // origin: NewMappedHostBuffer (allocates, caller fills after)
+	rh  *gc.RegisteredHost[uint8] // origin: RegisterMappedHostBuffer (caller already filled, this pins in place)
 	buf Buffer
 }
 
@@ -580,10 +581,52 @@ func (d *Device) NewMappedHostBuffer(nBytes int) (*MappedHostBuffer, error) {
 	return &MappedHostBuffer{hb: hb, buf: Buffer{cx: d.cx, n: nBytes, raw: dptr}}, nil
 }
 
+// RegisterMappedHostBuffer pins data IN PLACE — no allocation, no copy — and returns the same
+// zero-copy device-usable handle NewMappedHostBuffer does. data must already hold its final
+// content; the returned MappedHostBuffer keeps data reachable (preventing the GC from collecting
+// or moving it) for as long as the buffer is open, so the caller does not need to separately.
+//
+// WHY THIS EXISTS, and why it is not simply "NewMappedHostBuffer but you supply the bytes":
+// cuMemAllocHost (what NewMappedHostBuffer calls) allocates FRESH pinned memory — the driver has
+// to find that many bytes of LOCKABLE physical RAM right then, which on a box with a large page
+// cache means reclaiming cache pages first, a real and highly variable cost. cuMemHostRegister
+// (this function) pins pages that are already resident — data was already touched by the caller's
+// own fill, so the memory is already committed; no reclaim is forced by this call. Measured on an
+// RTX 2070 SUPER at the 11.4 GB scale goinfer's C′ expert-stack staging runs at: populate-then-
+// register beat allocate-then-copy in every trial, 1.33x-4.46x (docs/measurements/
+// lead3-pin-order-2026-09-22.md in goinfer — cross-repo citation, not a path this module can
+// resolve, described rather than linked).
+//
+// Errors (not panics) so a caller can fall back to NewMappedHostBuffer, same convention as it.
+func (d *Device) RegisterMappedHostBuffer(data []byte) (*MappedHostBuffer, error) {
+	if d.cx == nil {
+		return nil, fmt.Errorf("cuda: RegisterMappedHostBuffer on a released device")
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("cuda: RegisterMappedHostBuffer got empty data")
+	}
+	if d.dev != nil {
+		if uva, err := d.dev.Attribute(gc.DeviceAttributeUnifiedAddressing); err == nil && uva == 0 {
+			return nil, fmt.Errorf("cuda: RegisterMappedHostBuffer needs UNIFIED_ADDRESSING (zero-copy host reads)")
+		}
+	}
+	rh, err := gc.RegisterHost[uint8](d.cx, data)
+	if err != nil {
+		return nil, fmt.Errorf("cuda: RegisterHost(%d bytes): %w", len(data), err)
+	}
+	dptr := cudasys.CUdeviceptr(uintptr(unsafe.Pointer(&data[0])))
+	return &MappedHostBuffer{rh: rh, buf: Buffer{cx: d.cx, n: len(data), raw: dptr}}, nil
+}
+
 // Bytes is the host-writable backing memory — fill it with the tensor's bytes before launch.
+// (A RegisterMappedHostBuffer's data was already filled before this call; Bytes() still returns
+// it, for a caller that wants to read back or verify what it pinned.)
 func (m *MappedHostBuffer) Bytes() []byte {
 	if m == nil {
 		return nil
+	}
+	if m.rh != nil {
+		return m.rh.Slice()
 	}
 	return m.hb.Slice()
 }
@@ -596,10 +639,16 @@ func (m *MappedHostBuffer) Buffer() Buffer {
 	return m.buf
 }
 
-// Close unregisters and frees the pinned host memory. Close before the owning Device.
+// Close unregisters (and, for NewMappedHostBuffer's origin, frees) the pinned host memory. A
+// RegisterMappedHostBuffer's underlying data is the caller's own slice and is not freed here —
+// only unpinned; the caller's ordinary Go GC ownership of it resumes. Close before the owning
+// Device.
 func (m *MappedHostBuffer) Close() error {
 	if m == nil {
 		return nil
+	}
+	if m.rh != nil {
+		return m.rh.Close()
 	}
 	return m.hb.Close()
 }

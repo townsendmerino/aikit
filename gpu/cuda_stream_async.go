@@ -110,6 +110,44 @@ func (q Queue) UploadAsyncAt(dst Buffer, src *HostBuffer[uint8], srcOff, n int) 
 	return err
 }
 
+// UploadAsyncAtFrom is UploadAsyncAt for a MappedHostBuffer source instead of a HostBuffer —
+// the same stream-ordered offset H2D, working from either of MappedHostBuffer's two origins
+// (NewMappedHostBuffer's own allocation, or RegisterMappedHostBuffer's caller-owned pin). Added
+// alongside RegisterMappedHostBuffer: C′'s expert-slot DMA (goinfer's dmaExpertSlot) reads its
+// pinned source through a MappedHostBuffer, not a bare HostBuffer, and UploadAsyncAt's existing
+// signature is kept as shipped (gpu/v0.33.2) rather than widened, so this is additive, not a
+// breaking change to released surface.
+func (q Queue) UploadAsyncAtFrom(dst Buffer, src *MappedHostBuffer, srcOff, n int) error {
+	if dst.b == nil {
+		return fmt.Errorf("cuda: UploadAsyncAtFrom into a nil or mapped-host buffer")
+	}
+	if q.s == nil {
+		return fmt.Errorf("cuda: UploadAsyncAtFrom on a queue with no stream")
+	}
+	if src == nil {
+		return fmt.Errorf("cuda: UploadAsyncAtFrom from a nil MappedHostBuffer")
+	}
+	s := src.Bytes()
+	if s == nil {
+		return fmt.Errorf("cuda: UploadAsyncAtFrom from a closed or empty MappedHostBuffer")
+	}
+	if n <= 0 {
+		return nil
+	}
+	if srcOff < 0 || srcOff+n > len(s) {
+		return fmt.Errorf("cuda: UploadAsyncAtFrom source [%d,%d) overruns a %d-byte pinned buffer", srcOff, srcOff+n, len(s))
+	}
+	if got, want := dst.b.Bytes(), uint64(dst.off)+uint64(n); got < want {
+		return fmt.Errorf("cuda: UploadAsyncAtFrom of %d bytes at offset %d overruns a %d-byte buffer", n, dst.off, got)
+	}
+	dptr := dst.b.DevicePtr() + cudasys.CUdeviceptr(dst.off)
+	err := q.d.onThread(func(drv *cudasys.Driver) error {
+		return cudaresult.MemcpyHtoDAsync(drv, dptr, &s[srcOff], uint64(n), q.s.Raw())
+	})
+	runtime.KeepAlive(src)
+	return err
+}
+
 // ZeroAsync enqueues a stream-ordered zero of n bytes of dst from its bind offset, on this queue.
 // The queue-ordered replacement for "Upload a slice of zeros" (two full syncs) when the buffer's
 // last reader and next writer are both on this queue.
