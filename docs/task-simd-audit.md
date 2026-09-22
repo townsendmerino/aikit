@@ -881,7 +881,10 @@ prefill == speculative verify` guarantees rest on.
 > **Still open here:** the S-01 tile's own fold (96 → 72, the read-back's 1.33× count — the same
 > identity, applied to `dot_w4a8_tile_arm64.s`, for prefill/verify); the load-side scale-vector
 > saving named below, not attempted — off the scalar/load side of a SIMD-issue-bound loop, so
-> expect little; the batched q‖k‖v span.
+> expect little; the batched q‖k‖v span. **Post-release wart, fixed on `main` for the next tag:**
+> v1.47.0 declared the `SetW4A8RowFold` toggle inside the arm64 file, so goinfer's untagged A/B
+> test did not compile on linux/amd64 (its CI run 35763888743) — now declared portably in
+> `quant_w4a8_fold.go`; goinfer's test carries `//go:build arm64` meanwhile.
 
 > **NOT STARTED, 2026-09-05, and deliberately so — the pre-registered decision rule said stop.**
 > The CPU-prefill-remainder brief (goinfer `task-prefill-gap.md` §4 L4) gated S-05 in the tile on a

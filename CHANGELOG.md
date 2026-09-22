@@ -9,6 +9,15 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`linalg.SetW4A8RowFold` / `W4A8RowFold` are now declared portably** (`linalg/quant_w4a8_fold.go`).
+  v1.47.0 declared them inside an `//go:build arm64` file, so a consumer referencing the toggle
+  from an untagged file failed to compile on linux/amd64 (goinfer's `TestR9_s05FoldAB`, CI run
+  35763888743) — an exported symbol that exists on one architecture is a defect even in the
+  Experimental tier. On non-arm64 the toggle is inert (set, readable, consulted by nothing); the
+  arm64 behaviour is unchanged.
+
 ## [1.47.0] — 2026-09-22
 
 `perfgate` VERDICT: PASS — no regression vs v1.46.0 above each shape's floor — 30/45 shapes

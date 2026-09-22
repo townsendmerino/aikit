@@ -4,25 +4,9 @@ package linalg
 
 // S-05 (docs/task-simd-audit.md): the M=1 row4 decode kernel with the -8
 // centering folded into the SDOT accumulators' initial value. See
-// dot_w4a8_fold_arm64.s for the identity and the µop count.
-
-// w4a8RowFold selects dotW4A8SplitHalf4RowFold for MatmulBTW4A8Row4Into's M=1
-// path (true) or the pre-S-05 dotW4A8SplitHalf4Row (false). Default on: the
-// two are bit-identical for every input (TestDotW4A8SplitHalf4RowFold_*), so
-// this is a performance switch kept so an in-process A/B can flip it —
-// SetW4A8RowFold. Not goroutine-safe to flip mid-matmul; a benchmark sets it
-// between calls.
-var w4a8RowFold = true
-
-// SetW4A8RowFold switches the M=1 row4 W4A8 path between the S-05 fold kernel
-// (true, the default) and the pre-S-05 kernel (false). Numerically inert —
-// both kernels produce identical bits — so this exists only for same-process
-// A/B measurement (docs/internal/measuring-performance.md rule 3).
-func SetW4A8RowFold(on bool) { w4a8RowFold = on }
-
-// W4A8RowFold reports whether the S-05 fold kernel is selected (see
-// SetW4A8RowFold).
-func W4A8RowFold() bool { return w4a8RowFold }
+// dot_w4a8_fold_arm64.s for the identity and the µop count. The A/B toggle
+// (w4a8RowFold, SetW4A8RowFold, W4A8RowFold) is declared portably in
+// quant_w4a8_fold.go so consumers can reference it from untagged files.
 
 // w4a8LaneCorrNeg8 writes corr[4g+l] = -8·(Σ act[32g+4l..32g+4l+3] +
 // Σ act[32g+16+4l..32g+16+4l+3]) for g < nGroups, l < 4 — the per-lane
