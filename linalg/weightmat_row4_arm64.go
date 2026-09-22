@@ -99,7 +99,9 @@ func row4Usable() bool { return hasDotProd }
 // which is compiled on every architecture; the non-arm64 twin is unreachable
 // behind row4Usable().
 func w4a8BatchRow4Span(aq []int8, aScale float32, row4 []byte, row4Scales, dst []float32, nGroups, bpr, q0, q1 int) {
-	w4a8Row4Span(aq, aScale, row4, row4Scales, dst, nGroups, bpr, q0, q1)
+	// nil corr: the pre-S-05 kernel. The batched q‖k‖v path is opt-in and parked
+	// (goinfer R-06); it gets the S-05 fold when it is funded, not silently here.
+	w4a8Row4Span(aq, nil, aScale, row4, row4Scales, dst, nGroups, bpr, q0, q1)
 }
 
 // RepackInt4Row4InPlace permutes the CALLER'S OWN q4/q4s into row4 layout —

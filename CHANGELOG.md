@@ -9,6 +9,58 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.47.0] — 2026-09-22
+
+`perfgate` VERDICT: PASS — no regression vs v1.46.0 above each shape's floor — 30/45 shapes
+resolve the 5.0% class (Apple M1 Pro, `./linalg`, 6 visits, interleaved working tree vs v1.46.0;
+box at load ~2.3–2.9, not idle). Every instrumented shape reads flat — and the one kernel this
+release changes is NOT among them: `BenchmarkW4A8_CanonicalVsSplitHalf`, the row the instrument
+set names as "the int4 decode kernel", existed only under `//go:build amd64`, so on an arm64 box
+perfgate's PASS carried no row for the arm64 row4 decode kernel at all (a gate vouching for less
+than it reads as — `docs/task-simd-audit.md` S-09's class). This release adds the arm64 twin of
+that benchmark (same name, so the instrument regex is unchanged); perfgate reports it "new — no
+baseline" this time and judges it from the next tag on. The changed kernel's own numbers are the
+harness rows under Added (1.284–1.290× hot, 1.268–1.296× streamed), not a perfgate verdict.
+
+STATEMENT: `tools/vulncheck` on this release's darwin machine (Apple M1 Pro) reports
+**INCOMPLETE — 12 clean, 0 vulnerable, 4 unscanned, of 16** — the 4 are
+`gpu/anncuda`/`gpu/enccuda`/`gpu/qwencuda`/`gpu/visioncuda`, whose `//go:build linux` tag
+`govulncheck` cannot resolve packages under on darwin (the same pattern as every prior release).
+The Linux cross-check (`nobara-pc`, linux/amd64) that completes the statement is recorded in the
+paragraph below it once run against the pushed prep commit.
+
+### Added
+
+- **arm64 W4A8 decode kernel: the −8 centering folded into the SDOT accumulator's initial value**
+  (`docs/task-simd-audit.md` S-05). `dotW4A8SplitHalf4RowFold` (`linalg/dot_w4a8_fold_arm64.s`) is
+  the M=1 row4 kernel with both per-row `VSUB.16B` removed — 9 → 7 SIMD µops per row-group — and
+  `w4a8LaneCorrNeg8` computes the per-lane activation sums × −8 once per activation row (two SDOTs
+  per group, 0.008–0.042% of a projection). `MatmulBTW4A8Row4Into` — the path every row4-resident
+  int4 tensor takes at M=1 — dispatches it by default. **Bit-identical** by the int32 identity
+  `Σ(nib−8)·act = Σnib·act − 8·Σact`: exact `==` gates against both the kernel it replaces and the
+  canonical `dotW4A8FoldSDOT` (nGroups 1..20 + 48/280, random and extreme activations) and at the
+  dispatch (serial and six-way, both production projections); mutation-checked (a wrong constant
+  and a one-ULP perturbation both go red); every new `SDOT`/`SCVTF` word cross-checked against
+  clang's assembler (14/14). Measured on `apple-m1pro`: **1.284–1.290× on the hot kernel,
+  1.268–1.296× single-core DRAM-streamed** (42.4 → 53.8 GMAC/s at 1536×8960), 1.04–1.07× at six
+  workers; goinfer measures **~1.05–1.10× on the 1.5B CPU decode token** (15/15 ABBA pairs).
+- **`linalg.SetW4A8RowFold` / `linalg.W4A8RowFold`** (Experimental tier): select the fold kernel
+  (default) or the pre-S-05 kernel for the M=1 row4 path. Numerically inert — the two are
+  bit-identical — so this exists for same-process A/B measurement only.
+- **`Workspace`** gains an int32 scratch for the correction; no API change.
+- **arm64 `BenchmarkW4A8_CanonicalVsSplitHalf`** (`linalg/w4a8_perfgate_arm64_bench_test.go`): the
+  perfgate instrument row for the int4 decode kernel now exists on arm64 too — hot canonical vs
+  row4 (fold) and a 12-matrix DRAM-streamed cold arm through the real entry points, serial. First
+  reading on the M1 Pro: hot 24.5 → 57.3 GMAC/s, cold 24.1 → 53.9. No baseline this release
+  (see the VERDICT note); judged from the next tag on.
+
+### Unchanged on purpose
+
+- The M>1 tile (`dotW4A8Row4Tile4x4`) and the batched q‖k‖v span keep the pre-S-05 kernel: the
+  tile's own fold (96 → 72 µops, 1.33× counted in the S-01 read-back) is the same identity applied
+  to a different loop and is filed, not built; the batched span is opt-in and parked in goinfer.
+- amd64: nothing — the fold is an arm64 SDOT-lane argument.
+
 ## [1.46.0] — 2026-09-20
 
 `perfgate` VERDICT: PASS — no regression vs v1.45.1 above each shape's floor — 25/45 shapes
@@ -4483,6 +4535,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.45.1...HEAD
+[1.47.0]: https://github.com/townsendmerino/aikit/compare/v1.46.0...v1.47.0
 [1.46.0]: https://github.com/townsendmerino/aikit/compare/v1.45.1...v1.46.0
 [1.45.1]: https://github.com/townsendmerino/aikit/compare/v1.45.0...v1.45.1
 [1.45.0]: https://github.com/townsendmerino/aikit/compare/v1.44.0...v1.45.0

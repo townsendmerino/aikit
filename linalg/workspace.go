@@ -20,7 +20,12 @@ type Workspace struct {
 	// silently overwrote a caller's held scales with dequantized weight values
 	// whenever K >= M — without growing the buffer, so the documented
 	// "valid until the next call that grows the scratch" rule did not catch it.
-	deq          []float32
+	deq []float32
+	// i32 is the S-05 lane-sum correction for the M=1 row4 W4A8 path
+	// (w4a8LaneCorrNeg8: 4 int32 per 32-k group of one activation row), per call,
+	// consumed within MatmulBTW4A8Row4Into. Its own buffer for the same reason deq
+	// is: it must never alias the activation scales in f32.
+	i32          []int32
 	width        int  // per-Workspace fan-out cap; 0 ⇒ inherit SetParallelWidth
 	threshold    int  // per-Workspace parallelization threshold (when thresholdSet)
 	thresholdSet bool // false ⇒ inherit the process-wide SetParallelThreshold default
@@ -99,6 +104,15 @@ func (w *Workspace) deqBuf(n int) []float32 {
 		w.deq = make([]float32, n)
 	}
 	return w.deq[:n]
+}
+
+// int32Buf returns a length-n int32 scratch slice for the S-05 lane-sum
+// correction (see the i32 field), backed by its own reusable storage.
+func (w *Workspace) int32Buf(n int) []int32 {
+	if cap(w.i32) < n {
+		w.i32 = make([]int32, n)
+	}
+	return w.i32[:n]
 }
 
 // QuantizeActivations dynamically quantizes a's M×K rows to int8 into this

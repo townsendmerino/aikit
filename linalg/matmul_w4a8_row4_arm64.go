@@ -128,23 +128,38 @@ func MatmulBTW4A8Row4Into(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []
 		return
 	}
 	nQuads := N / 4
+	// S-05 (docs/task-simd-audit.md): the -8 centering folded into the SDOT
+	// accumulators' initial value. corr is the activation's per-lane sums × -8,
+	// computed ONCE per call here (K/32 groups, two SDOTs each) and shared by every
+	// quad; the row kernel then skips both per-row VSUBs. nil corr selects the
+	// pre-S-05 kernel — bit-identical, kept for the in-process A/B (SetW4A8RowFold).
+	var corr []int32
+	if w4a8RowFold {
+		corr = ws.int32Buf(4 * nGroups)
+		w4a8LaneCorrNeg8(&aq[0], &corr[0], nGroups)
+	}
 	if M*N*K < ws.thr() || nQuads < 2 {
-		w4a8Row4Span(aq, aScale, w4Row4, wScales4, dst, nGroups, bpr, 0, nQuads)
+		w4a8Row4Span(aq, corr, aScale, w4Row4, wScales4, dst, nGroups, bpr, 0, nQuads)
 		return
 	}
 	ws.parallel(nQuads, func(q0, q1 int) {
-		w4a8Row4Span(aq, aScale, w4Row4, wScales4, dst, nGroups, bpr, q0, q1)
+		w4a8Row4Span(aq, corr, aScale, w4Row4, wScales4, dst, nGroups, bpr, q0, q1)
 	})
 }
 
 // w4a8Row4Span computes output quads [q0,q1) — 4 real rows each — of
-// MatmulBTW4A8Row4Into's dst, given the already-quantized activation row.
-func w4a8Row4Span(aq []int8, aScale float32, w4Row4 []byte, wScales4 []float32, dst []float32, nGroups, bpr, q0, q1 int) {
+// MatmulBTW4A8Row4Into's dst, given the already-quantized activation row and,
+// when corr is non-nil, its S-05 lane-sum correction (w4a8LaneCorrNeg8).
+func w4a8Row4Span(aq []int8, corr []int32, aScale float32, w4Row4 []byte, wScales4 []float32, dst []float32, nGroups, bpr, q0, q1 int) {
 	var out [4]float32
 	for q := q0; q < q1; q++ {
 		blk := w4Row4[q*4*bpr : q*4*bpr+4*bpr]
 		sblk := wScales4[q*4*nGroups : q*4*nGroups+4*nGroups]
-		dotW4A8SplitHalf4Row(&aq[0], &blk[0], &sblk[0], &out[0], nGroups)
+		if corr != nil {
+			dotW4A8SplitHalf4RowFold(&aq[0], &corr[0], &blk[0], &sblk[0], &out[0], nGroups)
+		} else {
+			dotW4A8SplitHalf4Row(&aq[0], &blk[0], &sblk[0], &out[0], nGroups)
+		}
 		dst[q*4] = out[0] * aScale
 		dst[q*4+1] = out[1] * aScale
 		dst[q*4+2] = out[2] * aScale

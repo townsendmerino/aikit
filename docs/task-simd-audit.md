@@ -46,6 +46,12 @@
 > 99% of a four-pipe issue ceiling, and the S-05 fold is the one lever left in them — 1.33×
 > counted; see the S-01 read-back.
 >
+> **UPDATE 2026-09-22 (Mac): S-05 is BUILT, GATED, MEASURED and SHIPPED on the M=1 decode kernel** —
+> 1.284–1.290× hot, 1.27–1.30× single-core streamed, bit-identical by three exact gates with both
+> canaries red, and ~1.05–1.10× on the 1.5B decode token end to end. Funded as a decode lever, not
+> the prefill one its 2026-09-05 stop rule closed. The tile's own fold and the scale-vector load
+> remain open. See the S-05 annotation.
+>
 > **Original status: nothing started.** Static read of aikit `v1.31.0-5-gca817a4`
 > (`linalg/`, 16 assembly files, the Go dispatch, the docs and bench records) and goinfer
 > `30b168e` (the callers). Three independent reviewers (arm64 assembly, amd64 assembly, Go
@@ -818,6 +824,65 @@ prefill == speculative verify` guarantees rest on.
 
 ### S-05 · Perf-minor (decode kernel, arm64) — fold the −8 centering into the SDOT accumulator's initial value: 9 → 7 SIMD µops per row-group, bit-identical
 
+> **BUILT, GATED, MEASURED, SHIPPED — 2026-09-22, as a DECODE lever on the M=1 kernel; the count
+> landed exactly.** Funded after the stop below on a different premise than the prefill one that
+> stopped it: the M=1 kernel is at 91–97% of its issue ceiling and this is the one µop lever left
+> in it. `dotW4A8SplitHalf4RowFold` (`linalg/dot_w4a8_fold_arm64.s`) is `dotW4A8SplitHalf4Row` with
+> both per-row `VSUB.16B` gone and `MOVI #0` replaced by a register copy of `corr_g`;
+> `w4a8LaneCorrNeg8` computes `corr[4g+l] = −8·Σ act` over lane l's eight k's — the row kernel's own
+> SDOT lane mapping — once per activation row, two SDOTs against a vector of int8 −8 per group.
+> `MatmulBTW4A8Row4Into` computes it into a new `Workspace` scratch and dispatches the fold;
+> `SetW4A8RowFold(false)` keeps the old kernel selectable for the in-process A/B. The batched
+> q‖k‖v span (goinfer R-06, parked) keeps the old kernel until it is funded.
+>
+> **Gates, all exact `==`, and the canaries.** `TestW4A8LaneCorrNeg8_matchesScalar`;
+> `TestDotW4A8SplitHalf4RowFold_bitIdenticalToSplitHalf4Row` against BOTH the kernel it replaces and
+> canonical `dotW4A8FoldSDOT`, nGroups 1..20 + 48/280, random activations plus all-(−128) / all-127
+> / alternating; `TestMatmulBTW4A8Row4Into_foldBitIdenticalToUnfolded` at the dispatch, serial and
+> six-way, both production projections. The existing row4 / M-consistency / tile gates run through
+> the fold and pass. The one-ULP canary discipline the stop note said was never exercised now has
+> been: −8 → −7 in the pre-pass fails all four gates including the raw-kernel one; a
+> `Float32bits+1` on the fold path's row-0 output fails the three dispatch-level ones (the raw-kernel
+> gate cannot see a Go-side change — the correct shape). The raw-WORD cross-check too: ten new
+> `SDOT` words and four `SCVTF` computed from the formula, self-checked against the four words the
+> old kernel carries, and **14/14 equal to clang's assembler** (`-march=armv8.2-a+dotprod`).
+>
+> **Measured, `apple-m1pro`, `AIKIT_HARNESS=1`, a loaded box (load ~4):**
+>
+> | regime | shape | baseline | fold | ratio |
+> |---|---|--:|--:|--:|
+> | hot, one quad, L1-resident (min of 3) | K=1536 | 138.0 ns, 44.5 GMAC/s | 107.0 ns, 57.4 | **1.290×** |
+> | hot, one quad | K=8960 | 804.0 ns, 44.6 | 626.0 ns, 57.3 | **1.284×** |
+> | streamed 12-matrix bank, single core, ABBA | 1536×8960 | 42.4 GMAC/s | 53.8 (33.6 GB/s) | **1.268×**, 3/3 |
+> | streamed, single core | 8960×1536 | 42.2 | 54.6 (34.2 GB/s) | **1.296×**, 3/3 |
+> | streamed, six workers | 1536×8960 | 100.5 | 107.3 (67.1 GB/s) | 1.068×, 3/3 |
+> | streamed, six workers | 8960×1536 | 93.7 | 97.5 (60.9 GB/s) | 1.040×, 3/3 |
+>
+> Correction pre-pass: 19 / 100 ns per activation row = 0.008% / 0.042% of a projection — free.
+> 9 → 7 µops is 1.286×; measured 1.284–1.290×: **the "medium on 1.29×" hedge resolves at the
+> top of its range, and `MOVI #0` is confirmed NOT a rename-time zero idiom a second time** (the
+> S-01 read-back's inference; 9 → 8 would have read ~1.13×). The single-core streamed rows keep
+> the whole gain because one core at 34 GB/s is nowhere near the 71.9 GB/s a thread can pull —
+> the decode kernel is issue-bound on one core, as §1 said. **Ship, by the registered single-core
+> rule.**
+>
+> **End-to-end (goinfer `docs/measurements/s05-centering-fold-2026-09-22.md`), reported beside
+> the ship decision, not gated on it — and it under-ran the prediction the other way.** 1.5B
+> qwen2.5-coder int4, CPU, depth 128, `SetW4A8RowFold` flipped in-process, ABBA: pre-registered
+> run 1.089× (3/3), replicates **1.097× (6/6) and 1.048× (6/6)** — 15 of 15 pairs, the ON arm at
+> 19.1–19.5 ms/token against OFF 19.9–21.3: **~1.05–1.10× on the token**, ~1.06–1.11× on the matmul
+> terms (~49 → ~52 tok/s). The pre-registration said "~0 to a few percent" because goinfer's step-0
+> split put the token's matmuls at 54% of the read ceiling and 17.4 GMAC/s per worker — S-02's
+> shape — where a faster kernel should mostly hide; it hides ~60% of itself, not all. The
+> `≥ 1.2×` refuter did not appear, so the fan-out reading stands; the magnitude was under-called.
+> The Mac activation-fan-out share came out of the same run: 6.5% of the 1.5B token, faster per
+> element than the 0.5B's serial loop — the Linux 3× loss does NOT reproduce on arm64, no flip.
+>
+> **Still open here:** the S-01 tile's own fold (96 → 72, the read-back's 1.33× count — the same
+> identity, applied to `dot_w4a8_tile_arm64.s`, for prefill/verify); the load-side scale-vector
+> saving named below, not attempted — off the scalar/load side of a SIMD-issue-bound loop, so
+> expect little; the batched q‖k‖v span.
+
 > **NOT STARTED, 2026-09-05, and deliberately so — the pre-registered decision rule said stop.**
 > The CPU-prefill-remainder brief (goinfer `task-prefill-gap.md` §4 L4) gated S-05 in the tile on a
 > peer measurement: *marginal ≤1.15× behind Ollama → CLOSE, no kernel work; ≥1.5× → build it.*
@@ -1288,7 +1353,7 @@ items; G4/G5 (f32 silu/gelu) were parity-gated; G10 (RoPE table) bit-identical. 
 | 2 | S-02 remedy that step 0 selects (dynamic chunking and/or `MatmulBTW4A8Batch`) + ~~S-03 NEON quantiser~~ (**S-03 built 2026-09-03, unmeasured**) | decode 1.15–1.7× on the fan-out term; −3 barriers, −3 quantisations per layer | bit-identical | step 0 |
 | 3 | ~~S-04 AV pure-Go accumulator blocks → NEON AV → NEON QK~~ (**all three built 2026-09-03; the NEON ports unmeasured**) | ~1.9× token at depth 8k; ~1.1× at 128 | bit-identical (exact products) | none |
 | 4 | S-06 step 1 (parallelise the elementwise loops) | prefill 7–25% at the 3700X rate, less on M1 | bit-identical | the stub measurement |
-| 5 | S-05 centering fold + the scale-vector load — **now in BOTH W4A8 kernels, 1.33× counted on the tile (see the S-01 read-back)**; ~~S-07 `q8Span` 8-column form~~ (**built 2026-09-03, unmeasured**) | single-core kernel up to 1.29×; weight-only int8 ~4× per row | bit-identical | S-02 (to be visible) |
+| 5 | S-05 centering fold — **M=1 decode kernel DONE 2026-09-22: 1.284–1.290× hot, 1.27–1.30× single-core streamed, ~1.05–1.10× on the 1.5B decode token (see the S-05 annotation)**; the tile's own fold (96 → 72, 1.33× counted, S-01 read-back) and the scale-vector load still open; ~~S-07 `q8Span` 8-column form~~ (**built 2026-09-03, unmeasured**) | single-core kernel up to 1.29×; weight-only int8 ~4× per row | bit-identical | S-02 (to be visible) |
 | 6 | S-06 step 2 (f32 transcendentals), S-08.3 VNNI redesign, S-08.2 GOAMD64 pin | parity-class / hardware-gated | not bit-identical / n/a | product decision / a VNNI host |
 | 7 | I8MM detection + `SMMLA` GEMM | 2× on step 1's prefill kernel | bit-identity needs its own argument (different lane grouping) | an M2+/Graviton3 box |
 
