@@ -28,9 +28,9 @@ type Workspace struct {
 	// touches it today (quant_w4a8_fold_arm64.go / matmul_w4a8_row4_arm64.go), so
 	// the pure-Go build sees it unreferenced.
 	i32          []int32 //nolint:unused // arm64-only user; see the field comment
-	width        int  // per-Workspace fan-out cap; 0 ⇒ inherit SetParallelWidth
-	threshold    int  // per-Workspace parallelization threshold (when thresholdSet)
-	thresholdSet bool // false ⇒ inherit the process-wide SetParallelThreshold default
+	width        int     // per-Workspace fan-out cap; 0 ⇒ inherit SetParallelWidth
+	threshold    int     // per-Workspace parallelization threshold (when thresholdSet)
+	thresholdSet bool    // false ⇒ inherit the process-wide SetParallelThreshold default
 }
 
 // SetThreshold overrides the parallelization threshold (see SetParallelThreshold)
