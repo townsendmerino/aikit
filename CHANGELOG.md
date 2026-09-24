@@ -9,6 +9,26 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.47.1] — 2026-09-24
+
+`perfgate` VERDICT: PASS — no regression vs v1.47.0 above each shape's floor — 11/47 shapes resolve the 5.0%
+class (`nobara-pc`, linux/amd64 Ryzen 3700X, `./linalg`, 6 visits, interleaved `2b817be` vs v1.47.0; box at load
+~1–2.6, shared with another session — a first run at load ~2–3 came back INCONCLUSIVE/BLIND, 0/47). This does not
+cover the changed kernel: the 3700X has no AVX-512, so every instrumented W4A8 shape ran the unchanged AVX2 path.
+The fix removes one FMA and one VMULPS per 32-element group from the VNNI loop and adds a VPSLLD + VPSUBD; its
+speed on real VNNI hardware is unmeasured.
+
+**Executed on AVX-512 VNNI+VL instructions** — under Intel SDE 10.13.1 (`sde64 -icx`, Ice Lake) on `nobara-pc`
+(Ryzen 3700X, which has no AVX-512 of its own), since neither project box can run them natively and this
+release's CI runner happened not to have them (`hasAVX512VNNIVL=false` in its log): every `TestAVX512VNNI*`
+test and `TestMatmulBTW4A8_MConsistent` pass on the fixed kernel; the new
+`TestAVX512VNNI_dotW4A8FoldAVX512VNNI_centersInInt32` FAILS against the v1.47.0 kernel (16 cases, values
+identical to the exact Go model used to design the fix); and goinfer's `TestInt4_forwardParity` fails on
+v1.47.0 with CI's exact digits and passes on this release (15 fixtures).
+
+STATEMENT: `tools/vulncheck` on `nobara-pc` (linux/amd64, go1.27.0) at `2b817be` —
+**no reachable vulnerabilities in 16/16 modules.**
+
 ### Fixed
 
 - **The AVX-512 VNNI W4A8 dot now applies its centering correction in int32** (`linalg/dot_w4a8_avx512vnni_amd64.s`).
@@ -4560,7 +4580,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.45.1...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.47.1...HEAD
+[1.47.1]: https://github.com/townsendmerino/aikit/compare/v1.47.0...v1.47.1
 [1.47.0]: https://github.com/townsendmerino/aikit/compare/v1.46.0...v1.47.0
 [1.46.0]: https://github.com/townsendmerino/aikit/compare/v1.45.1...v1.46.0
 [1.45.1]: https://github.com/townsendmerino/aikit/compare/v1.45.0...v1.45.1
