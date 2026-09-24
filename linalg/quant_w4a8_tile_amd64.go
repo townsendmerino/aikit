@@ -22,8 +22,10 @@ func dotW4A8Tile4RowAVX2(act *int8, actStride int, packed *byte, scales *float32
 //
 // THE hasAVX512VNNIVL EXCLUSION IS NOT REDUNDANT, and it is the subtle part.
 // dotW4A8 prefers dotW4A8FoldAVX512VNNI over the AVX2 kernel where VNNI exists,
-// and that kernel folds through TWO f32 accumulators where the AVX2 one uses one
-// — a different summation order, so the two are not bit-identical. This tile is
+// and that kernel's int32 lane partials come from VPDPBUSD's 4-byte lanes where the
+// AVX2 one's come from VPMADDWD pairs — a different summation order, so the two are
+// not bit-identical (they agree to f32 ULP noise since the 2026-09-24 int32-centering
+// fix, dot_w4a8_avx512vnni_amd64.go; before it they differed by far more). This tile is
 // built on the AVX2 fold. Letting it run at M>1 on a VNNI host while M=1 kept the
 // VNNI kernel would make the result depend on M, which is precisely the property
 // TestMatmulBTW4A8_MConsistent exists to forbid and which goinfer's speculative

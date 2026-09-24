@@ -30,20 +30,32 @@ package linalg
 // The first term is one VPDPBUSD(nib_u8, act_s8) per group; the second is a
 // correction sum computed the same way dotI8AVX512VNNI computes Σb — a
 // second VPDPBUSD, this time against an all-ones unsigned vector. Both are
-// folded in-register (converted to f32, multiplied by the group's broadcast
-// scale, accumulated into an 8-lane f32 accumulator) exactly like
-// dotW4A8FoldAVX2's single fold, just two parallel accumulators instead of
-// one; the correction accumulator's per-iteration multiplier is
-// pre-negated by 8 so combining the two at the end is addition, not
-// subtraction — sidesteps any doubt about operand order on a non-commutative
-// op, since the two folds are then combined with a single commutative add.
+// exact int32 lane partials, so the centered partial accDot − 8·accSum is
+// formed IN INT32 (VPSLLD + VPSUBD, exact), then converted to f32 once,
+// multiplied by the group's broadcast scale and accumulated into ONE 8-lane
+// f32 accumulator — the same single-fold structure as dotW4A8FoldAVX2.
+//
+// WHY THE CORRECTION IS APPLIED IN INT32. Until 2026-09-24 the two partials
+// were folded into two separate f32 accumulators and combined only at the end.
+// Each carried the UNCENTERED magnitude while their difference is the small
+// centered dot, so f32 rounding on the two large terms did not cancel. That
+// passed this file's own tests (one dot, relative 1e-5) but compounded through
+// a forward pass: measured with an exact Go emulation of this kernel on an
+// AVX2 host, goinfer's int4 forward goldens came out up to 3.2e-3 per logit
+// from the AVX2 path across 26 fixtures, and TestInt4_forwardParity/nemotron-tiny
+// failed on GitHub's AVX-512 runners with the emulation's exact digits. With
+// the correction in int32 the same comparison is 1.2e-7 — float32 ULP noise
+// from the lane layout (VPDPBUSD's 4-byte lanes vs AVX2's VPMADDWD pairs), so
+// the two tiers are still NOT bit-identical, which is why the AVX2 tile and
+// split-half kernels still decline on VNNI hosts.
 //
 // Unlike dotI8AVX512VNNI, this kernel's result is NOT bit-exact against the
-// scalar reference — it inherits the same f32-fold rounding
-// dotW4A8FoldAVX2 already has (that kernel's own doc comment: the per-group
-// scale multiply-accumulate happens in f32, so reassociation across groups
-// changes the last bit or two). Tested to the repo's existing W4A8 tolerance
-// (relative error ≤ 1e-5, TestW4A8_dotMatchesScalar's bar), not equality.
+// scalar reference — like dotW4A8FoldAVX2, the per-group scale
+// multiply-accumulate happens in f32, so reassociation across groups changes
+// the last bit or two. Tested to the repo's existing W4A8 tolerance (relative
+// error ≤ 1e-5, TestW4A8_dotMatchesScalar's bar), and — since the int32
+// centering — against dotW4A8FoldAVX2 to a much tighter bar, including inputs
+// whose exact answer is 0 (TestAVX512VNNI_dotW4A8FoldAVX512VNNI_centersInInt32).
 //
 // Uses the 256-bit (YMM) VPDPBUSD form — one 32-byte quant group per
 // instruction, a direct 1:1 loop-iteration match with dotW4A8FoldAVX2 and

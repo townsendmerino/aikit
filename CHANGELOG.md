@@ -11,6 +11,22 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+- **The AVX-512 VNNI W4A8 dot now applies its centering correction in int32** (`linalg/dot_w4a8_avx512vnni_amd64.s`).
+  `dotW4A8FoldAVX512VNNI` computes Σ(nib−8)·act as Σnib·act − 8·Σact, and folded the two terms into two
+  separate f32 accumulators, combining them only at the end. Each carried the uncentered magnitude while
+  their difference is the small centered dot, so f32 rounding on the two large terms did not cancel. It
+  passed this repo's single-dot tests (relative 1e-5) but compounded through a forward pass: goinfer's int4
+  forward goldens came out up to **3.2e-3 per logit** from the AVX2 path on VNNI hosts, and
+  `TestInt4_forwardParity/nemotron-tiny` failed on GitHub's AVX-512 runners. Now `accDot − 8·accSum` is
+  formed exactly in int32 (VPSLLD + VPSUBD), converted once and folded into one accumulator — the AVX2
+  kernel's structure. Measured with an exact Go model of each kernel on an AVX2 host (no AVX-512 hardware
+  was available): the same 26-fixture comparison drops to **1.2e-7** (f32 ULP noise from the lane layout),
+  and the model of the pre-fix kernel reproduces goinfer's CI failure to all 16 printed digits. One FMA and
+  one multiply fewer per group. The two tiers are still not bit-identical (4-byte VPDPBUSD lanes vs
+  VPMADDWD pairs), so the AVX2 tile and split-half kernels still decline on VNNI hosts. New regression test
+  `TestAVX512VNNI_dotW4A8FoldAVX512VNNI_centersInInt32` (runs only on AVX-512 VNNI+VL hosts — i.e. CI),
+  whose checks were verified to FAIL against the pre-fix kernel's model (16/24 cases, by 1.5–12× the bar)
+  and pass against the fix's.
 - **`linalg.SetW4A8RowFold` / `W4A8RowFold` are now declared portably** (`linalg/quant_w4a8_fold.go`).
   v1.47.0 declared them inside an `//go:build arm64` file, so a consumer referencing the toggle
   from an untagged file failed to compile on linux/amd64 (goinfer's `TestR9_s05FoldAB`, CI run

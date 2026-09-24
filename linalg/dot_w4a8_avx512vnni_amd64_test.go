@@ -128,3 +128,84 @@ func TestAVX512VNNI_dotW4A8_dispatchesThroughEveryTier(t *testing.T) {
 		}
 	}
 }
+
+// TestAVX512VNNI_dotW4A8FoldAVX512VNNI_centersInInt32 pins the 2026-09-24 fix: the Σact correction is
+// applied to the exact int32 partials BEFORE the f32 fold. The pre-fix kernel folded Σnib·act and
+// −8·Σact into two f32 accumulators and combined them at the end, so each carried the UNCENTERED
+// magnitude and their rounding did not cancel (measured: up to 3.2e-3 per logit through goinfer's int4
+// forward, failing its nemotron-tiny golden on AVX-512 runners).
+//
+// The check is built so the two kernels' errors are far apart: weights almost all 0 (nibble 8, with a
+// sparse ±1) against large same-sign activations, so the uncentered terms are ~100x the centered result.
+// The reference is exact (float64 of the exact int partials); the bar is the textbook recursive-summation
+// bound on the CENTERED terms, (nGroups+8)·u·Σ|terms| with u = 2^-24. A kernel whose error scales with the
+// centered magnitude (this one) meets it; one whose error scales with the uncentered magnitude (the
+// pre-fix kernel) misses it by an order of magnitude — verified by running this body against exact Go
+// models of both kernels on an AVX2 host (checkDotW4A8FoldCentering; the model lives outside the repo).
+// (An all-zero-weight case is deliberately NOT used: there the old kernel's two accumulators are exact
+// negatives of each other at every step and cancel perfectly, so it would pass either kernel.)
+//
+// Skips when the host lacks AVX-512 VNNI+VL (the asm would SIGILL) — i.e. on both project boxes; it is
+// meant to run on CI's AVX-512 runners, and its Logf says when it did.
+func TestAVX512VNNI_dotW4A8FoldAVX512VNNI_centersInInt32(t *testing.T) {
+	if !hasAVX512VNNIVL {
+		t.Skip("CPU lacks AVX-512 VNNI+VL; dotW4A8FoldAVX512VNNI asm path not exercised")
+	}
+	t.Logf("running on an AVX-512 VNNI+VL host (hasAVX2=%v)", hasAVX2)
+	checkDotW4A8FoldCentering(t, func(act []int8, packed []byte, scales []float32, nGroups int) float32 {
+		return dotW4A8FoldAVX512VNNI(&act[0], &packed[0], &scales[0], nGroups)
+	})
+}
+
+// checkDotW4A8FoldCentering is the body of TestAVX512VNNI_dotW4A8FoldAVX512VNNI_centersInInt32, split out so
+// the checks themselves can be exercised against a portable model of the kernel on hosts without VNNI.
+func checkDotW4A8FoldCentering(t *testing.T, kernel func(act []int8, packed []byte, scales []float32, nGroups int) float32) {
+	t.Helper()
+	rng := rand.New(rand.NewSource(211))
+	pack := func(nib []byte) []byte {
+		p := make([]byte, len(nib)/2)
+		for i := 0; i < len(nib); i += 2 {
+			p[i/2] = (nib[i] & 0x0F) | ((nib[i+1] & 0x0F) << 4)
+		}
+		return p
+	}
+	for _, nGroups := range []int{1, 2, 7, 24, 96, 256} {
+		for trial := range 4 {
+			K := nGroups * 32
+			act := make([]int8, K)
+			nib := make([]byte, K)
+			for i := range act {
+				act[i] = int8(100 + rng.Intn(28)) // large, same sign: Σact does not cancel
+				nib[i] = 8                        // weight 0 …
+				if rng.Intn(16) == 0 {
+					nib[i] = byte(7 + 2*rng.Intn(2)) // … except a sparse ±1
+				}
+			}
+			scales := make([]float32, nGroups)
+			for g := range scales {
+				scales[g] = float32(rng.Float64()*0.05 + 0.0001) // non-dyadic: products do not round exactly
+			}
+			var exact, mag float64
+			for g, s := range scales {
+				var c, m int64
+				for k := g * 32; k < g*32+32; k++ {
+					v := int64(int(nib[k])-8) * int64(act[k])
+					c += v
+					if v < 0 {
+						v = -v
+					}
+					m += v
+				}
+				exact += float64(s) * float64(c)
+				mag += math.Abs(float64(s)) * float64(m)
+			}
+			tol := float64(nGroups+8)*mag/(1<<24) + 1e-30
+			got := kernel(act, pack(nib), scales, nGroups)
+			if d := math.Abs(float64(got) - exact); d > tol {
+				t.Errorf("nGroups=%d trial=%d: got %.9g, exact %.9g, |Δ| %.3g > %.3g — the error scales with the "+
+					"UNCENTERED magnitude: the Σact correction is not being applied in int32 before the f32 fold",
+					nGroups, trial, got, exact, d, tol)
+			}
+		}
+	}
+}
