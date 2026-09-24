@@ -4,10 +4,9 @@
 // WHY IT EXISTS. Using CI as a first linter rather than a last check costs a full round trip
 // per mistake (a revert once left an asm kernel with no caller; golangci-lint reports that
 // in three seconds, but it was found from CI, after pushing, twice — 2026-08-12). So this runs
-// every one of ci.yml's core-job steps, in the same order, with exactly two deliberate
-// weakenings: `go test` runs UNRACED (CI's own `-race` pass costs a real multiple of both time
-// and memory — too slow for a pre-push gate) and `fuzz (smoke)` does not run at all (8 targets
-// x 15s x up to 2 retries, also too slow). Every other core step is mirrored exactly, including
+// every one of ci.yml's core-job steps, in the same order, with exactly one deliberate
+// weakening: `go test` runs UNRACED (CI's own `-race` pass costs a real multiple of both time
+// and memory — too slow for a pre-push gate). Every other core step is mirrored exactly, including
 // "no cgo deps in core graph" and "test (aikit_checks)" — both fast, neither needs network or a
 // GPU, and both used to be silent gaps here with no actual justification.
 //
@@ -21,7 +20,8 @@
 // preflight covers the core job, PLUS one thing the core job cannot cover: a cross-GOOS/
 // GOARCH vet. arm64, treesitter, vulncheck, perf-smoke, scripts-boundary, gpu-pins, and
 // gpu-kernels are separate ci.yml jobs that genuinely need network, a GPU, another OS, or
-// another module, and aren't attempted here; gpugate/gpudevice/scriptsguard/gpupins are the
+// another module, and aren't attempted here; nor is fuzz-smoke (10 targets x 15s x up to 2
+// retries — too slow for a pre-push gate, and its own job so it stays off CI's critical path); gpugate/gpudevice/scriptsguard/gpupins are the
 // local tools for the pieces that have one.
 //
 // THE CROSS-VET IS THE ONE DELIBERATE ADDITION, and it is not a core-job mirror — it is the
@@ -153,8 +153,8 @@ func run(args []string) int {
 		return 2
 	}
 	fmt.Println(gate.Verdict(gate.OK, fmt.Sprintf("%d/%d clean", rep.Pass, rep.Total)))
-	fmt.Println("         CI also runs go test WITH -race and the fuzz (smoke) pass; arm64/treesitter/")
-	fmt.Println("         vulncheck/perf-smoke/scripts-boundary/gpu-pins/gpu-kernels are separate CI jobs")
+	fmt.Println("         CI also runs go test WITH -race; fuzz-smoke/arm64/treesitter/vulncheck/")
+	fmt.Println("         perf-smoke/scripts-boundary/gpu-pins/gpu-kernels are separate CI jobs")
 	fmt.Println("         (windows: its vet step IS covered above by cross-vet windows; its build/test are not).")
 	return 0
 }

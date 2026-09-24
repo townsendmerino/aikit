@@ -78,6 +78,19 @@ jobs:
       - name: test (aikit_checks)
         run: go test -tags aikit_checks ./linalg/
 
+  fuzz-smoke:
+    name: fuzz (smoke)
+    # Its own job, not a trailing step of `core`: ten 15s targets run serially cost ~3 min,
+    # and as the last step of `core` they sat on CI's critical path behind the race tests.
+    # Nothing here depends on those steps, so running alongside them keeps the same checks
+    # and takes ~3 min off the wall clock.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
       # Short fuzz smoke on the untrusted-input surfaces: the binary parsers
       # (GGUF / safetensors, §3.1) and the indexing-pipeline text paths (bm25
       # tokenizers + chunkers, §3.4) — a panic in either takes down an index

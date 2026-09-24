@@ -26,7 +26,6 @@ var coreSteps = []string{
 	"build with cgo disabled",
 	"test (race)",
 	"test (aikit_checks)",
-	"fuzz (smoke)",
 }
 
 // implementedAs maps each ci.yml core-job step name preflight mirrors to the Check.Name
@@ -50,9 +49,11 @@ var implementedAs = map[string]string{
 // and "test (aikit_checks)" both did, despite needing neither network nor a GPU). A name in
 // neither this map nor implementedAs now fails TestCoreStepsAccountedFor instead of just
 // being absent from a comment nobody re-checks.
-var notImplemented = map[string]string{
-	"fuzz (smoke)": "real wall-clock cost (8 targets x 15s x up to 2 retries) — too slow for a pre-push gate",
-}
+//
+// Empty since `fuzz (smoke)` moved out of the core job into its own ci.yml job (it ran as
+// core's last step and sat on CI's critical path); like the other separate jobs it is not
+// attempted here — too slow for a pre-push gate.
+var notImplemented = map[string]string{}
 
 func TestCICoreStepsUnchanged(t *testing.T) {
 	root, err := gpumod.RepoRoot()
