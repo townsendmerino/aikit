@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	github.com/townsendmerino/aikit v1.47.0
-	github.com/townsendmerino/aikit/gpu v0.33.2
+	github.com/townsendmerino/aikit/gpu v0.33.3
 )
 
 require (
