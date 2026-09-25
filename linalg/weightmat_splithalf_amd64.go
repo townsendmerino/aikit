@@ -69,6 +69,10 @@ func (w *WeightMat) RepackInt4SplitHalf() bool {
 // the kernels do the same arithmetic in the same order
 // (TestWeightMatSplitHalf_matchesCanonical, TestWeightMatSplitHalf_repackedOnlyMatchesCanonical).
 func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
+	if actQuantGroup > 0 {
+		matmulW4A8GroupedRef(ws, a, w.int4Layout(), dst, M, w.rows) // actgroup.go
+		return
+	}
 	if w.q4SplitHalf != nil {
 		if M == 1 {
 			matmulBTW4A8SplitHalfInto(ws, a, w.q4SplitHalf, w.q4s, dst, w.cols, w.rows, w.group)

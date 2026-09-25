@@ -266,6 +266,10 @@ func MatmulBTW8A8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K
 // MatmulBTW8A8 (same quantizeRowInt8 / dotI8 / rescale, just hoisted).
 func MatmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	checkMatmulQ8("MatmulBTW8A8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
+	if actQuantGroup > 0 {
+		matmulW8A8GroupedRef(ws, a, bQ, bScales, dst, M, K, N) // actgroup.go
+		return
+	}
 	aq := ws.int8Buf(M * K)
 	aScales := ws.f32Buf(M)
 	QuantizeActivationsInto(aq, aScales, a, M, K)
@@ -497,6 +501,12 @@ func MatmulBTW8A8Batch(ws *Workspace, a []float32, M, K int, ops []W8A8Op) {
 	for _, op := range ops {
 		checkMatmulQ8("MatmulBTW8A8Batch", len(a), len(op.BQ), len(op.Scales), len(op.Dst), M, K, op.N)
 		totalN += op.N
+	}
+	if actQuantGroup > 0 {
+		for _, op := range ops {
+			matmulW8A8GroupedRef(ws, a, op.BQ, op.Scales, op.Dst, M, K, op.N) // actgroup.go
+		}
+		return
 	}
 	aq := ws.int8Buf(M * K)
 	aScales := ws.f32Buf(M)
@@ -759,6 +769,10 @@ func MatmulBTW4A8Into(ws *Workspace, a []float32, w4 []byte, wScales []float32, 
 	// worker goroutine (uncatchable). This panics recoverably, caller-side.
 	checkMatmulW4A8("MatmulBTW4A8", len(a), len(w4), len(wScales), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTW4A8", len(a), w4, wScales, len(dst), M, K, N, group)
+	if actQuantGroup > 0 {
+		matmulW4A8GroupedRef(ws, a, int4Layout{w4: w4, wS: wScales, group: group, K: K}, dst, M, N) // actgroup.go
+		return
+	}
 	nGroups, bpr := groupsFor(K, group)
 	aq := ws.int8Buf(M * K)
 	aScales := ws.f32Buf(M)
@@ -904,6 +918,13 @@ func MatmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []W4A8Op
 		checkMatmulW4A8("MatmulBTW4A8Batch", len(a), w4Len, scalesLen, len(op.Dst), M, K, op.N, group)
 		checkGroupMatmul("MatmulBTW4A8Batch", len(a), checkPacked, checkScales, len(op.Dst), M, K, op.N, group)
 		totalN += op.N
+	}
+	if actQuantGroup > 0 {
+		for _, op := range ops {
+			l := int4Layout{w4: op.W4, sh: op.SplitHalf, r4: op.Row4, wS: op.Scales, r4S: op.Row4Scales, group: group, K: K}
+			matmulW4A8GroupedRef(ws, a, l, op.Dst, M, op.N) // actgroup.go
+		}
+		return
 	}
 	nGroups, bpr := groupsFor(K, group)
 	aq := ws.int8Buf(M * K)

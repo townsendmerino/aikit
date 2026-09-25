@@ -1,0 +1,218 @@
+package linalg
+
+import "fmt"
+
+// PER-GROUP ACTIVATION QUANTIZATION — the Go reference (goinfer
+// docs/tasks/task-actquant-pergroup-2026-09.md, goinfer queue H2).
+//
+// Every W8A8 and W4A8 kernel here quantizes an activation row to int8 with ONE max/127 scale for
+// the whole row. A model whose projection inputs carry massive outliers loses most of each row
+// to rounding. Measured on Phi-3-mini: max/rms ~80-90 at the down_proj input, so a per-row
+// scale rounds 99.9% of the row to zero. Scaling each group of G consecutive inputs separately
+// keeps an outlier's damage inside its own group, which is what llama.cpp's Q8_0/Q8_K activation
+// blocks do.
+//
+// This file is the REFERENCE: plain Go, architecture-independent, exact integer arithmetic within
+// each group, behind SetActQuantGroup. It exists to answer the quality question before any
+// SIMD/PTX kernel is written, and to be the oracle those kernels are tested against. It is not
+// fast (scalar Go, the weight codes re-gathered per call) and does not try to be. With the group
+// at 0, the default, nothing here runs and every existing kernel is untouched.
+
+// actQuantGroup is the activation group size the W8A8/W4A8 entry points use: 0 = one scale per
+// row (the kernels' existing behaviour); > 0 = one scale per that many inputs, via the reference
+// below. Not goroutine-safe to change mid-matmul; set it before loading/running a model.
+var actQuantGroup int
+
+// SetActQuantGroup selects per-group activation scales for every W8A8/W4A8 matmul entry point
+// (MatmulBTW8A8Into/Batch, MatmulBTW4A8Into/Batch, MatmulBTW4A8Row4Into and
+// WeightMat.MatmulBTW4A8Into): 0 restores the per-row kernels, g > 0 routes those calls through
+// the Go reference with one int8 scale per g inputs. For W4A8, g and the weight group must divide
+// one another.
+func SetActQuantGroup(g int) {
+	if g < 0 {
+		panic(fmt.Sprintf("linalg: SetActQuantGroup(%d): group must be >= 0", g))
+	}
+	actQuantGroup = g
+}
+
+// ActQuantGroup reports the activation group size SetActQuantGroup selected (0 = per-row).
+func ActQuantGroup() int { return actQuantGroup }
+
+// QuantizeActivationsGroupedInto quantizes a's M rows of K floats to int8 with one symmetric
+// max/127 scale per group of `group` consecutive elements (the last group of a row ragged when
+// group does not divide K). scales[m*nG+g] is row m's group g, nG = ceil(K/group). Each group
+// uses exactly the per-row quantizer's rounding, clamp and zero convention (an all-zero group gets
+// scale 0 and zero codes), so per-row quantization is the special case group >= K.
+func QuantizeActivationsGroupedInto(aq []int8, scales []float32, a []float32, M, K, group int) {
+	nG := (K + group - 1) / group
+	if group <= 0 || len(aq) < M*K || len(scales) < M*nG || len(a) < M*K {
+		panic("linalg: QuantizeActivationsGroupedInto: bad group or short buffer")
+	}
+	for m := range M {
+		for g := range nG {
+			lo, hi := m*K+g*group, m*K+min((g+1)*group, K)
+			scales[m*nG+g] = quantizeRowInt8Core(a[lo:hi], aq[lo:hi], 0)
+		}
+	}
+}
+
+// groupedDot is Σ_k aq·w over one row, scaled per segment: segments are the intersection of the
+// activation groups (ag, scales aS) and the weight groups (wg, scales wS, nil for a per-row weight
+// scale applied by the caller). Within a segment the dot is exact int32; each segment's partial
+// is scaled in f32 and accumulated in f32. ag and wg must divide one another.
+func groupedDot(aq []int8, aS []float32, ag int, w []int8, wS []float32, wg int, K int) float32 {
+	seg := ag
+	if wS != nil && wg < seg {
+		seg = wg
+	}
+	var acc float32
+	for k0 := 0; k0 < K; k0 += seg {
+		k1 := min(k0+seg, K)
+		var isum int32
+		for k := k0; k < k1; k++ {
+			isum += int32(aq[k]) * int32(w[k])
+		}
+		s := aS[k0/ag]
+		if wS != nil {
+			s *= wS[k0/wg]
+		}
+		acc += float32(isum) * s
+	}
+	return acc
+}
+
+func checkGroups(ag, wg int) {
+	if ag%wg != 0 && wg%ag != 0 {
+		panic(fmt.Sprintf("linalg: activation group %d and weight group %d must divide one another", ag, wg))
+	}
+}
+
+// refParallel runs fn over [0, N) row spans on the workspace's workers (the reference's only
+// concession to speed: a 7B decode step at one core would take seconds).
+func refParallel(ws *Workspace, N int, fn func(n0, n1 int)) {
+	width := 0
+	if ws != nil {
+		width = ws.width
+	}
+	if N < 64 {
+		fn(0, N)
+		return
+	}
+	parallelSpawnCols(N, resolveWidth(width), fn)
+}
+
+// quantizeActGrouped quantizes a into workspace scratch with actQuantGroup and returns the codes,
+// scales and group count per row.
+func quantizeActGrouped(ws *Workspace, a []float32, M, K int) ([]int8, []float32, int) {
+	if ws == nil {
+		ws = new(Workspace)
+	}
+	g := actQuantGroup
+	nG := (K + g - 1) / g
+	aq := ws.int8Buf(M * K)
+	aS := ws.f32Buf(M * nG)
+	QuantizeActivationsGroupedInto(aq, aS, a, M, K, g)
+	return aq, aS, nG
+}
+
+// matmulW8A8GroupedRef is MatmulBTW8A8Into with per-group activation scales:
+// dst[m,n] = bScales[n] · Σ_g aS[m,g] · Σ_{k∈g} aq[m,k]·bQ[n,k].
+func matmulW8A8GroupedRef(ws *Workspace, a []float32, bQ []int8, bScales, dst []float32, M, K, N int) {
+	aq, aS, nG := quantizeActGrouped(ws, a, M, K)
+	g := actQuantGroup
+	refParallel(ws, N, func(n0, n1 int) {
+		for n := n0; n < n1; n++ {
+			w := bQ[n*K : n*K+K]
+			for m := range M {
+				dst[m*N+n] = groupedDot(aq[m*K:m*K+K], aS[m*nG:m*nG+nG], g, w, nil, 0, K) * bScales[n]
+			}
+		}
+	})
+}
+
+// int4Layout reads row n's int4 codes (nibble-8, in [-8, 7]) and its per-group scales from one of
+// the three int4 layouts: canonical (w4, wS, any group), split-half (sh, wS, group 32) or row4
+// (r4, r4S, group 32). Each branch is the same gather as that layout's dequantizer
+// (DequantizeRowInt4, dequantizeRowFromSplitHalf, dequantizeRowFromRow4), emitting codes instead
+// of products.
+type int4Layout struct {
+	w4, sh, r4 []byte
+	wS, r4S    []float32
+	group, K   int
+}
+
+func (l int4Layout) row(n int, codes []int8, scales []float32) {
+	K, group := l.K, l.group
+	nG := (K + group - 1) / group
+	bpr := (K + 1) / 2
+	switch {
+	case l.w4 != nil:
+		row := l.w4[n*bpr : (n+1)*bpr]
+		for k := range K {
+			b := row[k/2]
+			if k&1 == 1 {
+				b >>= 4
+			}
+			codes[k] = int8(b&0x0F) - 8
+		}
+		copy(scales, l.wS[n*nG:(n+1)*nG])
+	case l.sh != nil, l.r4 != nil:
+		var q, r int
+		if l.r4 != nil {
+			q, r = n/4, n%4
+		}
+		for g := range nG {
+			var chunk []byte
+			if l.sh != nil {
+				chunk = l.sh[n*bpr+g*16 : n*bpr+g*16+16]
+				scales[g] = l.wS[n*nG+g]
+			} else {
+				base := q*4*bpr + g*64 + r*16
+				chunk = l.r4[base : base+16]
+				scales[g] = l.r4S[q*4*nG+4*g+r]
+			}
+			gk := g * 32
+			for k := gk; k < min(gk+32, K); k++ {
+				kl := k - gk
+				var nib byte
+				if kl < 16 {
+					nib = chunk[kl] & 0x0F
+				} else {
+					nib = chunk[kl-16] >> 4
+				}
+				codes[k] = int8(nib) - 8
+			}
+		}
+	default:
+		panic("linalg: int4Layout: no layout")
+	}
+}
+
+// matmulW4A8GroupedRef is the W4A8 matmul with per-group activation scales over any int4 layout:
+// dst[m,n] = Σ_seg aS[m,·]·wS[n,·]·Σ_{k∈seg} aq[m,k]·code[n,k]. Mathematically the same product the
+// per-row kernels compute, with the activation scale moved inside the sum.
+func matmulW4A8GroupedRef(ws *Workspace, a []float32, l int4Layout, dst []float32, M, N int) {
+	K := l.K
+	if l.sh != nil || l.r4 != nil {
+		l.group = 32
+	}
+	checkGroups(actQuantGroup, l.group)
+	aq, aS, nG := quantizeActGrouped(ws, a, M, K)
+	g := actQuantGroup
+	wG := (K + l.group - 1) / l.group
+	refParallel(ws, N, func(n0, n1 int) {
+		codes := make([]int8, K)
+		wS := make([]float32, wG)
+		for n := n0; n < n1; n++ {
+			l.row(n, codes, wS)
+			for m := range M {
+				dst[m*N+n] = groupedDot(aq[m*K:m*K+K], aS[m*nG:m*nG+nG], g, codes, wS, l.group, K)
+			}
+		}
+	})
+}
+
+// int4Layout describes whichever int4 layout w holds, canonical first (matching Row's order).
+func (w *WeightMat) int4Layout() int4Layout {
+	return int4Layout{w4: w.q4, sh: w.q4SplitHalf, r4: w.q4Row4, wS: w.q4s, r4S: w.q4Row4Scales, group: w.group, K: w.cols}
+}
