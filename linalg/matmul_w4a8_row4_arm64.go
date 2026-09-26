@@ -115,7 +115,7 @@ func MatmulBTW4A8Row4Into(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []
 			matmulBTW4A8Row4GroupedInto(ws, a, w4Row4, wScales4, dst, K, N)
 			return
 		}
-		matmulW4A8GroupedRef(ws, a, int4Layout{r4: w4Row4, r4S: wScales4, group: group, K: K}, dst, M, N) // actgroup.go
+		matmulW4A8Grouped(ws, a, int4Layout{r4: w4Row4, r4S: wScales4, group: group, K: K}, dst, M, N) // actgroup.go
 		return
 	}
 	if K%group != 0 {
@@ -215,4 +215,17 @@ func matmulBTW4A8Row4GroupedInto(ws *Workspace, a []float32, w4Row4 []byte, wSca
 		return
 	}
 	ws.parallel(nQuads, span)
+}
+
+// w4a8GroupedFastRows serves matmulW4A8Grouped from the row4 kernels, one activation row at a time.
+// false when the layout is not row4.
+func w4a8GroupedFastRows(ws *Workspace, a []float32, l int4Layout, dst []float32, M, N int) bool {
+	if l.r4 == nil || N%4 != 0 {
+		return false
+	}
+	K := l.K
+	for m := range M {
+		matmulBTW4A8Row4GroupedInto(ws, a[m*K:(m+1)*K], l.r4, l.r4S, dst[m*N:(m+1)*N], K, N)
+	}
+	return true
 }

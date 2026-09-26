@@ -16,7 +16,7 @@ import "fmt"
 // anyway.
 func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 	if actQuantGroup > 0 {
-		matmulW4A8GroupedRef(ws, a, w.int4Layout(), dst, M, w.rows) // actgroup.go
+		matmulW4A8Grouped(ws, a, w.int4Layout(), dst, M, w.rows) // actgroup.go
 		return
 	}
 	if w.q4 == nil {

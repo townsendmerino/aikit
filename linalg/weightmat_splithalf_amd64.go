@@ -70,11 +70,7 @@ func (w *WeightMat) RepackInt4SplitHalf() bool {
 // (TestWeightMatSplitHalf_matchesCanonical, TestWeightMatSplitHalf_repackedOnlyMatchesCanonical).
 func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 	if actQuantGroup > 0 {
-		if w.q4SplitHalf != nil && M == 1 && actQuantGroup == 32 && w.cols%32 == 0 {
-			matmulBTW4A8SplitHalfGroupedInto(ws, a, w.q4SplitHalf, w.q4s, dst, w.cols, w.rows)
-			return
-		}
-		matmulW4A8GroupedRef(ws, a, w.int4Layout(), dst, M, w.rows) // actgroup.go
+		matmulW4A8Grouped(ws, a, w.int4Layout(), dst, M, w.rows) // actgroup.go
 		return
 	}
 	if w.q4SplitHalf != nil {
@@ -189,4 +185,17 @@ func matmulBTW4A8SplitHalfGroupedInto(ws *Workspace, a []float32, w4sh []byte, w
 		return
 	}
 	ws.parallel(N, span)
+}
+
+// w4a8GroupedFastRows serves matmulW4A8Grouped from the split-half AVX2 kernel, one activation row at
+// a time (M>1 loses the tiles' weight reuse but keeps SIMD). false when the layout or CPU cannot.
+func w4a8GroupedFastRows(ws *Workspace, a []float32, l int4Layout, dst []float32, M, N int) bool {
+	if l.sh == nil || !splitHalfUsable() {
+		return false
+	}
+	K := l.K
+	for m := range M {
+		matmulBTW4A8SplitHalfGroupedInto(ws, a[m*K:(m+1)*K], l.sh, l.wS, dst[m*N:(m+1)*N], K, N)
+	}
+	return true
 }

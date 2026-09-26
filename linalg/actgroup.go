@@ -216,3 +216,42 @@ func matmulW4A8GroupedRef(ws *Workspace, a []float32, l int4Layout, dst []float3
 func (w *WeightMat) int4Layout() int4Layout {
 	return int4Layout{w4: w.q4, sh: w.q4SplitHalf, r4: w.q4Row4, wS: w.q4s, r4S: w.q4Row4Scales, group: w.group, K: w.cols}
 }
+
+// matmulW4A8Grouped is the per-group W4A8 matmul every W4A8 hook calls. With per-32 activation scales
+// over 32-wide weight groups it runs the existing SIMD kernels fed combined scales wS[j,g]*aS[i,g]:
+// the arch's M=1 repacked kernel per activation row where the layout is present (amd64 split-half,
+// arm64 row4), else the canonical dotW4A8. Anything else (other group sizes, ragged K) takes the
+// Go reference.
+func matmulW4A8Grouped(ws *Workspace, a []float32, l int4Layout, dst []float32, M, N int) {
+	K := l.K
+	if actQuantGroup == 32 && K%32 == 0 && K >= 32 {
+		if (l.sh != nil || l.r4 != nil) && w4a8GroupedFastRows(ws, a, l, dst, M, N) {
+			return
+		}
+		if l.w4 != nil && l.group == 32 {
+			matmulW4A8CanonicalGrouped(ws, a, l.w4, l.wS, dst, M, K, N)
+			return
+		}
+	}
+	matmulW4A8GroupedRef(ws, a, l, dst, M, N)
+}
+
+// matmulW4A8CanonicalGrouped runs the canonical-layout dotW4A8 kernel (every arch) with combined
+// per-group scales, for per-32 activations over 32-wide weight groups.
+func matmulW4A8CanonicalGrouped(ws *Workspace, a []float32, w4 []byte, wScales, dst []float32, M, K, N int) {
+	aq, aS, nG := quantizeActGrouped(ws, a, M, K)
+	bpr := (K + 1) / 2
+	refParallel(ws, N, func(n0, n1 int) {
+		cs := make([]float32, nG)
+		for j := n0; j < n1; j++ {
+			prow, srow := w4[j*bpr:j*bpr+bpr], wScales[j*nG:j*nG+nG]
+			for i := range M {
+				as := aS[i*nG : i*nG+nG]
+				for g := range cs {
+					cs[g] = srow[g] * as[g]
+				}
+				dst[i*N+j] = dotW4A8(aq[i*K:i*K+K], prow, cs, 32, K)
+			}
+		}
+	})
+}

@@ -777,7 +777,7 @@ func MatmulBTW4A8Into(ws *Workspace, a []float32, w4 []byte, wScales []float32, 
 	checkMatmulW4A8("MatmulBTW4A8", len(a), len(w4), len(wScales), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTW4A8", len(a), w4, wScales, len(dst), M, K, N, group)
 	if actQuantGroup > 0 {
-		matmulW4A8GroupedRef(ws, a, int4Layout{w4: w4, wS: wScales, group: group, K: K}, dst, M, N) // actgroup.go
+		matmulW4A8Grouped(ws, a, int4Layout{w4: w4, wS: wScales, group: group, K: K}, dst, M, N) // actgroup.go
 		return
 	}
 	nGroups, bpr := groupsFor(K, group)
@@ -929,7 +929,7 @@ func MatmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []W4A8Op
 	if actQuantGroup > 0 {
 		for _, op := range ops {
 			l := int4Layout{w4: op.W4, sh: op.SplitHalf, r4: op.Row4, wS: op.Scales, r4S: op.Row4Scales, group: group, K: K}
-			matmulW4A8GroupedRef(ws, a, l, op.Dst, M, op.N) // actgroup.go
+			matmulW4A8Grouped(ws, a, l, op.Dst, M, op.N) // actgroup.go
 		}
 		return
 	}

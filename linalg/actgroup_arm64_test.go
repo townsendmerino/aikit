@@ -62,3 +62,25 @@ func TestActGroup_row4KernelMatchesReference(t *testing.T) {
 		}
 	}
 }
+
+// TestActGroup_row4MultiRow: M>1 through a repacked-only row4 WeightMat (the per-row loop over the
+// M=1 row4 kernel) agrees with the reference.
+func TestActGroup_row4MultiRow(t *testing.T) {
+	r := rand.New(rand.NewPCG(19, 20))
+	const M, K, N = 3, 256, 32
+	a := agRandMat(r, M*K)
+	a[400] = 250
+	q4, s4 := QuantizeGroupsInt4(agRandMat(r, N*K), N, K, 32)
+	withActGroup(t, 32)
+	ref := make([]float32, M*N)
+	matmulW4A8GroupedRef(new(Workspace), a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, M, N)
+	only, ok := WrapInt4Row4Only(RepackW4A8Row4(q4, N, K, 32), RepackW4A8Row4Scales(s4, N, K, 32), N, K, 32)
+	if !ok {
+		t.Fatal("WrapInt4Row4Only declined")
+	}
+	got := make([]float32, M*N)
+	only.MatmulBTW4A8Into(new(Workspace), a, got, M)
+	if e := agRelErr(got, ref); e > 1e-6 {
+		t.Errorf("row4 M=%d grouped vs reference: rel err %.3g", M, e)
+	}
+}

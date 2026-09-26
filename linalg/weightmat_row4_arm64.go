@@ -70,7 +70,7 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 			MatmulBTW4A8Row4Into(ws, a, w.q4Row4, w.q4Row4Scales, dst, M, w.cols, w.rows, w.group)
 			return
 		}
-		matmulW4A8GroupedRef(ws, a, w.int4Layout(), dst, M, w.rows) // actgroup.go
+		matmulW4A8Grouped(ws, a, w.int4Layout(), dst, M, w.rows) // actgroup.go
 		return
 	}
 	if w.q4Row4 != nil {

@@ -66,28 +66,31 @@ func TestActGroup_wholeRowGroupIsThePerRowKernel(t *testing.T) {
 	}
 }
 
-// TestActGroup_layoutsAgree: canonical and split-half int4 layouts must give bit-identical
-// reference results, through the free function, the WeightMat method and the Batch entry point.
+// TestActGroup_layoutsAgree: every W4A8 entry point under per-32 activations — the canonical free
+// function, the Batch entry over the split-half layout, and the WeightMat method — agrees with the Go
+// reference to accumulation order, at M=3 (the per-row loop over the M=1 kernels, and the canonical
+// kernel's M>1 path).
 func TestActGroup_layoutsAgree(t *testing.T) {
 	r := rand.New(rand.NewPCG(3, 4))
-	const M, K, N = 2, 128, 24
+	const M, K, N = 3, 128, 24
 	a := agRandMat(r, M*K)
+	a[40] = 300
 	wm := QuantizeInt4(agRandMat(r, N*K), N, K, 32)
 	q4, s4, _, _ := wm.Int4()
 	withActGroup(t, 32)
 
+	ref := make([]float32, M*N)
+	matmulW4A8GroupedRef(new(Workspace), a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, M, N)
 	canon := make([]float32, M*N)
 	MatmulBTW4A8Into(new(Workspace), a, q4, s4, canon, M, K, N, 32)
 	sh := RepackW4A8SplitHalf(q4, N, K, 32)
-	viaSH := make([]float32, M*N)
-	matmulW4A8GroupedRef(new(Workspace), a, int4Layout{sh: sh, wS: s4, group: 32, K: K}, viaSH, M, N)
 	batch := make([]float32, M*N)
 	MatmulBTW4A8Batch(new(Workspace), a, M, K, 32, []W4A8Op{{SplitHalf: sh, Scales: s4, Dst: batch, N: N}})
 	method := make([]float32, M*N)
 	wm.MatmulBTW4A8Into(new(Workspace), a, method, M)
-	for i := range canon {
-		if viaSH[i] != canon[i] || batch[i] != canon[i] || method[i] != canon[i] {
-			t.Fatalf("[%d]: canonical %v, split-half %v, batch %v, method %v — want bit-identical", i, canon[i], viaSH[i], batch[i], method[i])
+	for name, got := range map[string][]float32{"canonical": canon, "batch split-half": batch, "method": method} {
+		if e := agRelErr(got, ref); e > 1e-6 {
+			t.Errorf("%s vs reference: rel err %.3g", name, e)
 		}
 	}
 }
