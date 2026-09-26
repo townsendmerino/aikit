@@ -124,10 +124,14 @@ q4k_sb:
 	ORQ  R11, R12
 	SHLQ $32, AX
 	ORQ  R13, AX
-	MOVQ R12, X4
+	// VMOVQ, NOT MOVQ: the Go assembler encodes `MOVQ reg, X` as legacy SSE, and a legacy-SSE write
+	// to an XMM register while the upper YMM halves are dirty cost this loop ~16x on a Ryzen 7 3700X
+	// (Zen 2): 1900 ns vs 115 ns per 14-super-block row (BenchmarkQ4KDotRow, 2026-09-26). Inside an
+	// AVX loop, every XMM write must be VEX-encoded.
+	VMOVQ R12, X4
 	VPMOVZXBD X4, Y4
 	VCVTDQ2PS Y4, Y4
-	MOVQ AX, X5
+	VMOVQ AX, X5
 	VPMOVZXBD X5, Y5
 	VCVTDQ2PS Y5, Y5
 
