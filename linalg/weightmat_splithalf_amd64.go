@@ -159,11 +159,12 @@ func w4a8BatchSplitHalfSpan(aq []int8, aScale float32, splitHalf []byte, scales,
 }
 
 // matmulBTW4A8SplitHalfGroupedInto is matmulBTW4A8SplitHalfInto with per-32 ACTIVATION scales
-// (SetActQuantGroup(32)), on the unchanged AVX2 kernel. dotW4A8SplitHalfAVX2 returns
-// sum_g int32dot_g * scales[g]; handed the combined scale wS[j,g]*aS[g] per group instead of the
-// weight scale alone, and without the final per-row activation multiply, it computes the per-group
-// product exactly. The cost is one f32 multiply per 32 weights. It matches matmulW4A8GroupedRef up
-// to the kernel's accumulation order (TestActGroup_splitHalfKernelMatchesReference).
+// (SetActQuantGroup(32)), on dotW4A8SplitHalfScaledAVX2: the split-half kernel with each group's
+// scale multiplied by the activation's group scale in-register (two instructions per group), and no
+// final per-row activation multiply. The first version formed those combined scales in Go, per row,
+// into a scratch array: ~20% extra work on a small matmul, the 1.5B speed-gate FAIL
+// (docs/tasks/task-actquant-pergroup-2026-09.md). Matches matmulW4A8GroupedRef to accumulation order
+// (TestActGroup_splitHalfKernelMatchesReference).
 func matmulBTW4A8SplitHalfGroupedInto(ws *Workspace, a []float32, w4sh []byte, wScales, dst []float32, K, N int) {
 	const group = 32
 	nGroups, bpr := groupsFor(K, group)
@@ -171,13 +172,8 @@ func matmulBTW4A8SplitHalfGroupedInto(ws *Workspace, a []float32, w4sh []byte, w
 	aS := ws.f32Buf(nGroups)
 	QuantizeActivationsGroupedInto(aq, aS, a[:K], 1, K, group)
 	span := func(j0, j1 int) {
-		cs := make([]float32, nGroups)
 		for j := j0; j < j1; j++ {
-			srow := wScales[j*nGroups : j*nGroups+nGroups]
-			for g := range cs {
-				cs[g] = srow[g] * aS[g]
-			}
-			dst[j] = dotW4A8SplitHalfAVX2(&aq[0], &w4sh[j*bpr], &cs[0], nGroups)
+			dst[j] = dotW4A8SplitHalfScaledAVX2(&aq[0], &w4sh[j*bpr], &wScales[j*nGroups], &aS[0], nGroups)
 		}
 	}
 	if N*K < ws.thr() || N < 2 {

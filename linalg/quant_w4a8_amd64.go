@@ -72,3 +72,9 @@ func dotW4A8Fold2AccAVX2(act *int8, packed *byte, scales *float32, nGroups int) 
 //
 //go:noescape
 func dotW4A8SplitHalfAVX2(act *int8, packed *byte, scales *float32, nGroups int) float32
+
+// dotW4A8SplitHalfScaledAVX2 is dotW4A8SplitHalfAVX2 with a per-group activation scale multiplied into
+// each group's scale (dot_w4a8_amd64.s): per-32 activation quantization (actgroup.go).
+//
+//go:noescape
+func dotW4A8SplitHalfScaledAVX2(act *int8, packed *byte, scales *float32, aScales *float32, nGroups int) float32

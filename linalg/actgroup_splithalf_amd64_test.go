@@ -1,6 +1,7 @@
 package linalg
 
 import (
+	"math"
 	"math/rand/v2"
 	"testing"
 )
@@ -54,5 +55,35 @@ func TestActGroup_splitHalfMultiRow(t *testing.T) {
 	sh.MatmulBTW4A8Into(new(Workspace), a, got, M)
 	if e := agRelErr(got, ref); e > 1e-6 {
 		t.Errorf("split-half M=%d grouped vs reference: rel err %.3g", M, e)
+	}
+}
+
+// TestActGroup_splitHalfScaledKernelOddGroups: the two-accumulator scaled kernel against the Go oracle
+// sum over group counts 1..9 (the odd tail and the unrolled pairs), with a zero activation group.
+func TestActGroup_splitHalfScaledKernelOddGroups(t *testing.T) {
+	if !splitHalfUsable() {
+		t.Skip("split-half AVX2 kernel not usable on this CPU")
+	}
+	r := rand.New(rand.NewPCG(29, 30))
+	for nG := 1; nG <= 9; nG++ {
+		K := 32 * nG
+		a := agRandMat(r, K)
+		for i := 0; i < 32; i++ {
+			a[i] = 0 // group 0 all-zero: its scale is 0
+		}
+		aq := make([]int8, K)
+		aS := make([]float32, nG)
+		QuantizeActivationsGroupedInto(aq, aS, a, 1, K, 32)
+		q4, s4 := QuantizeGroupsInt4(agRandMat(r, K), 1, K, 32)
+		sh := RepackW4A8SplitHalf(q4, 1, K, 32)
+		got := dotW4A8SplitHalfScaledAVX2(&aq[0], &sh[0], &s4[0], &aS[0], nG)
+		var want float64
+		for k := range K {
+			nib := int(q4[k/2]>>(4*(k%2))) & 0xF
+			want += float64(nib-8) * float64(aq[k]) * float64(s4[k/32]*aS[k/32])
+		}
+		if d := math.Abs(float64(got) - want); d > 1e-5*math.Abs(want)+1e-6 {
+			t.Errorf("nGroups=%d: kernel %v, oracle %v", nG, got, want)
+		}
 	}
 }

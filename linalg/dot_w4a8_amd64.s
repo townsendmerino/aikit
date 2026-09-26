@@ -290,3 +290,115 @@ loopsh:
 	MOVSS        X10, ret+32(FP)
 	VZEROUPPER
 	RET
+
+// func dotW4A8SplitHalfScaledAVX2(act *int8, packed *byte, scales *float32, aScales *float32, nGroups int) float32
+//
+// dotW4A8SplitHalfAVX2 with a per-group ACTIVATION scale (actgroup.go, per-32 activations): each
+// group's int32 partial is multiplied by scales[g]*aScales[g] (one VMULPS, the same f32 product the Go
+// side formed before) instead of scales[g] alone. The scale costs two instructions per group; to keep
+// that from lengthening a compute-bound small matmul (the 1.5B speed-gate case), the loop does two
+// groups per iteration into two independent accumulators (Y10, Y13), summed once at the end, with a
+// one-group tail for an odd count.
+TEXT ·dotW4A8SplitHalfScaledAVX2(SB), NOSPLIT, $0-44
+	MOVQ act+0(FP), SI
+	MOVQ packed+8(FP), DI
+	MOVQ scales+16(FP), BX
+	MOVQ aScales+24(FP), R8
+	MOVQ nGroups+32(FP), CX
+
+	LEAQ    mask0F<>(SB), AX
+	VMOVDQU (AX), X14
+	LEAQ    const8<>(SB), AX
+	VMOVDQU (AX), X15
+	VXORPS  Y10, Y10, Y10
+	VXORPS  Y13, Y13, Y13
+
+	CMPQ CX, $2
+	JLT  tailshs
+
+loopshs2:
+	// group g -> Y10
+	VMOVDQU   (DI), X0
+	VPAND     X14, X0, X1
+	VPSRLW    $4, X0, X2
+	VPAND     X14, X2, X2
+	VPSUBB    X15, X1, X1
+	VPSUBB    X15, X2, X2
+	VPMOVSXBW X1, Y3
+	VPMOVSXBW X2, Y4
+	VMOVDQU   (SI), X5
+	VMOVDQU   16(SI), X6
+	VPMOVSXBW X5, Y5
+	VPMOVSXBW X6, Y6
+	VPMADDWD  Y5, Y3, Y7
+	VPMADDWD  Y6, Y4, Y8
+	VPADDD    Y8, Y7, Y7
+	VCVTDQ2PS    Y7, Y9
+	VBROADCASTSS (BX), Y11
+	VBROADCASTSS (R8), Y12
+	VMULPS       Y12, Y11, Y11
+	VFMADD231PS  Y11, Y9, Y10
+
+	// group g+1 -> Y13
+	VMOVDQU   16(DI), X0
+	VPAND     X14, X0, X1
+	VPSRLW    $4, X0, X2
+	VPAND     X14, X2, X2
+	VPSUBB    X15, X1, X1
+	VPSUBB    X15, X2, X2
+	VPMOVSXBW X1, Y3
+	VPMOVSXBW X2, Y4
+	VMOVDQU   32(SI), X5
+	VMOVDQU   48(SI), X6
+	VPMOVSXBW X5, Y5
+	VPMOVSXBW X6, Y6
+	VPMADDWD  Y5, Y3, Y7
+	VPMADDWD  Y6, Y4, Y8
+	VPADDD    Y8, Y7, Y7
+	VCVTDQ2PS    Y7, Y9
+	VBROADCASTSS 4(BX), Y11
+	VBROADCASTSS 4(R8), Y12
+	VMULPS       Y12, Y11, Y11
+	VFMADD231PS  Y11, Y9, Y13
+
+	ADDQ $32, DI
+	ADDQ $64, SI
+	ADDQ $8, BX
+	ADDQ $8, R8
+	SUBQ $2, CX
+	CMPQ CX, $2
+	JGE  loopshs2
+
+tailshs:
+	TESTQ CX, CX
+	JZ    donehs
+	VMOVDQU   (DI), X0
+	VPAND     X14, X0, X1
+	VPSRLW    $4, X0, X2
+	VPAND     X14, X2, X2
+	VPSUBB    X15, X1, X1
+	VPSUBB    X15, X2, X2
+	VPMOVSXBW X1, Y3
+	VPMOVSXBW X2, Y4
+	VMOVDQU   (SI), X5
+	VMOVDQU   16(SI), X6
+	VPMOVSXBW X5, Y5
+	VPMOVSXBW X6, Y6
+	VPMADDWD  Y5, Y3, Y7
+	VPMADDWD  Y6, Y4, Y8
+	VPADDD    Y8, Y7, Y7
+	VCVTDQ2PS    Y7, Y9
+	VBROADCASTSS (BX), Y11
+	VBROADCASTSS (R8), Y12
+	VMULPS       Y12, Y11, Y11
+	VFMADD231PS  Y11, Y9, Y10
+
+donehs:
+	VADDPS       Y13, Y10, Y10
+	VEXTRACTF128 $1, Y10, X11
+	VADDPS       X11, X10, X10
+	VHADDPS      X10, X10, X10
+	VHADDPS      X10, X10, X10
+	MOVSS        X10, ret+40(FP)
+	VZEROUPPER
+	RET
