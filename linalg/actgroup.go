@@ -261,7 +261,7 @@ func matmulW4A8Grouped(ws *Workspace, g int, a []float32, l int4Layout, dst []fl
 func matmulW4A8CanonicalGrouped(ws *Workspace, a []float32, w4 []byte, wScales, dst []float32, M, K, N int) {
 	aq, aS, nG := quantizeActGrouped(ws, 32, a, M, K)
 	bpr := (K + 1) / 2
-	refParallel(ws, N, func(n0, n1 int) {
+	parallelFor(ws, M*N*K, N, func(n0, n1 int) {
 		cs := make([]float32, nG)
 		for j := n0; j < n1; j++ {
 			prow, srow := w4[j*bpr:j*bpr+bpr], wScales[j*nG:j*nG+nG]
@@ -297,14 +297,16 @@ func matmulW8A8Grouped(ws *Workspace, g int, a []float32, bQ []int8, bScales, ds
 		return
 	}
 	aq, aS, nG := quantizeActGrouped(ws, 32, a, M, K)
-	refParallel(ws, N, func(n0, n1 int) {
+	span := func(n0, n1 int) {
 		for n := n0; n < n1; n++ {
 			w := bQ[n*K : n*K+K]
 			for m := range M {
 				dst[m*N+n] = dotI8Scaled32(aq[m*K:m*K+K], w, aS[m*nG:m*nG+nG]) * bScales[n]
 			}
 		}
-	})
+	}
+	// The workspace's own fan-out and threshold, as the per-row W8A8 path uses.
+	parallelFor(ws, M*N*K, N, span)
 }
 
 // SetActQuantGroup stamps this weight's activation group size: WeightMat's own matmul methods use it
@@ -343,4 +345,13 @@ func (w *WeightMat) withWeightGroup(ws *Workspace, fn func(*Workspace)) {
 		defer func() { ws.actGroup = 0 }()
 	}
 	fn(ws)
+}
+
+// parallelFor is Workspace.parallelCols (the per-row kernels' fan-out and threshold), tolerating a
+// nil workspace.
+func parallelFor(ws *Workspace, work, N int, fn func(j0, j1 int)) {
+	if ws == nil {
+		ws = new(Workspace)
+	}
+	ws.parallelCols(work, N, fn)
 }
