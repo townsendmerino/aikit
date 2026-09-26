@@ -27,13 +27,15 @@ type Workspace struct {
 	// i32 is the S-05 lane-sum correction for the M=1 row4 W4A8 path
 	// (w4a8LaneCorrNeg8: 4 int32 per 32-k group of one activation row), per call,
 	// consumed within MatmulBTW4A8Row4Into. Its own buffer for the same reason deq
-	// is: it must never alias the activation scales in f32. Only the arm64 path
-	// touches it today (quant_w4a8_fold_arm64.go / matmul_w4a8_row4_arm64.go), so
-	// the pure-Go build sees it unreferenced.
-	i32          []int32 //nolint:unused // arm64-only user; see the field comment
-	width        int     // per-Workspace fan-out cap; 0 ⇒ inherit SetParallelWidth
-	threshold    int     // per-Workspace parallelization threshold (when thresholdSet)
-	thresholdSet bool    // false ⇒ inherit the process-wide SetParallelThreshold default
+	// is: it must never alias the activation scales in f32. Also the Q4_K matmul's
+	// per-group activation sums (q4k.go), a different call, so never live at once.
+	i32 []int32
+	// q4kSum is the Q4_K matmul's per-group aS·Σaq (q4k.go): its own buffer, since f32
+	// holds that call's activation scales.
+	q4kSum       []float32
+	width        int  // per-Workspace fan-out cap; 0 ⇒ inherit SetParallelWidth
+	threshold    int  // per-Workspace parallelization threshold (when thresholdSet)
+	thresholdSet bool // false ⇒ inherit the process-wide SetParallelThreshold default
 }
 
 // SetThreshold overrides the parallelization threshold (see SetParallelThreshold)
@@ -111,16 +113,22 @@ func (w *Workspace) deqBuf(n int) []float32 {
 	return w.deq[:n]
 }
 
-// int32Buf returns a length-n int32 scratch slice for the S-05 lane-sum
-// correction (see the i32 field), backed by its own reusable storage. Its only
-// caller is the arm64 M=1 row4 dispatch, so the pure-Go build sees it unused.
-//
-//nolint:unused // arm64-only caller (matmul_w4a8_row4_arm64.go)
+// int32Buf returns a length-n int32 scratch slice (see the i32 field), backed by
+// its own reusable storage: the arm64 M=1 row4 dispatch's S-05 lane-sum
+// correction, and the Q4_K matmul's per-group activation sums.
 func (w *Workspace) int32Buf(n int) []int32 {
 	if cap(w.i32) < n {
 		w.i32 = make([]int32, n)
 	}
 	return w.i32[:n]
+}
+
+// q4kSumBuf returns a length-n f32 scratch slice for the Q4_K matmul (see q4kSum).
+func (w *Workspace) q4kSumBuf(n int) []float32 {
+	if cap(w.q4kSum) < n {
+		w.q4kSum = make([]float32, n)
+	}
+	return w.q4kSum[:n]
 }
 
 // QuantizeActivations dynamically quantizes a's M×K rows to int8 into this

@@ -123,12 +123,17 @@ func matmulQ4K(ws *Workspace, a []float32, raw []byte, dst []float32, M, K, N in
 	aq, aS, nG := quantizeActGrouped(ws, q4kGroup, a, M, K)
 	sums := ws.int32Buf(M * nG)
 	q4kActSums(aq, sums, M, K)
+	asumf := ws.q4kSumBuf(M * nG)
+	for i := range asumf {
+		asumf[i] = aS[i] * float32(sums[i])
+	}
 	rb := Q4KRowBytes(K)
 	parallelFor(ws, M*N*K, N, func(n0, n1 int) {
 		for n := n0; n < n1; n++ {
 			row := raw[n*rb : (n+1)*rb]
 			for m := range M {
-				dst[m*N+n] = dotQ4K(row, aq[m*K:m*K+K], aS[m*nG:m*nG+nG], sums[m*nG:m*nG+nG], K)
+				g := m * nG
+				dst[m*N+n] = dotQ4K(row, aq[m*K:m*K+K], aS[g:g+nG], sums[g:g+nG], asumf[g:g+nG], K)
 			}
 		}
 	})

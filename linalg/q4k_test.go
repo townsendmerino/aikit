@@ -160,3 +160,38 @@ func TestQ4K_rowAndKind(t *testing.T) {
 		}
 	}
 }
+
+// TestQ4K_kernelMatchesGo: the arch kernel dotQ4K (AVX2 on amd64) against the Go oracle dotQ4KGo, on
+// random and saturated rows of 1..9 super-blocks: relative error ≤ 1e-6. On a build with no arch kernel
+// the two are the same function and this checks nothing, which it logs.
+func TestQ4K_kernelMatchesGo(t *testing.T) {
+	r := rand.New(rand.NewPCG(55, 56))
+	for _, nSB := range []int{1, 2, 3, 9} {
+		for _, sat := range []bool{false, true} {
+			K := nSB * qkK
+			raw := q4kTestRows(r, 1, K, sat)
+			a := make([]float32, K)
+			for i := range a {
+				a[i] = float32(r.NormFloat64())
+				if sat {
+					a[i] = -1 // saturates to -127 codes: the most negative dot
+				}
+			}
+			a[K/2] = 300
+			nG := K / q4kGroup
+			aq, aS := make([]int8, K), make([]float32, nG)
+			QuantizeActivationsGroupedInto(aq, aS, a, 1, K, q4kGroup)
+			sums := make([]int32, nG)
+			q4kActSums(aq, sums, 1, K)
+			asumf := make([]float32, nG)
+			for i := range asumf {
+				asumf[i] = aS[i] * float32(sums[i])
+			}
+			want := float64(dotQ4KGo(raw, aq, aS, sums, K))
+			got := float64(dotQ4K(raw, aq, aS, sums, asumf, K))
+			if e := math.Abs(got-want) / math.Max(math.Abs(want), 1e-30); e > 1e-6 {
+				t.Errorf("nSB=%d sat=%v: kernel %v, Go %v (rel %.3g)", nSB, sat, got, want, e)
+			}
+		}
+	}
+}
