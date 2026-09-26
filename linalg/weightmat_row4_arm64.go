@@ -64,7 +64,7 @@ func (w *WeightMat) RepackInt4Row4() bool {
 // kernel against the same row computed inside a batch through the tile, which is
 // exactly the pair speculative verify exercises.
 func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
-	if g := actGroupFor(ws); g > 0 {
+	if g := w.groupFor(ws); g > 0 {
 		if w.q4Row4 != nil && M == 1 {
 			// MatmulBTW4A8Row4Into takes its per-32 kernel path (or the reference) itself.
 			MatmulBTW4A8Row4Into(ws, a, w.q4Row4, w.q4Row4Scales, dst, M, w.cols, w.rows, w.group)

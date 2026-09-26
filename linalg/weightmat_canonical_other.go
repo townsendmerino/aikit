@@ -15,7 +15,7 @@ import "fmt"
 // something (a hand-built WeightMat bypassing the constructors) reaches it
 // anyway.
 func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
-	if g := actGroupFor(ws); g > 0 {
+	if g := w.groupFor(ws); g > 0 {
 		matmulW4A8Grouped(ws, g, a, w.int4Layout(), dst, M, w.rows) // actgroup.go
 		return
 	}

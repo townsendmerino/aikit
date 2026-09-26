@@ -306,3 +306,41 @@ func matmulW8A8Grouped(ws *Workspace, g int, a []float32, bQ []int8, bScales, ds
 		}
 	})
 }
+
+// SetActQuantGroup stamps this weight's activation group size: WeightMat's own matmul methods use it
+// when the workspace sets none, and a consumer calling the free functions with this weight's raw
+// arrays reads it back (ActQuantGroup) to set its workspace. Per weight, so per model.
+func (w *WeightMat) SetActQuantGroup(g int) {
+	if g < 0 {
+		panic(fmt.Sprintf("linalg: WeightMat.SetActQuantGroup(%d): group must be >= 0", g))
+	}
+	w.actGroup = g
+}
+
+// ActQuantGroup reports the group SetActQuantGroup stamped on this weight (0 = none).
+func (w *WeightMat) ActQuantGroup() int { return w.actGroup }
+
+// groupFor is the activation group a matmul of w through ws uses: the workspace's own, else the
+// weight's, else the process-wide one.
+func (w *WeightMat) groupFor(ws *Workspace) int {
+	if ws != nil && ws.actGroup > 0 {
+		return ws.actGroup
+	}
+	if w.actGroup > 0 {
+		return w.actGroup
+	}
+	return actQuantGroup
+}
+
+// withWeightGroup runs fn with ws carrying w's group when ws sets none, so a WeightMat method that
+// calls a free function (which reads only the workspace) honours the weight's stamp.
+func (w *WeightMat) withWeightGroup(ws *Workspace, fn func(*Workspace)) {
+	if w.actGroup > 0 && (ws == nil || ws.actGroup == 0) {
+		if ws == nil {
+			ws = new(Workspace)
+		}
+		ws.actGroup = w.actGroup
+		defer func() { ws.actGroup = 0 }()
+	}
+	fn(ws)
+}

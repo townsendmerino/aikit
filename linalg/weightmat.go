@@ -37,8 +37,12 @@ type WeightMat struct {
 	q4s    []float32 // [rows*nGroups] per-group int4 scales
 	group  int       // int4 group size (0 unless int4)
 	w8a8   bool      // int8 weights run full int8×int8 (W8A8) instead of weight-only Q8
-	rows   int       // out features (N)
-	cols   int       // in features (K)
+	// actGroup is this weight's per-group activation-quantization size (SetActQuantGroup): the
+	// consumer stamps it per model at load, and the WeightMat methods use it when the workspace
+	// sets none. 0 = defer to the workspace / process-wide setting.
+	actGroup int
+	rows     int // out features (N)
+	cols     int // in features (K)
 
 	// q4Row4/q4Row4Scales: an OPTIONAL, additional arm64-only in-RAM layout —
 	// split-half nibbles + 4-row interleave (docs/task-w4a8-neon-bandwidth.md's
@@ -307,6 +311,12 @@ func WrapInt4SplitHalfOnly(q4SplitHalf []byte, q4s []float32, rows, cols, group 
 // stored precision to the matching linalg kernel. CPU only — a consumer with a GPU
 // backend dispatches via the raw accessors and uses this as the fallback.
 func (w *WeightMat) MatmulBT(a, dst []float32, M int) {
+	if w.actGroup > 0 && (w.w8a8 || w.q4 != nil || w.q4Row4 != nil || w.q4SplitHalf != nil) {
+		// A stamped activation group rides on a workspace, which the free functions below read.
+		var ws Workspace
+		w.MatmulBTInto(&ws, a, dst, M)
+		return
+	}
 	switch {
 	case w.q4 != nil:
 		MatmulBTW4A8(a, w.q4, w.q4s, dst, M, w.cols, w.rows, w.group)
@@ -336,6 +346,10 @@ func (w *WeightMat) MatmulBT(a, dst []float32, M int) {
 // Workspace-scoped parallel matmul honoring its SetThreshold/SetWorkers. So every
 // storage kind is now zero-alloc on the serial decode path.
 func (w *WeightMat) MatmulBTInto(ws *Workspace, a, dst []float32, M int) {
+	if w.actGroup > 0 && (ws == nil || ws.actGroup == 0) {
+		w.withWeightGroup(ws, func(ws *Workspace) { w.MatmulBTInto(ws, a, dst, M) })
+		return
+	}
 	// Case order kept identical to MatmulBT above: with constructor-built values
 	// the storage kinds are mutually exclusive so order is inert, but a
 	// hand-built WeightMat with more than one set would otherwise route the two

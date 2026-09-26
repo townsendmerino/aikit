@@ -196,3 +196,45 @@ func TestActGroup_perWorkspace(t *testing.T) {
 		t.Errorf("premise: the default workspace's output matches the per-32 reference (rel err %.3g)", agRelErr(perRow, ref))
 	}
 }
+
+// TestActGroup_weightStamp: a weight stamped with SetActQuantGroup(32) runs per-32 through every
+// WeightMat entry point (MatmulBT, MatmulBTInto, MatmulBTW4A8Into) with a default workspace and the
+// process-wide setting at 0, and an unstamped weight in the same process still runs per-row.
+func TestActGroup_weightStamp(t *testing.T) {
+	r := rand.New(rand.NewPCG(27, 28))
+	const M, K, N = 1, 256, 32
+	a := agRandMat(r, M*K)
+	a[5] = 400
+	wf := agRandMat(r, N*K)
+	w8 := QuantizeInt8(wf, N, K, true)
+	q8, s8, _, _ := w8.Int8()
+	w4 := QuantizeInt4(wf, N, K, 32)
+	q4, s4, _, _ := w4.Int4()
+	ref8, ref4 := make([]float32, N), make([]float32, N)
+	matmulW8A8GroupedRef(new(Workspace), 32, a, q8, s8, ref8, M, K, N)
+	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref4, M, N)
+	plain8 := make([]float32, N)
+	w8.MatmulBT(a, plain8, M) // unstamped: per-row
+	w8.SetActQuantGroup(32)
+	w4.SetActQuantGroup(32)
+	for name, run := range map[string]func([]float32){
+		"w8 MatmulBT":       func(d []float32) { w8.MatmulBT(a, d, M) },
+		"w8 MatmulBTInto":   func(d []float32) { w8.MatmulBTInto(new(Workspace), a, d, M) },
+		"w4 MatmulBT":       func(d []float32) { w4.MatmulBT(a, d, M) },
+		"w4 MatmulBTInto":   func(d []float32) { w4.MatmulBTInto(new(Workspace), a, d, M) },
+		"w4 MatmulBTW4A8In": func(d []float32) { w4.MatmulBTW4A8Into(new(Workspace), a, d, M) },
+	} {
+		got := make([]float32, N)
+		run(got)
+		ref := ref4
+		if name[1] == '8' {
+			ref = ref8
+		}
+		if e := agRelErr(got, ref); e > 1e-6 {
+			t.Errorf("%s: stamped weight vs per-32 reference, rel err %.3g", name, e)
+		}
+	}
+	if agRelErr(plain8, ref8) < 1e-4 {
+		t.Error("premise: the unstamped weight's output matches the per-32 reference")
+	}
+}
