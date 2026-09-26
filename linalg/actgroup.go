@@ -298,15 +298,33 @@ func matmulW8A8Grouped(ws *Workspace, g int, a []float32, bQ []int8, bScales, ds
 	}
 	aq, aS, nG := quantizeActGrouped(ws, 32, a, M, K)
 	span := func(n0, n1 int) {
-		for n := n0; n < n1; n++ {
-			w := bQ[n*K : n*K+K]
-			for m := range M {
-				dst[m*N+n] = dotI8Scaled32(aq[m*K:m*K+K], w, aS[m*nG:m*nG+nG]) * bScales[n]
-			}
-		}
+		w8a8GroupedSpan(aq, aS, bQ, bScales, dst, M, K, N, nG, n0, n1)
 	}
 	// The workspace's own fan-out and threshold, as the per-row W8A8 path uses.
 	parallelFor(ws, M*N*K, N, span)
+}
+
+// matmulW8A8GroupedBatch is MatmulBTW8A8Batch with per-group activation scales: quantizes activations
+// ONCE for the whole batch and executes all ops under ONE parallel fan-out across totalN columns.
+func matmulW8A8GroupedBatch(ws *Workspace, g int, a []float32, ops []W8A8Op, M, K, totalN int) {
+	if g != 32 || K%32 != 0 {
+		for _, op := range ops {
+			matmulW8A8GroupedRef(ws, g, a, op.BQ, op.Scales, op.Dst, M, K, op.N)
+		}
+		return
+	}
+	aq, aS, nG := quantizeActGrouped(ws, 32, a, M, K)
+	span := func(g0, g1 int) {
+		base := 0
+		for _, op := range ops {
+			lo, hi := max(g0, base), min(g1, base+op.N)
+			if lo < hi {
+				w8a8GroupedSpan(aq, aS, op.BQ, op.Scales, op.Dst, M, K, op.N, nG, lo-base, hi-base)
+			}
+			base += op.N
+		}
+	}
+	parallelFor(ws, M*totalN*K, totalN, span)
 }
 
 // SetActQuantGroup stamps this weight's activation group size: WeightMat's own matmul methods use it

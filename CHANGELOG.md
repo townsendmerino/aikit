@@ -7,7 +7,55 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html): see
 follows semver (no breaking change before a v2.0), the Experimental tier is
 excluded from that promise and may change in any release until it graduates.
 
-## [Unreleased]
+## [1.48.0] — 2026-09-26
+
+> **PERFGATE EXCEPTION: `go run -C tools ./perfgate v1.47.1` returns `VERDICT: FAIL`, and it is an
+> instruction alignment artifact on unchanged ViT attention code — not a production regression.**
+>
+> `nobara-pc` (linux/amd64 Ryzen 3700X, `./linalg`, 6 visits, interleaved working tree vs `v1.47.1`).
+> 44 of 47 shapes read flat across all W8A8, W4A8, GEMV, MatmulQKAcc64, MatmulAVAcc64, SoftmaxRowKernels,
+> SiLUKernels, and QuantizeRowInt8 shapes. The 3 flagged regressions are `BenchmarkAttendTileFused_expKind/np{576,1024,2048}/contract`
+> (Δ=+6.1% to +6.6%, vs derived floors ±2.08% to ±4.60%). The ViT attention code (`linalg/fusedattn.go`)
+> and AVX2 exp kernel (`linalg/exp_avx2_amd64.s`) are 100% bit-identical between v1.47.1 and this release
+> (`git diff v1.47.1...HEAD linalg/fusedattn* linalg/exp_*` is empty); disassembly confirms identical
+> instruction sequences with shifted loop alignment from preceding additive package code.
+
+`perfgate` VERDICT: FAIL — 3 regression(s) vs v1.47.1 across 47 shapes, confirmed on a second measurement — 12/47 shapes resolve the 5.0% class (see PERFGATE EXCEPTION above).
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at b8f3d63 +dirty (2026-09-26T16:55:58Z)
+
+### Added (Experimental tier)
+
+- **Per-group activation quantization for every W8A8 / W4A8 matmul** (`linalg/actgroup.go`). Every
+  W8A8/W4A8 kernel scales an activation row by ONE max/127; a model whose projection inputs carry
+  massive outliers loses most of the row to rounding. Measured on Phi-3-mini (goinfer
+  `docs/tasks/task-actquant-pergroup-2026-09.md`): down_proj inputs at max/rms ~80-90, per-row int8
+  activations take the logit cosine vs f32 to ~0 by position 16; per-32 at int8int8 restores p10
+  0.973 / 0.998 on goinfer's gate prompts (filler / prose), though 0.930 on a close variant of the
+  filler prompt: the outlier damage is removed, the model's sensitivity to such inputs is not. Selected per call by group size (0 = per-row, the default and unchanged):
+  - `Workspace.SetActQuantGroup(g)` / `ActQuantGroup()`: per workspace, the per-model mechanism;
+  - `WeightMat.SetActQuantGroup(g)` / `ActQuantGroup()`: stamped on the weight, honoured by the
+    WeightMat methods when the workspace sets none, and readable by a consumer driving the free
+    functions;
+  - `SetActQuantGroup(g)` / `ActQuantGroup()`: process-wide, for experiments and tests;
+  - `QuantizeActivationsGroupedInto`: the per-group quantizer (each group is the per-row core itself:
+    same rounding, clamp and zero convention).
+
+  Kernels: the M=1 W4A8 decode kernels (amd64 split-half AVX2, arm64 row4 with the S-05 fold on or
+  off, canonical `dotW4A8` everywhere) run unchanged, fed combined `wScale[g]*aScale[g]` per group;
+  M>1 loops them per activation row. W8A8 gets `dotI8Scaled32AVX2` and 2-column register-blocked
+  `dotI8Scaled32x2AVX2` (per-32 int32 partials, scaled and accumulated in f32; portable Go elsewhere).
+  Batched activation fanout (`matmulW8A8GroupedBatch` in `MatmulBTW8A8Batch`) quantizes activations once
+  and fans out under one thread barrier across all ops in a batch. A plain-Go reference
+  (`matmulW4A8GroupedRef`, `matmulW8A8GroupedRef`) covers other group sizes and is the tests' oracle.
+  Every entry point goinfer reaches is hooked: `MatmulBTW8A8Into/Batch`, `MatmulBTW4A8Into/Batch`,
+  `MatmulBTW4A8Row4Into`, and `WeightMat.MatmulBT/MatmulBTInto/MatmulBTW4A8Into`.
+- **`SetInt4WeightScheme("fullrange" | "mse")`** (`linalg/int4scheme.go`): int4 weight-quantizer
+  candidates in the same format (decode `(nibble-8)*scale`, no kernel change). The default `max/7`
+  rule uses 15 of 16 levels; `fullrange` is Q4_0's signed-extreme/-8 rule, `mse` a per-group
+  least-squares scale search. Reconstruction error on N(0,1): 37.06 default, 29.47 fullrange, 26.11
+  mse. Output quality is model-dependent: neither passed goinfer's pre-registered forward-quality gate
+  (large gains on some families, regressions on others), so the default is unchanged.
 
 ## [1.47.1] — 2026-09-24
 
@@ -4580,7 +4628,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.47.1...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.48.0...HEAD
+[1.48.0]: https://github.com/townsendmerino/aikit/compare/v1.47.1...v1.48.0
 [1.47.1]: https://github.com/townsendmerino/aikit/compare/v1.47.0...v1.47.1
 [1.47.0]: https://github.com/townsendmerino/aikit/compare/v1.46.0...v1.47.0
 [1.46.0]: https://github.com/townsendmerino/aikit/compare/v1.45.1...v1.46.0

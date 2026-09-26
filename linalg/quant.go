@@ -503,9 +503,7 @@ func MatmulBTW8A8Batch(ws *Workspace, a []float32, M, K int, ops []W8A8Op) {
 		totalN += op.N
 	}
 	if g := actGroupFor(ws); g > 0 {
-		for _, op := range ops {
-			matmulW8A8Grouped(ws, g, a, op.BQ, op.Scales, op.Dst, M, K, op.N) // actgroup.go
-		}
+		matmulW8A8GroupedBatch(ws, g, a, ops, M, K, totalN)
 		return
 	}
 	aq := ws.int8Buf(M * K)
