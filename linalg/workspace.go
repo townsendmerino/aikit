@@ -11,8 +11,11 @@ package linalg
 // its KV cache). The zero value is ready to use; buffers grow on demand and are
 // never shrunk.
 type Workspace struct {
-	i8  []int8
-	f32 []float32
+	// actGroup is this workspace's per-group activation-quantization size (SetActQuantGroup),
+	// overriding the process-wide setting when > 0 — so two models in one process can differ.
+	actGroup int
+	i8       []int8
+	f32      []float32
 	// deq is the weight-only Q8/Q4 spans' dequantized-row scratch, kept SEPARATE
 	// from f32 on purpose (audit C-05). f32 holds activation scales, whose
 	// lifetime QuantizeActivations documents to the caller; the dequant scratch

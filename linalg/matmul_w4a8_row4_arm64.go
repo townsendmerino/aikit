@@ -110,12 +110,12 @@ func MatmulBTW4A8Row4Into(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []
 	if N%4 != 0 {
 		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires N a multiple of 4, got %d", N))
 	}
-	if actQuantGroup > 0 {
-		if actQuantGroup == 32 && K%32 == 0 && K >= 32 {
+	if g := actGroupFor(ws); g > 0 {
+		if g == 32 && K%32 == 0 && K >= 32 {
 			matmulBTW4A8Row4GroupedInto(ws, a, w4Row4, wScales4, dst, K, N)
 			return
 		}
-		matmulW4A8Grouped(ws, a, int4Layout{r4: w4Row4, r4S: wScales4, group: group, K: K}, dst, M, N) // actgroup.go
+		matmulW4A8Grouped(ws, g, a, int4Layout{r4: w4Row4, r4S: wScales4, group: group, K: K}, dst, M, N) // actgroup.go
 		return
 	}
 	if K%group != 0 {

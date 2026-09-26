@@ -42,7 +42,7 @@ func TestActGroup_w8a8KernelMatchesReference(t *testing.T) {
 	q8, s8, _, _ := wm.Int8()
 	withActGroup(t, 32)
 	ref := make([]float32, M*N)
-	matmulW8A8GroupedRef(new(Workspace), a, q8, s8, ref, M, K, N)
+	matmulW8A8GroupedRef(new(Workspace), 32, a, q8, s8, ref, M, K, N)
 	got := make([]float32, M*N)
 	MatmulBTW8A8Into(new(Workspace), a, q8, s8, got, M, K, N)
 	batch := make([]float32, M*N)

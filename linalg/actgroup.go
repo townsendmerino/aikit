@@ -38,6 +38,29 @@ func SetActQuantGroup(g int) {
 // ActQuantGroup reports the activation group size SetActQuantGroup selected (0 = per-row).
 func ActQuantGroup() int { return actQuantGroup }
 
+// SetActQuantGroup sets this workspace's activation group size: every W8A8/W4A8 matmul run through
+// it uses per-g activation scales (g > 0) regardless of the process-wide SetActQuantGroup, or defers
+// to the process-wide setting (g == 0). A consumer with one workspace per model or per call — goinfer
+// sets it from the model's options before each matmul — gets a per-model choice with no global state.
+func (w *Workspace) SetActQuantGroup(g int) {
+	if g < 0 {
+		panic(fmt.Sprintf("linalg: Workspace.SetActQuantGroup(%d): group must be >= 0", g))
+	}
+	w.actGroup = g
+}
+
+// ActQuantGroup reports this workspace's own activation group size (0 = defer to the process-wide one).
+func (w *Workspace) ActQuantGroup() int { return w.actGroup }
+
+// actGroupFor is the activation group size a matmul through ws uses: the workspace's own when set,
+// else the process-wide one.
+func actGroupFor(ws *Workspace) int {
+	if ws != nil && ws.actGroup > 0 {
+		return ws.actGroup
+	}
+	return actQuantGroup
+}
+
 // QuantizeActivationsGroupedInto quantizes a's M rows of K floats to int8 with one symmetric
 // max/127 scale per group of `group` consecutive elements (the last group of a row ragged when
 // group does not divide K). scales[m*nG+g] is row m's group g, nG = ceil(K/group). Each group
@@ -101,13 +124,12 @@ func refParallel(ws *Workspace, N int, fn func(n0, n1 int)) {
 	parallelSpawnCols(N, resolveWidth(width), fn)
 }
 
-// quantizeActGrouped quantizes a into workspace scratch with actQuantGroup and returns the codes,
+// quantizeActGrouped quantizes a into workspace scratch with group g and returns the codes,
 // scales and group count per row.
-func quantizeActGrouped(ws *Workspace, a []float32, M, K int) ([]int8, []float32, int) {
+func quantizeActGrouped(ws *Workspace, g int, a []float32, M, K int) ([]int8, []float32, int) {
 	if ws == nil {
 		ws = new(Workspace)
 	}
-	g := actQuantGroup
 	nG := (K + g - 1) / g
 	aq := ws.int8Buf(M * K)
 	aS := ws.f32Buf(M * nG)
@@ -117,9 +139,8 @@ func quantizeActGrouped(ws *Workspace, a []float32, M, K int) ([]int8, []float32
 
 // matmulW8A8GroupedRef is MatmulBTW8A8Into with per-group activation scales:
 // dst[m,n] = bScales[n] · Σ_g aS[m,g] · Σ_{k∈g} aq[m,k]·bQ[n,k].
-func matmulW8A8GroupedRef(ws *Workspace, a []float32, bQ []int8, bScales, dst []float32, M, K, N int) {
-	aq, aS, nG := quantizeActGrouped(ws, a, M, K)
-	g := actQuantGroup
+func matmulW8A8GroupedRef(ws *Workspace, g int, a []float32, bQ []int8, bScales, dst []float32, M, K, N int) {
+	aq, aS, nG := quantizeActGrouped(ws, g, a, M, K)
 	refParallel(ws, N, func(n0, n1 int) {
 		for n := n0; n < n1; n++ {
 			w := bQ[n*K : n*K+K]
@@ -191,14 +212,13 @@ func (l int4Layout) row(n int, codes []int8, scales []float32) {
 // matmulW4A8GroupedRef is the W4A8 matmul with per-group activation scales over any int4 layout:
 // dst[m,n] = Σ_seg aS[m,·]·wS[n,·]·Σ_{k∈seg} aq[m,k]·code[n,k]. Mathematically the same product the
 // per-row kernels compute, with the activation scale moved inside the sum.
-func matmulW4A8GroupedRef(ws *Workspace, a []float32, l int4Layout, dst []float32, M, N int) {
+func matmulW4A8GroupedRef(ws *Workspace, g int, a []float32, l int4Layout, dst []float32, M, N int) {
 	K := l.K
 	if l.sh != nil || l.r4 != nil {
 		l.group = 32
 	}
-	checkGroups(actQuantGroup, l.group)
-	aq, aS, nG := quantizeActGrouped(ws, a, M, K)
-	g := actQuantGroup
+	checkGroups(g, l.group)
+	aq, aS, nG := quantizeActGrouped(ws, g, a, M, K)
 	wG := (K + l.group - 1) / l.group
 	refParallel(ws, N, func(n0, n1 int) {
 		codes := make([]int8, K)
@@ -222,9 +242,9 @@ func (w *WeightMat) int4Layout() int4Layout {
 // the arch's M=1 repacked kernel per activation row where the layout is present (amd64 split-half,
 // arm64 row4), else the canonical dotW4A8. Anything else (other group sizes, ragged K) takes the
 // Go reference.
-func matmulW4A8Grouped(ws *Workspace, a []float32, l int4Layout, dst []float32, M, N int) {
+func matmulW4A8Grouped(ws *Workspace, g int, a []float32, l int4Layout, dst []float32, M, N int) {
 	K := l.K
-	if actQuantGroup == 32 && K%32 == 0 && K >= 32 {
+	if g == 32 && K%32 == 0 && K >= 32 {
 		if (l.sh != nil || l.r4 != nil) && w4a8GroupedFastRows(ws, a, l, dst, M, N) {
 			return
 		}
@@ -233,13 +253,13 @@ func matmulW4A8Grouped(ws *Workspace, a []float32, l int4Layout, dst []float32, 
 			return
 		}
 	}
-	matmulW4A8GroupedRef(ws, a, l, dst, M, N)
+	matmulW4A8GroupedRef(ws, g, a, l, dst, M, N)
 }
 
 // matmulW4A8CanonicalGrouped runs the canonical-layout dotW4A8 kernel (every arch) with combined
 // per-group scales, for per-32 activations over 32-wide weight groups.
 func matmulW4A8CanonicalGrouped(ws *Workspace, a []float32, w4 []byte, wScales, dst []float32, M, K, N int) {
-	aq, aS, nG := quantizeActGrouped(ws, a, M, K)
+	aq, aS, nG := quantizeActGrouped(ws, 32, a, M, K)
 	bpr := (K + 1) / 2
 	refParallel(ws, N, func(n0, n1 int) {
 		cs := make([]float32, nG)
@@ -271,12 +291,12 @@ func dotI8Scaled32Go(a, b []int8, aS []float32) float32 {
 
 // matmulW8A8Grouped is the per-group W8A8 matmul the W8A8 hooks call: dotI8Scaled32 (AVX2 on amd64)
 // for per-32 activations over a K that is a multiple of 32, the Go reference otherwise.
-func matmulW8A8Grouped(ws *Workspace, a []float32, bQ []int8, bScales, dst []float32, M, K, N int) {
-	if actQuantGroup != 32 || K%32 != 0 {
-		matmulW8A8GroupedRef(ws, a, bQ, bScales, dst, M, K, N)
+func matmulW8A8Grouped(ws *Workspace, g int, a []float32, bQ []int8, bScales, dst []float32, M, K, N int) {
+	if g != 32 || K%32 != 0 {
+		matmulW8A8GroupedRef(ws, g, a, bQ, bScales, dst, M, K, N)
 		return
 	}
-	aq, aS, nG := quantizeActGrouped(ws, a, M, K)
+	aq, aS, nG := quantizeActGrouped(ws, 32, a, M, K)
 	refParallel(ws, N, func(n0, n1 int) {
 		for n := n0; n < n1; n++ {
 			w := bQ[n*K : n*K+K]

@@ -20,7 +20,7 @@ func TestActGroup_splitHalfKernelMatchesReference(t *testing.T) {
 	q4, s4, _, _ := wm.Int4()
 	withActGroup(t, 32)
 	ref := make([]float32, N)
-	matmulW4A8GroupedRef(new(Workspace), a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, 1, N)
+	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, 1, N)
 	sh, ok := RepackInt4SplitHalfInPlace(append([]byte(nil), q4...), s4, N, K, 32)
 	if !ok {
 		t.Skip("split-half repack declined")
@@ -45,7 +45,7 @@ func TestActGroup_splitHalfMultiRow(t *testing.T) {
 	q4, s4 := QuantizeGroupsInt4(agRandMat(r, N*K), N, K, 32)
 	withActGroup(t, 32)
 	ref := make([]float32, M*N)
-	matmulW4A8GroupedRef(new(Workspace), a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, M, N)
+	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, M, N)
 	sh, ok := RepackInt4SplitHalfInPlace(append([]byte(nil), q4...), s4, N, K, 32)
 	if !ok {
 		t.Skip("split-half repack declined")

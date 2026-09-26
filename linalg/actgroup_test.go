@@ -80,7 +80,7 @@ func TestActGroup_layoutsAgree(t *testing.T) {
 	withActGroup(t, 32)
 
 	ref := make([]float32, M*N)
-	matmulW4A8GroupedRef(new(Workspace), a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, M, N)
+	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, M, N)
 	canon := make([]float32, M*N)
 	MatmulBTW4A8Into(new(Workspace), a, q4, s4, canon, M, K, N, 32)
 	sh := RepackW4A8SplitHalf(q4, N, K, 32)
@@ -156,5 +156,43 @@ func TestActGroup_offIsInert(t *testing.T) {
 		if before[i] != after[i] {
 			t.Fatalf("[%d] %v != %v after toggling the group off", i, after[i], before[i])
 		}
+	}
+}
+
+// TestActGroup_perWorkspace: a workspace's own group applies to matmuls run through it and only to
+// them, with the process-wide setting untouched: goinfer runs two models in one process with
+// different choices by giving each its own workspace setting.
+func TestActGroup_perWorkspace(t *testing.T) {
+	r := rand.New(rand.NewPCG(25, 26))
+	const M, K, N = 1, 256, 32
+	a := agRandMat(r, M*K)
+	a[10] = 400
+	wm := QuantizeInt8(agRandMat(r, N*K), N, K, true)
+	q8, s8, _, _ := wm.Int8()
+	if ActQuantGroup() != 0 {
+		t.Fatal("process-wide group must start at 0")
+	}
+	perRow := make([]float32, N)
+	MatmulBTW8A8Into(new(Workspace), a, q8, s8, perRow, M, K, N)
+	var grouped Workspace
+	grouped.SetActQuantGroup(32)
+	viaWS := make([]float32, N)
+	MatmulBTW8A8Into(&grouped, a, q8, s8, viaWS, M, K, N)
+	ref := make([]float32, N)
+	matmulW8A8GroupedRef(new(Workspace), 32, a, q8, s8, ref, M, K, N)
+	if e := agRelErr(viaWS, ref); e > 1e-6 {
+		t.Errorf("workspace group 32 vs reference: rel err %.3g", e)
+	}
+	again := make([]float32, N)
+	MatmulBTW8A8Into(new(Workspace), a, q8, s8, again, M, K, N)
+	for i := range perRow {
+		if again[i] != perRow[i] {
+			t.Fatalf("[%d] a default workspace changed after another used group 32: %v != %v", i, again[i], perRow[i])
+		}
+	}
+	// Premise: the default workspace really did run per-row — its output is not the per-32 result.
+	// (A small relative gap: the outlier's own, exactly-quantized term dominates every output.)
+	if agRelErr(perRow, ref) < 1e-4 {
+		t.Errorf("premise: the default workspace's output matches the per-32 reference (rel err %.3g)", agRelErr(perRow, ref))
 	}
 }

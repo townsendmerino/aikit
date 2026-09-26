@@ -49,7 +49,7 @@ func TestActGroup_row4KernelMatchesReference(t *testing.T) {
 	q4, s4, _, _ := wm.Int4()
 	withActGroup(t, 32)
 	ref := make([]float32, N)
-	matmulW4A8GroupedRef(new(Workspace), a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, 1, N)
+	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, 1, N)
 	r4, r4s := RepackW4A8Row4(q4, N, K, 32), RepackW4A8Row4Scales(s4, N, K, 32)
 	for _, fold := range []bool{true, false} {
 		prev := W4A8RowFold()
@@ -73,7 +73,7 @@ func TestActGroup_row4MultiRow(t *testing.T) {
 	q4, s4 := QuantizeGroupsInt4(agRandMat(r, N*K), N, K, 32)
 	withActGroup(t, 32)
 	ref := make([]float32, M*N)
-	matmulW4A8GroupedRef(new(Workspace), a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, M, N)
+	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, M, N)
 	only, ok := WrapInt4Row4Only(RepackW4A8Row4(q4, N, K, 32), RepackW4A8Row4Scales(s4, N, K, 32), N, K, 32)
 	if !ok {
 		t.Fatal("WrapInt4Row4Only declined")
