@@ -1,6 +1,7 @@
 package linalg
 
 import (
+	"math"
 	"math/rand/v2"
 	"testing"
 )
@@ -50,6 +51,49 @@ func TestActGroup_w8a8KernelMatchesReference(t *testing.T) {
 	for name, v := range map[string][]float32{"Into": got, "Batch": batch} {
 		if e := agRelErr(v, ref); e > 1e-6 {
 			t.Errorf("W8A8 %s grouped vs reference: rel err %.3g", name, e)
+		}
+	}
+}
+
+// TestActGroup_w8a8BatchMultiOp: MatmulBTW8A8Batch under per-32 activations with several ops of mixed
+// and odd N (the Q/K/V and gate/up shape the batch exists for) matches the reference per op, serial
+// and fanned out. The fan-out splits the concatenated column space in multiples of 8, so op
+// boundaries land mid-shard and a shard can start or end on an odd column of an op: the 2-column
+// kernel's single-column tail and the per-op offset arithmetic are both exercised.
+func TestActGroup_w8a8BatchMultiOp(t *testing.T) {
+	r := rand.New(rand.NewPCG(31, 32))
+	const K = 512
+	Ns := []int{7, 33, 80, 1, 19}
+	withActGroup(t, 32)
+	for _, M := range []int{1, 3} {
+		a := agRandMat(r, M*K)
+		a[K/3] = 350
+		ops := make([]W8A8Op, len(Ns))
+		refs := make([][]float32, len(Ns))
+		for i, N := range Ns {
+			wm := QuantizeInt8(agRandMat(r, N*K), N, K, true)
+			q8, s8, _, _ := wm.Int8()
+			refs[i] = make([]float32, M*N)
+			matmulW8A8GroupedRef(new(Workspace), 32, a, q8, s8, refs[i], M, K, N)
+			ops[i] = W8A8Op{BQ: q8, Scales: s8, N: N}
+		}
+		for _, par := range []bool{false, true} {
+			ws := new(Workspace)
+			if par {
+				ws.SetThreshold(1)
+				ws.SetWorkers(5)
+			} else {
+				ws.SetThreshold(math.MaxInt)
+			}
+			for i := range ops {
+				ops[i].Dst = make([]float32, M*Ns[i])
+			}
+			MatmulBTW8A8Batch(ws, a, M, K, ops)
+			for i := range ops {
+				if e := agRelErr(ops[i].Dst, refs[i]); e > 1e-6 {
+					t.Errorf("M=%d par=%v op %d (N=%d): rel err %.3g vs reference", M, par, i, Ns[i], e)
+				}
+			}
 		}
 	}
 }
