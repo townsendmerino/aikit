@@ -4,7 +4,7 @@ package linalg
 func dotI8Scaled32AVX2(a, b *int8, aS *float32, nGroups int) float32
 
 //go:noescape
-func dotI8Scaled32x2AVX2(a, b0, b1 *int8, aS *float32, nGroups int) (float32, float32)
+func dotI8Scaled32x2AVX2(a, b0, b1 *int8, aS *float32, nGroups int) (ret0, ret1 float32)
 
 // dotI8Scaled32 is sum_g aS[g] * sum_{k in group g} a[k]*b[k] over groups of 32; len(a) must be a
 // multiple of 32. The W8A8 dot under per-32 activation scales.
