@@ -111,6 +111,10 @@ func MatmulBTW4A8Row4Into(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []
 		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires N a multiple of 4, got %d", N))
 	}
 	if actQuantGroup > 0 {
+		if actQuantGroup == 32 && K%32 == 0 && K >= 32 {
+			matmulBTW4A8Row4GroupedInto(ws, a, w4Row4, wScales4, dst, K, N)
+			return
+		}
 		matmulW4A8GroupedRef(ws, a, int4Layout{r4: w4Row4, r4S: wScales4, group: group, K: K}, dst, M, N) // actgroup.go
 		return
 	}
@@ -169,4 +173,46 @@ func w4a8Row4Span(aq []int8, corr []int32, aScale float32, w4Row4 []byte, wScale
 		dst[q*4+2] = out[2] * aScale
 		dst[q*4+3] = out[3] * aScale
 	}
+}
+
+// matmulBTW4A8Row4GroupedInto is MatmulBTW4A8Row4Into (M=1) with per-32 ACTIVATION scales, on the
+// unchanged row4 kernels. They return sum_g int32dot_g * sblk[4g+r] for four rows; handed the combined
+// scale sblk[4g+r]*aS[g] and without the final per-row activation multiply, they compute the per-group
+// product exactly. The S-05 fold's -8 correction is integer per group and is unaffected. Matches
+// matmulW4A8GroupedRef to accumulation order (TestActGroup_row4KernelMatchesReference).
+func matmulBTW4A8Row4GroupedInto(ws *Workspace, a []float32, w4Row4 []byte, wScales4, dst []float32, K, N int) {
+	const group = 32
+	nGroups, bpr := groupsFor(K, group)
+	aq := ws.int8Buf(K)
+	aS := ws.f32Buf(nGroups)
+	QuantizeActivationsGroupedInto(aq, aS, a[:K], 1, K, group)
+	var corr []int32
+	if w4a8RowFold {
+		corr = ws.int32Buf(4 * nGroups)
+		w4a8LaneCorrNeg8(&aq[0], &corr[0], nGroups)
+	}
+	nQuads := N / 4
+	span := func(q0, q1 int) {
+		var out [4]float32
+		cs := make([]float32, 4*nGroups)
+		for q := q0; q < q1; q++ {
+			blk := w4Row4[q*4*bpr : q*4*bpr+4*bpr]
+			sblk := wScales4[q*4*nGroups : q*4*nGroups+4*nGroups]
+			for g := range nGroups {
+				s := aS[g]
+				cs[4*g], cs[4*g+1], cs[4*g+2], cs[4*g+3] = sblk[4*g]*s, sblk[4*g+1]*s, sblk[4*g+2]*s, sblk[4*g+3]*s
+			}
+			if corr != nil {
+				dotW4A8SplitHalf4RowFold(&aq[0], &corr[0], &blk[0], &cs[0], &out[0], nGroups)
+			} else {
+				dotW4A8SplitHalf4Row(&aq[0], &blk[0], &cs[0], &out[0], nGroups)
+			}
+			dst[q*4], dst[q*4+1], dst[q*4+2], dst[q*4+3] = out[0], out[1], out[2], out[3]
+		}
+	}
+	if N*K < ws.thr() || nQuads < 2 {
+		span(0, nQuads)
+		return
+	}
+	ws.parallel(nQuads, span)
 }
