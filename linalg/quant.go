@@ -597,6 +597,13 @@ func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales 
 	_ = scales[nGroups-1]
 	_ = row[cols-1]
 	_ = packed[(cols-1)/2]
+	if int4WeightScheme != "" {
+		for g := range nGroups {
+			ks, ke := g*group, min((g+1)*group, cols)
+			scales[g] = quantizeInt4GroupAlt(row, ks, ke, packed) // int4scheme.go
+		}
+		return
+	}
 	for g := range nGroups {
 		ks := g * group
 		ke := min(ks+group, cols)
