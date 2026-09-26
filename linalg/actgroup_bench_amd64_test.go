@@ -42,3 +42,30 @@ func BenchmarkActGroupSplitHalf(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkActGroupW8A8: the M=1 W8A8 decode matmul, per-row vs per-32 (dotI8Scaled32AVX2), at the
+// same shapes; the same pre-registered kernel gate applies.
+func BenchmarkActGroupW8A8(b *testing.B) {
+	for _, sh := range [][2]int{{1536, 1536}, {1536, 8960}, {8960, 1536}, {3584, 3584}, {3584, 18944}, {18944, 3584}} {
+		K, N := sh[0], sh[1]
+		r := rand.New(rand.NewPCG(uint64(K), uint64(N)))
+		a := agRandMat(r, K)
+		wm := QuantizeInt8(agRandMat(r, N*K), N, K, true)
+		q8, s8, _, _ := wm.Int8()
+		dst := make([]float32, N)
+		for _, g := range []int{0, 32} {
+			b.Run(fmt.Sprintf("K%d_N%d/group%d", K, N, g), func(b *testing.B) {
+				prev := ActQuantGroup()
+				SetActQuantGroup(g)
+				defer SetActQuantGroup(prev)
+				var ws Workspace
+				ws.SetThreshold(300_000) // goinfer's W8A8 decode threshold (DefaultDecodeParallelThreshold)
+				b.SetBytes(int64(N * K))
+				b.ResetTimer()
+				for range b.N {
+					MatmulBTW8A8Into(&ws, a, q8, s8, dst, 1, K, N)
+				}
+			})
+		}
+	}
+}

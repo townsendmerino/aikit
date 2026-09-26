@@ -255,3 +255,34 @@ func matmulW4A8CanonicalGrouped(ws *Workspace, a []float32, w4 []byte, wScales, 
 		}
 	})
 }
+
+// dotI8Scaled32Go is dotI8Scaled32's portable form and its test oracle.
+func dotI8Scaled32Go(a, b []int8, aS []float32) float32 {
+	var acc float32
+	for g := range len(a) / 32 {
+		var isum int32
+		for k := g * 32; k < g*32+32; k++ {
+			isum += int32(a[k]) * int32(b[k])
+		}
+		acc += float32(isum) * aS[g]
+	}
+	return acc
+}
+
+// matmulW8A8Grouped is the per-group W8A8 matmul the W8A8 hooks call: dotI8Scaled32 (AVX2 on amd64)
+// for per-32 activations over a K that is a multiple of 32, the Go reference otherwise.
+func matmulW8A8Grouped(ws *Workspace, a []float32, bQ []int8, bScales, dst []float32, M, K, N int) {
+	if actQuantGroup != 32 || K%32 != 0 {
+		matmulW8A8GroupedRef(ws, a, bQ, bScales, dst, M, K, N)
+		return
+	}
+	aq, aS, nG := quantizeActGrouped(ws, a, M, K)
+	refParallel(ws, N, func(n0, n1 int) {
+		for n := n0; n < n1; n++ {
+			w := bQ[n*K : n*K+K]
+			for m := range M {
+				dst[m*N+n] = dotI8Scaled32(aq[m*K:m*K+K], w, aS[m*nG:m*nG+nG]) * bScales[n]
+			}
+		}
+	})
+}

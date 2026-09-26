@@ -267,7 +267,7 @@ func MatmulBTW8A8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K
 func MatmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	checkMatmulQ8("MatmulBTW8A8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	if actQuantGroup > 0 {
-		matmulW8A8GroupedRef(ws, a, bQ, bScales, dst, M, K, N) // actgroup.go
+		matmulW8A8Grouped(ws, a, bQ, bScales, dst, M, K, N) // actgroup.go
 		return
 	}
 	aq := ws.int8Buf(M * K)
@@ -504,7 +504,7 @@ func MatmulBTW8A8Batch(ws *Workspace, a []float32, M, K int, ops []W8A8Op) {
 	}
 	if actQuantGroup > 0 {
 		for _, op := range ops {
-			matmulW8A8GroupedRef(ws, a, op.BQ, op.Scales, op.Dst, M, K, op.N) // actgroup.go
+			matmulW8A8Grouped(ws, a, op.BQ, op.Scales, op.Dst, M, K, op.N) // actgroup.go
 		}
 		return
 	}
