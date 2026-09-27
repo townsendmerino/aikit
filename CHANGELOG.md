@@ -7,6 +7,38 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html): see
 follows semver (no breaking change before a v2.0), the Experimental tier is
 excluded from that promise and may change in any release until it graduates.
 
+## [1.49.0] — 2026-09-26
+
+`perfgate` VERDICT: PASS — no regression vs v1.48.0 above each shape's floor — 8/47 shapes resolve the 5.0% class
+
+sensitivity: 8/47 shapes have a floor ≤ 5.0% (the class this gate targets). `nobara-pc` (linux/amd64, Ryzen 7 3700X), idle box, 2026-09-27T00:20Z. A green here is evidence against a regression larger than each shape's floor, not proof of none.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at f684314 +dirty (2026-09-27T00:21:03Z)
+
+### Added (Experimental tier)
+
+- **Q4_K `WeightMat` kind: a GGUF Q4_K tensor multiplied natively, with no re-quantization**
+  (`linalg/q4k.go`). A Q4_K tensor is 4-bit and asymmetric: each 32-weight sub-block carries a
+  scale and a minimum. Re-quantizing it to the symmetric int4 kind rounds a second time, and that
+  second rounding measured as goinfer's int4 quality loss (goinfer
+  `docs/tasks/task-int4-weight-quality-2026-09.md`). Keeping Q4_K exact restores qwen2.5-7b's filler
+  p10 from 0.306 to 0.992 and phi3-mini's from 0.734 to 0.969.
+  - `WrapQ4K(raw, rows, cols)` wraps super-blocks verbatim; `Q4K()` returns them for GPU export.
+    `MatmulBT`, `MatmulBTInto`, `Row` and `Kind` ("q4k") dispatch on the kind. Activations are
+    always per-32 int8, since a sub-block is 32 weights.
+  - Kernels:
+    - `dotQ4KGo` is the oracle;
+    - `dotQ4KAVX2` (AVX2 + F16C, detected) computes eight groups per FMA. At goinfer's decode fan-out
+      it takes 1.2 ms against split-half int4's 1.45 ms at the qwen2.5-7b FFN shape. End to end, CPU
+      decode runs at 0.977× today's int4 on qwen2.5-7b, which reads 12% more bytes, and 1.31×
+      int8int8 on phi3-mini;
+    - the portable Go path elsewhere (arm64 NEON is a later step).
+  - `kquant.go`'s native K-quant matmul stays a separate, unwired negative result: its bar was speed
+    against W8A8, with Q8_K per-256 activations.
+- **`embed.GGUFFile.Q4KRaw(name)`**: a Q4_K tensor's raw super-blocks and dims, aliasing the mapping;
+  ok=false for any other type. On a real Q4_K_M file, all 96 Q4_K tensors wrapped this way dequantize
+  bit-identically to `RowDequantizer`.
+
 ## [1.48.0] — 2026-09-26
 
 > **PERFGATE EXCEPTION: `go run -C tools ./perfgate v1.47.1` returns `VERDICT: FAIL`, and it is an
@@ -4628,7 +4660,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.48.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.49.0...HEAD
+[1.49.0]: https://github.com/townsendmerino/aikit/compare/v1.48.0...v1.49.0
 [1.48.0]: https://github.com/townsendmerino/aikit/compare/v1.47.1...v1.48.0
 [1.47.1]: https://github.com/townsendmerino/aikit/compare/v1.47.0...v1.47.1
 [1.47.0]: https://github.com/townsendmerino/aikit/compare/v1.46.0...v1.47.0
