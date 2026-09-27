@@ -15,7 +15,10 @@ import (
 func TestQ4KRaw_matchesDequant(t *testing.T) {
 	path := os.Getenv("AIKIT_Q4K_GGUF")
 	if path == "" {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Skipf("no home directory: %v", err)
+		}
 		path = filepath.Join(home, "models", "llama-3.2-1b-instruct-q4_k_m.gguf")
 	}
 	if _, err := os.Stat(path); err != nil {
