@@ -73,6 +73,9 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 		matmulW4A8Grouped(ws, g, a, w.int4Layout(), dst, M, w.rows) // actgroup.go
 		return
 	}
+	if w.matmulBTW4A8F16S0(ws, a, dst, M) { // S0 prototype, w4a8_f16_s0_amd64.go
+		return
+	}
 	if w.q4SplitHalf != nil {
 		if M == 1 {
 			matmulBTW4A8SplitHalfInto(ws, a, w.q4SplitHalf, w.q4s, dst, w.cols, w.rows, w.group)

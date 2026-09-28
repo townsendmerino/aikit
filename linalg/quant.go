@@ -865,6 +865,9 @@ type W4A8Op struct {
 	SplitHalf  []byte
 	Dst        []float32
 	N          int
+	// ScalesF16: S0 prototype only (w4a8_f16_s0.go) — an f16 copy of Scales, used by the canonical
+	// path at M < 4 when SetInt4F16ScalesS0(true).
+	ScalesF16 []uint16
 }
 
 // MatmulBTW4A8Batch runs several W4A8 matmuls that share the SAME activation
@@ -998,6 +1001,10 @@ func w4a8BatchOp(aq []int8, aScales []float32, op W4A8Op, M, K, group, nGroups, 
 				"at M=1 (row4 additionally needs whole-quad boundaries); a repacked-only WeightMat "+
 				"cannot be used in a batch whose shard boundaries split one of its row4 quads, or at "+
 				"M>1", op.N, c0, c1, M))
+		}
+		if int4F16Scales && op.ScalesF16 != nil && M < 4 {
+			w4a8SpanRowsF16(aq, aScales, op.W4, op.ScalesF16, op.Dst, K, op.N, group, nGroups, bpr, 0, M, c0, c1)
+			return
 		}
 		w4a8Span(aq, aScales, op.W4, op.Scales, op.Dst, M, K, op.N, group, nGroups, bpr, c0, c1)
 	}

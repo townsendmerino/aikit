@@ -66,6 +66,9 @@ type WeightMat struct {
 	// layouts. See dot_w4a8_amd64.s for why the shuffle port, not the accumulator chain, is the
 	// AVX2 bottleneck this addresses.
 	q4SplitHalf []byte
+
+	// q4sF16: S0 prototype only (w4a8_f16_s0.go) — an optional f16 copy of q4s.
+	q4sF16 []uint16
 }
 
 // SplitHalfBytes reports the size of the optional split-half nibble layout, or 0
