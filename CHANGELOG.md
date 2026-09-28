@@ -7,6 +7,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html): see
 follows semver (no breaking change before a v2.0), the Experimental tier is
 excluded from that promise and may change in any release until it graduates.
 
+## [1.50.1] — 2026-09-28
+
+> **PERFGATE EXCEPTION: no perfgate run for this release.** Every production file it changes is arm64-only. None
+> of the 197 non-test files in any package's linux/amd64 build changed since v1.50.0, and no root `go.mod` changed,
+> so perfgate on the amd64 reference box would time the same binary twice. On arm64, perfgate's W4A8 benchmarks call
+> the f32-scale kernels, which this release leaves unchanged, so it would not reach the changed path either. The
+> change was timed directly instead (below: an in-package kernel benchmark, and goinfer's served decode).
+
+STATEMENT: 16 clean, 0 vulnerable, 0 unscanned, of 16. `tools/vulncheck` alone reports 12 clean / 0 vulnerable /
+4 unscanned (Apple M1 Pro / darwin, at `2fd6f59`), with the same `gpu/*cuda` darwin-GOOS gap as every prior release.
+The four unscanned modules' `go.mod` changed since v1.50.0 only in their `aikit` require (v1.49.0 → v1.50.0, the
+v1.50.0 `gpupins --fix`), and the root `go.mod` / `go.sum` are unchanged since v1.49.0. Their dependency graph is
+therefore v1.50.0's, whose real-Linux scan (`nobara-pc`, 16/16 clean) still applies; it was not re-run.
+
+### Fixed — arm64 widens binary16 int4 scales with NEON
+
+v1.50.0's arm64 W4A8 paths widened int4 group scales with a scalar loop, once per quad of every M=1 decode matmul.
+On an M1 Pro, goinfer's served CPU decode fell to **0.544× / 0.554× / 0.435×** of v1.49.0 (qwen2.5 0.5B / 1.5B /
+7B). amd64 (F16C) was unaffected. With this release it reads **1.041× / 1.053× / 1.080×** of v1.49.0, and output is
+bit-identical to v1.50.0 (goinfer `docs/tasks/task-cpu-decode-peer-gap-2026-09.md`, "L1 arm64 fix").
+
+- **The widen.** `widenF16` on arm64 (`f16scale_arm64.{go,s}`) widens eight halves per `FCVTL` / `FCVTL2` pair, the
+  twin of the amd64 F16C widen, and every widening path on arm64 uses it. The scalar loop remains only for other
+  architectures (`f16scale_generic.go`).
+- **The decode kernel.** `dotW4A8SplitHalf4RowFoldF16`, the default (folded) M=1 row4 decode kernel, reads binary16
+  scales in-kernel. Per group it does one 8-byte load and one `FCVTL` for the quad's four scales, then `FMLA` by
+  element in place of four broadcasts. Kernel time is 0.87–0.905× of the f32-scale kernel on four decode shapes; the
+  v1.50.0 scalar widen ran 1.40–2.88×.
+- **The per-32-activation row4 path** widens each quad with `widenF16` instead of a scalar conversion per element.
+- **Tests.** `TestWidenF16_exhaustive` covers all 65,536 binary16 patterns against the scalar oracle. It is the
+  widen's only independent check, since the f16 path tests build their reference through `widenF16` itself.
+  `TestDotW4A8SplitHalf4RowFoldF16_matchesF32` covers the fused kernel. Hand mutations of both asm files turn them
+  red.
+- **No API change.**
+
 ## [1.50.0] — 2026-09-27
 
 `perfgate` VERDICT: PASS — no regression vs v1.49.0 above each shape's floor — 16/47 shapes resolve the 5.0% class
@@ -4703,6 +4738,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.49.0...HEAD
+[1.50.1]: https://github.com/townsendmerino/aikit/compare/v1.50.0...v1.50.1
 [1.50.0]: https://github.com/townsendmerino/aikit/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/townsendmerino/aikit/compare/v1.48.0...v1.49.0
 [1.48.0]: https://github.com/townsendmerino/aikit/compare/v1.47.1...v1.48.0
