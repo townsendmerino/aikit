@@ -7,6 +7,47 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html): see
 follows semver (no breaking change before a v2.0), the Experimental tier is
 excluded from that promise and may change in any release until it graduates.
 
+## [1.50.2] — 2026-09-28
+
+`perfgate` VERDICT: PASS — no regression vs v1.50.0 above each shape's floor — 14/47 shapes resolve the 5.0% class
+
+sensitivity: 14/47 shapes have a floor ≤ 5.0% (the class this gate targets). `nobara-pc` (linux/amd64, Ryzen 7
+3700X), idle box, 2026-09-28T20:47Z. A green here is evidence against a regression larger than each shape's floor,
+not proof of none. `BenchmarkQuantizeRowInt8/dispatched` (the changed path) is instrumented but BLIND at this
+box's noise floor for a same-session single sample — the same shapes independently re-measured warm-cache, N=20000,
+read **10.9× / 21.2×** faster at K=1536/K=8960 (goinfer `docs/measurements/cpu-down-vs-gateup-bandwidth-2026-09-28.md`).
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at bb9c829 (2026-09-28T20:46:43Z)
+
+### Fixed — amd64 vectorizes the activation quantizer with AVX2
+
+`quantizeRowInt8Core`'s two scalar passes (abs/max, then round+clamp) ran on the calling goroutine before every
+W8A8/W4A8 fan-out, unvectorized on amd64 (`docs/task-simd-audit.md` S-03's arm64/NEON half shipped 2026-09-03,
+`linalg/quant_act_arm64.s`; amd64 was left open). Traced from goinfer's investigation of why its CPU decode's
+`down` matmul streams slower per byte than `gate+up`: `down`'s own quantizer runs over `intermediate_size`
+(3.4–6.4× `hidden_size`),
+where the scalar loop's cost per element is super-linear once a row exceeds L1/L2 — 3.5 → 6.8 ns/element,
+independently microbenched. With this release the isolated quantizer reads 8.3–33.7× faster across the same K
+range, and goinfer's `down`/`gate+up` decode-time ratio moves from 0.55–0.68 to 0.48–0.49 on all three model sizes
+measured (0.5B/1.5B/7B), within 0.02 of the pure byte-ratio floor.
+
+- **Two x86 ISA differences from ARM64, both found and fixed, neither assumed by analogy.** `VMAXPS`'s NaN rule is
+  asymmetric (unlike ARM's symmetric `FMAXNM`): the accumulator must be the first Go-listed operand, or a NaN row
+  value poisons the running max — caught by the existing `all-nan` corner test on the first attempt, backwards.
+  `VCVTTPS2DQ` (truncate to int32) returns one fixed "integer indefinite" value for ANY invalid conversion — NaN or
+  overflow alike — unlike ARM's `FCVTAS`, which saturates toward the input's own sign; a naive port would turn
+  `+Inf` into `-127` instead of `+127`. Fixed by clamping the float into `[-127,127]` before truncating, so the
+  indefinite-value path is never taken for a genuine overflow, with NaN handled separately (an ordered-predicate
+  compare + AND, zeroing exactly the NaN lanes).
+- **Bit-identical.** The existing architecture-independent `TestQuantizeRowInt8_bitIdenticalToScalar` /
+  `TestQuantizeRowInt8_corners` (posinf-in-body, both-inf, nan-is-largest-slot, negzero-scattered,
+  exact-ties-tail, all-nan, denormals, `MaxFloat32`, …) now exercise this kernel through the real
+  `quantizeRowInt8Core` entry point for the first time on amd64. Two new kernel-level tests mirror arm64's own,
+  plus one driving the raw kernel with a genuine ±Inf through an unrelated `inv` (the corner tests above never do,
+  since a row containing an Inf collapses `inv` to 0 first). Mutation-checked: corrupting the rounding constant, or
+  swapping the ordered/unordered `VCMPPS` predicate, each turn 4 of 5 tests red immediately.
+- **No API change.**
+
 ## [1.50.1] — 2026-09-28
 
 > **PERFGATE EXCEPTION: no perfgate run for this release.** Every production file it changes is arm64-only. None
@@ -4738,6 +4779,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.49.0...HEAD
+[1.50.2]: https://github.com/townsendmerino/aikit/compare/v1.50.1...v1.50.2
 [1.50.1]: https://github.com/townsendmerino/aikit/compare/v1.50.0...v1.50.1
 [1.50.0]: https://github.com/townsendmerino/aikit/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/townsendmerino/aikit/compare/v1.48.0...v1.49.0
