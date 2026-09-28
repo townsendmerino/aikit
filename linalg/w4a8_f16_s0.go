@@ -14,6 +14,9 @@ import (
 
 var int4F16Scales bool
 
+// f16S0BufGroups bounds the stack buffer a row's widened scales use (K up to 32768).
+const f16S0BufGroups = 1024
+
 // SetInt4F16ScalesS0 makes the M=1 W4A8 paths read f16 scales where a weight carries them.
 func SetInt4F16ScalesS0(on bool) { int4F16Scales = on }
 
@@ -98,8 +101,24 @@ func MatmulBTW4A8F16Into(ws *Workspace, a []float32, w4 []byte, wScales16 []uint
 	})
 }
 
-// w4a8SpanRowsF16 is w4a8SpanRows over f16 scales.
+// w4a8SpanRowsF16 is w4a8SpanRows over f16 scales. By default each weight row's scales are widened once
+// into buf (eight per instruction, L1-resident) and the unchanged f32 kernel runs on them.
 func w4a8SpanRowsF16(aq []int8, aScales []float32, w4 []byte, wScales16 []uint16, dst []float32, K, N, group, nGroups, bpr, i0, i1, j0, j1 int) {
+	if !f16S0PerGroup && nGroups <= f16S0BufGroups {
+		var buf [f16S0BufGroups]float32
+		for j := j0; j < j1; j++ {
+			prow := w4[j*bpr : j*bpr+bpr]
+			srow := wScales16[j*nGroups : j*nGroups+nGroups]
+			for i := i0; i < i1; i++ {
+				if aScales[i] == 0 {
+					dst[i*N+j] = 0
+					continue
+				}
+				dst[i*N+j] = dotW4A8F16Row(aq[i*K:i*K+K], prow, srow, group, K, buf[:]) * aScales[i]
+			}
+		}
+		return
+	}
 	for j := j0; j < j1; j++ {
 		prow := w4[j*bpr : j*bpr+bpr]
 		srow := wScales16[j*nGroups : j*nGroups+nGroups]

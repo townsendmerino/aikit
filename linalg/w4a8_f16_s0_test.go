@@ -78,3 +78,63 @@ func TestW4A8F16S0_matchesF32(t *testing.T) {
 	}
 	t.Logf("hasW4A8F16 kernel path: %v", f16KernelActive())
 }
+
+func TestW4A8F16S0_perGroupVariantMatches(t *testing.T) {
+	rng := rand.New(rand.NewSource(9))
+	w4, s32, s16 := f16S0Fixture(rng, 97, 4864)
+	a := make([]float32, 4864)
+	for i := range a {
+		a[i] = float32(rng.NormFloat64())
+	}
+	want, got := make([]float32, 97), make([]float32, 97)
+	var ws Workspace
+	MatmulBTW4A8Into(&ws, a, w4, s32, want, 1, 4864, 97, 32)
+	for _, pg := range []bool{false, true} {
+		SetInt4F16PerGroupS0(pg)
+		MatmulBTW4A8F16Into(&ws, a, w4, s16, got, 1, 4864, 97, 32)
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("perGroup=%v: dst[%d] %v != %v", pg, i, got[i], want[i])
+			}
+		}
+	}
+	SetInt4F16PerGroupS0(false)
+}
+
+// BenchmarkW4A8F16S0 times one M=1 row-block at the 0.5B's gate/up and down shapes: f32 scales, f16
+// widened per row (default), f16 converted per group. Cache-hot by construction (a diagnostic of the
+// kernels' compute cost, not a decode prediction).
+func BenchmarkW4A8F16S0(b *testing.B) {
+	for _, sh := range []struct {
+		name string
+		K, N int
+	}{{"K896xN4864", 896, 4864}, {"K4864xN896", 4864, 896}, {"K1536xN8960", 1536, 8960}} {
+		rng := rand.New(rand.NewSource(3))
+		w4, s32, s16 := f16S0Fixture(rng, sh.N, sh.K)
+		a := make([]float32, sh.K)
+		for i := range a {
+			a[i] = float32(rng.NormFloat64())
+		}
+		dst := make([]float32, sh.N)
+		ws := Workspace{}
+		ws.SetThreshold(1 << 62) // serial: kernel cost, not fan-out
+		b.Run(sh.name+"/f32", func(b *testing.B) {
+			for i := 0; i < b.N; i++ {
+				MatmulBTW4A8Into(&ws, a, w4, s32, dst, 1, sh.K, sh.N, 32)
+			}
+		})
+		b.Run(sh.name+"/f16-row", func(b *testing.B) {
+			SetInt4F16PerGroupS0(false)
+			for i := 0; i < b.N; i++ {
+				MatmulBTW4A8F16Into(&ws, a, w4, s16, dst, 1, sh.K, sh.N, 32)
+			}
+		})
+		b.Run(sh.name+"/f16-group", func(b *testing.B) {
+			SetInt4F16PerGroupS0(true)
+			for i := 0; i < b.N; i++ {
+				MatmulBTW4A8F16Into(&ws, a, w4, s16, dst, 1, sh.K, sh.N, 32)
+			}
+			SetInt4F16PerGroupS0(false)
+		})
+	}
+}
