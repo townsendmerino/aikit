@@ -181,3 +181,72 @@ func TestW4A8F16_everyPathMatchesF32(t *testing.T) {
 	}
 	t.Logf("fused amd64 row kernel active: %v; row4 usable: %v; split-half usable: %v", f16FusedKernelActive(), row4Usable(), splitHalfUsable())
 }
+
+// TestWidenF16_exhaustive is gate 1 of the L1 arm64 fix (goinfer docs/tasks/task-cpu-decode-peer-gap-2026-09.md,
+// "L1 arm64 fix — pre-registered"): the SIMD widen (F16C on amd64, FCVTL on arm64, the scalar loop elsewhere)
+// turns every one of the 65,536 binary16 patterns into f16ToF32's f32 bits. NaN inputs must stay NaN (both
+// instructions quiet a signalling NaN; a scale is never NaN).
+//
+// This test is the widen's only independent check. f16Fixture builds TestW4A8F16_everyPathMatchesF32's f32
+// reference through F16ToF32Slice, which is widenF16 itself, so a wrong widen would corrupt the reference and the
+// path under test identically and that test would still pass.
+func TestWidenF16_exhaustive(t *testing.T) {
+	src := make([]uint16, 1<<16)
+	for i := range src {
+		src[i] = uint16(i)
+	}
+	dst := make([]float32, len(src))
+	widenF16(dst, src)
+	mism := widenMismatches(dst, src)
+	if len(mism) != 0 {
+		t.Fatalf("widenF16 disagrees with f16ToF32 on %d of 65536 patterns; first: %#04x → %#08x, want %#08x",
+			len(mism), src[mism[0]], math.Float32bits(dst[mism[0]]), math.Float32bits(f16ToF32(src[mism[0]])))
+	}
+
+	// The comparison can go red: widen a shifted input, so each lane holds its neighbour's value.
+	shifted := make([]float32, len(src)-1)
+	widenF16(shifted, src[1:])
+	if n := len(widenMismatches(shifted, src[:len(src)-1])); n < 60000 {
+		t.Fatalf("the exhaustive comparison is not discriminating: a shifted widen produced only %d mismatches", n)
+	}
+
+	// Every length 0..40 at every alignment 0..7: the scalar short path, the overlapping last block, and no write
+	// past len(src) (canaries after the end).
+	const canary = float32(-12345.5)
+	for n := 0; n <= 40; n++ {
+		for off := 0; off < 8; off++ {
+			s := src[0x3C00+off*97 : 0x3C00+off*97+n] // around 1.0: normal values with varied mantissas
+			d := make([]float32, n+8)
+			for i := range d {
+				d[i] = canary
+			}
+			widenF16(d[:n], s)
+			if m := widenMismatches(d[:n], s); len(m) != 0 {
+				t.Fatalf("n=%d off=%d: lane %d %#04x → %v, want %v", n, off, m[0], s[m[0]], d[m[0]], f16ToF32(s[m[0]]))
+			}
+			for i := n; i < len(d); i++ {
+				if d[i] != canary {
+					t.Fatalf("n=%d off=%d: widenF16 wrote past len(src) at %d", n, off, i)
+				}
+			}
+		}
+	}
+}
+
+// widenMismatches lists the indices where got is not f16ToF32(src) bit for bit (NaN matches any NaN).
+func widenMismatches(got []float32, src []uint16) []int {
+	var out []int
+	for i, h := range src {
+		want := f16ToF32(h)
+		if want != want {
+			if got[i] == got[i] {
+				out = append(out, i)
+			}
+			continue
+		}
+		if math.Float32bits(got[i]) != math.Float32bits(want) {
+			out = append(out, i)
+		}
+	}
+	return out
+}

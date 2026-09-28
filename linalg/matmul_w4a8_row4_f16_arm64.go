@@ -75,10 +75,36 @@ func matmulBTW4A8Row4F16Into(ws *Workspace, a []float32, w4Row4 []byte, s4 []uin
 	})
 }
 
-// w4a8Row4SpanF16 is w4a8Row4Span over binary16 scales: each quad's 4·nGroups scales are widened into one
-// buffer (reused across the span) before the same kernel call.
+// dotW4A8SplitHalf4RowFoldF16 is dotW4A8SplitHalf4RowFold over binary16 interleaved scales, widened in-kernel
+// with one FCVTL per group (dot_w4a8_fold_f16_arm64.s). Bit-identical to dotW4A8SplitHalf4RowFold on the
+// widened scales.
+//
+//go:noescape
+func dotW4A8SplitHalf4RowFoldF16(act *int8, corr *int32, packed4 *byte, scales4 *uint16, dst *float32, nGroups int)
+
+// w4a8Row4FusedF16 selects dotW4A8SplitHalf4RowFoldF16 for the folded M=1 path. With it off, each quad's
+// scales are widened into a buffer and the f32 kernel runs. It is the benchmark's A/B toggle for the L1 arm64
+// fix, in the same role as w4a8RowFold; both arms give the same bits.
+var w4a8Row4FusedF16 = true
+
+// w4a8Row4SpanF16 is w4a8Row4Span over binary16 scales. The folded path (corr != nil) widens in-kernel;
+// otherwise each quad's 4·nGroups scales are widened into one buffer (reused across the span) before the
+// same kernel call.
 func w4a8Row4SpanF16(aq []int8, corr []int32, aScale float32, w4Row4 []byte, s4 []uint16, dst []float32, nGroups, bpr, q0, q1 int) {
 	if q0 >= q1 {
+		return
+	}
+	if corr != nil && w4a8Row4FusedF16 {
+		var out [4]float32
+		for q := q0; q < q1; q++ {
+			blk := w4Row4[q*4*bpr : q*4*bpr+4*bpr]
+			sb := s4[q*4*nGroups : q*4*nGroups+4*nGroups]
+			dotW4A8SplitHalf4RowFoldF16(&aq[0], &corr[0], &blk[0], &sb[0], &out[0], nGroups)
+			dst[q*4] = out[0] * aScale
+			dst[q*4+1] = out[1] * aScale
+			dst[q*4+2] = out[2] * aScale
+			dst[q*4+3] = out[3] * aScale
+		}
 		return
 	}
 	p := getScaleBuf(4 * nGroups)
@@ -116,12 +142,13 @@ func matmulBTW4A8Row4GroupedF16Into(ws *Workspace, a []float32, w4Row4 []byte, s
 	span := func(q0, q1 int) {
 		var out [4]float32
 		cs := make([]float32, 4*nGroups)
+		wq := make([]float32, 4*nGroups) // this quad's scales, widened (NEON) once
 		for q := q0; q < q1; q++ {
 			blk := w4Row4[q*4*bpr : q*4*bpr+4*bpr]
-			sblk := s4[q*4*nGroups : q*4*nGroups+4*nGroups]
+			widenF16(wq, s4[q*4*nGroups:q*4*nGroups+4*nGroups])
 			for g := range nGroups {
 				s := aS[g]
-				cs[4*g], cs[4*g+1], cs[4*g+2], cs[4*g+3] = f16ToF32(sblk[4*g])*s, f16ToF32(sblk[4*g+1])*s, f16ToF32(sblk[4*g+2])*s, f16ToF32(sblk[4*g+3])*s
+				cs[4*g], cs[4*g+1], cs[4*g+2], cs[4*g+3] = wq[4*g]*s, wq[4*g+1]*s, wq[4*g+2]*s, wq[4*g+3]*s
 			}
 			if corr != nil {
 				dotW4A8SplitHalf4RowFold(&aq[0], &corr[0], &blk[0], &cs[0], &out[0], nGroups)
