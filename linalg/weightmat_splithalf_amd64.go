@@ -74,11 +74,7 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 		return
 	}
 	if w.q4SplitHalf != nil {
-		if M == 1 {
-			matmulBTW4A8SplitHalfInto(ws, a, w.q4SplitHalf, w.q4s, dst, w.cols, w.rows, w.group)
-			return
-		}
-		matmulBTW4A8SplitHalfMultiInto(ws, a, w.q4SplitHalf, w.q4s, dst, M, w.cols, w.rows, w.group)
+		matmulBTW4A8SplitHalfF16Into(ws, a, w.q4SplitHalf, w.q4s16, dst, M, w.cols, w.rows, w.group)
 		return
 	}
 	// audit M-22: structurally unreachable for a successfully-constructed
@@ -93,7 +89,7 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 		panic(fmt.Sprintf("linalg: WeightMat.MatmulBTW4A8Into: no split-half and no canonical layout "+
 			"(rows=%d cols=%d) — nothing to dispatch to", w.rows, w.cols))
 	}
-	MatmulBTW4A8Into(ws, a, w.q4, w.q4s, dst, M, w.cols, w.rows, w.group)
+	MatmulBTW4A8F16Into(ws, a, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
 }
 
 // matmulBTW4A8SplitHalfInto is MatmulBTW4A8Into's M=1 split-half twin. It mirrors that function's
@@ -191,7 +187,11 @@ func w4a8GroupedFastRows(ws *Workspace, a []float32, l int4Layout, dst []float32
 	}
 	K := l.K
 	for m := range M {
-		matmulBTW4A8SplitHalfGroupedInto(ws, a[m*K:(m+1)*K], l.sh, l.wS, dst[m*N:(m+1)*N], K, N)
+		if l.wS != nil {
+			matmulBTW4A8SplitHalfGroupedInto(ws, a[m*K:(m+1)*K], l.sh, l.wS, dst[m*N:(m+1)*N], K, N)
+		} else {
+			matmulBTW4A8SplitHalfGroupedF16Into(ws, a[m*K:(m+1)*K], l.sh, l.wS16, dst[m*N:(m+1)*N], K, N)
+		}
 	}
 	return true
 }

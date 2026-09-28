@@ -19,3 +19,8 @@ func splitHalfUsable() bool { return false }
 func w4a8BatchSplitHalfSpan(aq []int8, aScale float32, splitHalf []byte, scales, dst []float32, K, N, nGroups, bpr, j0, j1 int) {
 	panic("linalg: w4a8BatchSplitHalfSpan reached off amd64 — splitHalfUsable() should have gated this")
 }
+
+// w4a8BatchSplitHalfSpanF16 is unreachable off amd64, like its f32 twin above.
+func w4a8BatchSplitHalfSpanF16(aq []int8, aScale float32, splitHalf []byte, s16 []uint16, dst []float32, K, N, nGroups, bpr, j0, j1 int) {
+	panic("linalg: w4a8BatchSplitHalfSpanF16 reached off amd64 — splitHalfUsable() should have gated this")
+}

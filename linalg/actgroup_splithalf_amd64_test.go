@@ -44,6 +44,7 @@ func TestActGroup_splitHalfMultiRow(t *testing.T) {
 	a := agRandMat(r, M*K)
 	a[300] = 250
 	q4, s4 := QuantizeGroupsInt4(agRandMat(r, N*K), N, K, 32)
+	f16RoundScales(s4) // the WeightMat stores binary16 scales
 	withActGroup(t, 32)
 	ref := make([]float32, M*N)
 	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, M, N)
@@ -75,6 +76,7 @@ func TestActGroup_splitHalfScaledKernelOddGroups(t *testing.T) {
 		aS := make([]float32, nG)
 		QuantizeActivationsGroupedInto(aq, aS, a, 1, K, 32)
 		q4, s4 := QuantizeGroupsInt4(agRandMat(r, K), 1, K, 32)
+		f16RoundScales(s4) // the WeightMat stores binary16 scales
 		sh := RepackW4A8SplitHalf(q4, 1, K, 32)
 		got := dotW4A8SplitHalfScaledAVX2(&aq[0], &sh[0], &s4[0], &aS[0], nG)
 		var want float64

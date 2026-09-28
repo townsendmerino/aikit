@@ -71,6 +71,7 @@ func TestActGroup_row4MultiRow(t *testing.T) {
 	a := agRandMat(r, M*K)
 	a[400] = 250
 	q4, s4 := QuantizeGroupsInt4(agRandMat(r, N*K), N, K, 32)
+	f16RoundScales(s4) // the WeightMat stores binary16 scales
 	withActGroup(t, 32)
 	ref := make([]float32, M*N)
 	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, M, N)

@@ -30,3 +30,13 @@ func w4a8BatchRow4Span(aq []int8, aScale float32, row4 []byte, row4Scales, dst [
 func RepackInt4Row4InPlace(q4 []byte, q4s []float32, rows, cols, group int) (WeightMat, bool) {
 	return WeightMat{}, false
 }
+
+// w4a8BatchRow4SpanF16 is unreachable off arm64, like its f32 twin above.
+func w4a8BatchRow4SpanF16(aq []int8, aScale float32, row4 []byte, s4 []uint16, dst []float32, nGroups, bpr, q0, q1 int) {
+	panic("linalg: w4a8BatchRow4SpanF16 reached off arm64 — row4Usable() should have gated this")
+}
+
+// RepackInt4Row4InPlaceF16 is always ok=false off arm64, like RepackInt4Row4InPlace.
+func RepackInt4Row4InPlaceF16(q4 []byte, q4s []uint16, rows, cols, group int) (WeightMat, bool) {
+	return WeightMat{}, false
+}

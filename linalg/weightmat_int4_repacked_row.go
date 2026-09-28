@@ -21,7 +21,7 @@ package linalg
 //
 // Raw-bit-identical to canonical Row() for the same logical weights —
 // TestWeightMatRow_row4MatchesCanonical.
-func dequantizeRowFromRow4(q4Row4 []byte, q4Row4Scales []float32, cols, i int, dst []float32) {
+func dequantizeRowFromRow4(q4Row4 []byte, q4Row4Scales []uint16, cols, i int, dst []float32) {
 	const groupSize = 32
 	if cols <= 0 {
 		return
@@ -33,7 +33,7 @@ func dequantizeRowFromRow4(q4Row4 []byte, q4Row4Scales []float32, cols, i int, d
 	quadBase := q * 4 * bpr
 	scaleQuadBase := q * 4 * nGroups
 	for g := range nGroups {
-		s := q4Row4Scales[scaleQuadBase+4*g+r]
+		s := f16ToF32(q4Row4Scales[scaleQuadBase+4*g+r])
 		gk := g * groupSize
 		end := min(gk+groupSize, cols)
 		chunk := q4Row4[quadBase+g*64+r*16 : quadBase+g*64+r*16+16]
@@ -71,7 +71,7 @@ func dequantizeRowFromRow4(q4Row4 []byte, q4Row4Scales []float32, cols, i int, d
 //
 // Raw-bit-identical to canonical Row() for the same logical weights —
 // TestWeightMatRow_splitHalfMatchesCanonical.
-func dequantizeRowFromSplitHalf(q4SplitHalf []byte, scales []float32, cols, i int, dst []float32) {
+func dequantizeRowFromSplitHalf(q4SplitHalf []byte, scales []uint16, cols, i int, dst []float32) {
 	const groupSize = 32
 	if cols <= 0 {
 		return
@@ -82,7 +82,7 @@ func dequantizeRowFromSplitHalf(q4SplitHalf []byte, scales []float32, cols, i in
 	row := q4SplitHalf[i*bpr : (i+1)*bpr]
 	srow := scales[i*nGroups : (i+1)*nGroups]
 	for g := range nGroups {
-		s := srow[g]
+		s := f16ToF32(srow[g])
 		gk := g * groupSize
 		end := min(gk+groupSize, cols)
 		ob := g * 16

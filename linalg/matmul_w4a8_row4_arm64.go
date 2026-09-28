@@ -225,7 +225,11 @@ func w4a8GroupedFastRows(ws *Workspace, a []float32, l int4Layout, dst []float32
 	}
 	K := l.K
 	for m := range M {
-		matmulBTW4A8Row4GroupedInto(ws, a[m*K:(m+1)*K], l.r4, l.r4S, dst[m*N:(m+1)*N], K, N)
+		if l.r4S != nil {
+			matmulBTW4A8Row4GroupedInto(ws, a[m*K:(m+1)*K], l.r4, l.r4S, dst[m*N:(m+1)*N], K, N)
+		} else {
+			matmulBTW4A8Row4GroupedF16Into(ws, a[m*K:(m+1)*K], l.r4, l.r4S16, dst[m*N:(m+1)*N], K, N)
+		}
 	}
 	return true
 }

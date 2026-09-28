@@ -32,11 +32,12 @@ func TestW4A8Batch_bitIdenticalToPerOp(t *testing.T) {
 	// RepackInt4Row4's own gate may still decline (N%4, group, DotProd).
 	mkOp := func(K, N int, withRow4 bool) W4A8Op {
 		q4, q4s := QuantizeGroupsInt4(rv(N*K), N, K, group)
+		f16RoundScales(q4s) // the WeightMat below stores binary16 scales
 		op := W4A8Op{W4: q4, Scales: q4s, N: N}
 		if withRow4 && row4Usable() && N%4 == 0 && K%group == 0 {
 			wm := WrapInt4(q4, q4s, N, K, group)
 			if wm.RepackInt4Row4() {
-				op.Row4, op.Row4Scales = wm.q4Row4, wm.q4Row4Scales
+				op.Row4, op.Row4ScalesF16 = wm.q4Row4, wm.q4Row4Scales16
 			}
 		}
 		return op
@@ -137,11 +138,12 @@ func TestW4A8Batch_widthInert(t *testing.T) {
 				w[j] = float32(r.NormFloat64())
 			}
 			q4, q4s := QuantizeGroupsInt4(w, N, K, group)
+			f16RoundScales(q4s) // the WeightMat below stores binary16 scales
 			ops[i] = W4A8Op{W4: q4, Scales: q4s, N: N, Dst: make([]float32, M*N)}
 			if row4Usable() {
 				wm := WrapInt4(q4, q4s, N, K, group)
 				if wm.RepackInt4Row4() {
-					ops[i].Row4, ops[i].Row4Scales = wm.q4Row4, wm.q4Row4Scales
+					ops[i].Row4, ops[i].Row4ScalesF16 = wm.q4Row4, wm.q4Row4Scales16
 				}
 			}
 		}

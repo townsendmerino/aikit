@@ -71,6 +71,7 @@ func TestWeightMat_bitIdenticalToKernels(t *testing.T) {
 	{
 		wm := QuantizeInt4(wf, N, K, group)
 		q4, q4s := QuantizeGroupsInt4(wf, N, K, group)
+		f16RoundScales(q4s) // QuantizeInt4 stores binary16 scales: the kernel reference gets the same values
 		got := make([]float32, M*N)
 		wm.MatmulBT(a, got, M)
 		want := make([]float32, M*N)
@@ -153,9 +154,22 @@ func TestWeightMat_wrapConstructors(t *testing.T) {
 		wm.Row(2, rGot)
 		ref.Row(2, rWant)
 		eq("wrapint4_row", rGot, rWant)
+		// The scales are stored as binary16: WrapInt4 converts them, so only the nibbles alias. WrapInt4F16
+		// aliases both, and Int4F16 returns them as stored.
 		gq4, gq4s, ggroup, ok := wm.Int4()
-		if !ok || ggroup != group || &gq4[0] != &q4[0] || &gq4s[0] != &q4s[0] {
-			t.Fatalf("WrapInt4 accessor: ok=%v group=%d aliased(q4)=%v aliased(q4s)=%v", ok, ggroup, &gq4[0] == &q4[0], &gq4s[0] == &q4s[0])
+		if !ok || ggroup != group || &gq4[0] != &q4[0] || len(gq4s) != len(q4s) {
+			t.Fatalf("WrapInt4 accessor: ok=%v group=%d aliased(q4)=%v len(q4s) %d != %d", ok, ggroup, &gq4[0] == &q4[0], len(gq4s), len(q4s))
+		}
+		for i := range q4s {
+			if gq4s[i] != F16ToF32(F32ToF16(q4s[i])) {
+				t.Fatalf("WrapInt4: Int4() scale %d = %v, want the binary16 rounding of %v", i, gq4s[i], q4s[i])
+			}
+		}
+		s16 := F32ToF16Scales(q4s)
+		wf16 := WrapInt4F16(q4, s16, N, K, group)
+		hq4, hs16, _, ok := wf16.Int4F16()
+		if !ok || &hq4[0] != &q4[0] || &hs16[0] != &s16[0] {
+			t.Fatalf("WrapInt4F16 accessor: ok=%v aliased(q4)=%v aliased(q4s16)=%v", ok, &hq4[0] == &q4[0], &hs16[0] == &s16[0])
 		}
 	}
 	// shape guards panic.

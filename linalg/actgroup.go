@@ -157,9 +157,26 @@ func matmulW8A8GroupedRef(ws *Workspace, g int, a []float32, bQ []int8, bScales,
 // (DequantizeRowInt4, dequantizeRowFromSplitHalf, dequantizeRowFromRow4), emitting codes instead
 // of products.
 type int4Layout struct {
-	w4, sh, r4 []byte
-	wS, r4S    []float32
-	group, K   int
+	w4, sh, r4  []byte
+	wS, r4S     []float32 // f32 scales (the f32 free functions' callers)
+	wS16, r4S16 []uint16  // binary16 scales (a WeightMat, MatmulBTW4A8F16Into); used when wS/r4S are nil
+	group, K    int
+}
+
+// scaleAt is the f32 value of canonical-order scale i.
+func (l int4Layout) scaleAt(i int) float32 {
+	if l.wS != nil {
+		return l.wS[i]
+	}
+	return f16ToF32(l.wS16[i])
+}
+
+// row4ScaleAt is the f32 value of row4-interleaved scale i.
+func (l int4Layout) row4ScaleAt(i int) float32 {
+	if l.r4S != nil {
+		return l.r4S[i]
+	}
+	return f16ToF32(l.r4S16[i])
 }
 
 func (l int4Layout) row(n int, codes []int8, scales []float32) {
@@ -176,7 +193,11 @@ func (l int4Layout) row(n int, codes []int8, scales []float32) {
 			}
 			codes[k] = int8(b&0x0F) - 8
 		}
-		copy(scales, l.wS[n*nG:(n+1)*nG])
+		if l.wS != nil {
+			copy(scales, l.wS[n*nG:(n+1)*nG])
+		} else {
+			widenF16(scales[:nG], l.wS16[n*nG:(n+1)*nG])
+		}
 	case l.sh != nil, l.r4 != nil:
 		var q, r int
 		if l.r4 != nil {
@@ -186,11 +207,11 @@ func (l int4Layout) row(n int, codes []int8, scales []float32) {
 			var chunk []byte
 			if l.sh != nil {
 				chunk = l.sh[n*bpr+g*16 : n*bpr+g*16+16]
-				scales[g] = l.wS[n*nG+g]
+				scales[g] = l.scaleAt(n*nG + g)
 			} else {
 				base := q*4*bpr + g*64 + r*16
 				chunk = l.r4[base : base+16]
-				scales[g] = l.r4S[q*4*nG+4*g+r]
+				scales[g] = l.row4ScaleAt(q*4*nG + 4*g + r)
 			}
 			gk := g * 32
 			for k := gk; k < min(gk+32, K); k++ {
@@ -234,7 +255,7 @@ func matmulW4A8GroupedRef(ws *Workspace, g int, a []float32, l int4Layout, dst [
 
 // int4Layout describes whichever int4 layout w holds, canonical first (matching Row's order).
 func (w *WeightMat) int4Layout() int4Layout {
-	return int4Layout{w4: w.q4, sh: w.q4SplitHalf, r4: w.q4Row4, wS: w.q4s, r4S: w.q4Row4Scales, group: w.group, K: w.cols}
+	return int4Layout{w4: w.q4, sh: w.q4SplitHalf, r4: w.q4Row4, wS16: w.q4s16, r4S16: w.q4Row4Scales16, group: w.group, K: w.cols}
 }
 
 // matmulW4A8Grouped is the per-group W4A8 matmul every W4A8 hook calls. With per-32 activation scales
@@ -249,7 +270,7 @@ func matmulW4A8Grouped(ws *Workspace, g int, a []float32, l int4Layout, dst []fl
 			return
 		}
 		if l.w4 != nil && l.group == 32 {
-			matmulW4A8CanonicalGrouped(ws, a, l.w4, l.wS, dst, M, K, N)
+			matmulW4A8CanonicalGrouped(ws, a, l, dst, M, K, N)
 			return
 		}
 	}
@@ -258,13 +279,20 @@ func matmulW4A8Grouped(ws *Workspace, g int, a []float32, l int4Layout, dst []fl
 
 // matmulW4A8CanonicalGrouped runs the canonical-layout dotW4A8 kernel (every arch) with combined
 // per-group scales, for per-32 activations over 32-wide weight groups.
-func matmulW4A8CanonicalGrouped(ws *Workspace, a []float32, w4 []byte, wScales, dst []float32, M, K, N int) {
+func matmulW4A8CanonicalGrouped(ws *Workspace, a []float32, l int4Layout, dst []float32, M, K, N int) {
 	aq, aS, nG := quantizeActGrouped(ws, 32, a, M, K)
 	bpr := (K + 1) / 2
+	w4 := l.w4
 	parallelFor(ws, M*N*K, N, func(n0, n1 int) {
 		cs := make([]float32, nG)
+		srow := make([]float32, nG)
 		for j := n0; j < n1; j++ {
-			prow, srow := w4[j*bpr:j*bpr+bpr], wScales[j*nG:j*nG+nG]
+			prow := w4[j*bpr : j*bpr+bpr]
+			if l.wS != nil {
+				copy(srow, l.wS[j*nG:j*nG+nG])
+			} else {
+				widenF16(srow, l.wS16[j*nG:j*nG+nG])
+			}
 			for i := range M {
 				as := aS[i*nG : i*nG+nG]
 				for g := range cs {

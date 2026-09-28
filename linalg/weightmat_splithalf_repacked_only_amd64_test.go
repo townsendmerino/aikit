@@ -156,8 +156,8 @@ func TestRepackInt4SplitHalfInPlace_matchesOutOfPlace(t *testing.T) {
 	// q4s is retained UNCHANGED (shared scales, not repacked) — assert that
 	// directly rather than only via a passing matmul comparison.
 	for i, s := range q4s {
-		if w.q4s[i] != s {
-			t.Fatalf("q4s[%d] = %v, want unchanged %v — split-half must not repack scales", i, w.q4s[i], s)
+		if w.q4s16[i] != F32ToF16(s) {
+			t.Fatalf("q4s[%d] = %v, want unchanged %v — split-half must not repack scales", i, F16ToF32(w.q4s16[i]), s)
 		}
 	}
 }

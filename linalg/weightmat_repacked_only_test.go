@@ -25,7 +25,8 @@ func quantizeInt4Random(rng *rand.Rand, rows, cols, group int) (packed []byte, s
 	for i := range w {
 		w[i] = float32(rng.NormFloat64())
 	}
-	return QuantizeGroupsInt4(w, rows, cols, group)
+	q4, q4s := QuantizeGroupsInt4(w, rows, cols, group)
+	return q4, f16RoundScales(q4s) // WeightMats store binary16 scales; references get the same values
 }
 
 func cloneBytes(b []byte) []byte {

@@ -28,7 +28,7 @@ func (w *WeightMat) RepackInt4Row4() bool {
 		return false
 	}
 	w.q4Row4 = RepackW4A8Row4(w.q4, w.rows, w.cols, w.group)
-	w.q4Row4Scales = RepackW4A8Row4Scales(w.q4s, w.rows, w.cols, w.group)
+	w.q4Row4Scales16 = RepackW4A8Row4ScalesF16(w.q4s16, w.rows, w.cols, w.group)
 	return true
 }
 
@@ -66,8 +66,8 @@ func (w *WeightMat) RepackInt4Row4() bool {
 func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 	if g := w.groupFor(ws); g > 0 {
 		if w.q4Row4 != nil && M == 1 {
-			// MatmulBTW4A8Row4Into takes its per-32 kernel path (or the reference) itself.
-			MatmulBTW4A8Row4Into(ws, a, w.q4Row4, w.q4Row4Scales, dst, M, w.cols, w.rows, w.group)
+			// matmulBTW4A8Row4F16Into takes its per-32 kernel path (or the reference) itself.
+			matmulBTW4A8Row4F16Into(ws, a, w.q4Row4, w.q4Row4Scales16, dst, w.cols, w.rows, w.group)
 			return
 		}
 		matmulW4A8Grouped(ws, g, a, w.int4Layout(), dst, M, w.rows) // actgroup.go
@@ -75,10 +75,10 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 	}
 	if w.q4Row4 != nil {
 		if M == 1 {
-			MatmulBTW4A8Row4Into(ws, a, w.q4Row4, w.q4Row4Scales, dst, M, w.cols, w.rows, w.group)
+			matmulBTW4A8Row4F16Into(ws, a, w.q4Row4, w.q4Row4Scales16, dst, w.cols, w.rows, w.group)
 			return
 		}
-		MatmulBTW4A8Row4TileInto(ws, a, w.q4Row4, w.q4Row4Scales, dst, M, w.cols, w.rows, w.group)
+		matmulBTW4A8Row4TileF16Into(ws, a, w.q4Row4, w.q4Row4Scales16, dst, M, w.cols, w.rows, w.group)
 		return
 	}
 	// audit M-22: structurally unreachable for a repacked-only WeightMat —
@@ -91,7 +91,7 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 		panic(fmt.Sprintf("linalg: WeightMat.MatmulBTW4A8Into: no canonical and no row4 layout "+
 			"(rows=%d cols=%d) — nothing to dispatch to", w.rows, w.cols))
 	}
-	MatmulBTW4A8Into(ws, a, w.q4, w.q4s, dst, M, w.cols, w.rows, w.group)
+	MatmulBTW4A8F16Into(ws, a, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
 }
 
 // row4Usable reports whether this CPU can safely dispatch the split-half +
@@ -155,7 +155,18 @@ func w4a8BatchRow4Span(aq []int8, aScale float32, row4 []byte, row4Scales, dst [
 // canonical-sized memory in the first place.
 //
 // Panics on the same shape/length problems WrapInt4/WrapInt4Row4 do.
+//
+// Deprecated: int4 scales are stored as binary16; this converts q4s with F32ToF16 (so q4s itself is not
+// the result's storage). Use RepackInt4Row4InPlaceF16.
 func RepackInt4Row4InPlace(q4 []byte, q4s []float32, rows, cols, group int) (WeightMat, bool) {
+	if !Int4Row4Usable(rows, cols, group) {
+		return WeightMat{}, false
+	}
+	return RepackInt4Row4InPlaceF16(q4, F32ToF16Scales(q4s), rows, cols, group)
+}
+
+// RepackInt4Row4InPlaceF16 is RepackInt4Row4InPlace over binary16 scales, permuted in place.
+func RepackInt4Row4InPlaceF16(q4 []byte, q4s []uint16, rows, cols, group int) (WeightMat, bool) {
 	if !Int4Row4Usable(rows, cols, group) {
 		return WeightMat{}, false
 	}
@@ -173,13 +184,13 @@ func RepackInt4Row4InPlace(q4 []byte, q4s []float32, rows, cols, group int) (Wei
 	}
 
 	quadScales := 4 * nGroups
-	scaleScratch := make([]float32, quadScales) // the scales pass's one allocation, likewise reused
+	scaleScratch := make([]uint16, quadScales) // the scales pass's one allocation, likewise reused
 	for q := 0; q < rows/4; q++ {
 		base := q * quadScales
 		quad := q4s[base : base+quadScales]
 		copy(scaleScratch, quad)
-		RepackInt4Row4ScalesQuad(quad, scaleScratch, nGroups)
+		RepackInt4Row4ScalesQuadF16(quad, scaleScratch, nGroups)
 	}
 
-	return WeightMat{q4Row4: q4, q4Row4Scales: q4s, group: group, rows: rows, cols: cols}, true
+	return WeightMat{q4Row4: q4, q4Row4Scales16: q4s, group: group, rows: rows, cols: cols}, true
 }

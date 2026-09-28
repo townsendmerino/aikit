@@ -33,6 +33,7 @@ func TestWeightMat_RepackInt4Row4_dispatchMatchesCanonical(t *testing.T) {
 			w[i] = float32(rng.NormFloat64())
 		}
 		q4, q4s := QuantizeGroupsInt4(w, N, K, group)
+		f16RoundScales(q4s) // the WeightMat stores binary16 scales; the canonical reference gets the same values
 		wm := WrapInt4(q4, q4s, N, K, group)
 
 		var wsWant Workspace

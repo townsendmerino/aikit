@@ -865,6 +865,24 @@ type W4A8Op struct {
 	SplitHalf  []byte
 	Dst        []float32
 	N          int
+	// ScalesF16 / Row4ScalesF16 are Scales / Row4Scales as binary16 (a WeightMat's storage, Int4F16 /
+	// Int4Row4F16). Where set they are used instead of the f32 field, and the f32 field may be nil.
+	ScalesF16     []uint16
+	Row4ScalesF16 []uint16
+}
+
+func (op *W4A8Op) scalesLen() int {
+	if op.ScalesF16 != nil {
+		return len(op.ScalesF16)
+	}
+	return len(op.Scales)
+}
+
+func (op *W4A8Op) row4ScalesLen() int {
+	if op.Row4ScalesF16 != nil {
+		return len(op.Row4ScalesF16)
+	}
+	return len(op.Row4Scales)
 }
 
 // MatmulBTW4A8Batch runs several W4A8 matmuls that share the SAME activation
@@ -908,25 +926,33 @@ func MatmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []W4A8Op
 		// (never repacked), so its own length check reuses Scales directly. A
 		// canonical op (W4 != nil) is checked exactly as before either case
 		// existed.
-		w4Len, scalesLen := len(op.W4), len(op.Scales)
+		w4Len, scalesLen := len(op.W4), op.scalesLen()
 		checkPacked, checkScales := op.W4, op.Scales
 		switch {
 		case op.W4 != nil:
 			// unchanged.
 		case op.Row4 != nil:
-			w4Len, scalesLen = len(op.Row4), len(op.Row4Scales)
+			w4Len, scalesLen = len(op.Row4), op.row4ScalesLen()
 			checkPacked, checkScales = op.Row4, op.Row4Scales
 		case op.SplitHalf != nil:
-			w4Len, scalesLen = len(op.SplitHalf), len(op.Scales)
+			w4Len, scalesLen = len(op.SplitHalf), op.scalesLen()
 			checkPacked, checkScales = op.SplitHalf, op.Scales
 		}
 		checkMatmulW4A8("MatmulBTW4A8Batch", len(a), w4Len, scalesLen, len(op.Dst), M, K, op.N, group)
-		checkGroupMatmul("MatmulBTW4A8Batch", len(a), checkPacked, checkScales, len(op.Dst), M, K, op.N, group)
+		if op.ScalesF16 == nil && op.Row4ScalesF16 == nil {
+			checkGroupMatmul("MatmulBTW4A8Batch", len(a), checkPacked, checkScales, len(op.Dst), M, K, op.N, group)
+		}
 		totalN += op.N
 	}
 	if g := actGroupFor(ws); g > 0 {
 		for _, op := range ops {
 			l := int4Layout{w4: op.W4, sh: op.SplitHalf, r4: op.Row4, wS: op.Scales, r4S: op.Row4Scales, group: group, K: K}
+			if op.ScalesF16 != nil {
+				l.wS, l.wS16 = nil, op.ScalesF16
+			}
+			if op.Row4ScalesF16 != nil {
+				l.r4S, l.r4S16 = nil, op.Row4ScalesF16
+			}
 			matmulW4A8Grouped(ws, g, a, l, op.Dst, M, op.N) // actgroup.go
 		}
 		return
@@ -999,9 +1025,17 @@ func w4a8BatchOp(aq []int8, aScales []float32, op W4A8Op, M, K, group, nGroups, 
 				"cannot be used in a batch whose shard boundaries split one of its row4 quads, or at "+
 				"M>1", op.N, c0, c1, M))
 		}
+		if op.ScalesF16 != nil {
+			w4a8SpanF16(aq, aScales, op.W4, op.ScalesF16, op.Dst, M, K, op.N, group, nGroups, bpr, c0, c1)
+			return
+		}
 		w4a8Span(aq, aScales, op.W4, op.Scales, op.Dst, M, K, op.N, group, nGroups, bpr, c0, c1)
 	}
 	if op.SplitHalf != nil && splitHalfUsable() && M == 1 && group == 32 && K%group == 0 {
+		if op.ScalesF16 != nil {
+			w4a8BatchSplitHalfSpanF16(aq, aScales[0], op.SplitHalf, op.ScalesF16, op.Dst, K, op.N, nGroups, bpr, j0, j1)
+			return
+		}
 		w4a8BatchSplitHalfSpan(aq, aScales[0], op.SplitHalf, op.Scales, op.Dst, K, op.N, nGroups, bpr, j0, j1)
 		return
 	}
@@ -1015,7 +1049,11 @@ func w4a8BatchOp(aq []int8, aScales []float32, op W4A8Op, M, K, group, nGroups, 
 		return
 	}
 	canonical(j0, q0*4)
-	w4a8BatchRow4Span(aq, aScales[0], op.Row4, op.Row4Scales, op.Dst, nGroups, bpr, q0, q1)
+	if op.Row4ScalesF16 != nil {
+		w4a8BatchRow4SpanF16(aq, aScales[0], op.Row4, op.Row4ScalesF16, op.Dst, nGroups, bpr, q0, q1)
+	} else {
+		w4a8BatchRow4Span(aq, aScales[0], op.Row4, op.Row4Scales, op.Dst, nGroups, bpr, q0, q1)
+	}
 	canonical(q1*4, j1)
 }
 

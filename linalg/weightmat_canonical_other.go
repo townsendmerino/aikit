@@ -23,7 +23,7 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 		panic(fmt.Sprintf("linalg: WeightMat.MatmulBTW4A8Into: no canonical int4 bytes (rows=%d cols=%d) "+
 			"and this target has no repacked layout to fall back to", w.rows, w.cols))
 	}
-	MatmulBTW4A8Into(ws, a, w.q4, w.q4s, dst, M, w.cols, w.rows, w.group)
+	MatmulBTW4A8F16Into(ws, a, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
 }
 
 // RepackInt4SplitHalf is a no-op off amd64: the split-half layout's only consumer is the AVX2
@@ -38,4 +38,9 @@ func splitHalfUsable() bool { return false }
 // arm64 twin. Audit M-22 follow-up.
 func w4a8BatchSplitHalfSpan(aq []int8, aScale float32, splitHalf []byte, scales, dst []float32, K, N, nGroups, bpr, j0, j1 int) {
 	panic("linalg: w4a8BatchSplitHalfSpan reached off amd64 — splitHalfUsable() should have gated this")
+}
+
+// w4a8BatchSplitHalfSpanF16 is unreachable off amd64, like its f32 twin above.
+func w4a8BatchSplitHalfSpanF16(aq []int8, aScale float32, splitHalf []byte, s16 []uint16, dst []float32, K, N, nGroups, bpr, j0, j1 int) {
+	panic("linalg: w4a8BatchSplitHalfSpanF16 reached off amd64 — splitHalfUsable() should have gated this")
 }

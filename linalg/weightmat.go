@@ -34,7 +34,7 @@ type WeightMat struct {
 	q8     []int8    // non-nil ⇒ per-row int8 (weight-only Q8, or W8A8 if w8a8)
 	scales []float32 // [rows] per-row int8 scales
 	q4     []byte    // non-nil ⇒ group-wise int4 packed nibbles
-	q4s    []float32 // [rows*nGroups] per-group int4 scales
+	q4s16  []uint16  // [rows*nGroups] per-group int4 scales, IEEE binary16 (f16scale.go)
 	group  int       // int4 group size (0 unless int4)
 	q4k    []byte    // non-nil ⇒ GGUF Q4_K super-blocks, verbatim (q4k.go); activations always per-32
 	w8a8   bool      // int8 weights run full int8×int8 (W8A8) instead of weight-only Q8
@@ -55,8 +55,8 @@ type WeightMat struct {
 	// authoritative and are never dropped by RepackInt4Row4 itself (the
 	// drop-canonical-after-repack question is the plumbing phase's own
 	// load-time/resident-memory measurement to make, not decided here).
-	q4Row4       []byte    // non-nil ⇒ split-half + 4-row-interleaved packed nibbles (RepackW4A8Row4 layout)
-	q4Row4Scales []float32 // interleaved per-group scales (RepackW4A8Row4Scales layout)
+	q4Row4         []byte   // non-nil ⇒ split-half + 4-row-interleaved packed nibbles (RepackW4A8Row4 layout)
+	q4Row4Scales16 []uint16 // interleaved per-group scales, binary16 (RepackW4A8Row4Scales layout)
 
 	// q4SplitHalf: the amd64 counterpart of q4Row4 — an OPTIONAL, additional in-RAM layout,
 	// split-half only (no row interleave), set exclusively by an explicit RepackInt4SplitHalf
@@ -113,7 +113,9 @@ func QuantizeInt8(w []float32, rows, cols int, w8a8 bool) WeightMat {
 // (~⅛ f32; group consecutive input features share one scale), not retaining the source.
 func QuantizeInt4(w []float32, rows, cols, group int) WeightMat {
 	q4, q4s := QuantizeGroupsInt4(w, rows, cols, group)
-	return WeightMat{q4: q4, q4s: q4s, group: group, rows: rows, cols: cols}
+	// Codes are chosen against the f32 scale; the scale is then stored as binary16 (F32ToF16), which is
+	// exactly what every GPU backend serves for the same weights.
+	return WeightMat{q4: q4, q4s16: F32ToF16Scales(q4s), group: group, rows: rows, cols: cols}
 }
 
 // WrapInt8 wraps ALREADY-quantized per-row int8 weights (q8 [rows*cols] + per-row
@@ -140,17 +142,31 @@ func WrapInt8(q8 []int8, scales []float32, rows, cols int, w8a8 bool) WeightMat 
 // quantized checkpoint), so the caller keeps them alive.
 // Panics if rows or cols is negative, group <= 0, len(q4) != rows*⌈cols/2⌉, or
 // len(q4s) != rows*⌈cols/group⌉ (all checked overflow-safe).
+//
+// Deprecated: int4 scales are stored as binary16. This converts q4s with F32ToF16 into a new slice (so
+// scales that are not binary16-representable are rounded, and q4s is not aliased); use WrapInt4F16.
 func WrapInt4(q4 []byte, q4s []float32, rows, cols, group int) WeightMat {
+	checkWrapInt4("WrapInt4", q4, len(q4s), rows, cols, group)
+	return WrapInt4F16(q4, F32ToF16Scales(q4s), rows, cols, group)
+}
+
+// WrapInt4F16 is WrapInt4 over binary16 scales (F32ToF16's bit patterns), aliasing both slices without
+// copying — the form a loader mapping a quantized checkpoint uses.
+func WrapInt4F16(q4 []byte, q4s16 []uint16, rows, cols, group int) WeightMat {
+	checkWrapInt4("WrapInt4F16", q4, len(q4s16), rows, cols, group)
+	return WeightMat{q4: q4, q4s16: q4s16, group: group, rows: rows, cols: cols}
+}
+
+func checkWrapInt4(name string, q4 []byte, nScales, rows, cols, group int) {
 	if rows < 0 || cols < 0 {
-		panic(fmt.Sprintf("linalg: WrapInt4 negative dim (rows=%d cols=%d)", rows, cols))
+		panic(fmt.Sprintf("linalg: %s negative dim (rows=%d cols=%d)", name, rows, cols))
 	}
 	if group <= 0 {
-		panic(fmt.Sprintf("linalg: WrapInt4 needs group > 0, got %d", group))
+		panic(fmt.Sprintf("linalg: %s needs group > 0, got %d", name, group))
 	}
 	nGroups, bpr := groupsFor(cols, group)
-	requireExactLen("WrapInt4", "q4", len(q4), mul(rows, bpr))
-	requireExactLen("WrapInt4", "q4s", len(q4s), mul(rows, nGroups))
-	return WeightMat{q4: q4, q4s: q4s, group: group, rows: rows, cols: cols}
+	requireExactLen(name, "q4", len(q4), mul(rows, bpr))
+	requireExactLen(name, "q4s", nScales, mul(rows, nGroups))
 }
 
 // WrapInt4Row4 is WrapInt4 plus an ALREADY-repacked split-half + 4-row-interleaved
@@ -179,8 +195,16 @@ func WrapInt4(q4 []byte, q4s []float32, rows, cols, group int) WeightMat {
 // RepackW4A8Row4's own output-length contract for this rows/cols/group — the
 // same shape the repack functions would have produced, applied to bytes that
 // arrived from elsewhere.
+//
+// Deprecated: int4 scales are stored as binary16; this converts both scale slices with F32ToF16. Use
+// WrapInt4Row4F16.
 func WrapInt4Row4(q4 []byte, q4s []float32, rows, cols, group int, q4Row4 []byte, q4Row4Scales []float32) WeightMat {
-	w := WrapInt4(q4, q4s, rows, cols, group)
+	return WrapInt4Row4F16(q4, F32ToF16Scales(q4s), rows, cols, group, q4Row4, F32ToF16Scales(q4Row4Scales))
+}
+
+// WrapInt4Row4F16 is WrapInt4Row4 over binary16 scales, aliasing every slice.
+func WrapInt4Row4F16(q4 []byte, q4s16 []uint16, rows, cols, group int, q4Row4 []byte, q4Row4Scales []uint16) WeightMat {
+	w := WrapInt4F16(q4, q4s16, rows, cols, group)
 	if q4Row4 == nil && q4Row4Scales == nil {
 		return w
 	}
@@ -208,7 +232,7 @@ func WrapInt4Row4(q4 []byte, q4s []float32, rows, cols, group int, q4Row4 []byte
 	requireExactLen("WrapInt4Row4", "q4Row4", len(q4Row4), mul(rows, bpr))
 	requireExactLen("WrapInt4Row4", "q4Row4Scales", len(q4Row4Scales), mul(rows, nGroups))
 	w.q4Row4 = q4Row4
-	w.q4Row4Scales = q4Row4Scales
+	w.q4Row4Scales16 = q4Row4Scales
 	return w
 }
 
@@ -257,14 +281,25 @@ func Int4SplitHalfUsable(cols, group int) bool {
 // Panics on a length mismatch against RepackW4A8Row4/RepackW4A8Row4Scales's
 // own output-length contract for this rows/cols/group — the same shape
 // check WrapInt4Row4 applies to externally-supplied row4 bytes.
+//
+// Deprecated: int4 scales are stored as binary16; this converts q4Row4Scales with F32ToF16. Use
+// WrapInt4Row4OnlyF16.
 func WrapInt4Row4Only(q4Row4 []byte, q4Row4Scales []float32, rows, cols, group int) (WeightMat, bool) {
+	if !Int4Row4Usable(rows, cols, group) {
+		return WeightMat{}, false
+	}
+	return WrapInt4Row4OnlyF16(q4Row4, F32ToF16Scales(q4Row4Scales), rows, cols, group)
+}
+
+// WrapInt4Row4OnlyF16 is WrapInt4Row4Only over binary16 scales, aliasing both slices.
+func WrapInt4Row4OnlyF16(q4Row4 []byte, q4Row4Scales []uint16, rows, cols, group int) (WeightMat, bool) {
 	if !Int4Row4Usable(rows, cols, group) {
 		return WeightMat{}, false
 	}
 	nGroups, bpr := groupsFor(cols, group)
 	requireExactLen("WrapInt4Row4Only", "q4Row4", len(q4Row4), mul(rows, bpr))
 	requireExactLen("WrapInt4Row4Only", "q4Row4Scales", len(q4Row4Scales), mul(rows, nGroups))
-	return WeightMat{q4Row4: q4Row4, q4Row4Scales: q4Row4Scales, group: group, rows: rows, cols: cols}, true
+	return WeightMat{q4Row4: q4Row4, q4Row4Scales16: q4Row4Scales, group: group, rows: rows, cols: cols}, true
 }
 
 // RepackInt4SplitHalfInPlace is RepackInt4Row4InPlace's amd64 split-half
@@ -277,7 +312,18 @@ func WrapInt4Row4Only(q4Row4 []byte, q4Row4Scales []float32, rows, cols, group i
 // legitimately keeps — Int4()'s ok is still false, since ok means "packed
 // NIBBLES present", not scales. Same input-is-consumed contract as
 // RepackInt4Row4InPlace.
+//
+// Deprecated: int4 scales are stored as binary16; this converts q4s with F32ToF16. Use
+// RepackInt4SplitHalfInPlaceF16.
 func RepackInt4SplitHalfInPlace(q4 []byte, q4s []float32, rows, cols, group int) (WeightMat, bool) {
+	if !Int4SplitHalfUsable(cols, group) {
+		return WeightMat{}, false
+	}
+	return RepackInt4SplitHalfInPlaceF16(q4, F32ToF16Scales(q4s), rows, cols, group)
+}
+
+// RepackInt4SplitHalfInPlaceF16 is RepackInt4SplitHalfInPlace over binary16 scales (aliased).
+func RepackInt4SplitHalfInPlaceF16(q4 []byte, q4s []uint16, rows, cols, group int) (WeightMat, bool) {
 	if !Int4SplitHalfUsable(cols, group) {
 		return WeightMat{}, false
 	}
@@ -290,7 +336,7 @@ func RepackInt4SplitHalfInPlace(q4 []byte, q4s []float32, rows, cols, group int)
 		copy(rowScratch, row)
 		RepackInt4SplitHalfRow(row, rowScratch, cols)
 	}
-	return WeightMat{q4SplitHalf: q4, q4s: q4s, group: group, rows: rows, cols: cols}, true
+	return WeightMat{q4SplitHalf: q4, q4s16: q4s, group: group, rows: rows, cols: cols}, true
 }
 
 // WrapInt4SplitHalfOnly is WrapInt4Row4Only's amd64 split-half twin: q4s is
@@ -298,14 +344,25 @@ func RepackInt4SplitHalfInPlace(q4 []byte, q4s []float32, rows, cols, group int)
 // — see the q4SplitHalf field comment — not the canonical packed NIBBLES,
 // which this constructor never takes). ok=false when
 // Int4SplitHalfUsable(cols, group) is false.
+//
+// Deprecated: int4 scales are stored as binary16; this converts q4s with F32ToF16. Use
+// WrapInt4SplitHalfOnlyF16.
 func WrapInt4SplitHalfOnly(q4SplitHalf []byte, q4s []float32, rows, cols, group int) (WeightMat, bool) {
+	if !Int4SplitHalfUsable(cols, group) {
+		return WeightMat{}, false
+	}
+	return WrapInt4SplitHalfOnlyF16(q4SplitHalf, F32ToF16Scales(q4s), rows, cols, group)
+}
+
+// WrapInt4SplitHalfOnlyF16 is WrapInt4SplitHalfOnly over binary16 scales, aliasing both slices.
+func WrapInt4SplitHalfOnlyF16(q4SplitHalf []byte, q4s []uint16, rows, cols, group int) (WeightMat, bool) {
 	if !Int4SplitHalfUsable(cols, group) {
 		return WeightMat{}, false
 	}
 	nGroups, bpr := groupsFor(cols, group)
 	requireExactLen("WrapInt4SplitHalfOnly", "q4SplitHalf", len(q4SplitHalf), mul(rows, bpr))
 	requireExactLen("WrapInt4SplitHalfOnly", "q4s", len(q4s), mul(rows, nGroups))
-	return WeightMat{q4SplitHalf: q4SplitHalf, q4s: q4s, group: group, rows: rows, cols: cols}, true
+	return WeightMat{q4SplitHalf: q4SplitHalf, q4s16: q4s, group: group, rows: rows, cols: cols}, true
 }
 
 // MatmulBT computes dst[M, rows] = a[M, cols] · weight[rows, cols]ᵀ, dispatching by
@@ -322,7 +379,8 @@ func (w *WeightMat) MatmulBT(a, dst []float32, M int) {
 	case w.q4k != nil:
 		matmulQ4K(nil, a, w.q4k, dst, M, w.cols, w.rows)
 	case w.q4 != nil:
-		MatmulBTW4A8(a, w.q4, w.q4s, dst, M, w.cols, w.rows, w.group)
+		var ws Workspace
+		MatmulBTW4A8F16Into(&ws, a, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
 	case w.q4Row4 != nil, w.q4SplitHalf != nil:
 		// Repacked-only (audit M-22): the case above is UNCHANGED (still the
 		// free-function call, still the exact code path a canonical-only or
@@ -361,7 +419,7 @@ func (w *WeightMat) MatmulBTInto(ws *Workspace, a, dst []float32, M int) {
 	case w.q4k != nil:
 		matmulQ4K(ws, a, w.q4k, dst, M, w.cols, w.rows)
 	case w.q4 != nil:
-		MatmulBTW4A8Into(ws, a, w.q4, w.q4s, dst, M, w.cols, w.rows, w.group)
+		MatmulBTW4A8F16Into(ws, a, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
 	case w.q4Row4 != nil, w.q4SplitHalf != nil:
 		// Repacked-only (audit M-22) — see MatmulBT's identical case for why
 		// the q4 != nil branch above is untouched.
@@ -395,11 +453,11 @@ func (w *WeightMat) Row(i int, dst []float32) {
 	case w.q4 != nil:
 		bpr := (w.cols + 1) / 2
 		nGroups := (w.cols + w.group - 1) / w.group
-		DequantizeRowInt4(w.q4[i*bpr:(i+1)*bpr], w.q4s[i*nGroups:(i+1)*nGroups], w.group, w.cols, dst)
+		DequantizeRowInt4(w.q4[i*bpr:(i+1)*bpr], widenScalesCopy(w.q4s16[i*nGroups:(i+1)*nGroups]), w.group, w.cols, dst)
 	case w.q4Row4 != nil:
-		dequantizeRowFromRow4(w.q4Row4, w.q4Row4Scales, w.cols, i, dst)
+		dequantizeRowFromRow4(w.q4Row4, w.q4Row4Scales16, w.cols, i, dst)
 	case w.q4SplitHalf != nil:
-		dequantizeRowFromSplitHalf(w.q4SplitHalf, w.q4s, w.cols, i, dst)
+		dequantizeRowFromSplitHalf(w.q4SplitHalf, w.q4s16, w.cols, i, dst)
 	case w.q8 != nil:
 		lo := i * w.cols
 		DequantizeRowInt8(w.q8[lo:lo+w.cols], w.scales[i], dst)
@@ -447,9 +505,22 @@ func (w *WeightMat) Int8() (q8 []int8, scales []float32, w8a8, ok bool) {
 // worst outcome — a caller trusting ok and dereferencing nil. Use IsInt4()
 // to ask "is this tensor int4 at all" and Int4Layout() to ask "in which
 // form".
+//
+// Deprecated: the scales are stored as binary16; this returns them widened into a NEW slice on every call
+// (an allocation of rows·nGroups floats), so it is not for a hot path. Use Int4F16.
 func (w *WeightMat) Int4() (q4 []byte, q4s []float32, group int, ok bool) {
-	return w.q4, w.q4s, w.group, w.q4 != nil
+	return w.q4, widenScalesCopy(w.q4s16), w.group, w.q4 != nil
 }
+
+// Int4F16 is Int4 with the scales as stored: binary16 bit patterns (F16ToF32 widens one exactly), aliased,
+// not copied. The accessor a GPU upload or a serializer reads.
+func (w *WeightMat) Int4F16() (q4 []byte, q4s16 []uint16, group int, ok bool) {
+	return w.q4, w.q4s16, w.group, w.q4 != nil
+}
+
+// Int4ScalesF16 returns the per-group scales, binary16 and aliased, for any int4 layout that keeps the
+// canonical scale order (canonical and split-half); nil otherwise.
+func (w *WeightMat) Int4ScalesF16() []uint16 { return w.q4s16 }
 
 // IsInt4 reports whether this WeightMat is int4-resident in ANY layout —
 // canonical, row4, or split-half (audit M-22). Unlike Int4()'s ok, this is
@@ -492,8 +563,16 @@ func (w *WeightMat) Int4Layout() string {
 // (w *WeightMat) MatmulBTW4A8Into for the M=1 dispatch decision rather than
 // branching on this directly, unless you specifically need the raw bytes
 // (e.g. measuring the repack's resident-memory delta).
+//
+// Deprecated: the scales are stored as binary16; this returns them widened into a NEW slice on every call.
+// Use Int4Row4F16.
 func (w *WeightMat) Int4Row4() (packed4 []byte, scales4 []float32, ok bool) {
-	return w.q4Row4, w.q4Row4Scales, w.q4Row4 != nil
+	return w.q4Row4, widenScalesCopy(w.q4Row4Scales16), w.q4Row4 != nil
+}
+
+// Int4Row4F16 is Int4Row4 with the interleaved scales as stored (binary16, aliased).
+func (w *WeightMat) Int4Row4F16() (packed4 []byte, scales4 []uint16, ok bool) {
+	return w.q4Row4, w.q4Row4Scales16, w.q4Row4 != nil
 }
 
 // F32 returns the dense weights (ok=false unless f32-resident) — e.g. for a GPU
