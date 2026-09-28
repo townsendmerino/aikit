@@ -7,6 +7,48 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html): see
 follows semver (no breaking change before a v2.0), the Experimental tier is
 excluded from that promise and may change in any release until it graduates.
 
+## [1.50.0] — 2026-09-27
+
+`perfgate` VERDICT: PASS — no regression vs v1.49.0 above each shape's floor — 16/47 shapes resolve the 5.0% class
+
+sensitivity: 16/47 shapes have a floor ≤ 5.0% (the class this gate targets). `nobara-pc` (linux/amd64, Ryzen 7 3700X), idle box, 2026-09-28T06:10Z. A green here is evidence against a regression larger than each shape's floor, not proof of none. Its W4A8 benchmarks call the f32-scale kernels, which this release leaves unchanged; the binary16 path's speed was measured end to end in goinfer (below).
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 9867cb7 +dirty (2026-09-28T06:20:35Z)
+
+### Changed — int4 group scales are stored as binary16
+
+A `WeightMat`'s int4 per-group scales are now stored as IEEE binary16: 2 bytes per 32 weights instead of 4. They are
+the exact values goinfer's CUDA, Metal and WebGPU backends already serve. On a Ryzen 7 3700X, goinfer's served CPU
+decode reads **1.016× / 1.047× / 1.089×** the previous build on qwen2.5 0.5B / 1.5B / 7B (goinfer
+`docs/tasks/task-cpu-decode-peer-gap-2026-09.md`, L1).
+
+- **Behaviour changes, no signature changes.**
+  - `QuantizeInt4` picks codes against the f32 scale as before, then stores the scale as `F32ToF16` of it, so its
+    int4 numerics move by that rounding.
+  - `WrapInt4` / `WrapInt4Row4` / `WrapInt4Row4Only` / `RepackInt4SplitHalfInPlace` / `WrapInt4SplitHalfOnly` /
+    `RepackInt4Row4InPlace` now **convert** their f32 scales into a new binary16 slice instead of aliasing them.
+    They are Deprecated; the `…F16` forms alias.
+  - `Int4()` and `Int4Row4()` return the scales widened into a **new slice on every call**. They are Deprecated for
+    `Int4F16` / `Int4Row4F16`, which alias.
+  - The free f32-scale functions (`MatmulBTW4A8Into`, `MatmulBTW4A8Batch` with `Scales`, `QuantizeGroupsInt4`,
+    `DequantizeRowInt4` and the rest) are unchanged, bit for bit.
+- **Bit-identity.** Every W4A8 path fed binary16 scales is bit-identical to its f32 path fed the widened values:
+  `TestW4A8F16_everyPathMatchesF32` checks every entry point against its own layout's f32 path (M 1–7, per-row and
+  per-32 activations, mutation-checked), on amd64 and on arm64 (qemu).
+
+### Added
+
+- `F32ToF16` (round-half-up on the magnitude with carry, overflow to ±Inf, gradual underflow — goinfer's `F16Bits`
+  rule, bit for bit), `F16ToF32`, `F32ToF16Slice`, `F32ToF16Scales`, `F16ToF32Slice` (F16C on amd64).
+- `WrapInt4F16`, `WrapInt4Row4F16`, `WrapInt4Row4OnlyF16`, `RepackInt4SplitHalfInPlaceF16`, `WrapInt4SplitHalfOnlyF16`,
+  `RepackInt4Row4InPlaceF16`, and (arm64) `RepackW4A8Row4ScalesF16` / `RepackInt4Row4ScalesQuadF16`.
+- `WeightMat.Int4F16`, `Int4Row4F16`, `Int4ScalesF16`.
+- `MatmulBTW4A8F16Into` (every M, per-row or per-group activations), and `W4A8Op.ScalesF16` / `Row4ScalesF16`.
+- **Kernels.** amd64 AVX2 + F16C, M < 4: `dotW4A8FoldF16RowAVX2` widens a row's scales eight per `VCVTPH2PS` into L1,
+  then runs `dotW4A8FoldAVX2`'s loop (+2.5% compute over f32 when cache-hot, against +6–10% converting per group).
+  Every other path (prefill tiles, split-half, VNNI, arm64 row4, per-32 activations, `Row`) widens a row, quad or
+  column chunk into a buffer and runs its existing f32 kernel.
+
 ## [1.49.0] — 2026-09-26
 
 `perfgate` VERDICT: PASS — no regression vs v1.48.0 above each shape's floor — 8/47 shapes resolve the 5.0% class
@@ -4661,6 +4703,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.49.0...HEAD
+[1.50.0]: https://github.com/townsendmerino/aikit/compare/v1.49.0...v1.50.0
 [1.49.0]: https://github.com/townsendmerino/aikit/compare/v1.48.0...v1.49.0
 [1.48.0]: https://github.com/townsendmerino/aikit/compare/v1.47.1...v1.48.0
 [1.47.1]: https://github.com/townsendmerino/aikit/compare/v1.47.0...v1.47.1
