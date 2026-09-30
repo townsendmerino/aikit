@@ -422,13 +422,20 @@ func (e *QwenVisionEncoder) merge(hidden []float32, gridTHW [][3]int) []float32 
 // every segment length n this function is ever called with satisfies n <= maxSeg, and
 // FusedAttnScratch's buffers are prefix slices (Fits(n, hd) holds whenever n <= maxSeg).
 func (e *QwenVisionEncoder) attentionInto(out, x []float32, b *qwenBlock, seq int, cos, sin []float32, cu []int, s *qwenScratch) error {
-	hidden, nH := e.Cfg.HiddenSize, e.Cfg.NumHeads
+	return packedAttentionInto(out, x, b.qkvw, b.qkvb, e.Cfg.HiddenSize, e.Cfg.NumHeads, seq, cos, sin, cu, s)
+}
+
+// packedAttentionInto is attentionInto's body, factored out so the Qwen3.5+ tower (qwen3_encoder.go)
+// shares the one fused-attention schedule instead of carrying a copy. Only the fused biased qkv
+// projection enters it; the output projection, residual and norms stay with the caller. Moving the
+// body did not change a single operation or its order.
+func packedAttentionInto(out, x []float32, qkvw linalg.WeightMat, qkvb []float32, hidden, nH, seq int, cos, sin []float32, cu []int, s *qwenScratch) error {
 	hd := hidden / nH
 	scale := 1.0 / math.Sqrt(float64(hd))
 
 	qkv := s.qkv[:seq*3*hidden]
-	b.qkvw.MatmulBT(x, qkv, seq)
-	addBias(qkv, b.qkvb, seq, 3*hidden)
+	qkvw.MatmulBT(x, qkv, seq)
+	addBias(qkv, qkvb, seq, 3*hidden)
 	// split: row layout is [3, nH, hd], so q/k/v are the three contiguous halves.
 	q := s.q[:seq*hidden]
 	k := s.k[:seq*hidden]
