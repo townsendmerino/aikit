@@ -7,6 +7,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html): see
 follows semver (no breaking change before a v2.0), the Experimental tier is
 excluded from that promise and may change in any release until it graduates.
 
+## [1.52.0] — 2026-10-02
+
+> **PERFGATE EXCEPTION: no perfgate run for this release.** perfgate times `linalg` kernels only, and this release
+> changes no `linalg` file and no `go.mod` / `go.sum` (checked against `v1.51.1`). Its production changes are one new
+> file (`vision/glm_ocr_encoder.go`) and a move of `QwenVisionEncoder`'s fused-attention tail, from
+> `packedAttentionInto` into a shared `attendPackedInto`, with the `scale` expression moving with it (no operation or its
+> order changed). perfgate would time the same binary twice.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at c0b402a +dirty (2026-10-02T14:34:19Z). `nobara-pc`
+(linux/amd64); the `+dirty` is an untracked, gitignored test fixture directory, not a source change.
+
+### Added — the GLM-OCR vision tower (`vision.GlmOcrVisionEncoder`)
+
+A fourth ViT family beside SigLIP, Qwen2.5-VL and Qwen3.5+: `GlmOcrVisionModel`, the tower of `zai-org/GLM-OCR`. New
+exported surface: `GlmOcrEncoderConfig`, `GlmOcrVisionEncoder`, `LoadGlmOcrVisionEncoder(dir, quant)`, and the
+encoder's `Embed`, `ForwardViT` (after `post_layernorm`), `ForwardDownsampled` (HF's `last_hidden_state`) and
+`Forward`, which takes pre-patchified `pixel_values` `[n_patches, 1176]` in merge-block order exactly as
+`Qwen3VisionEncoder` does and returns `[Σ t·h·w / 4, 1536]`, equal to HF's `pooler_output`.
+
+- **What it is:** a 24-block ViT with full attention per image, a biased Conv3d patch embed, a 2D rotary over (row, col)
+  at theta 1e4 (half-split `rotate_half`), RMSNorm, **per-head q/k RMSNorm before the rotary**, a SiLU-gated 4096-wide
+  biased MLP, a `post_layernorm`, a biased Conv2d `downsample` (one matmul per 2×2 merge block, flattened channel-major),
+  and a merger of `proj` → LayerNorm → exact-erf GELU → a SiLU-gated unbiased MLP. There is no learned position table.
+- **`validate()` refuses what it cannot run** rather than half-running it: `attention_bias=false`, a non-silu activation,
+  a non-axial rope type, a rope theta other than 1e4, and a grid whose height or width is not a multiple of 2.
+- **Parity, f32, against transformers 5.12.0 (`GlmOcrVisionModel`, eager attention) on the real checkpoint:** every merged
+  row's cosine is at least 0.999999987 on a 1.47 MP page (1,872 merged rows) and 1.0 on a small image, with the same
+  `pixel_values` fed to both sides. The committed tiny fixture is held to a relative max|diff| of 5e-6 per stage and
+  reads at most 1.6e-6. The gate was shown able to fail: skipping the q/k norm, flattening the downsample patch-major,
+  applying the rotary before the q/k norm, and swapping the merger's erf-GELU for the tanh form each turn it red (the
+  last reads cosine 0.99999997, which only the relative max|diff| bar catches).
+- **`quant=true` (W8A8) is sanity-checked on the tiny fixture only** (worst-row cosine 0.9976) and is **not** gated on the
+  real checkpoint; treat it as untested at scale.
+- **No other change.** The Qwen towers are untouched except for the move noted in the perfgate exception, and their
+  parity tests pass after it.
+
 ## [1.51.1] — 2026-10-01
 
 > **PERFGATE EXCEPTION: no perfgate run for this release** (owner decision, 2026-10-01). The one production change is
@@ -4853,7 +4889,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.49.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.52.0...HEAD
+[1.52.0]: https://github.com/townsendmerino/aikit/compare/v1.51.1...v1.52.0
 [1.51.1]: https://github.com/townsendmerino/aikit/compare/v1.51.0...v1.51.1
 [1.51.0]: https://github.com/townsendmerino/aikit/compare/v1.50.2...v1.51.0
 [1.50.2]: https://github.com/townsendmerino/aikit/compare/v1.50.1...v1.50.2
