@@ -671,6 +671,13 @@ func (q Queue) Run2D(p Pipeline, gx, gy, tgx, tgy int, bufs ...Buffer) {
 	mustCmdBufOK(cb, "dispatch aborted")
 }
 
+// maxBindBuffers is Metal's limit on the entries of the buffer argument table, per kernel function: 31, the same
+// on every GPU family (Apple2 through Apple10). Source: Apple's "Metal feature set tables", section "GPU
+// implementation limits by family", row "Maximum number of entries in the buffer argument table, per graphics or
+// kernel function" (edition of May 21, 2026). Encoder's scratch is sized to it, so every binding Metal itself
+// accepts fits, and bindBuffers refuses one more with a message rather than a bare index-out-of-range.
+const maxBindBuffers = 31
+
 // Encoder batches many DIFFERENT kernel dispatches into ONE command buffer — the
 // per-token shape the decode loop needs (whole layer stack → one commit/wait, per the
 // tax finding). The default serial compute encoder inserts barriers between dependent
@@ -687,8 +694,8 @@ type Encoder struct {
 	// rest is GPU-side per-Dispatch latency, not Go-side msgSend): skip setComputePipelineState
 	// when the pipeline is unchanged, and batch all buffer binds into ONE setBuffers call.
 	curPipe objc.ID
-	idScr   [16]objc.ID // reusable C-arrays for batched setBuffers:offsets:withRange:
-	offScr  [16]uintptr
+	idScr   [maxBindBuffers]objc.ID // reusable C-arrays for batched setBuffers:offsets:withRange:
+	offScr  [maxBindBuffers]uintptr
 	// GPU timing of the last committed command buffer (seconds), captured in end() after
 	// waitUntilCompleted (valid post-completion) and before the pool drains the cb.
 	gpuStart, gpuEnd, kernStart, kernEnd float64
@@ -813,6 +820,25 @@ func (e *Encoder) ReadTimes() {
 	e.kernEnd = objc.Send[float64](e.cb, selKernelEndTime)
 }
 
+// bindBuffers binds bufs at indices 0..len-1 of the current compute encoder in ONE setBuffers:offsets:withRange:
+// msgSend (vs one per buffer): the aggressive Go-side-encode-cost probe. NSRange{location,length} lowers to two
+// trailing word args. Allocation-free: this is the per-dispatch hot path, hundreds of dispatches per token.
+//
+// More than maxBindBuffers is a programming error in the kernel's binding list, not something to recover from, so
+// it panics. Pipeline carries no name, so the stack trace is what identifies the call site.
+func (e *Encoder) bindBuffers(bufs []Buffer) {
+	nb := len(bufs)
+	if nb > maxBindBuffers {
+		panic(fmt.Sprintf("gpu: dispatch binds %d buffers, over Metal's limit of %d buffer-argument-table entries per kernel function; the kernel must bind fewer buffers", nb, maxBindBuffers))
+	}
+	for i, b := range bufs {
+		e.idScr[i], e.offScr[i] = b.id, b.off
+	}
+	e.enc.Send(selSetBuffers, unsafe.Pointer(&e.idScr[0]), unsafe.Pointer(&e.offScr[0]), uintptr(0), uintptr(nb))
+	runtime.KeepAlive(&e.idScr)
+	runtime.KeepAlive(&e.offScr)
+}
+
 // Dispatch encodes one kernel over n threads (threadgroup width tg, clamped ≤ n), binding
 // bufs at indices 0..len-1. dispatchThreads launches EXACTLY n threads (non-uniform), so
 // no out-of-range writes.
@@ -824,16 +850,7 @@ func (e *Encoder) Dispatch(p Pipeline, n, tg int, bufs ...Buffer) {
 		e.enc.Send(selSetPipeline, p.id)
 		e.curPipe = p.id
 	}
-	// Batch ALL buffer binds into one setBuffers:offsets:withRange: msgSend (vs one per
-	// buffer) — the aggressive Go-side-encode-cost probe. NSRange{location,length} lowers to
-	// two trailing word args.
-	nb := len(bufs)
-	for i, b := range bufs {
-		e.idScr[i], e.offScr[i] = b.id, b.off
-	}
-	e.enc.Send(selSetBuffers, unsafe.Pointer(&e.idScr[0]), unsafe.Pointer(&e.offScr[0]), uintptr(0), uintptr(nb))
-	runtime.KeepAlive(&e.idScr)
-	runtime.KeepAlive(&e.offScr)
+	e.bindBuffers(bufs)
 	total := mtlSize{w: uint64(n), h: 1, d: 1}
 	perTG := mtlSize{w: uint64(tg), h: 1, d: 1}
 	e.enc.Send(selDispatchThreads, unsafe.Pointer(&total), unsafe.Pointer(&perTG))
@@ -855,13 +872,7 @@ func (e *Encoder) Dispatch2D(p Pipeline, gx, gy, tgx, tgy int, bufs ...Buffer) {
 		e.enc.Send(selSetPipeline, p.id)
 		e.curPipe = p.id
 	}
-	nb := len(bufs)
-	for i, b := range bufs {
-		e.idScr[i], e.offScr[i] = b.id, b.off
-	}
-	e.enc.Send(selSetBuffers, unsafe.Pointer(&e.idScr[0]), unsafe.Pointer(&e.offScr[0]), uintptr(0), uintptr(nb))
-	runtime.KeepAlive(&e.idScr)
-	runtime.KeepAlive(&e.offScr)
+	e.bindBuffers(bufs)
 	grid := mtlSize{w: uint64(gx), h: uint64(gy), d: 1}
 	perTG := mtlSize{w: uint64(tgx), h: uint64(tgy), d: 1}
 	e.enc.Send(selDispatchTG, unsafe.Pointer(&grid), unsafe.Pointer(&perTG))
@@ -880,14 +891,8 @@ func (e *Encoder) DispatchTG(p Pipeline, n, tg, tgBytes int, bufs ...Buffer) {
 		e.enc.Send(selSetPipeline, p.id)
 		e.curPipe = p.id
 	}
-	nb := len(bufs)
-	for i, b := range bufs {
-		e.idScr[i], e.offScr[i] = b.id, b.off
-	}
-	e.enc.Send(selSetBuffers, unsafe.Pointer(&e.idScr[0]), unsafe.Pointer(&e.offScr[0]), uintptr(0), uintptr(nb))
+	e.bindBuffers(bufs)
 	e.enc.Send(selSetTgMem, uintptr(tgBytes), uintptr(0))
-	runtime.KeepAlive(&e.idScr)
-	runtime.KeepAlive(&e.offScr)
 	total := mtlSize{w: uint64(n), h: 1, d: 1}
 	perTG := mtlSize{w: uint64(tg), h: 1, d: 1}
 	e.enc.Send(selDispatchThreads, unsafe.Pointer(&total), unsafe.Pointer(&perTG))

@@ -7,6 +7,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html): see
 follows semver (no breaking change before a v2.0), the Experimental tier is
 excluded from that promise and may change in any release until it graduates.
 
+## [Unreleased]
+
+### Fixed — `gpu.Encoder` checks how many buffers a dispatch binds, and holds Metal's full 31
+
+`Encoder.Dispatch`, `Dispatch2D` and `DispatchTG` bound their buffers through a fixed `[16]` scratch with no length
+check. A 17th buffer was not a memory overrun: Go's bounds check caught it and panicked with `index out of range [16]
+with length 16`, which names neither the limit nor what to do. goinfer's widest dispatch already binds 15
+(goinfer's Metal audit, finding C-N01), so one more binding would have hit it.
+
+- **The three copy loops are now one helper**, `Encoder.bindBuffers`, which does the fill and the single
+  `setBuffers:offsets:withRange:` send. It allocates nothing; the message is built only on the panic path.
+- **The scratch holds Metal's limit**, 31 (`maxBindBuffers`): the "Maximum number of entries in the buffer argument
+  table, per graphics or kernel function" row of Apple's Metal feature set tables, which reads 31 for every GPU family
+  from Apple2 through Apple10 (edition of May 21, 2026).
+- **A 32nd buffer panics with a message** that gives the count and the limit and says the kernel must bind fewer
+  buffers. `Pipeline` carries no name, so the stack trace identifies the call site.
+- **Test:** `TestEncoderBindBuffers_limit` (darwin, real device) runs a kernel binding exactly 31 buffers through all
+  three entry points and checks an index-weighted sum, the last buffer included, then checks the panic message for one
+  more. **Run on a real Metal device (a Mac) on 2026-10-02: 6 of 6 pass with no skips, and with the guard removed the
+  three over-limit cases fail with Go's `index out of range [31] with length 31` while the three at-the-limit cases
+  still pass.** Metal compiled and correctly ran a kernel with 31 `[[buffer(n)]]` arguments plus a `[[threadgroup(0)]]`
+  argument through `DispatchTG`.
+
+No API change. Not released on its own; it rides the next release.
+
 ## [1.52.0] — 2026-10-02
 
 > **PERFGATE EXCEPTION: no perfgate run for this release.** perfgate times `linalg` kernels only, and this release
