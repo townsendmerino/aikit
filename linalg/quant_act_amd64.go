@@ -6,11 +6,18 @@ package linalg
 // 2026-09-03; this is its amd64 twin).
 //
 // quantizeRowInt8Core runs two scalar passes on the calling goroutine before every W8A8/W4A8
-// fan-out. Both passes are elementwise (a max, then a multiply-round-clamp), so the vector forms
-// are bit-identical to the scalar loops by construction; TestQuantizeRowInt8_bitIdenticalToScalar
+// fan-out. Both passes are elementwise (a max, then a multiply-round-clamp), and the vector forms
+// are bit-identical to the scalar loops; TestQuantizeRowInt8_bitIdenticalToScalar
 // (arch-independent, quant_act_test.go) and TestQuantActAVX2Kernels_matchScalar (this package,
 // against the raw kernels directly) hold them to it over random rows and the pinned corners (NaN,
-// ±Inf, -0.0, exact .5 ties, saturating magnitudes, all-zero).
+// ±Inf, -0.0, exact .5 ties, every rounding boundary in the clamp range, saturating magnitudes,
+// all-zero).
+//
+// "Elementwise" did not make the rounding bit-identical by construction. v1.50.2 rounded with
+// y + copysign(0.5, y) and a truncate, which sends 0.49999997 to 1 (the float32 sum is a tie that
+// rounds to even); random rows almost never hold that one value, and real activations do. The
+// kernel now adds nextafter32(0.5, 0) instead (quant_act_amd64.s explains why that is exact), and
+// the "every-rounding-boundary" corner pins both values on either side of every k+0.5.
 //
 // TWO ISA DIFFERENCES FROM ARM64, BOTH HANDLED EXPLICITLY, NEITHER GUESSED:
 //

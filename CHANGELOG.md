@@ -7,6 +7,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html): see
 follows semver (no breaking change before a v2.0), the Experimental tier is
 excluded from that promise and may change in any release until it graduates.
 
+## [1.51.1] — 2026-10-01
+
+> **PERFGATE EXCEPTION: no perfgate run for this release** (owner decision, 2026-10-01). The one production change is
+> one immediate in `quantizeF32AVX2` (`linalg/quant_act_amd64.s`, `0x3F000000` → `0x3EFFFFFF`): no instruction is
+> added, removed or reordered, and no register or memory access changes, so perfgate would time the same
+> instruction stream twice. No `go.mod` / `go.sum` changed.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 5c144cc (2026-10-01T17:12:34Z). `nobara-pc` (linux/amd64).
+
+### Fixed — amd64's AVX2 int8 quantizer was not bit-identical to the scalar reference (v1.50.2 to v1.51.0)
+
+v1.50.2's `quantizeF32AVX2` rounded half away from zero as `trunc(y + copysign(0.5, y))` in float32. For
+y = ±0.49999997 (`nextafter32(0.5, 0)`) the exact sum, 1 − 2⁻²⁵, is a float32 tie that rounds to even, that is to
+1.0, so the kernel gave ±1 where the scalar reference (`math.Round`) and arm64's `FCVTAS` give 0. It is the only
+misrounded value inside the ±127 clamp. Checked exhaustively over every float32 with |y| < 2³¹: adding 0.5
+misrounds 8,388,610 values, every other one beyond the clamp, and adding `nextafter32(0.5, 0)`, which the kernel now
+does, misrounds none.
+
+**Reach.** `quantizeRowInt8Core` is shared, so on amd64 the misrounding applied to activation quantization before
+every W8A8/W4A8 matmul AND to int8 weight quantization (`QuantizeRowInt8`, `QuantizeRowsInt8`, and anything built on
+them at load time). The two answers are equally close (0.49999997 is half a quantization step from both 0 and 1), so
+no result got less accurate. What broke is the bit-identity the kernel claimed: amd64 int8 output stopped matching the
+scalar path and arm64, and int8 data written on amd64 with v1.50.2–v1.51.0 can differ from the same data written
+elsewhere in exactly those elements. goinfer's v0.20.0 release sweep found it: `TestQwen35GGUF_gate`
+(Qwen3.6-35B-A3B, Q8_0 loaded as int8, 80 greedy steps against a bf16 golden) fell from argmax 68/80 to 57/80
+against its 66 floor on `nobara-pc`. A bisect put it on goinfer's v1.50.2 bump, an adjacent pair, deterministic on
+both sides. With this constant patched in, the gate reproduces the pre-v1.50.2 result exactly: 68/80, cosine
+0.98740 / 0.99608, every prompt's tokens identical.
+
+- The random-row and corner tests all passed on the broken kernel, because random rows almost never hold that one
+  value. A new corner, `every-rounding-boundary`, feeds the float32 just below, at and just above every k+0.5 for
+  k = 0..126, in both signs, at scale 1, through the vector path. It fails on the v1.50.2 kernel
+  (`q[1] differs: scalar 0 dispatched 1 (row[1]=0.49999997, scale=1)`) and passes with the fix, on `nobara-pc`.
+- arm64 is unaffected (`FCVTAS` rounds ties away exactly), and so is every other architecture (scalar).
+- No API change.
+
 ## [1.51.0] — 2026-09-30
 
 > **PERFGATE EXCEPTION: no perfgate run for this release.** perfgate times `linalg` kernels only, and this release
@@ -4818,6 +4854,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.49.0...HEAD
+[1.51.1]: https://github.com/townsendmerino/aikit/compare/v1.51.0...v1.51.1
 [1.51.0]: https://github.com/townsendmerino/aikit/compare/v1.50.2...v1.51.0
 [1.50.2]: https://github.com/townsendmerino/aikit/compare/v1.50.1...v1.50.2
 [1.50.1]: https://github.com/townsendmerino/aikit/compare/v1.50.0...v1.50.1

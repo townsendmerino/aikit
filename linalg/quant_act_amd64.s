@@ -15,10 +15,15 @@
 // the same reasoning quant_act_arm64.s gives for its four: break the max-latency chain.
 //
 // quantizeF32AVX2, per lane: y = row[i]*inv (VMULPS, one f32 multiply, matching the scalar's
-// single `v * inv`); round-half-away-from-zero via y + copysign(0.5, y) (VANDPS the sign bit,
-// VORPS onto +0.5's bits, VADDPS) — x86 has no single-instruction "round ties away" mode (VROUNDPS
-// only offers nearest-even/floor/ceil/truncate), so this is the composite form
-// quant_act_other.go's own comment already named as the open design; then the float result is
+// single `v * inv`); round-half-away-from-zero via y + copysign(h, y) with h = nextafter32(0.5, 0)
+// = 0.49999997 (VANDPS the sign bit, VORPS onto h's bits, VADDPS) — x86 has no single-instruction
+// "round ties away" mode (VROUNDPS only offers nearest-even/floor/ceil/truncate), so this is a
+// composite form. h is NOT 0.5: v1.50.2 added exactly 0.5, and for y = 0.49999997 the exact sum
+// 1 - 2^-25 is a tie in float32 that rounds to even, i.e. to 1.0, so the truncate gave 1 where the
+// scalar math.Round gives 0 (and -1 for -0.49999997). That was the only misrounded value inside the
+// ±127 clamp, and it broke bit-identity on real activations (goinfer's TestQwen35GGUF_gate on
+// amd64, 2026-10-01). Adding h misrounds no float32 at all: checked exhaustively over every value
+// with |y| < 2^31. Then the float result is
 // clamped into [-127, 127] (VMINPS/VMAXPS against the two constants, CONSTANT operand first per
 // the same NaN-order rule as the max pass — so a NaN here is folded to +127 by this step, not yet
 // the 0 the scalar path wants) BEFORE truncating (VCVTTPS2DQ) — critical, because x86's truncate
@@ -116,9 +121,9 @@ TEXT ·quantizeF32AVX2(SB), NOSPLIT, $0-28
 	VPCMPEQD Y12, Y12, Y12
 	VPSLLD   $31, Y12, Y13   // Y13 = 0x80000000 in every lane (sign mask, in-register, no data load)
 
-	MOVL    $0x3F000000, AX // 0.5f
+	MOVL    $0x3EFFFFFF, AX // h = nextafter32(0.5, 0) = 0.49999997f, not 0.5f (see the header)
 	MOVQ    AX, X12
-	VPBROADCASTD X12, Y12    // Y12 = 0.5f in every lane
+	VPBROADCASTD X12, Y12    // Y12 = h in every lane
 
 	MOVL    $0x42FE0000, AX // 127.0f
 	MOVQ    AX, X11
@@ -136,8 +141,8 @@ quant8:
 	VMULPS  Y14, Y0, Y0          // y = row * inv
 
 	VANDPS  Y13, Y0, Y1           // sign bit of y
-	VORPS   Y12, Y1, Y1           // ±0.5 with y's own sign
-	VADDPS  Y1, Y0, Y2            // r = y + copysign(0.5, y)
+	VORPS   Y12, Y1, Y1           // ±h with y's own sign
+	VADDPS  Y1, Y0, Y2            // r = y + copysign(h, y)
 
 	VMINPS  Y2, Y11, Y2            // const FIRST: r = min(127, r)  (NaN -> 127, fixed below)
 	VMAXPS  Y2, Y10, Y2            // r = max(-127, r)              (NaN -> stays 127 either way)

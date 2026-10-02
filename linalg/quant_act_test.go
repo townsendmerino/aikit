@@ -169,6 +169,24 @@ func TestQuantizeRowInt8_corners(t *testing.T) {
 			r[17] = 1234.5678
 			return r
 		},
+		// Every rounding boundary inside the clamp range, as the AVX2 pass sees it: maxAbs 127 makes the
+		// scale exactly 1, so each element is rounded as itself. For k = 0..126, the float32 just below,
+		// at, and just above k+0.5, in both signs, padded to a multiple of 8 so all of them take the
+		// vector path. v1.50.2's y + copysign(0.5, y) truncate rounded nextafter32(0.5, 0) = 0.49999997
+		// to 1 (the scalar math.Round gives 0) and passed every corner above; this one catches it.
+		"every-rounding-boundary": func() []float32 {
+			r := []float32{127}
+			for k := 0; k < 127; k++ {
+				h := float32(k) + 0.5
+				for _, v := range []float32{math.Nextafter32(h, 0), h, math.Nextafter32(h, 128)} {
+					r = append(r, v, -v)
+				}
+			}
+			for len(r)%8 != 0 {
+				r = append(r, 0)
+			}
+			return r
+		},
 	}
 	for name, mk := range cases {
 		checkQuantRowIdentical(t, name, mk())
