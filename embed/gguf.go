@@ -66,6 +66,7 @@ type ggufTensorInfo struct {
 	dims   []uint64
 	typ    uint32
 	offset uint64 // relative to the data section start
+	sec    []byte // the data section offset is relative to: nil for the file's own (GGUFFile.data), its shard's in a split set
 }
 
 // GGUFFile is a parsed GGUF checkpoint: its metadata (architecture config,
@@ -73,8 +74,17 @@ type ggufTensorInfo struct {
 type GGUFFile struct {
 	Metadata map[string]any
 	tensors  map[string]ggufTensorInfo
-	data     []byte // the tensor-data section (file bytes after the aligned header)
-	mmap     []byte // full mmap region iff opened via OpenGGUFMmap; nil for OpenGGUF
+	data     []byte   // the tensor-data section (file bytes after the aligned header); nil for a split set
+	mmap     []byte   // full mmap region iff opened via OpenGGUFMmap; nil for OpenGGUF
+	mmaps    [][]byte // every shard's mmap region iff opened via OpenGGUFSplitMmap
+}
+
+// section is the data section a tensor's offset is relative to.
+func (g *GGUFFile) section(info ggufTensorInfo) []byte {
+	if info.sec != nil {
+		return info.sec
+	}
+	return g.data
 }
 
 // gcur is a little-endian cursor over a byte slice with bounds checks — the
@@ -252,11 +262,27 @@ func OpenGGUFMmap(path string) (*GGUFFile, error) {
 // data must not be read afterward. No-op for OpenGGUF (heap-backed). Safe to
 // call more than once.
 func (g *GGUFFile) Close() error {
-	if g.mmap == nil {
-		return nil
+	var err error
+	if g.mmaps != nil {
+		// A split set: forget each tensor's shard section first, so a read after Close fails on an empty section
+		// the way a single file's does (g.data = nil below) instead of touching an unmapped page.
+		for name, info := range g.tensors {
+			info.sec = nil
+			g.tensors[name] = info
+		}
+		for _, m := range g.mmaps {
+			if e := mmap.Unmap(m); e != nil && err == nil {
+				err = e
+			}
+		}
+		g.mmaps = nil
 	}
-	err := mmap.Unmap(g.mmap)
-	g.mmap = nil
+	if g.mmap != nil {
+		if e := mmap.Unmap(g.mmap); e != nil && err == nil {
+			err = e
+		}
+		g.mmap = nil
+	}
 	g.data = nil
 	return err
 }
@@ -405,16 +431,17 @@ func (g *GGUFFile) RowDequantizer(name string) (dims []int, into func(start int,
 	// falsely rejected a legitimate Q2_K/IQ2_S tensor occupying >~65% of the
 	// data section (tensorBytes would have validated it exactly). Check before
 	// each multiply so the product itself can never overflow.
-	maxElems := 4*len(g.data) + qkK
+	sec := g.section(info)
+	maxElems := 4*len(sec) + qkK
 	n := 1
 	dims = make([]int, len(info.dims))
 	for i, d := range info.dims {
 		if d > uint64(maxElems) {
-			return nil, nil, fmt.Errorf("gguf: tensor %q dim %d (%d) exceeds data section (%d bytes)", name, i, d, len(g.data))
+			return nil, nil, fmt.Errorf("gguf: tensor %q dim %d (%d) exceeds data section (%d bytes)", name, i, d, len(sec))
 		}
 		di := int(d)
 		if di != 0 && n > maxElems/di {
-			return nil, nil, fmt.Errorf("gguf: tensor %q element count exceeds data section (%d bytes)", name, len(g.data))
+			return nil, nil, fmt.Errorf("gguf: tensor %q element count exceeds data section (%d bytes)", name, len(sec))
 		}
 		dims[i] = di
 		n *= di
@@ -513,10 +540,11 @@ func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
 	}
 	// info.offset is an untrusted uint64; compare without adding so a near-2^64
 	// offset can't wrap the sum past this guard and panic the slice below.
-	if info.offset > uint64(len(g.data)) || uint64(nbytes) > uint64(len(g.data))-info.offset {
-		return nil, fmt.Errorf("data range [%d:+%d] past section end %d", info.offset, nbytes, len(g.data))
+	sec := g.section(info)
+	if info.offset > uint64(len(sec)) || uint64(nbytes) > uint64(len(sec))-info.offset {
+		return nil, fmt.Errorf("data range [%d:+%d] past section end %d", info.offset, nbytes, len(sec))
 	}
-	return g.data[info.offset : info.offset+uint64(nbytes)], nil
+	return sec[info.offset : info.offset+uint64(nbytes)], nil
 }
 
 // --- typed metadata accessors ---

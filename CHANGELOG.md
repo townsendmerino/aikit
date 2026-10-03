@@ -9,6 +9,28 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added — `embed.OpenGGUFSplitMmap` opens a llama.cpp split GGUF as one file
+
+llama-gguf-split writes a big model as `<name>-00001-of-0000N.gguf` …, each shard a complete GGUF holding some of the
+tensors, with `split.no`, `split.count` and (on the first) `split.tensors.count` in its metadata. Uploaders split
+mainly to get a quant under HuggingFace's 50 GB per-file limit. `OpenGGUFSplitMmap(paths)` maps every shard, takes
+the first shard's metadata as the model's, and unions the tensor directories. `Tensor`, `RowDequantizer` and `Q4KRaw`
+then read each tensor from whichever shard holds it, exactly as from a single file. For goinfer's split-GGUF pull and
+load, see goinfer's task-checkpoint-fetch-2026-09.md, P4.
+
+- **A bad set is refused at open**, before any weight is read: a shard whose `split.no` or `split.count` does not
+  match its place in `paths` (a missing or misordered shard), a tensor named by two shards, or a union short of the
+  first shard's `split.tensors.count`. One path is `OpenGGUFMmap`.
+- **Close unmaps every shard**, and a tensor read afterwards is an error, as for a single file, rather than a read
+  of an unmapped page.
+- **How it works:** each tensor's directory entry now records the data section its offset is relative to (nil for a
+  single file's own). Single-file behaviour is unchanged.
+- **Tests (`embed/gguf_split_test.go`):**
+  - A five-tensor F32 model is written as one file and as three shards laid out the way llama-gguf-split lays them
+    out. Every tensor reads bit-identically through `Tensor` and `RowDequantizer`.
+  - Four bad sets are refused, each with its own message, and a read after Close errors.
+  - Dropping the per-tensor section fails the identity test.
+
 ### Fixed — `gpu.Encoder` checks how many buffers a dispatch binds, and holds Metal's full 31
 
 `Encoder.Dispatch`, `Dispatch2D` and `DispatchTG` bound their buffers through a fixed `[16]` scratch with no length
