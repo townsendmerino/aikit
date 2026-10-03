@@ -9,28 +9,6 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
-### Added — `embed.OpenGGUFSplitMmap` opens a llama.cpp split GGUF as one file
-
-llama-gguf-split writes a big model as `<name>-00001-of-0000N.gguf` …, each shard a complete GGUF holding some of the
-tensors, with `split.no`, `split.count` and (on the first) `split.tensors.count` in its metadata. Uploaders split
-mainly to get a quant under HuggingFace's 50 GB per-file limit. `OpenGGUFSplitMmap(paths)` maps every shard, takes
-the first shard's metadata as the model's, and unions the tensor directories. `Tensor`, `RowDequantizer` and `Q4KRaw`
-then read each tensor from whichever shard holds it, exactly as from a single file. For goinfer's split-GGUF pull and
-load, see goinfer's task-checkpoint-fetch-2026-09.md, P4.
-
-- **A bad set is refused at open**, before any weight is read: a shard whose `split.no` or `split.count` does not
-  match its place in `paths` (a missing or misordered shard), a tensor named by two shards, or a union short of the
-  first shard's `split.tensors.count`. One path is `OpenGGUFMmap`.
-- **Close unmaps every shard**, and a tensor read afterwards is an error, as for a single file, rather than a read
-  of an unmapped page.
-- **How it works:** each tensor's directory entry now records the data section its offset is relative to (nil for a
-  single file's own). Single-file behaviour is unchanged.
-- **Tests (`embed/gguf_split_test.go`):**
-  - A five-tensor F32 model is written as one file and as three shards laid out the way llama-gguf-split lays them
-    out. Every tensor reads bit-identically through `Tensor` and `RowDequantizer`.
-  - Four bad sets are refused, each with its own message, and a read after Close errors.
-  - Dropping the per-tensor section fails the identity test.
-
 ### Fixed — `gpu.Encoder` checks how many buffers a dispatch binds, and holds Metal's full 31
 
 `Encoder.Dispatch`, `Dispatch2D` and `DispatchTG` bound their buffers through a fixed `[16]` scratch with no length
@@ -53,6 +31,38 @@ with length 16`, which names neither the limit nor what to do. goinfer's widest 
   argument through `DispatchTG`.
 
 No API change. Not released on its own; it rides the next release.
+
+## [1.53.0] — 2026-10-03
+
+> **PERFGATE EXCEPTION: no perfgate run for this release.** perfgate times `linalg` kernels only, and this release
+> changes no `linalg` file and no `go.mod` / `go.sum` (checked against `v1.52.0`). Its one production change is in
+> `embed`: a new file (`embed/gguf_split.go`), plus a per-tensor data-section field that `tensorBytes` and
+> `RowDequantizer` read through (nil, and so the old `g.data`, for every single-file GGUF). perfgate would time the
+> same binary twice.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 7188f06 (2026-10-03T16:44:11Z). `nobara-pc` (linux/amd64).
+
+### Added — `embed.OpenGGUFSplitMmap` opens a llama.cpp split GGUF as one file
+
+llama-gguf-split writes a big model as `<name>-00001-of-0000N.gguf` …, each shard a complete GGUF holding some of the
+tensors, with `split.no`, `split.count` and (on the first) `split.tensors.count` in its metadata. Uploaders split
+mainly to get a quant under HuggingFace's 50 GB per-file limit. `OpenGGUFSplitMmap(paths)` maps every shard, takes
+the first shard's metadata as the model's, and unions the tensor directories. `Tensor`, `RowDequantizer` and `Q4KRaw`
+then read each tensor from whichever shard holds it, exactly as from a single file. For goinfer's split-GGUF pull and
+load, see goinfer's task-checkpoint-fetch-2026-09.md, P4.
+
+- **A bad set is refused at open**, before any weight is read: a shard whose `split.no` or `split.count` does not
+  match its place in `paths` (a missing or misordered shard), a tensor named by two shards, or a union short of the
+  first shard's `split.tensors.count`. One path is `OpenGGUFMmap`.
+- **Close unmaps every shard**, and a tensor read afterwards is an error, as for a single file, rather than a read
+  of an unmapped page.
+- **How it works:** each tensor's directory entry now records the data section its offset is relative to (nil for a
+  single file's own). Single-file behaviour is unchanged.
+- **Tests (`embed/gguf_split_test.go`):**
+  - A five-tensor F32 model is written as one file and as three shards laid out the way llama-gguf-split lays them
+    out. Every tensor reads bit-identically through `Tensor` and `RowDequantizer`.
+  - Four bad sets are refused, each with its own message, and a read after Close errors.
+  - Dropping the per-tensor section fails the identity test.
 
 ## [1.52.0] — 2026-10-02
 
@@ -4936,7 +4946,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.52.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.53.0...HEAD
+[1.53.0]: https://github.com/townsendmerino/aikit/compare/v1.52.0...v1.53.0
 [1.52.0]: https://github.com/townsendmerino/aikit/compare/v1.51.1...v1.52.0
 [1.51.1]: https://github.com/townsendmerino/aikit/compare/v1.51.0...v1.51.1
 [1.51.0]: https://github.com/townsendmerino/aikit/compare/v1.50.2...v1.51.0
