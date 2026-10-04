@@ -166,6 +166,27 @@ jobs:
 
   # The narrower amd64 kernel paths, forced on whatever CPU the runner has (the ubuntu pool mixes CPU models: some have AVX-512 VNNI, which is how the v1.47.0
   # accumulator bug surfaced on a failing run, and none is known to lack AVX2). goinfer's hardware-coverage task, H1.3. Each leg asserts its tag took effect.
+  # The class of bug the aikit_nodotprod step above cannot reach: that tag makes the dispatchers take the base kernels on a runner that HAS DotProd, so a test or kernel that calls an SDOT instruction
+  # directly, without asking hasDotProd, still passes there and dies with SIGILL on a real Cortex-A72 (a Raspberry Pi 4). This job IS such a core: the arm64 test binary is cross-compiled and each test
+  # runs in its own qemu-user process with -cpu cortex-a72, so a SIGILL names its test. The tool fails unless the CPU reports arm64 with DotProd absent (a green run on the wrong CPU is the failure
+  # mode), and prints the denominator. One such test was found by hand on 2026-10-04 (fixed in v1.54.0). goinfer's hardware-coverage task, H1.4.
+  qemu-nodotprod:
+    name: arm64 without DotProd (qemu-user, -cpu cortex-a72)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: install qemu-user
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends qemu-user-static
+          qemu-aarch64-static --version | head -1
+      - name: every linalg test on a core without DotProd
+        run: go run -C tools ./qemunodotprod -j 4
+
   forced-fallbacks:
     name: forced fallbacks (${{ matrix.force }})
     runs-on: ubuntu-latest

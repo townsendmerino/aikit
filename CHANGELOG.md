@@ -9,6 +9,15 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added — CI runs the `linalg` suite on a CPU without DotProd (`tools/qemunodotprod`)
+
+The `aikit_nodotprod` step forces the base arm64 kernels on a runner that has DotProd, so a test or kernel that calls an SDOT instruction without asking `hasDotProd` still passes there and dies with
+SIGILL on a real Cortex-A72 (a Raspberry Pi 4). One such test, `TestActGroup_row4KernelMatchesReference`, was found by running the suite under QEMU by hand on 2026-10-04 and guarded in v1.54.0.
+`go run -C tools ./qemunodotprod` is that run as a CI job (`qemu-nodotprod`, ubuntu-latest): it cross-compiles the arm64 test binary and runs every test in its own `qemu-aarch64-static -cpu cortex-a72` process,
+so a SIGILL names its test. It fails unless the kernel-report test says arm64 with DotProd neither detected nor active (a green run on the wrong CPU is the failure it is built to refuse), skips the FMA-peak
+timing probe by name (it infers the clock from throughput and read 0.35 GHz emulated), and prints the denominator: on 2026-10-04, 216 tests in 1 min 25 s on 4 jobs, 156 ok, 60 skipped by the tests themselves,
+none SIGILL, timed out or failed. **Shown red:** a throwaway test calling `dotI8SDOT` with no guard fails the run as `SIGILL`, named. No library code changed.
+
 ### Fixed — `gpu.Encoder` checks how many buffers a dispatch binds, and holds Metal's full 31
 
 `Encoder.Dispatch`, `Dispatch2D` and `DispatchTG` bound their buffers through a fixed `[16]` scratch with no length
