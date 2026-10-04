@@ -159,6 +159,27 @@ jobs:
       # The debug-only quant-kernel contract checks on the arm64 kernels.
       - name: test (aikit_checks)
         run: go test -tags aikit_checks ./linalg/
+      # The base SMULL/SADALP kernels a core without DotProd (Cortex-A72, a Raspberry Pi 4) runs: this runner's Neoverse has DotProd, so without the tag the
+      # fallback never executes in CI. AIKIT_EXPECT_FORCED makes a tag that forced nothing fail instead of passing silently.
+      - name: test (aikit_nodotprod, the no-DotProd kernels)
+        run: AIKIT_EXPECT_FORCED=nodotprod go test -tags aikit_nodotprod ./linalg/
+
+  # The narrower amd64 kernel paths, forced on whatever CPU the runner has (the ubuntu pool mixes CPU models: some have AVX-512 VNNI, which is how the v1.47.0
+  # accumulator bug surfaced on a failing run, and none is known to lack AVX2). goinfer's hardware-coverage task, H1.3. Each leg asserts its tag took effect.
+  forced-fallbacks:
+    name: forced fallbacks (${{ matrix.force }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        force: [noavx512, noavx2, nopopcnt]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: test (aikit_${{ matrix.force }})
+        run: AIKIT_EXPECT_FORCED=${{ matrix.force }} go test -tags aikit_${{ matrix.force }} ./linalg/
 
   simd:
     name: GOEXPERIMENT=simd (${{ matrix.os }})

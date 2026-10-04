@@ -9,6 +9,16 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added — `aikit_noavx512`, `aikit_noavx2`, `aikit_nopopcnt` and `aikit_nodotprod` force the narrower CPU kernels, and `linalg.ForcedFallbacks()` reports which
+
+A dispatcher picks its kernel from a flag detected once at init (`hasAVX2`, `hasAVX512VNNI`, `hasDotProd`, ...), so on a machine that has the feature the portable and narrower-ISA paths never run
+in CI. Building with one of these tags makes the flag read false (the derived flags, `hasQ4KAVX2` and `hasAVX512VNNIVL`, are set explicitly, because they were computed at variable-initialisation time),
+so the same suites execute the fallback on any runner. The tags only ever turn a fast path off, and are for CI and tests, not production. **`ForcedFallbacks()` returns the tags in effect** (nil in a normal
+build), and `TestForcedFallbacks_expected` fails when `AIKIT_EXPECT_FORCED` names a different set, so a `-tags` value that matched no file cannot pass silently. CI runs `linalg` under each tag on amd64
+(`forced-fallbacks`) and under `aikit_nodotprod` on the native arm64 runner. Measured on a Ryzen 7 3700X (no AVX-512): the suite under `aikit_noavx2` is 727 passed and 40 skipped (the base is 800 and 12) and
+takes 25 s against 17 s; with a fallback made to panic, the base run stays green and the tagged run fails. `aikit_noavx512` equals the base on a CPU without AVX-512, as it must. The arm64 leg was cross-vetted, not run, here.
+This is goinfer's hardware-coverage task H1.3 (`docs/tasks/task-hardware-coverage-2026-10.md`).
+
 ### Fixed — `gpu.Encoder` checks how many buffers a dispatch binds, and holds Metal's full 31
 
 `Encoder.Dispatch`, `Dispatch2D` and `DispatchTG` bound their buffers through a fixed `[16]` scratch with no length
