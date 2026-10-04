@@ -9,16 +9,6 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
-### Added — `aikit_noavx512`, `aikit_noavx2`, `aikit_nopopcnt` and `aikit_nodotprod` force the narrower CPU kernels, and `linalg.ForcedFallbacks()` reports which
-
-A dispatcher picks its kernel from a flag detected once at init (`hasAVX2`, `hasAVX512VNNI`, `hasDotProd`, ...), so on a machine that has the feature the portable and narrower-ISA paths never run
-in CI. Building with one of these tags makes the flag read false (the derived flags, `hasQ4KAVX2` and `hasAVX512VNNIVL`, are set explicitly, because they were computed at variable-initialisation time),
-so the same suites execute the fallback on any runner. The tags only ever turn a fast path off, and are for CI and tests, not production. **`ForcedFallbacks()` returns the tags in effect** (nil in a normal
-build), and `TestForcedFallbacks_expected` fails when `AIKIT_EXPECT_FORCED` names a different set, so a `-tags` value that matched no file cannot pass silently. CI runs `linalg` under each tag on amd64
-(`forced-fallbacks`) and under `aikit_nodotprod` on the native arm64 runner. Measured on a Ryzen 7 3700X (no AVX-512): the suite under `aikit_noavx2` is 727 passed and 40 skipped (the base is 800 and 12) and
-takes 25 s against 17 s; with a fallback made to panic, the base run stays green and the tagged run fails. `aikit_noavx512` equals the base on a CPU without AVX-512, as it must. The arm64 leg was cross-vetted, not run, here.
-This is goinfer's hardware-coverage task H1.3 (`docs/tasks/task-hardware-coverage-2026-10.md`).
-
 ### Fixed — `gpu.Encoder` checks how many buffers a dispatch binds, and holds Metal's full 31
 
 `Encoder.Dispatch`, `Dispatch2D` and `DispatchTG` bound their buffers through a fixed `[16]` scratch with no length
@@ -41,6 +31,26 @@ with length 16`, which names neither the limit nor what to do. goinfer's widest 
   argument through `DispatchTG`.
 
 No API change. Not released on its own; it rides the next release.
+
+## [1.54.0] — 2026-10-04
+
+`perfgate` VERDICT: PASS — no regression vs v1.53.0 above each shape's floor — 7/47 shapes resolve the 5.0% class
+
+Read that green as "no regression above each shape's floor", not "no regression": the sensitivity line was `7/47 shapes have a floor <= 5.0%`, and 40 shapes are BLIND to the 5% class (floors mostly +-5% to
++-30%: `nobara-pc` was not as quiet as perfgate wants, its 1-minute load average was 5.3 when it started because the preflight had just finished). The release adds no kernel code (one package variable, one
+exported function, and files compiled only under the new `aikit_no*` tags), so none of the timed paths changed; the PASS is consistent with that and is not what establishes it.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 1c07223 +dirty (2026-10-04T13:57:27Z). `nobara-pc` (linux/amd64). The `+dirty` is this CHANGELOG edit alone.
+
+### Added — `aikit_noavx512`, `aikit_noavx2`, `aikit_nopopcnt` and `aikit_nodotprod` force the narrower CPU kernels, and `linalg.ForcedFallbacks()` reports which
+
+A dispatcher picks its kernel from a flag detected once at init (`hasAVX2`, `hasAVX512VNNI`, `hasDotProd`, ...), so on a machine that has the feature the portable and narrower-ISA paths never run
+in CI. Building with one of these tags makes the flag read false (the derived flags, `hasQ4KAVX2` and `hasAVX512VNNIVL`, are set explicitly, because they were computed at variable-initialisation time),
+so the same suites execute the fallback on any runner. The tags only ever turn a fast path off, and are for CI and tests, not production. **`ForcedFallbacks()` returns the tags in effect** (nil in a normal
+build), and `TestForcedFallbacks_expected` fails when `AIKIT_EXPECT_FORCED` names a different set, so a `-tags` value that matched no file cannot pass silently. CI runs `linalg` under each tag on amd64
+(`forced-fallbacks`) and under `aikit_nodotprod` on the native arm64 runner. Measured on a Ryzen 7 3700X (no AVX-512): the suite under `aikit_noavx2` is 727 passed and 40 skipped (the base is 800 and 12) and
+takes 25 s against 17 s; with a fallback made to panic, the base run stays green and the tagged run fails. `aikit_noavx512` equals the base on a CPU without AVX-512, as it must. The arm64 leg was cross-vetted, not run, here.
+This is goinfer's hardware-coverage task H1.3 (`docs/tasks/task-hardware-coverage-2026-10.md`).
 
 ## [1.53.0] — 2026-10-03
 
@@ -4956,7 +4966,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.53.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.54.0...HEAD
+[1.54.0]: https://github.com/townsendmerino/aikit/compare/v1.53.0...v1.54.0
 [1.53.0]: https://github.com/townsendmerino/aikit/compare/v1.52.0...v1.53.0
 [1.52.0]: https://github.com/townsendmerino/aikit/compare/v1.51.1...v1.52.0
 [1.51.1]: https://github.com/townsendmerino/aikit/compare/v1.51.0...v1.51.1
