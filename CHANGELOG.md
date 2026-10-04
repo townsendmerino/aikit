@@ -32,6 +32,36 @@ with length 16`, which names neither the limit nor what to do. goinfer's widest 
 
 No API change. Not released on its own; it rides the next release.
 
+## [1.55.0] — 2026-10-04
+
+`perfgate` VERDICT: FAIL — 3 regression(s) vs v1.54.0 across 47 shapes, confirmed on a second measurement
+
+`perfgate` VERDICT: PASS — no regression vs v1.53.0 above each shape's floor — 11/47 shapes resolve the 5.0% class
+
+> **PERFGATE EXCEPTION: the FAIL against v1.54.0 is not a regression in this release.** The three shapes are `BenchmarkAttendTileFused_expKind/np576|np1024|np2048/contract` (+6.5%, +7.5%, +8.5%, floors
+> +-5.5%, +-2.6%, +-2.3%), and they reproduced on the second measurement. The same tree against **v1.53.0 is flat on all four `contract` shapes** (-0.19%, -0.16%, +1.58% and -0.24%, np196 to np2048, inside floors of
+> +-2.4%, +-9.8%, +-2.0% and +-4.5%): 1.55.0 runs this kernel at the v1.53.0 speed. And the v1.54.0 release's own gate measured the same shapes about 7% FASTER than v1.53.0 (-6.9% at np1024, -6.8% at np2048,
+> `scoped, not published`), so v1.54.0 is the outlier, not this tree. This release changes no kernel and none of the code the benchmark runs: it adds `selfcheck.go`, three small per-arch files and one new
+> exported function pair (`SelfCheck`, `ActiveKernels`), and the benchmark exercises the AVX2 exp-contract asm. A speed that moves by +-7% in both directions across releases that add only unrelated code is what
+> a code-alignment sensitivity looks like; that is consistent with the evidence above and is NOT demonstrated here (no alignment experiment was run). The other FAIL candidate the first pass raised
+> (`BenchmarkQuantizeRowInt8/scalar/K8960`, +27.9% with a floor of +-23.8%) did not reproduce. Run on `nobara-pc` (linux/amd64, Ryzen 7 3700X) at a 1-minute load of 0.7 before each run.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 71d1c2c +dirty (2026-10-04T15:32:46Z). `nobara-pc` (linux/amd64). The `+dirty` is the CHANGELOG edit and the new files, which are staged.
+
+### Added — `linalg.SelfCheck(repair)` runs the dispatched CPU kernels against their references, and `linalg.ActiveKernels()` reports the tiers in use
+
+A dispatcher picks its kernel from a flag detected once at init, so a machine nobody here owns can select a kernel that has never run, and a wrong kernel returns slightly wrong numbers instead of crashing
+(the 2026-09-24 AVX-512 VNNI accumulator bug moved a logit by 3.2e-3 and surfaced only because one CI runner had the CPU). `SelfCheck` runs the DISPATCHED `dotI8`, `dotW4A8` and `QuantizeRowInt8` against the
+portable scalar references on small fixed seeded inputs, held to **the agreement aikit's own tests already assert for each** (exact for `dotI8` and the quantizer, a relative 1e-5 for `dotW4A8`), plus the
+centering check that pins the 2026-09-24 fix (an exact float64 reference and the recursive-summation bound). It invents no tolerance, and takes about 1 ms (1.19 ms cold, on a Ryzen 7 3700X).
+With `repair` a mismatch turns the highest active tier off (AVX-512 VNNI, then AVX2 on amd64; DotProd on arm64; the derived flags with it) and checks again, so a bad tier degrades to the next instead of producing
+wrong numbers; call it before concurrent use, because the flags are plain package variables. `SelfCheckReport` carries the first pass's mismatches (kernel, observed, allowed, detail), the tiers disabled, and what
+remains. `ActiveKernels()` reports the ISA tiers detected (read fresh) against those active, and `ForcedFallbacks()`, for a hardware report.
+**Shown able to fail:** a model of the PRE-FIX 2026-09-24 kernel (two f32 accumulators combined at the end) misses the centering bound by 10.4x and is declined, and the fixed arithmetic is accepted; a real
+off-by-one planted in the AVX2 `dotI8` path is caught through the production dispatch and named (`n=65`), and passes once AVX2 is forced off; a repair test steps a kernel that is wrong only while AVX2 is on
+down to the next tier. Run on amd64 normally and under each forced tag, and on arm64 under QEMU on a DotProd core, a core without it (`-cpu cortex-a72`) and under `aikit_nodotprod`. The AVX-512 VNNI repair
+test skips here (no AVX-512); it is for a VNNI host or Intel SDE. This is goinfer's hardware-coverage task H2 (CPU-ISA part) and H3's kernel report.
+
 ## [1.54.0] — 2026-10-04
 
 `perfgate` VERDICT: PASS — no regression vs v1.53.0 above each shape's floor — 7/47 shapes resolve the 5.0% class
@@ -4968,7 +4998,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.54.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.55.0...HEAD
+[1.55.0]: https://github.com/townsendmerino/aikit/compare/v1.54.0...v1.55.0
 [1.54.0]: https://github.com/townsendmerino/aikit/compare/v1.53.0...v1.54.0
 [1.53.0]: https://github.com/townsendmerino/aikit/compare/v1.52.0...v1.53.0
 [1.52.0]: https://github.com/townsendmerino/aikit/compare/v1.51.1...v1.52.0
