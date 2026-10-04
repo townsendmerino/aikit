@@ -111,6 +111,9 @@ func TestWrapInt4Row4_nilIsPlainWrapInt4(t *testing.T) {
 // must panic rather than silently alias a mismatched span the kernel would
 // read out of bounds.
 func TestWrapInt4Row4_panicsOnBadLength(t *testing.T) {
+	if !hasDotProd {
+		t.Skip("DotProd required: the row4 layout declines without it (WrapInt4Row4Only reports false, WrapInt4Row4 returns the plain int4 matrix)")
+	}
 	const group, K, N = 32, 64, 8
 	rng := rand.New(rand.NewSource(13))
 	w := make([]float32, N*K)

@@ -49,7 +49,9 @@ in CI. Building with one of these tags makes the flag read false (the derived fl
 so the same suites execute the fallback on any runner. The tags only ever turn a fast path off, and are for CI and tests, not production. **`ForcedFallbacks()` returns the tags in effect** (nil in a normal
 build), and `TestForcedFallbacks_expected` fails when `AIKIT_EXPECT_FORCED` names a different set, so a `-tags` value that matched no file cannot pass silently. CI runs `linalg` under each tag on amd64
 (`forced-fallbacks`) and under `aikit_nodotprod` on the native arm64 runner. Measured on a Ryzen 7 3700X (no AVX-512): the suite under `aikit_noavx2` is 727 passed and 40 skipped (the base is 800 and 12) and
-takes 25 s against 17 s; with a fallback made to panic, the base run stays green and the tagged run fails. `aikit_noavx512` equals the base on a CPU without AVX-512, as it must. The arm64 leg was cross-vetted, not run, here.
+takes 25 s against 17 s; with a fallback made to panic, the base run stays green and the tagged run fails. `aikit_noavx512` equals the base on a CPU without AVX-512, as it must. The arm64 leg's first CI run found four tests that assumed DotProd and failed under `aikit_nodotprod`, and running the whole arm64 suite under QEMU (`-cpu cortex-a72`, a core with no DotProd) found a fifth that
+crashes with SIGILL by calling the row4 SDOT kernel directly: all five now skip without DotProd (they would have failed on real Cortex-A72 hardware too). Under emulation 211 of 212 arm64 tests pass in the forced build; the
+one that does not, `TestFMAPeak_empirical`, is a throughput measurement that does not finish under emulation.
 This is goinfer's hardware-coverage task H1.3 (`docs/tasks/task-hardware-coverage-2026-10.md`).
 
 ## [1.53.0] — 2026-10-03
