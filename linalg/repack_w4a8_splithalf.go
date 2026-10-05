@@ -53,6 +53,8 @@ func repackSplitHalfGroup(dg, sg []byte) {
 	dg[15] = (s7 >> 4) | (s15 & 0xF0)
 }
 
+// RepackInt4SplitHalfRow writes into a caller's buffer; its output contract:
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:K/2]; src and dst may not overlap.
 func RepackInt4SplitHalfRow(dst, src []byte, K int) {
 	if K%32 != 0 {
 		panic(fmt.Sprintf("linalg: RepackInt4SplitHalfRow requires K a multiple of 32, got %d", K))

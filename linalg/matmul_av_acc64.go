@@ -30,6 +30,9 @@ package linalg
 // acc is caller-provided [hd]-float64 scratch (steady-state decode calls this
 // hundreds of times per token; a fresh make([]float64, hd) per call would be
 // real allocation pressure). Zeroed on entry, not preserved on exit.
+//
+// Output contract: overwrites dst; do not pre-zero. acc is scratch: its contents on entry are ignored (it is cleared per output row), and only a
+// prefix is used.
 func MatmulAVAcc64(scores, vals, dst []float32, acc []float64, M, nKeys, hd, headOff, rowStride int) {
 	checkMatmulAVAcc64(len(scores), len(vals), len(dst), len(acc), M, nKeys, hd, headOff, rowStride)
 	for i := range M {

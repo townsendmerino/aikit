@@ -62,7 +62,7 @@ func (f *FusedAttnScratch) Fits(kt, hd int) bool {
 // AttendTileFused computes one query tile's attention into ch, keeping the score block resident.
 // It returns false when it declines, in which case the caller must run a materialized path instead.
 //
-//	mm    matmul callback, (a, b, dst, M, K, N) — linalg.MatmulBT satisfies it
+//	mm    matmul callback, (a, b, dst, M, K, N) — linalg.MatmulBT satisfies it. It must OVERWRITE dst (see the output contract below)
 //	qh    gathered Q for this tile, [kt, hd]
 //	kh    gathered K, [nKeys, hd]
 //	vBlk  gathered V in BLOCK-MAJOR layout — see GatherVBlockMajor
@@ -72,6 +72,11 @@ func (f *FusedAttnScratch) Fits(kt, hd int) bool {
 // lo/hi express a contiguous per-row key range. A predicate mask that is not contiguous (tree
 // attention, for one) cannot be folded into a key-blocked running softmax this way; such callers
 // must use a materialized path.
+//
+// Output contract: overwrites ch; do not pre-zero. The mm callback must itself OVERWRITE its dst, not accumulate into it: mm is handed sc's scratch
+// (SBlk, then Tmp), which still holds the previous key block's scores and is never zeroed between blocks, so a callback that adds into dst, or
+// assumes it starts at zero, is wrong from the second block on. linalg.MatmulBT qualifies (it zeroes internally). sc's buffers are scratch: their
+// contents on entry are ignored.
 func AttendTileFused(
 	mm func(a, b, dst []float32, M, K, N int),
 	qh, kh, vBlk, ch []float32,
@@ -105,6 +110,11 @@ func AttendTileFused(
 // extra accuracy is worth having.
 //
 // NOT bit-identical to AttendTileFused, by construction and by intent.
+//
+// Output contract: overwrites ch; do not pre-zero. The mm callback must itself OVERWRITE its dst, not accumulate into it: mm is handed sc's scratch
+// (SBlk, then Tmp), which still holds the previous key block's scores and is never zeroed between blocks, so a callback that adds into dst, or
+// assumes it starts at zero, is wrong from the second block on. linalg.MatmulBT qualifies (it zeroes internally). sc's buffers are scratch: their
+// contents on entry are ignored.
 func AttendTileFusedContractExp(
 	mm func(a, b, dst []float32, M, K, N int),
 	qh, kh, vBlk, ch []float32,
@@ -252,6 +262,8 @@ func attendTileFused(
 //
 // It also gathers this head's K into kh as [nKeys, hd]. vals/keys are the caller's cache, strided by
 // kvDim with this head at offset kvh*hd.
+//
+// Output contract: overwrites kh and vBlk; do not pre-zero. Both are fully rewritten from keys and vals.
 func GatherVBlockMajor(kh, vBlk, keys, vals []float32, kvh, hd, kvDim, nKeys int) {
 	for s := range nKeys {
 		kvBase := s*kvDim + kvh*hd

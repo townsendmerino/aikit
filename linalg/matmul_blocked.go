@@ -32,6 +32,8 @@ func zeroSpanF32(s []float32) {
 // for callers that own their own parallelism — the encoder row-splits a batch across
 // cores and wants each matmul serial; goinfer's batch/vision paths likewise. For
 // process-level column parallelism use MatmulBT. Experimental surface.
+//
+// Output contract: zeroes dst internally; do not pre-zero. Covers dst[:M*N]; it clears that span, then accumulates into it.
 func MatmulBTInto(dst, a, b []float32, M, K, N int) {
 	checkMatmulBT("MatmulBTInto", len(a), len(b), len(dst), M, K, N)
 	zeroSpanF32(dst[:M*N])

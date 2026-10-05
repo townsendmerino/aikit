@@ -14,6 +14,8 @@ import "fmt"
 // panic rather than pass nil into the canonical kernel's length checks if
 // something (a hand-built WeightMat bypassing the constructors) reaches it
 // anyway.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 	if g := w.groupFor(ws); g > 0 {
 		matmulW4A8Grouped(ws, g, a, w.int4Layout(), dst, M, w.rows) // actgroup.go

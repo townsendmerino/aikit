@@ -23,6 +23,8 @@ func getScaleBuf(n int) *[]float32 {
 
 // MatmulBTW4A8F16Into is MatmulBTW4A8Into over binary16 scales (wScales16: N·⌈K/group⌉ bit patterns), for
 // every M and activation grouping. Bit-identical to MatmulBTW4A8Into fed the widened scales.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTW4A8F16Into(ws *Workspace, a []float32, w4 []byte, wScales16 []uint16, dst []float32, M, K, N, group int) {
 	checkMatmulW4A8("MatmulBTW4A8F16", len(a), len(w4), len(wScales16), len(dst), M, K, N, group)
 	if g := actGroupFor(ws); g > 0 {

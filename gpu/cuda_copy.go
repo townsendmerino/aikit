@@ -51,6 +51,8 @@ type DeviceCopy struct {
 // caller cannot accidentally read a half-copied buffer. A caller who genuinely
 // wants overlap should reach for CopyDeviceBatch, which pays one synchronize for
 // many copies rather than one each.
+//
+// Output contract: overwrites dst[:nBytes] (at its bind offset); do not pre-zero.
 func CopyDevice(dst, src Buffer, nBytes int) error {
 	if err := checkDeviceCopy(dst, src, nBytes); err != nil {
 		return err

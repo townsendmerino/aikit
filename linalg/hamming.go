@@ -25,6 +25,9 @@ import "math/bits"
 // Zero maps to 1, matching math.Signbit's "is it negative" reading. Which side
 // zero falls on does not matter for retrieval — it must only be CONSISTENT
 // between the query and the corpus, and both go through this function.
+//
+// Output contract: zeroes dst internally; do not pre-zero. PackSignBitsRow clears dst[:(len(v)+63)/64] before OR-ing sign bits in; PackSignBits does
+// this per row.
 func PackSignBitsRow(dst []uint64, v []float32) {
 	w := PackedWords(len(v))
 	clear(dst[:w])
@@ -39,6 +42,9 @@ func PackSignBitsRow(dst []uint64, v []float32) {
 func PackedWords(dim int) int { return (dim + 63) / 64 }
 
 // PackSignBits packs a row-major [n, dim] float32 block into [n, words] codes.
+//
+// Output contract: zeroes dst internally; do not pre-zero. PackSignBitsRow clears dst[:(len(v)+63)/64] before OR-ing sign bits in; PackSignBits does
+// this per row.
 func PackSignBits(dst []uint64, src []float32, n, dim int) {
 	w := PackedWords(dim)
 	for i := range n {
@@ -51,6 +57,8 @@ func PackSignBits(dst []uint64, src []float32, n, dim int) {
 // dst is uint16 because the distance is bounded by dim, and a narrow
 // destination is the point: the caller scans it right after this returns, and
 // at n = 10⁶ the difference is a 2 MB pass instead of 8 MB.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:n].
 func HammingRows(q, codes []uint64, words, n int, dst []uint16) {
 	hammingRows(q, codes, words, n, dst)
 }

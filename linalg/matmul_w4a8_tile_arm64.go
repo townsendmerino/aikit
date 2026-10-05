@@ -26,6 +26,8 @@ import "fmt"
 // of group=32. Any M is accepted; M%4 remainder rows fall to the existing
 // four-weight-row kernel one activation row at a time, which is the shape the
 // M=1 path already ships.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTW4A8Row4TileInto(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []float32, dst []float32, M, K, N, group int) {
 	checkMatmulW4A8("MatmulBTW4A8Row4Tile", len(a), len(w4Row4), len(wScales4), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTW4A8Row4Tile", len(a), w4Row4, wScales4, len(dst), M, K, N, group)

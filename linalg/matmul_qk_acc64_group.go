@@ -33,6 +33,8 @@ package linalg
 // first (they become the oracle)" before the assembly ports; this is that oracle, now shaped so a
 // later NEON/AVX2 port has a real per-head-interleaved chain to translate rather than a
 // sequential one that would need restructuring anyway.
+//
+// Output contract: overwrites dst; do not pre-zero. Every score in the M×N (or G-row group) block it covers is written, one dot each.
 func MatmulQKAcc64Group(a, bMat, dst []float32, G, K, N, bOff, rowStride int) {
 	checkMatmulQKAcc64Group(len(a), len(bMat), len(dst), G, K, N, bOff, rowStride)
 	// arm64, G=6: whole 8-key blocks go through the NEON kernel

@@ -22,6 +22,8 @@ import "fmt"
 // RepackW4A8Row4Scales, or a .giw kind-4 tensor's on-disk bytes) — this is
 // the SAME data, just dispatched through a kernel with one added PRFM per
 // iteration. Same M/N/K/group contract as MatmulBTW4A8Row4Into.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTW4A8Row4PrefetchInto(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []float32, dst []float32, M, K, N, group, prefetchDistance int) {
 	checkMatmulW4A8("MatmulBTW4A8Row4Prefetch", len(a), len(w4Row4), len(wScales4), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTW4A8Row4Prefetch", len(a), w4Row4, wScales4, len(dst), M, K, N, group)
@@ -129,6 +131,8 @@ func RepackW4A8Row4DesharedScales(scales []float32, N, K, group int) (s0, s1, s2
 // RepackW4A8Row4Deshared/RepackW4A8Row4DesharedScales's 4-array layout —
 // bit-identical to MatmulBTW4A8Row4Into/MatmulBTW4A8Into for the same
 // logical weights. Same M/N/K/group contract.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTW4A8Row4DesharedInto(ws *Workspace, a []float32, w0, w1, w2, w3 []byte, s0, s1, s2, s3 []float32, dst []float32, M, K, N, group int) {
 	if M != 1 {
 		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4DesharedInto requires M=1, got M=%d", M))

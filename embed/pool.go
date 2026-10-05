@@ -19,6 +19,8 @@ const l2NormEps = 1e-12
 // Precision: the sum-of-squares accumulator is float64 and each element is divided
 // by the float64 norm before the cast to float32 — float32 accumulation here would
 // compound the drift the float64 pooling path is careful to avoid.
+//
+// Output contract: rewrites v in place and returns it; there is no separate destination.
 func L2Normalize(v []float32) []float32 {
 	var sq float64
 	for _, x := range v {

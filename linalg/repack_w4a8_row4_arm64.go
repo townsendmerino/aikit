@@ -136,6 +136,8 @@ func interleaveScales4Row(s0, s1, s2, s3 []float32, nGroups int) []float32 {
 // it — see RepackInt4Row4InPlace, which snapshots the live quad into
 // scratch BEFORE calling this with dst=the live array, src=the scratch, so
 // that hazard never arises.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:4*K/2].
 func RepackInt4Row4Quad(dst, src []byte, K int) {
 	if K%32 != 0 {
 		panic(fmt.Sprintf("linalg: RepackInt4Row4Quad requires K a multiple of 32, got %d", K))
@@ -164,6 +166,8 @@ func RepackInt4Row4Quad(dst, src []byte, K int) {
 // — group g's 4 scales (row0..row3) at dst[4*g:4*g+4] — matching
 // RepackW4A8Row4Scales/interleaveScales4Row's existing layout. dst and src
 // must not overlap, same reason as RepackInt4Row4Quad.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:4*nGroups].
 func RepackInt4Row4ScalesQuad(dst, src []float32, nGroups int) {
 	requireLen("RepackInt4Row4ScalesQuad", "dst", len(dst), 4*nGroups)
 	requireLen("RepackInt4Row4ScalesQuad", "src", len(src), 4*nGroups)

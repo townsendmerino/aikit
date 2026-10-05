@@ -25,6 +25,9 @@ package linalg
 // same "acc[g] gets the same fold regardless of what happens to acc[g'] in between" bit-identity
 // argument. acc is laid out [hd][G] (dim-major) rather than [G][hd] specifically so the innermost
 // head loop walks a contiguous run, not a stride-hd scatter.
+//
+// Output contract: overwrites dst; do not pre-zero. acc is scratch: its contents on entry are ignored (it is cleared per output row), and only a
+// prefix is used.
 func MatmulAVAcc64Group(scores, vals, dst []float32, acc []float64, G, nKeys, hd, headOff, rowStride int) {
 	checkMatmulAVAcc64Group(len(scores), len(vals), len(dst), len(acc), G, nKeys, hd, headOff, rowStride)
 	// arm64, G=6: whole 8-dim blocks go through the NEON kernel

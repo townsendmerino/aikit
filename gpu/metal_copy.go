@@ -33,6 +33,8 @@ type DeviceCopy struct {
 // one of them, which is a worse outcome than a function that is merely
 // unremarkable on darwin. The CUDA half carries the measurements and the
 // synchronization hazard; see cuda_copy.go.
+//
+// Output contract: overwrites dst[:nBytes] (at its bind offset); do not pre-zero.
 func CopyDevice(dst, src Buffer, nBytes int) error {
 	if err := checkDeviceCopy(dst, src, nBytes); err != nil {
 		return err

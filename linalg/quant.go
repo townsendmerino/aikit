@@ -132,12 +132,16 @@ func quantizeRowScaledScalar(row []float32, q []int8, inv float32) {
 // FlatI8), where no caller treats a returned scale as a sentinel, so 1 keeps it
 // reading as an ordinary nonzero scale rather than risking surprising a future
 // caller that checks for exactly 0.
+//
+// Output contract: overwrites q; do not pre-zero. Covers q[:len(row)]; the row's scale is the return value.
 func QuantizeRowInt8(row []float32, q []int8) (scale float32) {
 	return quantizeRowInt8Core(row, q, 1)
 }
 
 // DequantizeRowInt8 reconstructs one row into dst: dst[j] = float32(q[j])*scale.
 // Used for the tied embedding lookup when the table is stored int8.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(q)].
 func DequantizeRowInt8(q []int8, scale float32, dst []float32) {
 	checkDequantInt8(q, dst)
 	dequantRowInt8(dst, q, scale)
@@ -153,6 +157,8 @@ func DequantizeRowInt8(q []int8, scale float32, dst []float32) {
 // scalar. The scratch is one widened row wide — eight on arm64, where q8Span runs
 // eight columns through dotNEON8x4 at once (q8span_arm64.go) — and pooled across
 // calls on the parallel path. Parallelized over the N columns.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	var ws Workspace
 	MatmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
@@ -165,6 +171,8 @@ func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, 
 // per-worker scratch from a sync.Pool (the workers can't share ws's single
 // buffer), so it too stops allocating once warm. Output is byte-identical
 // (audit #14; TestQ8Span8Cols_bitIdenticalToColumnForm for the arm64 span).
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTQ8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	checkMatmulQ8("MatmulBTQ8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	if M*N*K < ws.thr() || N < 2 {
@@ -253,6 +261,8 @@ func quantizeRowInt8(a []float32, dst []int8) (scale float32) {
 // activation scale × the per-row weight scale. Unlike MatmulBTQ8 (weight-only
 // int8, f32 activations) this also quantizes the activations, so it is lossier —
 // the tradeoff for an integer kernel. Parallelized over the N columns.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTW8A8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	var ws Workspace
 	MatmulBTW8A8Into(&ws, a, bQ, bScales, dst, M, K, N)
@@ -264,6 +274,8 @@ func MatmulBTW8A8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K
 // same row in every parallel chunk and allocated a scratch buffer per worker,
 // which was the bulk of decode alloc_space. Output is bit-identical to
 // MatmulBTW8A8 (same quantizeRowInt8 / dotI8 / rescale, just hoisted).
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	checkMatmulQ8("MatmulBTW8A8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	if g := actGroupFor(ws); g > 0 {
@@ -318,6 +330,8 @@ func quantizeRowsInto(aq []int8, aScales []float32, a []float32, M, K, width int
 // sit well above the decode shapes (M=1) and well below a prefill row batch.
 const quantRowsParallelMinElems = 1 << 16
 
+// QuantizeActivationsInto writes into a caller's buffer; its output contract:
+// Output contract: overwrites aq and scales; do not pre-zero. Cover aq[:M*K] and scales[:M] (one scale per row).
 func QuantizeActivationsInto(aq []int8, scales []float32, a []float32, M, K int) {
 	if len(aq) < M*K || len(scales) < M || len(a) < M*K {
 		panic("linalg: QuantizeActivationsInto short buffer")
@@ -337,6 +351,8 @@ func QuantizeActivationsInto(aq []int8, scales []float32, a []float32, M, K int)
 // token and reused across every output row a W4A8 matmul evaluates (the
 // activation is the same for all N columns of one M=1 GEMV) — see
 // docs/task-w4a8-neon-bandwidth.md (goinfer) for the full rationale.
+//
+// Output contract: overwrites sumAct; do not pre-zero. Every group sum is recomputed from aq.
 func SumActGroupsInto(sumAct []int32, aq []int8, M, K, group int) {
 	nGroups := (K + group - 1) / group
 	if len(sumAct) < M*nGroups || len(aq) < M*K {
@@ -362,6 +378,8 @@ func SumActGroupsInto(sumAct []int32, aq []int8, M, K, group int) {
 // Bit-identical to MatmulBTW8A8Into given the same aq/aScales (same w8a8Span / dotI8
 // / rescale). For a paged scan that reuses one query across thousands of weight
 // blocks: quantize once, call this per block.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTW8A8Pre(ws *Workspace, aq []int8, aScales []float32, bQ []int8, bScales, dst []float32, M, K, N int) {
 	if len(aq) < M*K || len(aScales) < M || len(bQ) < N*K || len(bScales) < N || len(dst) < M*N {
 		panic("linalg: MatmulBTW8A8Pre short buffer")
@@ -489,6 +507,8 @@ type W8A8Op struct {
 // path) gets the dispatch reduction with NO concat copy.
 //
 // Numerically identical to calling MatmulBTW8A8Into once per op.
+//
+// Output contract: overwrites each op's Dst; do not pre-zero. Covers Dst[:M*op.N] of every op.
 func MatmulBTW8A8Batch(ws *Workspace, a []float32, M, K int, ops []W8A8Op) {
 	if len(ops) == 0 {
 		return
@@ -585,8 +605,16 @@ func QuantizeGroupsInt4(w []float32, rows, cols, group int) (packed []byte, scal
 // QuantizeGroupInt4Row quantizes one f32 row into packed (len (cols+1)/2) +
 // per-group scales (len ⌈cols/group⌉) — the single-row core of QuantizeGroupsInt4
 // (bit-identical), exposed so a loader can quantize each row as it is dequantized,
-// without buffering the whole f32 matrix. packed is assumed zeroed on entry (a
-// fresh per-row slice).
+// without buffering the whole f32 matrix.
+//
+// Output contract: overwrites scales[:⌈cols/group⌉] and every nibble of packed that
+// holds a weight; do not pre-zero. The ONE exception is the pad nibble: when cols is
+// odd, the high nibble of packed[(cols-1)/2] holds no weight, and the tail write
+// (packed[bi] &^ 0x0F | nib) preserves it rather than clearing it. So it comes out
+// as it went in — zero it first (a fresh make already is) only when cols is odd, or
+// the row's bytes are not reproducible, which breaks any byte-identity comparison or
+// hash of packed. Nothing reads the pad nibble. Pinned by
+// TestOutputContract_quantizeGroupInt4RowPadNibble.
 func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales []float32) {
 	if cols <= 0 {
 		return
@@ -670,6 +698,8 @@ func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales 
 // DequantizeRowInt4 reconstructs one row into dst[:cols] from its packed nibbles
 // and per-group scales (both already sliced to the row). Used for the tied
 // embedding lookup when the table is stored int4.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:cols].
 func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []float32) {
 	checkDequantInt4(packed, scales, group, cols, dst)
 	if cols <= 0 {
@@ -757,6 +787,8 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 // the dequant outright. Lossier than MatmulBTQ4 (activations are int8, not f32)
 // — the W8A8 tradeoff — so it's the explicit-opt-in kernel for RAM-constrained
 // int4 CPU decode, not a drop-in for the f32-activation path.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTW4A8(a []float32, w4 []byte, wScales []float32, dst []float32, M, K, N, group int) {
 	var ws Workspace
 	MatmulBTW4A8Into(&ws, a, w4, wScales, dst, M, K, N, group)
@@ -768,6 +800,8 @@ func MatmulBTW4A8(a []float32, w4 []byte, wScales []float32, dst []float32, M, K
 // make([]int8, M*K) + make([]float32, M) per call — the same alloc MatmulBTW8A8
 // was re-engineered to remove, now available for the RAM-constrained int4 path.
 // Output is bit-identical to MatmulBTW4A8.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTW4A8Into(ws *Workspace, a []float32, w4 []byte, wScales []float32, dst []float32, M, K, N, group int) {
 	// Always-on O(1) entry guard (M2): the aikit_checks contract below compiles
 	// to a no-op in production, so without this a bad shape would fault inside a
@@ -908,6 +942,8 @@ func (op *W4A8Op) row4ScalesLen() int {
 // cache residency.
 //
 // Numerically identical to calling MatmulBTW4A8Into once per op.
+//
+// Output contract: overwrites each op's Dst; do not pre-zero. Covers Dst[:M*op.N] of every op.
 func MatmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []W4A8Op) {
 	if len(ops) == 0 {
 		return
@@ -1074,6 +1110,8 @@ func w4a8BatchOp(aq []int8, aScales []float32, op W4A8Op, M, K, group, nGroups, 
 // Output matches DequantizeRowInt4-then-MatmulBT bit-for-bit (the same order the
 // Q4 parity test references); the prior per-group-dot kernel only matched within
 // tolerance, so this is also slightly MORE faithful, not less.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
 	var ws Workspace
 	MatmulBTQ4Into(&ws, a, bPacked, bScales, dst, M, K, N, group)
@@ -1083,6 +1121,8 @@ func MatmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M
 // the serial path takes its dequantized-weight-row scratch from ws.deqBuf(K)
 // (zero alloc after warm-up), the parallel path keeps a per-worker scratch. Output
 // is byte-identical (audit #14).
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTQ4Into(ws *Workspace, a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
 	// Always-on entry guard (M2); checkGroupMatmul below is a no-op without
 	// -tags aikit_checks. Same group-int4 shape contract as MatmulBTW4A8.

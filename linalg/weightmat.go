@@ -315,6 +315,8 @@ func WrapInt4Row4OnlyF16(q4Row4 []byte, q4Row4Scales []uint16, rows, cols, group
 //
 // Deprecated: int4 scales are stored as binary16; this converts q4s with F32ToF16. Use
 // RepackInt4SplitHalfInPlaceF16.
+//
+// Output contract: rewrites q4 and q4s in place; there is no separate destination, and nothing needs zeroing.
 func RepackInt4SplitHalfInPlace(q4 []byte, q4s []float32, rows, cols, group int) (WeightMat, bool) {
 	if !Int4SplitHalfUsable(cols, group) {
 		return WeightMat{}, false
@@ -368,6 +370,9 @@ func WrapInt4SplitHalfOnlyF16(q4SplitHalf []byte, q4s []uint16, rows, cols, grou
 // MatmulBT computes dst[M, rows] = a[M, cols] · weight[rows, cols]ᵀ, dispatching by
 // stored precision to the matching linalg kernel. CPU only — a consumer with a GPU
 // backend dispatches via the raw accessors and uses this as the fallback.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N]. The caller never zeroes either way: the f32 kind routes through MatmulBT (which
+// zeroes internally), the quantised kinds write each element once.
 func (w *WeightMat) MatmulBT(a, dst []float32, M int) {
 	if w.actGroup > 0 && (w.w8a8 || w.q4 != nil || w.q4Row4 != nil || w.q4SplitHalf != nil) {
 		// A stamped activation group rides on a workspace, which the free functions below read.
@@ -406,6 +411,9 @@ func (w *WeightMat) MatmulBT(a, dst []float32, M int) {
 // scratch from the Workspace too (MatmulBTQ8Into), and the f32 path runs the
 // Workspace-scoped parallel matmul honoring its SetThreshold/SetWorkers. So every
 // storage kind is now zero-alloc on the serial decode path.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N]. The caller never zeroes either way: the f32 kind routes through MatmulBT (which
+// zeroes internally), the quantised kinds write each element once.
 func (w *WeightMat) MatmulBTInto(ws *Workspace, a, dst []float32, M int) {
 	if w.actGroup > 0 && (ws == nil || ws.actGroup == 0) {
 		w.withWeightGroup(ws, func(ws *Workspace) { w.MatmulBTInto(ws, a, dst, M) })
@@ -445,6 +453,8 @@ func (w *WeightMat) MatmulBTInto(ws *Workspace, a, dst []float32, M int) {
 // and the one where the memory saving matters most. Checked in canonical's
 // favor first when both are present, so a "both"-policy WeightMat's Row()
 // output and code path are UNCHANGED from before this case existed.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:cols].
 func (w *WeightMat) Row(i int, dst []float32) {
 	switch {
 	case w.q4k != nil:

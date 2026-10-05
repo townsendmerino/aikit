@@ -43,6 +43,8 @@ func F32ToF16(f float32) uint16 {
 func F16ToF32(h uint16) float32 { return f16ToF32(h) }
 
 // F32ToF16Slice converts src into dst[:len(src)] with F32ToF16.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)].
 func F32ToF16Slice(dst []uint16, src []float32) {
 	_ = dst[len(src)-1:]
 	for i, f := range src {
@@ -63,6 +65,8 @@ func F32ToF16Scales(src []float32) []uint16 {
 }
 
 // F16ToF32Slice widens src into dst[:len(src)], exactly (SIMD where the CPU has it).
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)].
 func F16ToF32Slice(dst []float32, src []uint16) {
 	if len(src) == 0 {
 		return

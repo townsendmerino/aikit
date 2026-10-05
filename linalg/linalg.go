@@ -18,6 +18,8 @@ func Dot(a, b []float32) float32 { return dotF32(a, b) }
 // in lane 0 and zeros the rest; both reduce to the same value. n4 is len/4 (K
 // is a multiple of 4 in the matmul hot path). Exposed for a cache-blocked
 // matmul; the decoder uses MatmulBT/Dot.
+//
+// Output contract: overwrites sums; do not pre-zero. Every element of the fixed-size array is written.
 func Dot4x4(a, b0, b1, b2, b3 *float32, n4 int, sums *[16]float32) {
 	dotNEON4x4(a, b0, b1, b2, b3, n4, sums)
 }
@@ -30,6 +32,8 @@ func Dot4x4(a, b0, b1, b2, b3 *float32, n4 int, sums *[16]float32) {
 // keeps it in its fast range and is the right cache-blocking move regardless.
 // aikit's encoder does exactly this (kBlock=768), so it never hits the cliff; a
 // caller that hands Dot8x4 a single large-K row instead should prefer Dot4x4.
+//
+// Output contract: overwrites sums; do not pre-zero. Every element of the fixed-size array is written.
 func Dot8x4(a, b0, b1, b2, b3, b4, b5, b6, b7 *float32, n4 int, sums *[32]float32) {
 	dotNEON8x4(a, b0, b1, b2, b3, b4, b5, b6, b7, n4, sums)
 }
@@ -43,6 +47,8 @@ func Dot8x4(a, b0, b1, b2, b3, b4, b5, b6, b7 *float32, n4 int, sums *[32]float3
 // block's 4 lanes and adds the K%4 scalar tail. arm64 has the NEON kernel; other arches
 // get a portable reduction (the encoder wires this in only on arm64, keeping amd64 on
 // the AVX2 Dot8x4 path).
+//
+// Output contract: overwrites sums; do not pre-zero. Every element of the fixed-size array is written.
 func Dot2x8(a0, a1, b0, b1, b2, b3, b4, b5, b6, b7 *float32, n4 int, sums *[64]float32) {
 	dotNEON2x8(a0, a1, b0, b1, b2, b3, b4, b5, b6, b7, n4, sums)
 }
@@ -136,6 +142,8 @@ func resolveWidth(width int) int {
 // invariant above. The threshold is gone: all M route through blockedFill, which
 // — measured — is also faster than the naive span at small-M decode/attention
 // shapes, so M-invariance costs nothing here.)
+//
+// Output contract: zeroes dst internally; do not pre-zero. Covers dst[:M*N]; it clears that span, then accumulates into it.
 func MatmulBT(a, b, dst []float32, M, K, N int) {
 	checkMatmulBT("MatmulBT", len(a), len(b), len(dst), M, K, N)
 	zeroSpanF32(dst[:M*N])
@@ -148,6 +156,8 @@ func MatmulBT(a, b, dst []float32, M, K, N int) {
 // pool (SetThreshold / SetWorkers) instead of the process-wide globals — so an
 // independent decode stream tunes its own parallelism. Same shape and numerics as
 // the package-level MatmulBT (including the M-invariance contract documented there).
+//
+// Output contract: zeroes dst internally; do not pre-zero. Covers dst[:M*N]; it clears that span, then accumulates into it.
 func (w *Workspace) MatmulBT(a, b, dst []float32, M, K, N int) {
 	checkMatmulBT("MatmulBT", len(a), len(b), len(dst), M, K, N)
 	zeroSpanF32(dst[:M*N])
@@ -168,12 +178,16 @@ func (w *Workspace) MatmulBT(a, b, dst []float32, M, K, N int) {
 // f64 accumulate drops the error to ~1e-15, below any realistic router boundary,
 // while keeping the parallelism over N. For dense models MatmulBT's f32 accumulate
 // is fine — prefer it (this is slower).
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTAcc64(a, b, dst []float32, M, K, N int) {
 	checkMatmulBT("MatmulBTAcc64", len(a), len(b), len(dst), M, K, N)
 	parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTAcc64Span(a, b, dst, M, K, N, j0, j1) })
 }
 
 // MatmulBTAcc64 run through a Workspace uses its scoped threshold + worker pool.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func (w *Workspace) MatmulBTAcc64(a, b, dst []float32, M, K, N int) {
 	checkMatmulBT("MatmulBTAcc64", len(a), len(b), len(dst), M, K, N)
 	w.parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTAcc64Span(a, b, dst, M, K, N, j0, j1) })

@@ -48,6 +48,8 @@ func MXFP4Scale(e8m0 byte) float32 { return e8m0ToF32Half(e8m0) }
 //
 // See the package comment: this is the j / j+16 nibble order. Safetensors checkpoints need
 // DequantMXFP4Split instead, and picking the wrong one is silent.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:nBlocks*32].
 func DequantMXFP4Blocks(raw []byte, nBlocks int, dst []float32) error {
 	if nBlocks < 0 {
 		return fmt.Errorf("mxfp4: negative block count %d", nBlocks)
@@ -81,6 +83,8 @@ func DequantMXFP4Blocks(raw []byte, nBlocks int, dst []float32) error {
 // The shapes are checked exactly rather than as lower bounds: blocks and scales are two
 // independently-shaped tensors, and a mismatch between them is precisely the corruption worth
 // refusing loudly.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:nBlocks*32].
 func DequantMXFP4Split(blocks, scales []byte, nBlocks int, dst []float32) error {
 	if nBlocks < 0 {
 		return fmt.Errorf("mxfp4: negative block count %d", nBlocks)

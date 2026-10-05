@@ -21,6 +21,9 @@ import "math"
 // run ./linalg/...` before pushing anything arch-split.
 
 // ExpContractInto writes e^src[i] into dst[i] under the contract.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
+// not to pre-zero it.
 func ExpContractInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: ExpContractInto length mismatch")
@@ -30,6 +33,9 @@ func ExpContractInto(dst, src []float32) {
 
 // SoftmaxRowContractInto normalises one row under the contract, with the
 // denominator's summation order pinned (four f64 lane partials, fixed fold).
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
+// not to pre-zero it.
 func SoftmaxRowContractInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: SoftmaxRowContractInto length mismatch")
@@ -49,6 +55,9 @@ func SoftmaxRowContractInto(dst, src []float32) {
 // architectures for free, which a second fused kernel would have had to re-earn.
 // The extra pass is a multiply over a buffer already in cache, against an
 // exponential per element.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
+// not to pre-zero it.
 func SoftmaxRowScaledContractInto(dst, src []float32, scale float32) {
 	if len(dst) != len(src) {
 		panic("linalg: SoftmaxRowScaledContractInto length mismatch")
@@ -95,6 +104,9 @@ func SoftmaxRowScaledContractInto(dst, src []float32, scale float32) {
 }
 
 // SiLUContractInto writes x/(1+e^-x) elementwise under the contract.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
+// not to pre-zero it.
 func SiLUContractInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: SiLUContractInto length mismatch")
@@ -104,6 +116,9 @@ func SiLUContractInto(dst, src []float32) {
 
 // GELUTanhContractInto writes the tanh-approximation GELU elementwise under the
 // contract.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
+// not to pre-zero it.
 func GELUTanhContractInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: GELUTanhContractInto length mismatch")
@@ -114,6 +129,9 @@ func GELUTanhContractInto(dst, src []float32) {
 // GELUContractInto writes the EXACT GELU — x·Φ(x), HF's "gelu" — elementwise
 // under the contract. A different function from GELUTanhContractInto, not a
 // spelling of it: the two differ by up to 4.73e-4, worst near x ≈ −2.7.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
+// not to pre-zero it.
 func GELUContractInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: GELUContractInto length mismatch")

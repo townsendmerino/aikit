@@ -119,6 +119,9 @@ func expF32Core(x float32) float32 {
 // ExpF32Into writes e^src[i] into dst[i]. dst and src must have the same
 // length; they may be the same slice (the kernel reads each element before
 // writing it).
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
+// not to pre-zero it.
 func ExpF32Into(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: ExpF32Into length mismatch")
@@ -145,6 +148,9 @@ func ExpF32Into(dst, src []float32) {
 // file for why this doesn't reach the encoder's cosine goldens) — but each
 // build is internally deterministic and the default (non-experimental) build
 // is byte-for-byte what shipped before this existed.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
+// not to pre-zero it.
 func SoftmaxRowInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: SoftmaxRowInto length mismatch")
@@ -171,6 +177,9 @@ func SoftmaxRowInto(dst, src []float32) {
 // item 7's SIMD exp made it worth chasing); the default build still runs it
 // as two passes internally, since dead-ends §4.4's own measurement found no
 // win there (the pass was ~2% of the cost, swamped by scalar math.Exp).
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
+// not to pre-zero it.
 func SoftmaxRowScaledInto(dst, src []float32, scale float32) {
 	if len(dst) != len(src) {
 		panic("linalg: SoftmaxRowScaledInto length mismatch")
@@ -266,6 +275,9 @@ func GELUF32(x float32) float32 {
 // alias. Vectorized when built with GOEXPERIMENT=simd (see exp_simd.go),
 // same NOT-bit-identical caveat as SiLUInto (up to a few ULP, within
 // GELUF32's own 1e-6 absolute contract) — the default build is unchanged.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
+// not to pre-zero it.
 func GELUInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: GELUInto length mismatch")
@@ -295,6 +307,9 @@ func SiLUF32(x float32) float32 {
 // bit-identical to the default build (up to 1 ULP per exponential, same
 // class of difference SoftmaxRowInto documents) — the default (non-
 // experimental) build is byte-for-byte what shipped before this existed.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
+// not to pre-zero it.
 func SiLUInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: SiLUInto length mismatch")
@@ -357,6 +372,9 @@ func GELUTanhF32(x float32) float32 {
 // alias. Vectorized when built with GOEXPERIMENT=simd (see exp_simd.go),
 // same NOT-bit-identical caveat as SiLUInto/GELUInto — the default build is
 // unchanged.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
+// not to pre-zero it.
 func GELUTanhInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: GELUTanhInto length mismatch")
@@ -371,6 +389,9 @@ func GELUTanhInto(dst, src []float32) {
 // Vectorized when built with GOEXPERIMENT=simd (see exp_simd.go), same
 // NOT-bit-identical caveat as SiLUInto/GELUInto — the default build is
 // unchanged.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
+// not to pre-zero it.
 func TanhInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: TanhInto length mismatch")

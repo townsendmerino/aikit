@@ -66,6 +66,8 @@ func actGroupFor(ws *Workspace) int {
 // group does not divide K). scales[m*nG+g] is row m's group g, nG = ceil(K/group). Each group
 // uses exactly the per-row quantizer's rounding, clamp and zero convention (an all-zero group gets
 // scale 0 and zero codes), so per-row quantization is the special case group >= K.
+//
+// Output contract: overwrites aq and scales; do not pre-zero. Cover aq[:M*K] and scales[:M*nG] (nG = ceil(K/group)).
 func QuantizeActivationsGroupedInto(aq []int8, scales []float32, a []float32, M, K, group int) {
 	nG := (K + group - 1) / group
 	if group <= 0 || len(aq) < M*K || len(scales) < M*nG || len(a) < M*K {

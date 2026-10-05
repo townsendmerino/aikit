@@ -418,6 +418,9 @@ func (g *GGUFFile) Tensor(name string) (dims []int, data []float32, err error) {
 // small scratch and re-quantize each row immediately, instead of materializing
 // the whole f32 matrix (the load-time memory-bandwidth win). Tensor is the
 // whole-tensor convenience built on top, so both share one dequant path.
+//
+// Output contract: overwrites dst[:len(dst)] in the returned into(start, dst); do not pre-zero. Held for every supported ggml type by
+// TestOutputContract_dequantWritersOverwrite.
 func (g *GGUFFile) RowDequantizer(name string) (dims []int, into func(start int, dst []float32) error, err error) {
 	info, ok := g.tensors[name]
 	if !ok {

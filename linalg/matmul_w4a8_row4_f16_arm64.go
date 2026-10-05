@@ -9,6 +9,8 @@ import "fmt"
 // fed the widened values.
 
 // RepackInt4Row4ScalesQuadF16 is RepackInt4Row4ScalesQuad over binary16 scales.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:4*nGroups].
 func RepackInt4Row4ScalesQuadF16(dst, src []uint16, nGroups int) {
 	requireLen("RepackInt4Row4ScalesQuadF16", "dst", len(dst), 4*nGroups)
 	requireLen("RepackInt4Row4ScalesQuadF16", "src", len(src), 4*nGroups)

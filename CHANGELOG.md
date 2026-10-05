@@ -9,19 +9,6 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
-### Documentation — "the base kernels" on a core without DotProd are SMULL/SADALP for int8 only; int4 W4A8 runs scalar Go
-
-The v1.54.0, v1.55.0 and v1.56.0 notes, the `aikit_nodotprod` tag's comments and the `qemu-nodotprod` job describe the code a core without DotProd runs as "the base SMULL/SADALP kernels". That is true of the int8 dot
-(`dotI8NEON`). It is **not true of int4 W4A8**: `dotW4A8` has an SDOT kernel and no non-DotProd one, so without DotProd it falls back to the pure-Go scalar reference `dotW4A8Scalar`, which `TestDotProdVsBase_AB`
-measured at about 28x slower than the SDOT/row4 path for decode and about 36x for prefill on a Cobalt 100 (a pre-registered kernel-level A/B, run on both ubuntu-24.04-arm and windows-11-arm with the same result; int8 is about 1.5x and 4x; the whole-token effect is smaller and unmeasured; goinfer `docs/measurements/dotprod-windows-arm-2026-10-04.md`). Windows on ARM ran that scalar path for every int4 matmul before v1.56.0. Nothing in the code changed for this.
-
-### Added — an on-demand DotProd-versus-base A/B (`dotprod-ab`, `linalg/dotprod_ab_arm64_test.go`)
-
-`TestDotProdVsBase_AB` times the SDOT kernels and the row4 int4 layout against the base SMULL/SADALP kernels in ONE process (it flips `hasDotProd` between arms, which alternate which goes first each round), on the
-Qwen2.5 0.5B / 1.5B / 7B decode and prefill projections, for int4 and int8, graded by a pre-registered rule (`dotprod_ab_stats_test.go`, unit-tested at its boundaries). It runs only with `AIKIT_DOTPROD_AB=1` and
-skips on a core without DotProd; the `dotprod-ab` workflow (manual) runs it on `ubuntu-24.04-arm` and `windows-11-arm` (both Azure Cobalt 100). A guard checks that both arms compute the same result before timing
-(shown red by planting a different weight). Kernel-level: direction, not a served speed.
-
 ### Fixed — `gpu.Encoder` checks how many buffers a dispatch binds, and holds Metal's full 31
 
 `Encoder.Dispatch`, `Dispatch2D` and `DispatchTG` bound their buffers through a fixed `[16]` scratch with no length
@@ -44,6 +31,60 @@ with length 16`, which names neither the limit nor what to do. goinfer's widest 
   argument through `DispatchTG`.
 
 No API change. Not released on its own; it rides the next release.
+
+## [1.56.1] — 2026-10-05
+
+`perfgate` VERDICT: not run — every Go file changed since v1.56.0 compiles to the same code: only comments differ
+
+> **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** Since v1.56.0 the library's non-test Go files changed in 40 places (the output-contract doc lines, the corrected
+> `QuantizeGroupInt4Row`, `AttendTileFused` and `gpu.NewBufferLen*` docs) and by nothing else; the rest is new tests, one manual CI workflow (`dotprod-ab`) and the gpu backends' go.mod pins. Checked mechanically, not argued:
+> each of the 40 files was parsed at `v1.56.0` and at this tree with comments dropped and reprinted, keeping every `//go:` and `// +build` directive, and all 40 are identical. The checker is shown able to fail: run
+> against `linalg/dotprod_arm64_other.go` at `v1.54.0` (whose build tag changed in v1.56.0) it reports `CODE DIFFERS`. perfgate on `nobara-pc` (linux/amd64) would build two identical binaries; a verdict from it would be
+> noise.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at e636c78 +dirty (2026-10-05T16:25:51Z). `nobara-pc` (linux/amd64). The `+dirty` is this release's own uncommitted prep plus an untracked `testdata/qwen35vl-vision-tiny/` that is not part of it.
+
+### Documentation + tests — every exported writer states its output contract (goinfer audit R-11)
+
+No kernel changed. Before this, a caller could not tell from a doc comment whether a kernel wanted its `dst` zeroed first, and goinfer carried `clear(dst)` calls ahead of
+kernels that overwrite every element they cover (dead work), plus a Metal-only reliance on `NewBufferLen` being zero-filled.
+
+- **One `Output contract:` line per exported writer** in `linalg` (about 80 functions, every arch variant included), `embed` (`DequantMXFP4Blocks`, `DequantMXFP4Split`,
+  `L2Normalize`, `GGUFFile.RowDequantizer`'s closure), `encoder` (`Backend.MatmulBT`, `Q8Backend.MatmulBTQ8` and the CPU, CUDA and Metal implementations), and `gpu`
+  (`Download`, `ReadToHost`, `CopyDevice`). Each is one of `overwrites <out>; do not pre-zero`, `zeroes <out> internally`, `accumulates into <out>; caller zeroes`, or
+  `rewrites <out> in place`. The finding: **no aikit CPU kernel accumulates into its output.** `MatmulBT`, `MatmulBTInto`, `MatmulBTQ8Fused*` and `PackSignBits*` clear their span
+  themselves; everything else writes every element it covers.
+- **Two docs that were wrong or silent.** `QuantizeGroupInt4Row` said "packed is assumed zeroed on entry"; only the pad nibble (the high nibble of the last byte when `cols` is odd) is
+  never written, so only that needs zeroing, and only for odd `cols`. `AttendTileFused` now says its `mm` callback must overwrite `dst` (it is handed scratch holding the previous key
+  block's scores), and that `linalg.MatmulBT` qualifies.
+- **`gpu.NewBufferLen`, `NewBufferBytes` and `NewBufferLenOf`: behaviour unchanged, docs corrected.** CUDA's are uninitialized (`cuMemAlloc`); Metal's are zero-filled
+  (`newBufferWithLength`), and the Metal docs wrongly said "uninitialized". Both now say what they return and that code shared across backends must not rely on zeros.
+- **Poison tests make the contracts gates.** `linalg/outputcontract_test.go` runs every portable writer with its output filled three ways (`0xFF`, which is NaN as a float; zeros;
+  a finite pattern) and requires no NaN in the covered region, byte-identical results across the three fills, and untouched guard bytes past the region; scratch buffers (the f64
+  accumulators, `FusedAttnScratch`) are poisoned too, and the results may not depend on them. 227 cases on amd64. A meta-test proves the gate fails on a planted bug, and two
+  real-kernel mutations (dropping `MatmulBT`'s clear, skipping `ExpF32Into`'s last element) each turn it red. Companions: `embed` (every ggml dequantizer plus the two MXFP4 entry
+  points), `encoder` (the CPU `Backend.MatmulBT`), `gpu` (pins the NewBufferLen* docs against both backends' source).
+- **`TestOutputContract_everyWriterIsDocumented` keeps it that way**: it parses the source (so the arm64 and amd64-only files count on any host), requires a recognised contract line on
+  every exported function with a `dst` or `sums` parameter plus a listed set whose outputs are named otherwise, and fails on a stale list entry. Its first run found three writers
+  the author's own survey had missed (`Q8Backend.MatmulBTQ8` and its two device implementations).
+- **Where it ran.** amd64 default and `aikit_noavx512` / `aikit_noavx2` / `aikit_nopopcnt`; the generic kernels via `GOARCH=riscv64` under qemu-user (a 32-bit `GOARCH=386` build cannot
+  compile the package's existing tests, which use 1<<62 constants); arm64 under qemu-aarch64 with `-cpu cortex-a72` (no DotProd: only the plain-Go repack helpers run) and `-cpu max`
+  (DotProd: the row4 matmul, tile, prefetch and deshared kernels run too). **Not run: native arm64 hardware** (QEMU is an emulator; the row4 assembly wants a real-core pass).
+  Run `go test ./...` in `aikit` on an Apple-silicon Mac.
+- **The `gpu/` doc and test changes are in the root tag's tree but not in a `gpu/vX.Y.Z` release.** The gpu module versions separately and its tag ritual needs a Mac and an NVIDIA box; no gpu code changed, so the next gpu tag carries them.
+
+### Documentation — "the base kernels" on a core without DotProd are SMULL/SADALP for int8 only; int4 W4A8 runs scalar Go
+
+The v1.54.0, v1.55.0 and v1.56.0 notes, the `aikit_nodotprod` tag's comments and the `qemu-nodotprod` job describe the code a core without DotProd runs as "the base SMULL/SADALP kernels". That is true of the int8 dot
+(`dotI8NEON`). It is **not true of int4 W4A8**: `dotW4A8` has an SDOT kernel and no non-DotProd one, so without DotProd it falls back to the pure-Go scalar reference `dotW4A8Scalar`, which `TestDotProdVsBase_AB`
+measured at about 28x slower than the SDOT/row4 path for decode and about 36x for prefill on a Cobalt 100 (a pre-registered kernel-level A/B, run on both ubuntu-24.04-arm and windows-11-arm with the same result; int8 is about 1.5x and 4x; the whole-token effect is smaller and unmeasured; goinfer `docs/measurements/dotprod-windows-arm-2026-10-04.md`). Windows on ARM ran that scalar path for every int4 matmul before v1.56.0. Nothing in the code changed for this.
+
+### Added — an on-demand DotProd-versus-base A/B (`dotprod-ab`, `linalg/dotprod_ab_arm64_test.go`)
+
+`TestDotProdVsBase_AB` times the SDOT kernels and the row4 int4 layout against the base SMULL/SADALP kernels in ONE process (it flips `hasDotProd` between arms, which alternate which goes first each round), on the
+Qwen2.5 0.5B / 1.5B / 7B decode and prefill projections, for int4 and int8, graded by a pre-registered rule (`dotprod_ab_stats_test.go`, unit-tested at its boundaries). It runs only with `AIKIT_DOTPROD_AB=1` and
+skips on a core without DotProd; the `dotprod-ab` workflow (manual) runs it on `ubuntu-24.04-arm` and `windows-11-arm` (both Azure Cobalt 100). A guard checks that both arms compute the same result before timing
+(shown red by planting a different weight). Kernel-level: direction, not a served speed.
 
 ## [1.56.0] — 2026-10-04
 
@@ -5041,7 +5082,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.56.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.56.1...HEAD
+[1.56.1]: https://github.com/townsendmerino/aikit/compare/v1.56.0...v1.56.1
 [1.56.0]: https://github.com/townsendmerino/aikit/compare/v1.55.0...v1.56.0
 [1.55.0]: https://github.com/townsendmerino/aikit/compare/v1.54.0...v1.55.0
 [1.54.0]: https://github.com/townsendmerino/aikit/compare/v1.53.0...v1.54.0

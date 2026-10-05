@@ -396,11 +396,13 @@ func (b Buffer) download(dst []byte) error {
 	return b.b.CopyToAt(bg, dst, int(b.off))
 }
 
-// NewBufferLen allocates an uninitialized device buffer of nFloats float32s.
+// NewBufferLen allocates a device buffer of nFloats float32s. The memory is UNINITIALIZED (cuMemAlloc does not clear it): it holds whatever the
+// allocation last held until the first write. Metal's NewBufferLen is zero-filled, so the two backends differ here by design; code shared across
+// backends must not rely on zeros from either. Zero a buffer that needs it explicitly (Queue.ZeroAsync).
 func (d *Device) NewBufferLen(nFloats int) Buffer { return d.MustBuf(nFloats*4, nFloats, "len") }
 
-// NewBufferBytes allocates an uninitialized device buffer of n BYTES (n is also
-// the element count for the returned Buffer) — the primitive for consumers that
+// NewBufferBytes allocates an UNINITIALIZED device buffer of n BYTES (n is also
+// the element count for the returned Buffer; Metal's NewBufferBytes is zero-filled, so shared code must not rely on zeros) — the primitive for consumers that
 // size in raw bytes rather than float32s.
 func (d *Device) NewBufferBytes(n int) Buffer { return d.MustBuf(n, n, "bytes") }
 
@@ -431,7 +433,8 @@ func NewBufferOf[T Scalar](d *Device, data []T) Buffer {
 	return b
 }
 
-// NewBufferLenOf allocates an uninitialized device buffer of n elements of T.
+// NewBufferLenOf allocates an UNINITIALIZED device buffer of n elements of T (Metal's NewBufferLenOf is zero-filled; code shared across backends must not
+// rely on zeros).
 func NewBufferLenOf[T Scalar](d *Device, n int) Buffer {
 	var z T
 	return d.MustBuf(n*int(unsafe.Sizeof(z)), n, "typed-len")
@@ -446,6 +449,8 @@ func Upload[T Scalar](b Buffer, src []T) error {
 
 // Download copies the buffer's contents at its bind offset into dst (device →
 // host). dst's length sizes the transfer.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(dst)].
 func Download[T Scalar](b Buffer, dst []T) error {
 	err := b.download(asBytes(dst))
 	runtime.KeepAlive(dst)
@@ -660,6 +665,8 @@ func (m *MappedHostBuffer) Close() error {
 // It is a free function for the same reason NewHostBuffer is: Buffer is not
 // generic (it is untyped bytes, like an MTLBuffer), and the element type lives
 // only on the host side here.
+//
+// Output contract: overwrites dst's whole slice; do not pre-zero.
 func ReadToHost[T Scalar](b Buffer, dst *HostBuffer[T]) error {
 	if dst == nil {
 		return fmt.Errorf("cuda: ReadToHost into a nil host buffer")

@@ -63,6 +63,8 @@ func (w *WeightMat) RepackInt4Row4() bool {
 // the M=1/M>1 split HERE: it compares a row computed alone through the decode
 // kernel against the same row computed inside a batch through the tile, which is
 // exactly the pair speculative verify exercises.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 	if g := w.groupFor(ws); g > 0 {
 		if w.q4Row4 != nil && M == 1 {
@@ -158,6 +160,8 @@ func w4a8BatchRow4Span(aq []int8, aScale float32, row4 []byte, row4Scales, dst [
 //
 // Deprecated: int4 scales are stored as binary16; this converts q4s with F32ToF16 (so q4s itself is not
 // the result's storage). Use RepackInt4Row4InPlaceF16.
+//
+// Output contract: rewrites q4 and q4s in place; there is no separate destination, and nothing needs zeroing.
 func RepackInt4Row4InPlace(q4 []byte, q4s []float32, rows, cols, group int) (WeightMat, bool) {
 	if !Int4Row4Usable(rows, cols, group) {
 		return WeightMat{}, false

@@ -18,6 +18,8 @@ package linalg
 // apple-m1pro (real 1.5B shape, depth 130 and 8192), vs 3.0x for 4-wide —
 // picked over 4-wide per that measurement, not a guess. A scalar tail handles
 // N%8 != 0.
+//
+// Output contract: overwrites dst; do not pre-zero. Every score in the M×N (or G-row group) block it covers is written, one dot each.
 func MatmulQKAcc64(a, bMat, dst []float32, M, K, N, bOff, rowStride int) {
 	checkMatmulQKAcc64(len(a), len(bMat), len(dst), M, K, N, bOff, rowStride)
 	for i := range M {

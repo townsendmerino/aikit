@@ -22,6 +22,8 @@ package linalg
 //	dst[n*cols+k] = float32(q[n*cols+k]) * scales[n]
 //
 // dst must have len ≥ rows*cols, q len ≥ rows*cols, scales len ≥ rows.
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:rows*cols].
 func DequantizeRowsInt8Into(dst []float32, q []int8, scales []float32, rows, cols int) {
 	if rows < 0 || cols < 0 {
 		panic("linalg: DequantizeRowsInt8Into negative dims")

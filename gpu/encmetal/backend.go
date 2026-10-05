@@ -149,6 +149,8 @@ func (b *Backend) grow(buf *gpu.Buffer, cap *int, n int) {
 // Small shapes go to the CPU path — see minGPUFlops. Errors are not in the signature
 // (encoder.Backend predates this backend), so a device failure falls back to the CPU path
 // rather than producing wrong numbers. Silent wrongness is the one outcome not on the table.
+//
+// Output contract: overwrites dst[:M*N]; do not pre-zero (the device result is read back over it, and the CPU fallback zeroes internally).
 func (b *Backend) MatmulBT(a, w, dst []float32, M, K, N int) {
 	if 2*int64(M)*int64(K)*int64(N) < minGPUFlops || M <= 0 || K <= 0 || N <= 0 {
 		b.cpu.MatmulBT(a, w, dst, M, K, N)
@@ -247,6 +249,8 @@ func q8key(w []int8) uintptr {
 
 // MatmulBTQ8 implements encoder.Q8Backend: dst[M,N] = a[M,K] · dequant(wq)[N,K]ᵀ, activations
 // untouched. Returns false to leave the call on the CPU path.
+//
+// Output contract: overwrites dst[:M*N]; do not pre-zero (when it returns true; on false dst is untouched).
 func (b *Backend) MatmulBTQ8(dst, a []float32, wq []int8, wscales []float32, M, K, N int) bool {
 	if 2*int64(M)*int64(K)*int64(N) < minGPUFlops || M <= 0 || K <= 0 || N <= 0 {
 		return false

@@ -79,5 +79,7 @@ func (g *GTE) UseBackend(be Backend) {
 // available, and on any error. There is no error return: silently wrong numbers are
 // the one outcome this seam must make impossible.
 type Q8Backend interface {
+	// Output contract: overwrites dst[:M*N]; do not pre-zero. That holds when it returns true; on false
+	// (declined) dst is left untouched and the CPU path writes it.
 	MatmulBTQ8(dst, a []float32, wq []int8, wscales []float32, M, K, N int) bool
 }

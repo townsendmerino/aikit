@@ -433,7 +433,10 @@ func (d *Device) ReleaseBuf(b Buffer) {
 	b.id.Send(selRelease)
 }
 
-// NewBufferLen allocates an uninitialized shared MTLBuffer of nFloats float32s.
+// NewBufferLen allocates a shared MTLBuffer of nFloats float32s. Metal's newBufferWithLength returns ZERO-FILLED
+// contents, so the buffer reads as zeros until written.
+//
+// Code shared across backends must NOT rely on this: zero-fill is a Metal property only (CUDA's NewBufferLen returns uninitialized memory), so a buffer that must start at zero is zeroed explicitly on every backend, not assumed.
 func (d *Device) NewBufferLen(nFloats int) Buffer {
 	return d.MustBuf(d.id.Send(selNewBufferLen, uintptr(nFloats*4), uintptr(0)), nFloats, "len")
 }
@@ -454,8 +457,9 @@ func (d *Device) newBufferLenUntracked(nFloats int) Buffer {
 	return d.MustBuf(d.id.Send(selNewBufferLen, uintptr(nFloats*4), uintptr(mtlResourceHazardTrackingModeUntracked)), nFloats, "len-untracked")
 }
 
-// NewBufferBytes allocates an uninitialized shared MTLBuffer of n BYTES (n is the
-// element count for the returned Buffer). For consumers that size a buffer in raw
+// NewBufferBytes allocates a shared MTLBuffer of n BYTES (n is the
+// element count for the returned Buffer). Zero-filled on Metal, like NewBufferLen; backend-shared code must not rely on that (CUDA's NewBufferBytes
+// is uninitialized). For consumers that size a buffer in raw
 // bytes rather than float32s — the device-layer primitive goinfer's kernels reach
 // for when re-pointed onto this substrate.
 func (d *Device) NewBufferBytes(n int) Buffer {
@@ -523,7 +527,8 @@ func NewBufferOf[T Scalar](d *Device, data []T) Buffer {
 	return d.MustBuf(id, len(data), "typed")
 }
 
-// NewBufferLenOf allocates an uninitialized shared MTLBuffer of n elements of T.
+// NewBufferLenOf allocates a shared MTLBuffer of n elements of T. Zero-filled on Metal, like NewBufferLen; backend-shared code must not rely on that
+// (CUDA's NewBufferLenOf is uninitialized).
 func NewBufferLenOf[T Scalar](d *Device, n int) Buffer {
 	var z T
 	nBytes := n * int(unsafe.Sizeof(z))
@@ -560,6 +565,8 @@ func Upload[T Scalar](b Buffer, src []T) error {
 
 // Download copies the buffer's contents at its bind offset into dst
 // (zero-copy on UMA; dst's length sizes the transfer).
+//
+// Output contract: overwrites dst; do not pre-zero. Covers dst[:len(dst)].
 func Download[T Scalar](b Buffer, dst []T) error {
 	if len(dst) == 0 {
 		return nil

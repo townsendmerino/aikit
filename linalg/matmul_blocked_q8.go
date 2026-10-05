@@ -74,6 +74,8 @@ func checkMatmulBTQ8(name string, la, lbq, lbs, ldst, M, K, N int) {
 // their parallelism (the encoder row-splits a batch and wants each matmul serial).
 // Requires N a multiple of 8 (every encoder Q8 shape is); the caller routes odd N
 // through the dequant-then-f32-GEMM fallback.
+//
+// Output contract: zeroes dst internally; do not pre-zero. Covers dst[:M*N]; it clears that span, then accumulates into it.
 func MatmulBTQ8FusedInto(dst, a []float32, bQ []int8, bScales []float32, M, K, N int) {
 	checkMatmulBTQ8("MatmulBTQ8FusedInto", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	zeroSpanF32(dst[:M*N])
@@ -83,6 +85,8 @@ func MatmulBTQ8FusedInto(dst, a []float32, bQ []int8, bScales []float32, M, K, N
 // MatmulBTQ8Fused is the column-parallel sibling (mirrors MatmulBT), for a lone forward
 // that wants intra-op parallelism. Each worker widen-packs its own disjoint column
 // range, so no shared f32 weight buffer exists at all.
+//
+// Output contract: zeroes dst internally; do not pre-zero. Covers dst[:M*N]; it clears that span, then accumulates into it.
 func MatmulBTQ8Fused(dst, a []float32, bQ []int8, bScales []float32, M, K, N int) {
 	checkMatmulBTQ8("MatmulBTQ8Fused", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	zeroSpanF32(dst[:M*N])

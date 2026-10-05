@@ -22,6 +22,10 @@ type Backend interface {
 	// MatmulBT computes dst[M,N] = a[M,K] · b[N,K]ᵀ — the PyTorch [out,in]
 	// weight layout the safetensors checkpoints already store (so no
 	// transpose copy), matching the encoder's matmulBT convention.
+	//
+	// Output contract: overwrites dst[:M*N]; do not pre-zero. Every implementation does,
+	// so do not rely on dst's prior contents either (the CPU backend zeroes internally
+	// and accumulates; the device backends write each element once on readback).
 	MatmulBT(a, b, dst []float32, M, K, N int)
 	// Close releases backend resources (GPU buffers, etc.). No-op on CPU.
 	Close() error
@@ -70,6 +74,9 @@ type cpuBackend struct{}
 
 func (*cpuBackend) Name() string { return "cpu" }
 
+// MatmulBT implements Backend.
+//
+// Output contract: zeroes dst internally (matmulBTInto clears dst[:M*N] and accumulates); do not pre-zero.
 func (*cpuBackend) MatmulBT(a, b, dst []float32, M, K, N int) {
 	matmulBTInto(a, b, dst, M, K, N)
 }
