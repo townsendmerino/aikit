@@ -187,6 +187,25 @@ jobs:
       - name: every linalg test on a core without DotProd
         run: go run -C tools ./qemunodotprod -j 4
 
+  # Windows on ARM, the one OS where DotProd is found by an API (IsProcessorFeaturePresent) rather than HWCAP, and the one arm64 target aikit CI never ran: the windows job above is amd64. GitHub's
+  # windows-11-arm runner is free for public repositories (Azure Cobalt 100, Neoverse N2, which has DotProd). AIKIT_EXPECT_DOTPROD=yes makes the probe's test fail if Windows reports it absent, so a probe that
+  # always says no (the behaviour before it existed) cannot pass; the test skips, saying so, when the variable is unset. Then the whole suite runs on the SDOT kernels, which no Windows machine had executed.
+  windows-arm64:
+    name: windows arm64 (DotProd probe, native)
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go build ./...
+      - run: go vet ./...
+      - name: the DotProd probe, asserted
+        env:
+          AIKIT_EXPECT_DOTPROD: "yes"
+        run: go test -v -run 'TestDetectDotProd_windowsMatchesTheExpectation|TestActiveKernels_isConsistent' ./linalg/
+      - run: go test ./...
+
   forced-fallbacks:
     name: forced fallbacks (${{ matrix.force }})
     runs-on: ubuntu-latest

@@ -9,6 +9,14 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added — DotProd is detected on Windows on ARM
+
+`detectDotProd` returned `false` on every arm64 OS but Linux and Darwin, so a Windows ARM machine whose CPU has DotProd (Snapdragon X, Azure Cobalt 100) ran the base SMULL/SADALP kernels and the canonical int4
+layout. `dotprod_arm64_windows.go` now asks Windows, `IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE)` from kernel32, with no new dependency; an older Windows that does not know the feature returns
+false, the safe direction. Other arm64 OSes (FreeBSD, ...) keep the conservative `false`. `ActiveKernels()` and goinfer's `check --hardware` therefore show `dotprod` there. **Tested only on the CI runner**
+(`windows-arm64`, `windows-11-arm`, Cobalt 100): the probe's test fails unless Windows reports DotProd when `AIKIT_EXPECT_DOTPROD=yes`, and the whole suite runs on the SDOT kernels for the first time on Windows. Cross-built clean
+for linux, darwin, freebsd and windows on arm64 and for windows and linux on amd64; the assembly uses no x18 (Windows' platform register; one comment mentions it). It cannot be run off a Windows ARM machine.
+
 ### Added — CI runs the `linalg` suite on a CPU without DotProd (`tools/qemunodotprod`)
 
 The `aikit_nodotprod` step forces the base arm64 kernels on a runner that has DotProd, so a test or kernel that calls an SDOT instruction without asking `hasDotProd` still passes there and dies with
