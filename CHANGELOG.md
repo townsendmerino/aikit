@@ -9,6 +9,14 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Tests — the two tiny vision checkpoints are committed, so their parity tests run on a clean checkout (found by the gpu gate, 2026-10-05)
+
+`testdata/siglip-tiny` (134 KB) and `testdata/qwen25vl-vision-tiny` (791 KB) were gitignored and regenerated per machine, while their goldens (`siglip_vision_golden.json`, `qwen25vl_vision_golden.json`) were committed. On any clean
+checkout, CI included, `TestSiglipEncoder_parity` and `TestQwenVisionEncoder_parity` (`vision/`) and every test of `gpu/qwencuda` and `gpu/visioncuda` printed a skip and counted as green: `gpudevice` run from a clean worktree reported those two
+modules `SKIPPED (0 passed)`. The checkpoints are now tracked (a `!` rule per file after `*.safetensors`, like `glm-ocr-vision-tiny`), since each golden is valid only against its exact weights and regenerating rewrites both. Verified
+against the committed pair in a fresh worktree: the two `vision/` tests pass on amd64 and on arm64 under QEMU (`-cpu max` and `-cpu cortex-a72`), and `gpu/qwencuda` and `gpu/visioncuda` run 3 and 4 tests on the CUDA box. No library code
+changed. The `*cuda` modules still skip on CI runners, which have no GPU; the `vision/` tests are what CI newly exercises.
+
 ### Tests — the output contracts, run on Apple silicon, plus the encmetal device path (goinfer audit R-11)
 
 No code changed. v1.56.1's poison probes were verified on amd64 and under QEMU; this records the native run and closes the device-path gap.
