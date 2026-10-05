@@ -33,29 +33,6 @@ No code changed. v1.56.1's poison probes were verified on amd64 and under QEMU; 
   `pinnedStageMaxBytes`: `UploadAsync`, `ReadToHost`, a host copy into `dst`) on an unaligned shape, and the blocking path (`gpu.Download` straight into `dst`) on an aligned and an unaligned one, for `MatmulBT` and
   `MatmulBTQ8`. **Shown red on all four readback lines:** skipping the last element of the pinned copy and of the blocking download, in `gpuMatmul` and in the Q8 path, each fails exactly the matching cases.
 
-### Fixed — `gpu.Encoder` checks how many buffers a dispatch binds, and holds Metal's full 31
-
-`Encoder.Dispatch`, `Dispatch2D` and `DispatchTG` bound their buffers through a fixed `[16]` scratch with no length
-check. A 17th buffer was not a memory overrun: Go's bounds check caught it and panicked with `index out of range [16]
-with length 16`, which names neither the limit nor what to do. goinfer's widest dispatch already binds 15
-(goinfer's Metal audit, finding C-N01), so one more binding would have hit it.
-
-- **The three copy loops are now one helper**, `Encoder.bindBuffers`, which does the fill and the single
-  `setBuffers:offsets:withRange:` send. It allocates nothing; the message is built only on the panic path.
-- **The scratch holds Metal's limit**, 31 (`maxBindBuffers`): the "Maximum number of entries in the buffer argument
-  table, per graphics or kernel function" row of Apple's Metal feature set tables, which reads 31 for every GPU family
-  from Apple2 through Apple10 (edition of May 21, 2026).
-- **A 32nd buffer panics with a message** that gives the count and the limit and says the kernel must bind fewer
-  buffers. `Pipeline` carries no name, so the stack trace identifies the call site.
-- **Test:** `TestEncoderBindBuffers_limit` (darwin, real device) runs a kernel binding exactly 31 buffers through all
-  three entry points and checks an index-weighted sum, the last buffer included, then checks the panic message for one
-  more. **Run on a real Metal device (a Mac) on 2026-10-02: 6 of 6 pass with no skips, and with the guard removed the
-  three over-limit cases fail with Go's `index out of range [31] with length 31` while the three at-the-limit cases
-  still pass.** Metal compiled and correctly ran a kernel with 31 `[[buffer(n)]]` arguments plus a `[[threadgroup(0)]]`
-  argument through `DispatchTG`.
-
-No API change. Not released on its own; it rides the next release.
-
 ## [1.56.1] — 2026-10-05
 
 `perfgate` VERDICT: not run — every Go file changed since v1.56.0 compiles to the same code: only comments differ
@@ -95,7 +72,7 @@ kernels that overwrite every element they cover (dead work), plus a Metal-only r
   compile the package's existing tests, which use 1<<62 constants); arm64 under qemu-aarch64 with `-cpu cortex-a72` (no DotProd: only the plain-Go repack helpers run) and `-cpu max`
   (DotProd: the row4 matmul, tile, prefetch and deshared kernels run too). **Not run: native arm64 hardware** (QEMU is an emulator; the row4 assembly wants a real-core pass).
   Run `go test ./...` in `aikit` on an Apple-silicon Mac.
-- **The `gpu/` doc and test changes are in the root tag's tree but not in a `gpu/vX.Y.Z` release.** The gpu module versions separately and its tag ritual needs a Mac and an NVIDIA box; no gpu code changed, so the next gpu tag carries them.
+- **The `gpu/` doc and test changes are in the root tag's tree but not in a `gpu/vX.Y.Z` release.** The gpu module versions separately and its tag ritual needs a Mac and an NVIDIA box; no gpu code changed in this release's diff. The first `gpu/` tags to follow (v0.33.4, v0.33.5) carry them, together with the earlier Encoder bind-limit change described at the end of this section.
 
 ### Documentation — "the base kernels" on a core without DotProd are SMULL/SADALP for int8 only; int4 W4A8 runs scalar Go
 
@@ -109,6 +86,31 @@ measured at about 28x slower than the SDOT/row4 path for decode and about 36x fo
 Qwen2.5 0.5B / 1.5B / 7B decode and prefill projections, for int4 and int8, graded by a pre-registered rule (`dotprod_ab_stats_test.go`, unit-tested at its boundaries). It runs only with `AIKIT_DOTPROD_AB=1` and
 skips on a core without DotProd; the `dotprod-ab` workflow (manual) runs it on `ubuntu-24.04-arm` and `windows-11-arm` (both Azure Cobalt 100). A guard checks that both arms compute the same result before timing
 (shown red by planting a different weight). Kernel-level: direction, not a served speed.
+
+### Fixed — `gpu.Encoder` checks how many buffers a dispatch binds, and holds Metal's full 31
+
+`Encoder.Dispatch`, `Dispatch2D` and `DispatchTG` bound their buffers through a fixed `[16]` scratch with no length
+check. A 17th buffer was not a memory overrun: Go's bounds check caught it and panicked with `index out of range [16]
+with length 16`, which names neither the limit nor what to do. goinfer's widest dispatch already binds 15
+(goinfer's Metal audit, finding C-N01), so one more binding would have hit it.
+
+- **The three copy loops are now one helper**, `Encoder.bindBuffers`, which does the fill and the single
+  `setBuffers:offsets:withRange:` send. It allocates nothing; the message is built only on the panic path.
+- **The scratch holds Metal's limit**, 31 (`maxBindBuffers`): the "Maximum number of entries in the buffer argument
+  table, per graphics or kernel function" row of Apple's Metal feature set tables, which reads 31 for every GPU family
+  from Apple2 through Apple10 (edition of May 21, 2026).
+- **A 32nd buffer panics with a message** that gives the count and the limit and says the kernel must bind fewer
+  buffers. `Pipeline` carries no name, so the stack trace identifies the call site.
+- **Test:** `TestEncoderBindBuffers_limit` (darwin, real device) runs a kernel binding exactly 31 buffers through all
+  three entry points and checks an index-weighted sum, the last buffer included, then checks the panic message for one
+  more. **Run on a real Metal device (a Mac) on 2026-10-02: 6 of 6 pass with no skips, and with the guard removed the
+  three over-limit cases fail with Go's `index out of range [31] with length 31` while the three at-the-limit cases
+  still pass.** Metal compiled and correctly ran a kernel with 31 `[[buffer(n)]]` arguments plus a `[[threadgroup(0)]]`
+  argument through `DispatchTG`.
+
+No API change.
+
+**Where it shipped, corrected 2026-10-05.** This entry sat under Unreleased long after the code was released, and its "rides the next release" was true only for the `gpu/` module. The change (`a143d8d`, 2026-10-02) has been in the root tree since v1.53.0, but the last `gpu/` tag before it was `gpu/v0.33.3`, so **`gpu/v0.33.4` and `gpu/v0.33.5` are the first `gpu/` tags that carry it**. Both tags' messages say "no code or API change", which is wrong: they carry this one code change (`Encoder.bindBuffers`, the 31-buffer limit and its panic message) on top of the documentation and test changes. Tags are immutable, so this note is the correction. A consumer pinned to `gpu v0.33.3` or earlier, as goinfer's `metal/` and `cuda/` modules were, still has the unchecked `[16]` scratch.
 
 ## [1.56.0] — 2026-10-04
 
