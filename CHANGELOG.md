@@ -9,6 +9,14 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.57.0] — 2026-10-05
+
+`perfgate` VERDICT: PASS — no regression vs v1.56.1 above each shape's floor — 8/47 shapes resolve the 5.0% class
+
+> **Read this verdict for what it is: no shape regressed above its floor, and most shapes cannot see 5%.** The default run (6 visits, 200 ms) on `nobara-pc` found 39 of 47 shapes BLIND to the 5% class (floors of 7% to 26% on a box whose floors are usually tighter; load was settling from the test suite when it started). Every W4A8 entry was restructured in this release (quantize into scratch, then the shared dispatch), so a second run was aimed at the entry-level benchmarks alone, 10 visits at 400 ms and a settled box: `BenchmarkMatmulBTW4A8Canonical`, `BenchmarkMatmulBTW4A8SplitHalfTile` and `BenchmarkW4A8_allocVsInto`, VERDICT: PASS, 3/12 shapes resolve the 5.0% class (`SplitHalfTile` M32 +0.62% at a ±4.0% floor and M128 -0.12% at ±3.2%, `Canonical` M128 -0.74% at ±4.8%). The nine shapes it is blind to moved by -4.58% to +1.92% (`allocVsInto/Into`, the quantizing entry itself, +1.92% at a ±8.2% floor), so on those a green is only evidence against a larger regression. Bit identity, not speed, is what this release proves: the Pre entries are the same dispatch the quantizing entries run.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 69822b0 +dirty (2026-10-05T23:25:01Z). `nobara-pc` (linux/amd64). The `+dirty` is an untracked `testdata/qwen35vl-vision-tiny/` that is not part of this release.
+
 ### Added — W4A8 on an activation quantized once (goinfer audit R-13); the grouped batch quantizes once (R-14)
 
 A caller that runs several W4A8 projections over one input (q, k and v of one normed row; gate and up; every routed expert of a MoE layer) re-quantized the same activation in every call. Quantization is deterministic, so the
@@ -5123,7 +5131,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.56.1...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.57.0...HEAD
+[1.57.0]: https://github.com/townsendmerino/aikit/compare/v1.56.1...v1.57.0
 [1.56.1]: https://github.com/townsendmerino/aikit/compare/v1.56.0...v1.56.1
 [1.56.0]: https://github.com/townsendmerino/aikit/compare/v1.55.0...v1.56.0
 [1.55.0]: https://github.com/townsendmerino/aikit/compare/v1.54.0...v1.55.0
