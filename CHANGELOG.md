@@ -9,6 +9,22 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Tests — the output contracts, run on Apple silicon, plus the encmetal device path (goinfer audit R-11)
+
+No code changed. v1.56.1's poison probes were verified on amd64 and under QEMU; this records the native run and closes the device-path gap.
+
+- **Native arm64** (Apple M1 Pro, macOS 26.6.2, Go 1.27.0, at `1a12562`): `TestOutputContract_*` passes in `linalg` with 245 cases in the default build (241 poison subtests, including all eight arm64-only row4 cases) and 234 with
+  `-tags aikit_nodotprod` (only the repack cases register there), and 245 with `-tags aikit_checks`; 0 fail, 0 skip in each. `embed` and `encoder` pass. **No arm64 kernel reads or accumulates into `dst`, or leaves part of its
+  covered region unwritten.** The full suite: 18 packages ok, 0 FAIL, 61 skips (21 need `AIKIT_HARNESS`, about 34 are missing local models, the rest opt-in env gates), none for lack of DotProd.
+- **`TestEncMetal_outputContract`** (`gpu/encmetal/outputcontract_test.go`, darwin) proves `MatmulBT` and `MatmulBTQ8` "overwrite `dst[:M*N]`; do not pre-zero" on the DEVICE path, on an aligned (`gemm_f32_sg_big`) and an
+  unaligned (`gemm_f32_sg`) shape, each over twice `minGPUFlops`: NaN-filled `dst`, finite result, guard tail untouched bit for bit, and byte-identical to a 7.5 pre-fill. The device path is asserted rather than inferred (the backend's
+  output buffer grows to `M*N`, and the result differs bitwise from the CPU backend's). **Shown red:** skipping the last element of the copy-back (`backend.go` `gpuMatmul` and `gpuMatmulQ8`) fails the matching cases.
+- **Gates on the same tree (macbookpro.lan):** `gpudevice` PASS 6/6 applicable modules, `gpugate` PASS 5/6 (`ptx-repro` n/a on darwin). Both need `GOWORK=off` on a machine whose `GOWORK` points at a workspace that does
+  not include `tools/`.
+- **`TestEncCUDA_outputContract`** (`gpu/enccuda/outputcontract_test.go`, linux) is the same test on CUDA, run on an RTX 2070 SUPER. It covers BOTH readback paths, not one: the pinned-staging path (operands at or under
+  `pinnedStageMaxBytes`: `UploadAsync`, `ReadToHost`, a host copy into `dst`) on an unaligned shape, and the blocking path (`gpu.Download` straight into `dst`) on an aligned and an unaligned one, for `MatmulBT` and
+  `MatmulBTQ8`. **Shown red on all four readback lines:** skipping the last element of the pinned copy and of the blocking download, in `gpuMatmul` and in the Q8 path, each fails exactly the matching cases.
+
 ### Fixed — `gpu.Encoder` checks how many buffers a dispatch binds, and holds Metal's full 31
 
 `Encoder.Dispatch`, `Dispatch2D` and `DispatchTG` bound their buffers through a fixed `[16]` scratch with no length
