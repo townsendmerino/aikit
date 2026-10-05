@@ -156,11 +156,12 @@ func TestDotProdVsBase_AB(t *testing.T) {
 						for i := range arms {
 							hasDotProd = arms[i].dot
 							run(i)
-							n[i] = abCalibrate(func() { run(i) }, blockNs)
+							n[i] = abCalibrate(func() { run(i) }, 1.5*blockNs) // a margin: the rounds can run faster than the calibration saw, and a block under spec is refused
 						}
 						ratios := make([][]float64, len(arms)-1) // base / arm_i for each non-base arm
 						var baseFirst []bool
 						minBlock := math.MaxFloat64
+						retimed := 0
 						for r := 0; r < rounds; r++ {
 							order := make([]int, len(arms))
 							for i := range order {
@@ -175,12 +176,24 @@ func TestDotProdVsBase_AB(t *testing.T) {
 							for _, i := range order {
 								hasDotProd = arms[i].dot
 								run(i) // warm this arm after the switch
-								ns[i] = abTime(n[i], func() { run(i) })
-								if math.IsNaN(ns[i]) || ns[i] <= 0 {
-									t.Fatalf("%s: arm %s timed %v ns per call: the clock did not advance over the block, so the result is not a measurement", label, arms[i].name, ns[i])
-								}
-								if b := ns[i] * float64(n[i]); b < minBlock {
-									minBlock = b
+								for attempt := 0; ; attempt++ {
+									ns[i] = abTime(n[i], func() { run(i) })
+									if math.IsNaN(ns[i]) || ns[i] <= 0 {
+										t.Fatalf("%s: arm %s timed %v ns per call: the clock did not advance over the block, so the result is not a measurement", label, arms[i].name, ns[i])
+									}
+									b := ns[i] * float64(n[i])
+									if b >= 0.9*blockNs {
+										if b < minBlock {
+											minBlock = b
+										}
+										break
+									}
+									// A block under spec is re-timed with a larger count. Only the block LENGTH decides this, never the speedup; the short measurement is discarded, not kept.
+									if attempt == 3 {
+										t.Fatalf("%s: arm %s: the timed block stayed under %.0f ms after %d re-timings (last %.2f ms)", label, arms[i].name, blockNs/1e6, attempt, b/1e6)
+									}
+									retimed++
+									n[i] = int(math.Min(200000, math.Ceil(float64(n[i])*1.5*blockNs/b)))
 								}
 							}
 							for i := 1; i < len(arms); i++ {
@@ -194,7 +207,7 @@ func TestDotProdVsBase_AB(t *testing.T) {
 						for i := 1; i < len(arms); i++ {
 							c := abSummarize(ratios[i-1], baseFirst)
 							v := abClassify(c)
-							t.Logf("AB %-62s %-9s speedup median %.3f IQR [%.3f, %.3f] faster-rounds %.0f%% base-first %.3f dot-first %.3f min-block %.1f ms -> %s", label, "base/"+arms[i].name, c.Median, c.Q1, c.Q3, 100*c.FracFaster, c.MedianFwd, c.MedianRev, minBlock/1e6, v)
+							t.Logf("AB %-62s %-9s speedup median %.3f IQR [%.3f, %.3f] faster-rounds %.0f%% base-first %.3f dot-first %.3f min-block %.1f ms retimed %d -> %s", label, "base/"+arms[i].name, c.Median, c.Q1, c.Q3, 100*c.FracFaster, c.MedianFwd, c.MedianRev, minBlock/1e6, retimed, v)
 							if arms[i].name == "dot" {
 								if M == 1 {
 									m1Verdicts = append(m1Verdicts, v)
