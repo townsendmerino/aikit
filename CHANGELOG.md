@@ -9,6 +9,13 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added — an on-demand DotProd-versus-base A/B (`dotprod-ab`, `linalg/dotprod_ab_arm64_test.go`)
+
+`TestDotProdVsBase_AB` times the SDOT kernels and the row4 int4 layout against the base SMULL/SADALP kernels in ONE process (it flips `hasDotProd` between arms, which alternate which goes first each round), on the
+Qwen2.5 0.5B / 1.5B / 7B decode and prefill projections, for int4 and int8, graded by a pre-registered rule (`dotprod_ab_stats_test.go`, unit-tested at its boundaries). It runs only with `AIKIT_DOTPROD_AB=1` and
+skips on a core without DotProd; the `dotprod-ab` workflow (manual) runs it on `ubuntu-24.04-arm` and `windows-11-arm` (both Azure Cobalt 100). A guard checks that both arms compute the same result before timing
+(shown red by planting a different weight). Kernel-level: direction, not a served speed.
+
 ### Fixed — `gpu.Encoder` checks how many buffers a dispatch binds, and holds Metal's full 31
 
 `Encoder.Dispatch`, `Dispatch2D` and `DispatchTG` bound their buffers through a fixed `[16]` scratch with no length

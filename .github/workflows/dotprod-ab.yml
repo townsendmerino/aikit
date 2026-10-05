@@ -1,0 +1,58 @@
+name: dotprod-ab
+
+# On demand only (`gh workflow run dotprod-ab`): a measurement, not a gate. DotProd versus the base SMULL/SADALP kernels, interleaved in one process (linalg/dotprod_ab_arm64_test.go),
+# on the two arm64 runner types GitHub offers for free: ubuntu-24.04-arm and windows-11-arm, both Azure Cobalt 100 (Neoverse N2). The pre-registered rule and what the result may be called are in goinfer's
+# docs/measurements/dotprod-windows-arm-2026-10-04.md. A shared VM has no idle gate, so the record says "exploratory, shared runner", and a kernel-level result gives direction, not a served speed.
+on:
+  workflow_dispatch:
+    inputs:
+      rounds:
+        description: "rounds per cell (odd; the pre-registered value is 21)"
+        default: "21"
+
+jobs:
+  ab:
+    name: DotProd A/B (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04-arm, windows-11-arm]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: machine (linux)
+        if: runner.os == 'Linux'
+        run: |
+          lscpu | grep -E 'Model name|Vendor ID|^CPU\(s\)|Flags' || true
+          cat /proc/loadavg
+          go version
+      - name: machine (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors | Format-List
+          go version
+      - name: the A/B
+        shell: bash
+        env:
+          AIKIT_DOTPROD_AB: "1"
+          AIKIT_DOTPROD_AB_ROUNDS: ${{ inputs.rounds }}
+        run: |
+          set -o pipefail
+          go test -run 'TestDotProdVsBase_AB' -v -timeout 70m ./linalg/ 2>&1 | tee ab.log
+      - name: summary
+        shell: bash
+        if: always()
+        run: |
+          grep -E "DotProd A/B:|ActiveKernels|SUMMARY|SLOWER CELL" ab.log || true
+          grep -c " -> FASTER" ab.log || true
+          grep -c " -> SLOWER" ab.log || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dotprod-ab-${{ matrix.os }}
+          path: ab.log
