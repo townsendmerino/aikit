@@ -9,23 +9,6 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
-### Added — DotProd is detected on Windows on ARM
-
-`detectDotProd` returned `false` on every arm64 OS but Linux and Darwin, so a Windows ARM machine whose CPU has DotProd (Snapdragon X, Azure Cobalt 100) ran the base SMULL/SADALP kernels and the canonical int4
-layout. `dotprod_arm64_windows.go` now asks Windows, `IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE)` from kernel32, with no new dependency; an older Windows that does not know the feature returns
-false, the safe direction. Other arm64 OSes (FreeBSD, ...) keep the conservative `false`. `ActiveKernels()` and goinfer's `check --hardware` therefore show `dotprod` there. **Tested only on the CI runner**
-(`windows-arm64`, `windows-11-arm`, Cobalt 100): the probe's test fails unless Windows reports DotProd when `AIKIT_EXPECT_DOTPROD=yes`, and the whole suite runs on the SDOT kernels for the first time on Windows. Cross-built clean
-for linux, darwin, freebsd and windows on arm64 and for windows and linux on amd64; the assembly uses no x18 (Windows' platform register; one comment mentions it). It cannot be run off a Windows ARM machine.
-
-### Added — CI runs the `linalg` suite on a CPU without DotProd (`tools/qemunodotprod`)
-
-The `aikit_nodotprod` step forces the base arm64 kernels on a runner that has DotProd, so a test or kernel that calls an SDOT instruction without asking `hasDotProd` still passes there and dies with
-SIGILL on a real Cortex-A72 (a Raspberry Pi 4). One such test, `TestActGroup_row4KernelMatchesReference`, was found by running the suite under QEMU by hand on 2026-10-04 and guarded in v1.54.0.
-`go run -C tools ./qemunodotprod` is that run as a CI job (`qemu-nodotprod`, ubuntu-latest): it cross-compiles the arm64 test binary and runs every test in its own `qemu-aarch64-static -cpu cortex-a72` process,
-so a SIGILL names its test. It fails unless the kernel-report test says arm64 with DotProd neither detected nor active (a green run on the wrong CPU is the failure it is built to refuse), skips the FMA-peak
-timing probe by name (it infers the clock from throughput and read 0.35 GHz emulated), and prints the denominator: on 2026-10-04, 216 tests in 1 min 25 s on 4 jobs, 156 ok, 60 skipped by the tests themselves,
-none SIGILL, timed out or failed. **Shown red:** a throwaway test calling `dotI8SDOT` with no guard fails the run as `SIGILL`, named. No library code changed.
-
 ### Fixed — `gpu.Encoder` checks how many buffers a dispatch binds, and holds Metal's full 31
 
 `Encoder.Dispatch`, `Dispatch2D` and `DispatchTG` bound their buffers through a fixed `[16]` scratch with no length
@@ -48,6 +31,36 @@ with length 16`, which names neither the limit nor what to do. goinfer's widest 
   argument through `DispatchTG`.
 
 No API change. Not released on its own; it rides the next release.
+
+## [1.56.0] — 2026-10-04
+
+`perfgate` VERDICT: not run — the compiled library is byte-for-byte the v1.55.0 code on every platform the benchmarks run on
+
+> **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** Since v1.55.0 the library gained one file, `linalg/dotprod_arm64_windows.go` (and its test), and one build tag
+> changed (`dotprod_arm64_other.go` now also excludes windows); everything else is CI configuration, `tools/qemunodotprod`, the CHANGELOG and the gpu backends' go.mod pins. Checked mechanically, not argued: `go list`
+> of `./linalg` for `GOOS/GOARCH` linux/amd64 (90 files), linux/arm64 (95), darwin/arm64 (95) and windows/amd64 (90) returns the SAME compiled file set (Go and assembly) on v1.55.0 and on this tree; only windows/arm64
+> differs, by exactly one file swapped (`dotprod_arm64_other.go` for `dotprod_arm64_windows.go`). perfgate runs on `nobara-pc` (linux/amd64), where it would build two identical binaries; a verdict from it would be noise
+> (v1.55.0's own run showed three shapes moving by 6-8% on a release that changed no kernel) and would say nothing about Windows ARM, which no perfgate box covers. The windows/arm64 change is the probe itself, whose
+> speed effect (the SDOT kernels instead of the base ones on cores that have DotProd) is **unmeasured**.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at b7f42fc +dirty (2026-10-05T01:13:56Z). `nobara-pc` (linux/amd64). The `+dirty` is an untracked `testdata/qwen35vl-vision-tiny/` that is not part of this release.
+
+### Added — DotProd is detected on Windows on ARM
+
+`detectDotProd` returned `false` on every arm64 OS but Linux and Darwin, so a Windows ARM machine whose CPU has DotProd (Snapdragon X, Azure Cobalt 100) ran the base SMULL/SADALP kernels and the canonical int4
+layout. `dotprod_arm64_windows.go` now asks Windows, `IsProcessorFeaturePresent(PF_ARM_V82_DP_INSTRUCTIONS_AVAILABLE)` from kernel32, with no new dependency; an older Windows that does not know the feature returns
+false, the safe direction. Other arm64 OSes (FreeBSD, ...) keep the conservative `false`. `ActiveKernels()` and goinfer's `check --hardware` therefore show `dotprod` there. **Tested only on the CI runner**
+(`windows-arm64`, `windows-11-arm`, Cobalt 100): the probe's test fails unless Windows reports DotProd when `AIKIT_EXPECT_DOTPROD=yes`, and the whole suite runs on the SDOT kernels for the first time on Windows. Cross-built clean
+for linux, darwin, freebsd and windows on arm64 and for windows and linux on amd64; the assembly uses no x18 (Windows' platform register; one comment mentions it). It cannot be run off a Windows ARM machine.
+
+### Added — CI runs the `linalg` suite on a CPU without DotProd (`tools/qemunodotprod`)
+
+The `aikit_nodotprod` step forces the base arm64 kernels on a runner that has DotProd, so a test or kernel that calls an SDOT instruction without asking `hasDotProd` still passes there and dies with
+SIGILL on a real Cortex-A72 (a Raspberry Pi 4). One such test, `TestActGroup_row4KernelMatchesReference`, was found by running the suite under QEMU by hand on 2026-10-04 and guarded in v1.54.0.
+`go run -C tools ./qemunodotprod` is that run as a CI job (`qemu-nodotprod`, ubuntu-latest): it cross-compiles the arm64 test binary and runs every test in its own `qemu-aarch64-static -cpu cortex-a72` process,
+so a SIGILL names its test. It fails unless the kernel-report test says arm64 with DotProd neither detected nor active (a green run on the wrong CPU is the failure it is built to refuse), skips the FMA-peak
+timing probe by name (it infers the clock from throughput and read 0.35 GHz emulated), and prints the denominator: on 2026-10-04, 216 tests in 1 min 25 s on 4 jobs, 156 ok, 60 skipped by the tests themselves,
+none SIGILL, timed out or failed. **Shown red:** a throwaway test calling `dotI8SDOT` with no guard fails the run as `SIGILL`, named. No library code changed.
 
 ## [1.55.0] — 2026-10-04
 
@@ -5015,7 +5028,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.55.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.56.0...HEAD
+[1.56.0]: https://github.com/townsendmerino/aikit/compare/v1.55.0...v1.56.0
 [1.55.0]: https://github.com/townsendmerino/aikit/compare/v1.54.0...v1.55.0
 [1.54.0]: https://github.com/townsendmerino/aikit/compare/v1.53.0...v1.54.0
 [1.53.0]: https://github.com/townsendmerino/aikit/compare/v1.52.0...v1.53.0
