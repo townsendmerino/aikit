@@ -3,7 +3,7 @@ module github.com/townsendmerino/aikit/gpu/visioncuda
 go 1.27.0
 
 require (
-	github.com/townsendmerino/aikit v1.56.1
+	github.com/townsendmerino/aikit v1.57.0
 	github.com/townsendmerino/aikit/gpu v0.33.5
 )
 
