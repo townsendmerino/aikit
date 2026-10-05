@@ -13,7 +13,7 @@ excluded from that promise and may change in any release until it graduates.
 
 The v1.54.0, v1.55.0 and v1.56.0 notes, the `aikit_nodotprod` tag's comments and the `qemu-nodotprod` job describe the code a core without DotProd runs as "the base SMULL/SADALP kernels". That is true of the int8 dot
 (`dotI8NEON`). It is **not true of int4 W4A8**: `dotW4A8` has an SDOT kernel and no non-DotProd one, so without DotProd it falls back to the pure-Go scalar reference `dotW4A8Scalar`, which `TestDotProdVsBase_AB`
-measured at roughly 28x slower than the SDOT/row4 path on a Cobalt 100 (an out-of-spec first run; the registered one is pending). Windows on ARM ran that scalar path for every int4 matmul before v1.56.0. Nothing in the code changed for this.
+measured at about 28x slower than the SDOT/row4 path for decode and about 36x for prefill on a Cobalt 100 (a pre-registered kernel-level A/B, run on both ubuntu-24.04-arm and windows-11-arm with the same result; int8 is about 1.5x and 4x; the whole-token effect is smaller and unmeasured; goinfer `docs/measurements/dotprod-windows-arm-2026-10-04.md`). Windows on ARM ran that scalar path for every int4 matmul before v1.56.0. Nothing in the code changed for this.
 
 ### Added — an on-demand DotProd-versus-base A/B (`dotprod-ab`, `linalg/dotprod_ab_arm64_test.go`)
 
