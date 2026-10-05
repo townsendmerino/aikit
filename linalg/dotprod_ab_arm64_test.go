@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
 // DotProd versus the base SMULL/SADALP kernels, interleaved in ONE process, on the production decode and prefill projections of Qwen2.5 0.5B / 1.5B / 7B
@@ -54,13 +53,46 @@ func abEnvInt(name string, def int) int {
 	return def
 }
 
-// abTime runs fn n times and returns ns per call.
+// abTime runs fn n times and returns ns per call, on the platform's high-resolution clock (abNow).
 func abTime(n int, fn func()) float64 {
-	t0 := time.Now()
+	t0 := abNow()
 	for i := 0; i < n; i++ {
 		fn()
 	}
-	return float64(time.Since(t0).Nanoseconds()) / float64(n)
+	return float64(abNow()-t0) / float64(n)
+}
+
+// abCalibrate returns how many calls of fn make one timed block at least blockNs long, measured on fn ITSELF: each arm is calibrated separately, because the arms differ by up to ~30x and a block sized
+// for the slow one is a fraction of a millisecond for the fast one (the first run's defect: below Windows' clock tick there, and 0.7 ms against a pre-registered 20 ms on Linux).
+func abCalibrate(fn func(), blockNs float64) int {
+	n := 1
+	for {
+		total := abTime(n, fn) * float64(n)
+		if total >= 2e6 || n >= 1<<20 { // at least 2 ms measured: a per-call figure we can trust
+			per := total / float64(n)
+			if per <= 0 {
+				return 1 << 20
+			}
+			return int(math.Min(200000, math.Max(1, math.Ceil(blockNs/per))))
+		}
+		n *= 2
+	}
+}
+
+// abClockTick is the smallest positive step the clock was seen to take, in ns: logged, and the floor under every block.
+func abClockTick() int64 {
+	best := int64(math.MaxInt64)
+	for i := 0; i < 200; i++ {
+		t0 := abNow()
+		t1 := abNow()
+		for t1 == t0 {
+			t1 = abNow()
+		}
+		if d := t1 - t0; d < best {
+			best = d
+		}
+	}
+	return best
 }
 
 type abArm struct {
@@ -82,6 +114,7 @@ func TestDotProdVsBase_AB(t *testing.T) {
 	blockNs := float64(abEnvInt("AIKIT_DOTPROD_AB_BLOCK_MS", 20)) * 1e6
 	t.Logf("DotProd A/B: arch %s/%s, %d logical CPUs, GOMAXPROCS %d, %d rounds per cell (alternating arm order), >=%.0f ms per timed block", runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.GOMAXPROCS(0), rounds, blockNs/1e6)
 	t.Logf("ActiveKernels = %+v", ActiveKernels())
+	t.Logf("clock: %s, smallest tick seen %d ns", abClockName(), abClockTick())
 
 	var m1Verdicts []abVerdict
 	var slowerCells []string
@@ -117,15 +150,17 @@ func TestDotProdVsBase_AB(t *testing.T) {
 						if d := abRelDiff(dst[0], dst[1]); d > 1e-4 {
 							t.Fatalf("%s: base and dot results differ by %.2e relative: not the same computation, so a timing would be meaningless", label, d)
 						}
-						// Calibrate the block length on the base arm, then alternate.
-						hasDotProd = arms[0].dot
-						n := 1
-						if t1 := abTime(1, func() { run(0) }); t1 < blockNs {
-							n = int(math.Min(2000, math.Ceil(blockNs/math.Max(t1, 1))))
+						// Calibrate EACH arm's block length on that arm, then alternate.
+						ns := make([]float64, len(arms))
+						n := make([]int, len(arms))
+						for i := range arms {
+							hasDotProd = arms[i].dot
+							run(i)
+							n[i] = abCalibrate(func() { run(i) }, blockNs)
 						}
 						ratios := make([][]float64, len(arms)-1) // base / arm_i for each non-base arm
 						var baseFirst []bool
-						ns := make([]float64, len(arms))
+						minBlock := math.MaxFloat64
 						for r := 0; r < rounds; r++ {
 							order := make([]int, len(arms))
 							for i := range order {
@@ -140,17 +175,26 @@ func TestDotProdVsBase_AB(t *testing.T) {
 							for _, i := range order {
 								hasDotProd = arms[i].dot
 								run(i) // warm this arm after the switch
-								ns[i] = abTime(n, func() { run(i) })
+								ns[i] = abTime(n[i], func() { run(i) })
+								if math.IsNaN(ns[i]) || ns[i] <= 0 {
+									t.Fatalf("%s: arm %s timed %v ns per call: the clock did not advance over the block, so the result is not a measurement", label, arms[i].name, ns[i])
+								}
+								if b := ns[i] * float64(n[i]); b < minBlock {
+									minBlock = b
+								}
 							}
 							for i := 1; i < len(arms); i++ {
 								ratios[i-1] = append(ratios[i-1], ns[0]/ns[i])
 							}
 							baseFirst = append(baseFirst, first)
 						}
+						if minBlock < 0.9*blockNs {
+							t.Fatalf("%s: the shortest timed block was %.2f ms, under the %.0f ms the pre-registration requires", label, minBlock/1e6, blockNs/1e6)
+						}
 						for i := 1; i < len(arms); i++ {
 							c := abSummarize(ratios[i-1], baseFirst)
 							v := abClassify(c)
-							t.Logf("AB %-62s %-9s speedup median %.3f IQR [%.3f, %.3f] faster-rounds %.0f%% base-first %.3f dot-first %.3f -> %s", label, "base/"+arms[i].name, c.Median, c.Q1, c.Q3, 100*c.FracFaster, c.MedianFwd, c.MedianRev, v)
+							t.Logf("AB %-62s %-9s speedup median %.3f IQR [%.3f, %.3f] faster-rounds %.0f%% base-first %.3f dot-first %.3f min-block %.1f ms -> %s", label, "base/"+arms[i].name, c.Median, c.Q1, c.Q3, 100*c.FracFaster, c.MedianFwd, c.MedianRev, minBlock/1e6, v)
 							if arms[i].name == "dot" {
 								if M == 1 {
 									m1Verdicts = append(m1Verdicts, v)
