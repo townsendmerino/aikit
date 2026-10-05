@@ -66,21 +66,35 @@ func (w *WeightMat) RepackInt4Row4() bool {
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
-	if g := w.groupFor(ws); g > 0 {
-		if w.q4Row4 != nil && M == 1 {
-			// matmulBTW4A8Row4F16Into takes its per-32 kernel path (or the reference) itself.
-			matmulBTW4A8Row4F16Into(ws, a, w.q4Row4, w.q4Row4Scales16, dst, w.cols, w.rows, w.group)
-			return
-		}
-		matmulW4A8Grouped(ws, g, a, w.int4Layout(), dst, M, w.rows) // actgroup.go
+	q := quantizeActScratch(ws, w.w4a8ActGroup(ws, M), a, M, w.cols)
+	w.matmulBTW4A8Q(ws, &q, dst, M)
+}
+
+// w4a8ActGroup is the activation group MatmulBTW4A8Into quantizes with: w.groupFor(ws), except that the row4 M=1
+// path reads the workspace's own group (matmulBTW4A8Row4F16Into's actGroupFor), as it always has. The two differ only
+// when w carries a group the workspace does not.
+func (w *WeightMat) w4a8ActGroup(ws *Workspace, M int) int {
+	g := w.groupFor(ws)
+	if g > 0 && w.q4Row4 != nil && M == 1 {
+		return actGroupFor(ws)
+	}
+	return g
+}
+
+// matmulBTW4A8Q is MatmulBTW4A8Into after its activation quantization: the dispatch it and MatmulBTW4A8PreInto
+// share (R-13).
+func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) {
+	if w.q4Row4 != nil && M == 1 {
+		// matmulBTW4A8Row4F16Q takes its per-32 kernel path (or the reference) itself on a grouped q.
+		matmulBTW4A8Row4F16Q(ws, q, w.q4Row4, w.q4Row4Scales16, dst, w.cols, w.rows, w.group)
+		return
+	}
+	if q.Group > 0 {
+		matmulW4A8GroupedQ(ws, q, w.int4Layout(), dst, M, w.rows) // actgroup.go
 		return
 	}
 	if w.q4Row4 != nil {
-		if M == 1 {
-			matmulBTW4A8Row4F16Into(ws, a, w.q4Row4, w.q4Row4Scales16, dst, w.cols, w.rows, w.group)
-			return
-		}
-		matmulBTW4A8Row4TileF16Into(ws, a, w.q4Row4, w.q4Row4Scales16, dst, M, w.cols, w.rows, w.group)
+		matmulBTW4A8Row4TileF16Q(ws, q, w.q4Row4, w.q4Row4Scales16, dst, M, w.cols, w.rows, w.group)
 		return
 	}
 	// audit M-22: structurally unreachable for a repacked-only WeightMat —
@@ -93,7 +107,7 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 		panic(fmt.Sprintf("linalg: WeightMat.MatmulBTW4A8Into: no canonical and no row4 layout "+
 			"(rows=%d cols=%d) — nothing to dispatch to", w.rows, w.cols))
 	}
-	MatmulBTW4A8F16Into(ws, a, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
+	matmulBTW4A8F16Q(ws, q, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
 }
 
 // row4Usable reports whether this CPU can safely dispatch the split-half +

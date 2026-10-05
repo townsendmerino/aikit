@@ -71,12 +71,22 @@ func (w *WeightMat) RepackInt4SplitHalf() bool {
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
-	if g := w.groupFor(ws); g > 0 {
-		matmulW4A8Grouped(ws, g, a, w.int4Layout(), dst, M, w.rows) // actgroup.go
+	q := quantizeActScratch(ws, w.w4a8ActGroup(ws, M), a, M, w.cols)
+	w.matmulBTW4A8Q(ws, &q, dst, M)
+}
+
+// w4a8ActGroup is the activation group MatmulBTW4A8Into quantizes with (R-13).
+func (w *WeightMat) w4a8ActGroup(ws *Workspace, _ int) int { return w.groupFor(ws) }
+
+// matmulBTW4A8Q is MatmulBTW4A8Into after its activation quantization: the dispatch it and MatmulBTW4A8PreInto
+// share (R-13).
+func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) {
+	if q.Group > 0 {
+		matmulW4A8GroupedQ(ws, q, w.int4Layout(), dst, M, w.rows) // actgroup.go
 		return
 	}
 	if w.q4SplitHalf != nil {
-		matmulBTW4A8SplitHalfF16Into(ws, a, w.q4SplitHalf, w.q4s16, dst, M, w.cols, w.rows, w.group)
+		matmulBTW4A8SplitHalfF16Q(ws, q, w.q4SplitHalf, w.q4s16, dst, M, w.cols, w.rows, w.group)
 		return
 	}
 	// audit M-22: structurally unreachable for a successfully-constructed
@@ -91,7 +101,7 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 		panic(fmt.Sprintf("linalg: WeightMat.MatmulBTW4A8Into: no split-half and no canonical layout "+
 			"(rows=%d cols=%d) — nothing to dispatch to", w.rows, w.cols))
 	}
-	MatmulBTW4A8F16Into(ws, a, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
+	matmulBTW4A8F16Q(ws, q, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
 }
 
 // matmulBTW4A8SplitHalfInto is MatmulBTW4A8Into's M=1 split-half twin. It mirrors that function's
@@ -162,13 +172,10 @@ func w4a8BatchSplitHalfSpan(aq []int8, aScale float32, splitHalf []byte, scales,
 // final per-row activation multiply. The first version formed those combined scales in Go, per row,
 // into a scratch array: ~20% extra work on a small matmul, the 1.5B speed-gate FAIL
 // (docs/tasks/task-actquant-pergroup-2026-09.md). Matches matmulW4A8GroupedRef to accumulation order
-// (TestActGroup_splitHalfKernelMatchesReference).
-func matmulBTW4A8SplitHalfGroupedInto(ws *Workspace, a []float32, w4sh []byte, wScales, dst []float32, K, N int) {
+// (TestActGroup_splitHalfKernelMatchesReference). It takes one activation row already quantized per 32 (R-13).
+func matmulBTW4A8SplitHalfGroupedQ(ws *Workspace, aq []int8, aS []float32, w4sh []byte, wScales, dst []float32, K, N int) {
 	const group = 32
 	nGroups, bpr := groupsFor(K, group)
-	aq := ws.int8Buf(K)
-	aS := ws.f32Buf(nGroups)
-	QuantizeActivationsGroupedInto(aq, aS, a[:K], 1, K, group)
 	span := func(j0, j1 int) {
 		for j := j0; j < j1; j++ {
 			dst[j] = dotW4A8SplitHalfScaledAVX2(&aq[0], &w4sh[j*bpr], &wScales[j*nGroups], &aS[0], nGroups)
@@ -181,18 +188,21 @@ func matmulBTW4A8SplitHalfGroupedInto(ws *Workspace, a []float32, w4sh []byte, w
 	ws.parallel(N, span)
 }
 
-// w4a8GroupedFastRows serves matmulW4A8Grouped from the split-half AVX2 kernel, one activation row at
+// w4a8GroupedFastRowsQ serves matmulW4A8GroupedQ from the split-half AVX2 kernel, one activation row at
 // a time (M>1 loses the tiles' weight reuse but keeps SIMD). false when the layout or CPU cannot.
-func w4a8GroupedFastRows(ws *Workspace, a []float32, l int4Layout, dst []float32, M, N int) bool {
+// It takes the activation already quantized per 32 for all M rows (R-13); the grouped quantizer is row-independent.
+func w4a8GroupedFastRowsQ(ws *Workspace, q *ActQ, l int4Layout, dst []float32, M, N int) bool {
 	if l.sh == nil || !splitHalfUsable() {
 		return false
 	}
 	K := l.K
+	nG := K / 32
 	for m := range M {
+		aq, aS := q.Q[m*K:(m+1)*K], q.S[m*nG:(m+1)*nG]
 		if l.wS != nil {
-			matmulBTW4A8SplitHalfGroupedInto(ws, a[m*K:(m+1)*K], l.sh, l.wS, dst[m*N:(m+1)*N], K, N)
+			matmulBTW4A8SplitHalfGroupedQ(ws, aq, aS, l.sh, l.wS, dst[m*N:(m+1)*N], K, N)
 		} else {
-			matmulBTW4A8SplitHalfGroupedF16Into(ws, a[m*K:(m+1)*K], l.sh, l.wS16, dst[m*N:(m+1)*N], K, N)
+			matmulBTW4A8SplitHalfGroupedF16Q(ws, aq, aS, l.sh, l.wS16, dst[m*N:(m+1)*N], K, N)
 		}
 	}
 	return true

@@ -17,15 +17,25 @@ import "fmt"
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
-	if g := w.groupFor(ws); g > 0 {
-		matmulW4A8Grouped(ws, g, a, w.int4Layout(), dst, M, w.rows) // actgroup.go
+	q := quantizeActScratch(ws, w.w4a8ActGroup(ws, M), a, M, w.cols)
+	w.matmulBTW4A8Q(ws, &q, dst, M)
+}
+
+// w4a8ActGroup is the activation group MatmulBTW4A8Into quantizes with (R-13).
+func (w *WeightMat) w4a8ActGroup(ws *Workspace, _ int) int { return w.groupFor(ws) }
+
+// matmulBTW4A8Q is MatmulBTW4A8Into after its activation quantization: the dispatch it and MatmulBTW4A8PreInto
+// share (R-13).
+func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) {
+	if q.Group > 0 {
+		matmulW4A8GroupedQ(ws, q, w.int4Layout(), dst, M, w.rows) // actgroup.go
 		return
 	}
 	if w.q4 == nil {
 		panic(fmt.Sprintf("linalg: WeightMat.MatmulBTW4A8Into: no canonical int4 bytes (rows=%d cols=%d) "+
 			"and this target has no repacked layout to fall back to", w.rows, w.cols))
 	}
-	MatmulBTW4A8F16Into(ws, a, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
+	matmulBTW4A8F16Q(ws, q, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
 }
 
 // RepackInt4SplitHalf is a no-op off amd64: the split-half layout's only consumer is the AVX2

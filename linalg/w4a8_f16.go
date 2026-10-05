@@ -27,14 +27,19 @@ func getScaleBuf(n int) *[]float32 {
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTW4A8F16Into(ws *Workspace, a []float32, w4 []byte, wScales16 []uint16, dst []float32, M, K, N, group int) {
 	checkMatmulW4A8("MatmulBTW4A8F16", len(a), len(w4), len(wScales16), len(dst), M, K, N, group)
-	if g := actGroupFor(ws); g > 0 {
-		matmulW4A8Grouped(ws, g, a, int4Layout{w4: w4, wS16: wScales16, group: group, K: K}, dst, M, N) // actgroup.go
+	q := quantizeActScratch(ws, actGroupFor(ws), a, M, K)
+	matmulBTW4A8F16Q(ws, &q, w4, wScales16, dst, M, K, N, group)
+}
+
+// matmulBTW4A8F16Q is MatmulBTW4A8F16Into after its activation quantization: the dispatch both it and
+// MatmulBTW4A8F16Pre run, so the two cannot drift (R-13).
+func matmulBTW4A8F16Q(ws *Workspace, q *ActQ, w4 []byte, wScales16 []uint16, dst []float32, M, K, N, group int) {
+	if q.Group > 0 {
+		matmulW4A8GroupedQ(ws, q, int4Layout{w4: w4, wS16: wScales16, group: group, K: K}, dst, M, N) // actgroup.go
 		return
 	}
 	nGroups, bpr := groupsFor(K, group)
-	aq := ws.int8Buf(M * K)
-	aScales := ws.f32Buf(M)
-	quantizeRowsInto(aq, aScales, a, M, K, ws.width)
+	aq, aScales := q.Q, q.S
 	if M*N*K < ws.thr() || N < 2 {
 		w4a8SpanF16(aq, aScales, w4, wScales16, dst, M, K, N, group, nGroups, bpr, 0, N)
 		return

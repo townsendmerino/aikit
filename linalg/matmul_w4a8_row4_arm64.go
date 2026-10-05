@@ -183,11 +183,17 @@ func w4a8Row4Span(aq []int8, corr []int32, aScale float32, w4Row4 []byte, wScale
 // product exactly. The S-05 fold's -8 correction is integer per group and is unaffected. Matches
 // matmulW4A8GroupedRef to accumulation order (TestActGroup_row4KernelMatchesReference).
 func matmulBTW4A8Row4GroupedInto(ws *Workspace, a []float32, w4Row4 []byte, wScales4, dst []float32, K, N int) {
-	const group = 32
-	nGroups, bpr := groupsFor(K, group)
+	nGroups, _ := groupsFor(K, 32)
 	aq := ws.int8Buf(K)
 	aS := ws.f32Buf(nGroups)
-	QuantizeActivationsGroupedInto(aq, aS, a[:K], 1, K, group)
+	QuantizeActivationsGroupedInto(aq, aS, a[:K], 1, K, 32)
+	matmulBTW4A8Row4GroupedQ(ws, aq, aS, w4Row4, wScales4, dst, K, N)
+}
+
+// matmulBTW4A8Row4GroupedQ is matmulBTW4A8Row4GroupedInto on one activation row already quantized per 32 (aq, aS) (R-13).
+func matmulBTW4A8Row4GroupedQ(ws *Workspace, aq []int8, aS []float32, w4Row4 []byte, wScales4, dst []float32, K, N int) {
+	const group = 32
+	nGroups, bpr := groupsFor(K, group)
 	var corr []int32
 	if w4a8RowFold {
 		corr = ws.int32Buf(4 * nGroups)
@@ -219,18 +225,22 @@ func matmulBTW4A8Row4GroupedInto(ws *Workspace, a []float32, w4Row4 []byte, wSca
 	ws.parallel(nQuads, span)
 }
 
-// w4a8GroupedFastRows serves matmulW4A8Grouped from the row4 kernels, one activation row at a time.
+// w4a8GroupedFastRowsQ serves matmulW4A8GroupedQ from the row4 kernels, one activation row at a time.
 // false when the layout is not row4.
-func w4a8GroupedFastRows(ws *Workspace, a []float32, l int4Layout, dst []float32, M, N int) bool {
+// It takes the activation already quantized per 32 for all M rows (R-13): each row's codes and scales are the
+// slices the per-row quantization produced, the grouped quantizer being row-independent.
+func w4a8GroupedFastRowsQ(ws *Workspace, q *ActQ, l int4Layout, dst []float32, M, N int) bool {
 	if l.r4 == nil || N%4 != 0 {
 		return false
 	}
 	K := l.K
+	nG := K / 32
 	for m := range M {
+		aq, aS := q.Q[m*K:(m+1)*K], q.S[m*nG:(m+1)*nG]
 		if l.r4S != nil {
-			matmulBTW4A8Row4GroupedInto(ws, a[m*K:(m+1)*K], l.r4, l.r4S, dst[m*N:(m+1)*N], K, N)
+			matmulBTW4A8Row4GroupedQ(ws, aq, aS, l.r4, l.r4S, dst[m*N:(m+1)*N], K, N)
 		} else {
-			matmulBTW4A8Row4GroupedF16Into(ws, a[m*K:(m+1)*K], l.r4, l.r4S16, dst[m*N:(m+1)*N], K, N)
+			matmulBTW4A8Row4GroupedF16Q(ws, aq, aS, l.r4, l.r4S16, dst[m*N:(m+1)*N], K, N)
 		}
 	}
 	return true

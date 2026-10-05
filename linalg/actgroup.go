@@ -236,12 +236,18 @@ func (l int4Layout) row(n int, codes []int8, scales []float32) {
 // dst[m,n] = Σ_seg aS[m,·]·wS[n,·]·Σ_{k∈seg} aq[m,k]·code[n,k]. Mathematically the same product the
 // per-row kernels compute, with the activation scale moved inside the sum.
 func matmulW4A8GroupedRef(ws *Workspace, g int, a []float32, l int4Layout, dst []float32, M, N int) {
-	K := l.K
+	aq, aS, _ := quantizeActGrouped(ws, g, a, M, l.K)
+	matmulW4A8GroupedRefQ(ws, &ActQ{Q: aq, S: aS, M: M, K: l.K, Group: g}, l, dst, M, N)
+}
+
+// matmulW4A8GroupedRefQ is matmulW4A8GroupedRef on an activation already quantized per q.Group (R-13).
+func matmulW4A8GroupedRefQ(ws *Workspace, q *ActQ, l int4Layout, dst []float32, M, N int) {
+	K, g := l.K, q.Group
 	if l.sh != nil || l.r4 != nil {
 		l.group = 32
 	}
 	checkGroups(g, l.group)
-	aq, aS, nG := quantizeActGrouped(ws, g, a, M, K)
+	aq, aS, nG := q.Q, q.S, (K+g-1)/g
 	wG := (K + l.group - 1) / l.group
 	refParallel(ws, N, func(n0, n1 int) {
 		codes := make([]int8, K)
@@ -266,23 +272,31 @@ func (w *WeightMat) int4Layout() int4Layout {
 // arm64 row4), else the canonical dotW4A8. Anything else (other group sizes, ragged K) takes the
 // Go reference.
 func matmulW4A8Grouped(ws *Workspace, g int, a []float32, l int4Layout, dst []float32, M, N int) {
-	K := l.K
+	aq, aS, _ := quantizeActGrouped(ws, g, a, M, l.K)
+	matmulW4A8GroupedQ(ws, &ActQ{Q: aq, S: aS, M: M, K: l.K, Group: g}, l, dst, M, N)
+}
+
+// matmulW4A8GroupedQ is matmulW4A8Grouped after its activation quantization (per q.Group): the dispatch the
+// quantizing entry and every W4A8 Pre entry run, so they cannot drift (R-13). Every kernel below reads the
+// activation only through q, so a block quantized once can feed any number of these calls.
+func matmulW4A8GroupedQ(ws *Workspace, q *ActQ, l int4Layout, dst []float32, M, N int) {
+	K, g := l.K, q.Group
 	if g == 32 && K%32 == 0 && K >= 32 {
-		if (l.sh != nil || l.r4 != nil) && w4a8GroupedFastRows(ws, a, l, dst, M, N) {
+		if (l.sh != nil || l.r4 != nil) && w4a8GroupedFastRowsQ(ws, q, l, dst, M, N) {
 			return
 		}
 		if l.w4 != nil && l.group == 32 {
-			matmulW4A8CanonicalGrouped(ws, a, l, dst, M, K, N)
+			matmulW4A8CanonicalGroupedQ(ws, q, l, dst, M, K, N)
 			return
 		}
 	}
-	matmulW4A8GroupedRef(ws, g, a, l, dst, M, N)
+	matmulW4A8GroupedRefQ(ws, q, l, dst, M, N)
 }
 
-// matmulW4A8CanonicalGrouped runs the canonical-layout dotW4A8 kernel (every arch) with combined
+// matmulW4A8CanonicalGroupedQ runs the canonical-layout dotW4A8 kernel (every arch) with combined
 // per-group scales, for per-32 activations over 32-wide weight groups.
-func matmulW4A8CanonicalGrouped(ws *Workspace, a []float32, l int4Layout, dst []float32, M, K, N int) {
-	aq, aS, nG := quantizeActGrouped(ws, 32, a, M, K)
+func matmulW4A8CanonicalGroupedQ(ws *Workspace, q *ActQ, l int4Layout, dst []float32, M, K, N int) {
+	aq, aS, nG := q.Q, q.S, (K+31)/32
 	bpr := (K + 1) / 2
 	w4 := l.w4
 	parallelFor(ws, M*N*K, N, func(n0, n1 int) {

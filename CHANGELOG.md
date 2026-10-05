@@ -9,6 +9,21 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added — W4A8 on an activation quantized once (goinfer audit R-13); the grouped batch quantizes once (R-14)
+
+A caller that runs several W4A8 projections over one input (q, k and v of one normed row; gate and up; every routed expert of a MoE layer) re-quantized the same activation in every call. Quantization is deterministic, so the
+repeats were dead work.
+- **New:** `ActQ`, `QuantizeActQ` and `WeightMat.QuantizeActW4A8` quantize once (one scale per row, or per group, as the matching entry would), and `WeightMat.MatmulBTW4A8PreInto` and `MatmulBTW4A8F16Pre` run the W4A8 kernels on
+  it. A block quantized for the wrong M, K or activation group is refused, not run.
+- **Bit-identical by construction:** every quantizing W4A8 entry (`WeightMat.MatmulBTW4A8Into` on each arch, `MatmulBTW4A8F16Into`, the grouped dispatch and its fast-rows, canonical and reference kernels, the arm64 row4
+  decode and tile paths, the amd64 split-half paths) is now "quantize into scratch, then the shared dispatch", and the Pre entries are that dispatch. The internal quantizing wrappers that only fed it are removed.
+- **`MatmulBTW4A8Batch` with an activation group** quantized `a` once per op; it now quantizes once for the batch (into the workspace's own `batchQ`, apart from the kernels' scratch). Its single fork/join across ops, and the
+  grouped fast rows' per-row scale widening at M > 1, are not changed here.
+- **Gates:** `TestW4A8Pre_bitIdenticalToQuantizingEntry` (canonical and repacked layouts, M = 1-5, groups 0, 32 and 64, one block feeding two weights, and the free function), `TestW4A8Pre_refusesAMismatchedBlock`,
+  `TestW4A8Batch_groupedQuantizesOnceBitIdentical`. A mutation that quantizes per row whatever the group fails the first; one that hands every row row 0's scales in the shared fast-rows path fails the existing
+  `TestActGroup_row4MultiRow` (the shared path's own tests carry it, since both entries run it). `linalg` passes on arm64 (default, `aikit_nodotprod`, `aikit_checks`) and on amd64 under Rosetta, which has no AVX2: the
+  split-half kernels skip there and want an AVX2 box.
+
 ### Tests — the two tiny vision checkpoints are committed, so their parity tests run on a clean checkout (found by the gpu gate, 2026-10-05)
 
 `testdata/siglip-tiny` (134 KB) and `testdata/qwen25vl-vision-tiny` (791 KB) were gitignored and regenerated per machine, while their goldens (`siglip_vision_golden.json`, `qwen25vl_vision_golden.json`) were committed. On any clean

@@ -981,6 +981,10 @@ func MatmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []W4A8Op
 		totalN += op.N
 	}
 	if g := actGroupFor(ws); g > 0 {
+		// One quantization for the batch (R-14): each op used to quantize a again inside matmulW4A8Grouped. The
+		// block is the workspace's own (batchQ), apart from the scratch the kernels draw on, and every op's kernel
+		// reads only it, so each op's output is the bits its own quantizing call gave.
+		QuantizeActQ(a, M, K, g, &ws.batchQ)
 		for _, op := range ops {
 			l := int4Layout{w4: op.W4, sh: op.SplitHalf, r4: op.Row4, wS: op.Scales, r4S: op.Row4Scales, group: group, K: K}
 			if op.ScalesF16 != nil {
@@ -989,7 +993,7 @@ func MatmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []W4A8Op
 			if op.Row4ScalesF16 != nil {
 				l.r4S, l.r4S16 = nil, op.Row4ScalesF16
 			}
-			matmulW4A8Grouped(ws, g, a, l, op.Dst, M, op.N) // actgroup.go
+			matmulW4A8GroupedQ(ws, &ws.batchQ, l, op.Dst, M, op.N) // actgroup.go
 		}
 		return
 	}
