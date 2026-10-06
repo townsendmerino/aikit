@@ -50,6 +50,10 @@ projection) from the last layer's output, so a GPU tower and the CPU share one t
 1.000000000 with the fixture's clip bounds on and random position tables (the fixture's own are all ones, which hid a
 swapped table); a dropped clamp, an unnormalised v, swapped tables and the wrong RoPE theta each turn it red.
 
+### Tests — the Qwen3.5 vision tower's tiny checkpoint is committed, so its parity test runs on a clean checkout (found by the 2026-10-06 queue review)
+
+`testdata/qwen35vl-vision-tiny` (584 KB) was untracked and its `*.safetensors` weights gitignored, while its golden (`testdata/qwen35vl_vision_golden.json`) was committed. On a clean checkout, CI included, `TestQwen3VisionEncoder_parity` (`vision/`; the checkpoint's only parity test) therefore skipped and counted as green (checked at the parent commit: it SKIPs there and PASSes here, in a fresh worktree each; the other two Qwen3 vision tests do not use the tiny checkpoint): the same hole the two other tiny vision checkpoints had until 2026-10-05. The checkpoint is now tracked (a `!` rule after `*.safetensors`, like `siglip-tiny` and `qwen25vl-vision-tiny`); the committed pair passes locally and in a fresh worktree (see the commit). No library code changed.
+
 ## [1.57.0] — 2026-10-05
 
 `perfgate` VERDICT: PASS — no regression vs v1.56.1 above each shape's floor — 8/47 shapes resolve the 5.0% class

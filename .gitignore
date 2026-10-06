@@ -27,6 +27,7 @@ testdata/gemma-3-270m
 !testdata/glm-ocr-vision-tiny/model.safetensors
 !testdata/siglip-tiny/model.safetensors
 !testdata/qwen25vl-vision-tiny/model.safetensors
+!testdata/qwen35vl-vision-tiny/model.safetensors
 
 # Go
 *.test

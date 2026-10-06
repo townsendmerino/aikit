@@ -4,7 +4,7 @@ removed) as an aikit parity golden. The third ViT family after SigLIP and Qwen2.
 
 Two modes, both CPU float32:
 
-  tiny (default; sub-second, no download; the checkpoint is gitignored and regenerated here)
+  tiny (default; sub-second, no download; the checkpoint is COMMITTED with its golden, since each golden is valid only against its exact weights: regenerating rewrites both, so commit both together)
       A small random Qwen3_5VisionModel with REAL structure — biased Conv3d patch embed, learned
       square pos table resampled by bilinear/align_corners interpolation, 2D rotary, full
       attention, LayerNorm with bias, non-gated gelu-tanh MLP, erf merger, deepstack []. Weights
