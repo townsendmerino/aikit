@@ -54,12 +54,29 @@ func Gemma4AspectRatioSize(height, width, maxSoftTokens, patchSize, poolingKerne
 	return targetH, targetW
 }
 
+// Gemma4Resize chooses Gemma4PreprocessResize's resampler.
+type Gemma4Resize int
+
+const (
+	// Gemma4Bicubic is the reference processor's resize (torchvision's antialiased bicubic on uint8, resample=3,
+	// ResizeBicubicAA), skipped when the image is already at its target size, as the processor skips it. The default.
+	Gemma4Bicubic Gemma4Resize = iota
+	// Gemma4Bilinear is aikit's bilinear resize, Gemma4Preprocess's only one before v1.58.0.
+	Gemma4Bilinear
+)
+
 // Gemma4Preprocess decodes image bytes and returns pre-unfolded patches
 // [numPatches, 3*patchSize*patchSize] ([0,1]-scaled, no mean/std) plus per-patch
 // (x,y) grid position ids, both in row-major (row,col) patch order — the input
 // Gemma4Encoder.Forward expects. maxSoftTokens must be one of the five legal
-// budgets {70,140,280,560,1120} (0 defaults to HF's own default, 280).
+// budgets {70,140,280,560,1120} (0 defaults to HF's own default, 280). It resizes
+// as the reference processor does (Gemma4Bicubic; bilinear before v1.58.0).
 func Gemma4Preprocess(data []byte, maxSoftTokens int) ([]float32, [][2]int, error) {
+	return Gemma4PreprocessResize(data, maxSoftTokens, Gemma4Bicubic)
+}
+
+// Gemma4PreprocessResize is Gemma4Preprocess with the resampler chosen.
+func Gemma4PreprocessResize(data []byte, maxSoftTokens int, resize Gemma4Resize) ([]float32, [][2]int, error) {
 	const patchSize = 16
 	const poolingKernelSize = 3
 	const maxPixels = 16 << 20 // decompression-bomb guard, same bound as Gemma3()
@@ -87,9 +104,36 @@ func Gemma4Preprocess(data []byte, maxSoftTokens int) ([]float32, [][2]int, erro
 	if targetH < patchSize || targetW < patchSize {
 		return nil, nil, fmt.Errorf("vision: resize target %dx%d smaller than one patch (%d)", targetH, targetW, patchSize)
 	}
-	hwc := gemma4ResizeToHWC01(img, targetH, targetW)
+	var hwc []float32
+	switch resize {
+	case Gemma4Bicubic:
+		hwc = gemma4BicubicToHWC01(img, ic.Height, ic.Width, targetH, targetW)
+	case Gemma4Bilinear:
+		hwc = gemma4ResizeToHWC01(img, targetH, targetW)
+	default:
+		return nil, nil, fmt.Errorf("vision: unknown Gemma4Resize %d", resize)
+	}
 	patches, positionIDs := gemma4Unfold(hwc, targetH, targetW, patchSize)
 	return patches, positionIDs, nil
+}
+
+// gemma4BicubicToHWC01 is the reference resize (ResizeBicubicAA on the uint8 RGB image, alpha dropped as PIL's
+// convert("RGB") drops it) and the [0,1] rescale (x/255 in f32, as the processor's rescale).
+func gemma4BicubicToHWC01(img image.Image, h, w, targetH, targetW int) []float32 {
+	nr := toNRGBA(img)
+	rgb := make([]uint8, h*w*3)
+	for y := range h {
+		row := nr.Pix[y*nr.Stride:]
+		for x := range w {
+			copy(rgb[(y*w+x)*3:(y*w+x)*3+3], row[x*4:x*4+3])
+		}
+	}
+	px := ResizeBicubicAA(rgb, h, w, targetH, targetW)
+	out := make([]float32, len(px))
+	for i, v := range px {
+		out[i] = float32(v) / 255
+	}
+	return out
 }
 
 // gemma4ResizeToHWC01 bilinearly resizes img to targetH×targetW (independent

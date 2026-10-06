@@ -9,6 +9,21 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Changed — `vision.Gemma4Preprocess` resizes like the reference processor: torchvision's antialiased bicubic, bit for bit
+
+`Gemma4Preprocess` now resizes with **`ResizeBicubicAA`** (new, exported): torchvision's antialiased bicubic on the uint8
+image, as `Gemma4ImageProcessor` does (`resample=3`). The resize is skipped when the image is already at its target size.
+It used to be bilinear. `Gemma4PreprocessResize(data, budget, Gemma4Bilinear)` keeps the old resampler.
+
+**Checked:**
+- `TestResizeBicubicAA_matchesTorchvision` equals torchvision 0.29.1 on 12 seeded cases, every value (golden and pin
+  script in `testdata/bicubic-resize/`, `scripts/pin_bicubic_resize.py`). Three planted defects turn it red.
+- In goinfer, transformers' `Gemma4ImageProcessor` gives the same pixels (SHA-256 equal) on four real images.
+- EmbeddingGemma 2's image embeddings read 1.000000000 against sentence-transformers through it.
+
+The resize was moved here from goinfer's `embeddinggemma2`, so Gemma 4 and EmbeddingGemma 2 share one copy. Also
+corrected: `vision/preprocess.go`'s note said Gemma 3's processor is bicubic; its config says bilinear (`resample: 2`).
+
 ### Added — `audio`: Gemma 4's audio tower (gemma4_audio) and its log-mel front end, in pure Go
 
 New package `audio`.

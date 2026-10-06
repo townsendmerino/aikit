@@ -4,11 +4,13 @@
 // decoded pixel count BEFORE decoding so a hostile/corrupt image yields a typed
 // error, never an OOM (the campaign Track-2 posture, extended to image bytes).
 //
-// Parity note: the resize here is bilinear (half-pixel centers). HF/PIL Gemma 3
-// uses BICUBIC, so this is NOT pixel-exact yet — per goinfer's multimodal.md §2
-// the end-to-end gate runs on precomputed pixel_values, and a PIL-exact
-// separable resampler is a follow-on. This file is the structure + the security
-// guard.
+// Parity note: the resize here is bilinear (half-pixel centers). Gemma 3's own
+// processor is bilinear too (google/gemma-3-4b-it preprocessor_config.json:
+// "resample": 2, read 2026-10-06; this note used to say BICUBIC), but PIL's
+// bilinear antialiases on a downscale and this one does not, so it is NOT
+// pixel-exact on a downscaled image (unmeasured). Gemma 4's reference resize is
+// bicubic and is exact: ResizeBicubicAA, bicubic.go. This file is the structure
+// + the security guard.
 //
 // "multimodal.md" refers to
 // https://github.com/townsendmerino/goinfer/blob/main/docs/multimodal.md.
