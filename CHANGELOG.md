@@ -9,6 +9,18 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added — the Gemma 4 vision tower's weights, exported for a device-resident tower (goinfer EmbeddingGemma 2, Phase VM)
+
+`vision.Gemma4Encoder.Weights()` returns the tower up to its pool in float32: the patch embed, both position tables,
+and per layer the four norms, the q/k norm weights and every projection with its `Gemma4ClippableLinear` bounds
+(`Gemma4Proj`, ±Inf when unclipped). `vision.Gemma4RopeTables` is the axial 2-D RoPE, and
+`Gemma4Encoder.FinishHidden` runs `Forward`'s tail (the pool, the √hidden scale, standardize, the unscaled norm and the
+projection) from the last layer's output, so a GPU tower and the CPU share one tail. A quantized load is refused by
+`Weights`. `Forward` is unchanged (the tail moved into a helper both call): the tiny golden still reads cosine
+1.000000000. `TestGemma4Weights_reproduceForward` builds a tower from the export alone and matches `Forward` at
+1.000000000 with the fixture's clip bounds on and random position tables (the fixture's own are all ones, which hid a
+swapped table); a dropped clamp, an unnormalised v, swapped tables and the wrong RoPE theta each turn it red.
+
 ## [1.57.0] — 2026-10-05
 
 `perfgate` VERDICT: PASS — no regression vs v1.56.1 above each shape's floor — 8/47 shapes resolve the 5.0% class

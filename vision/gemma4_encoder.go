@@ -305,11 +305,7 @@ func (e *Gemma4Encoder) Forward(patches []float32, positionIDs [][2]int) ([]floa
 		}
 	}
 
-	theta := 100.0
-	if c.RopeParameters != nil && c.RopeParameters.RopeTheta != 0 {
-		theta = c.RopeParameters.RopeTheta
-	}
-	cos, sin := gemma4RopeTables(positionIDs, hd, theta)
+	cos, sin := gemma4RopeTables(positionIDs, hd, e.ropeTheta())
 
 	s := newGemma4EncScratch(np, hidden, inter, hd, nH)
 	for l := range e.layers {
@@ -326,7 +322,13 @@ func (e *Gemma4Encoder) Forward(patches []float32, positionIDs [][2]int) ([]floa
 		rmsNormWInto(s.mlpNormed, s.mlpOut, lw.postFFNNormW, np, hidden, c.RMSNormEps)
 		addResidual(h, s.mlpNormed)
 	}
+	return e.finish(h, positionIDs, np)
+}
 
+// finish is Forward's tail after the last layer (FinishHidden exports it).
+func (e *Gemma4Encoder) finish(h []float32, positionIDs [][2]int, np int) ([]float32, error) {
+	c := e.Cfg
+	hidden := c.HiddenSize
 	pooled, _, _, err := e.averagePool(h, positionIDs, np)
 	if err != nil {
 		return nil, err
