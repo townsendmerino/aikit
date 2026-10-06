@@ -9,6 +9,35 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added — `audio`: Gemma 4's audio tower (gemma4_audio) and its log-mel front end, in pure Go
+
+New package `audio`.
+- `Gemma4Features` turns 16 kHz mono samples into the extractor's log-mel ([T, 128] over the valid frames):
+  - periodic Hann, applied in f32;
+  - a 512-point rFFT magnitude;
+  - an HTK mel bank with no norm;
+  - `ln(mel + 0.001)`;
+  - truncation at 30 s.
+- `LoadGemma4AudioEncoder` and `Forward` are the conformer tower and its `embed_audio` projection to the text width:
+  - the conv subsampler;
+  - 12 blocks with chunked local attention (a 12-key causal window, relative-position keys, `per_dim_scale` through
+    softplus, a softcap of 50);
+  - a GLU and a causal depthwise conv;
+  - every `ClippableLinear` clamp.
+- `ForwardStages` exposes the subsampler, each block and the tower for per-stage differencing. `Subsample` and
+  `FinishBlocks` split the tower for a device-resident port.
+
+The tower is shared by EmbeddingGemma 2 and Gemma 4 E2B/E4B.
+
+**Checked** in goinfer against transformers 5.19.0 (sdpa; eager inverts the audio mask):
+- Real EmbeddingGemma 2 checkpoint, three clips (0.37, 2.37 and 7.83 s):
+  - the log-mel within 4.8e-7;
+  - every stage at cosine 1.000000;
+  - the end-to-end embeddings at 1.000000000.
+- A committed tiny random tower with finite clip bounds: every stage at 1.000000000.
+- Planted defects each turn the gate red: the window one wider, the transposed flatten, the clamps skipped, no
+  softplus, a centred conv.
+
 ### Added — the Gemma 4 vision tower's weights, exported for a device-resident tower (goinfer EmbeddingGemma 2, Phase VM)
 
 `vision.Gemma4Encoder.Weights()` returns the tower up to its pool in float32: the patch embed, both position tables,
