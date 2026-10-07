@@ -337,6 +337,19 @@ func (e *GlmOcrVisionEncoder) ForwardDownsampled(pixelValues []float32, gridTHW 
 // ForwardViT runs embed + the transformer blocks + post_layernorm: the pre-downsample hidden state
 // [n_patches, hidden] (the parity gate's pre-merge stage).
 func (e *GlmOcrVisionEncoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32, error) {
+	h, err := e.forwardBlocks(pixelValues, gridTHW)
+	if err != nil {
+		return nil, err
+	}
+	nPatches := len(h) / e.Cfg.HiddenSize
+	post := make([]float32, len(h))
+	rmsNormEpsInto(post, h, e.postNormW, nPatches, e.Cfg.HiddenSize, e.Cfg.RMSNormEps)
+	return post, nil
+}
+
+// forwardBlocks runs embed + the transformer blocks: the last block's output [n_patches, hidden], before
+// post_layernorm (what a device tower hands to FinishHidden).
+func (e *GlmOcrVisionEncoder) forwardBlocks(pixelValues []float32, gridTHW [][3]int) ([]float32, error) {
 	h, err := e.Embed(pixelValues, gridTHW)
 	if err != nil {
 		return nil, err
@@ -367,9 +380,7 @@ func (e *GlmOcrVisionEncoder) ForwardViT(pixelValues []float32, gridTHW [][3]int
 		gatedSiLUMLPInto(mlpOut, n2, b.gatew, b.gateb, b.upw, b.upb, b.downw, b.downb, nPatches, hidden, inter, s.gate, s.up)
 		addResidual(h, mlpOut)
 	}
-	post := make([]float32, len(h))
-	rmsNormEpsInto(post, h, e.postNormW, nPatches, hidden, eps)
-	return post, nil
+	return h, nil
 }
 
 // attentionInto is the GLM-OCR attention body: biased fused qkv → split (seq, 3, heads, head_dim) →
