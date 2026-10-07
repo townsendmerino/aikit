@@ -205,8 +205,18 @@ func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 		}
 		return e.resident.ForwardPatches(patches)
 	}
+	h, err := e.forwardBlocks(pixels)
+	if err != nil {
+		return nil, err
+	}
+	return layerNorm(h, e.postLNw, e.postLNb, e.numPatches, c.HiddenSize, c.LayerNormEps), nil
+}
+
+// forwardBlocks is Forward's CPU path up to the last block's output [numPatches, hidden], before the post-layernorm:
+// split out so a device tower built from Weights can be checked against the same stage (FinishHidden is the rest).
+func (e *Encoder) forwardBlocks(pixels []float32) ([]float32, error) {
+	c := e.Cfg
 	hidden, np := c.HiddenSize, e.numPatches
-	cpp := c.NumChannels * c.PatchSize * c.PatchSize
 
 	// 1. im2col patch extraction in the Conv2d weight's (c,kh,kw) order, patches in
 	// (gh,gw) row-major — matching HF's embeddings.flatten(2).transpose. Shared
@@ -215,11 +225,7 @@ func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 	if err != nil {
 		return nil, err
 	}
-	// patch embed: h[np,hidden] = patches[np,cpp] · patchW[hidden,cpp]ᵀ + bias, + posEmb
-	h := make([]float32, np*hidden)
-	linalg.MatmulBT(patches, e.patchW, h, np, cpp, hidden)
-	addBias(h, e.patchB, np, hidden)
-	addResidual(h, e.posEmb)
+	h := e.embedPatches(patches)
 
 	// Allocate every per-layer scratch buffer ONCE (all layers share one shape) and
 	// reuse across the layer loop. The old code re-make'd n1/att/o/n2/mid/mlp plus
@@ -250,7 +256,19 @@ func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 		addBias(s.mlp, lw.fc2b, np, hidden)
 		addResidual(h, s.mlp)
 	}
-	return layerNorm(h, e.postLNw, e.postLNb, np, hidden, c.LayerNormEps), nil
+	return h, nil
+}
+
+// embedPatches is the patch embed over GridPatches' rows: h[np,hidden] = patches[np,cpp] · patchW[hidden,cpp]ᵀ + bias,
+// + posEmb.
+func (e *Encoder) embedPatches(patches []float32) []float32 {
+	c := e.Cfg
+	hidden, np := c.HiddenSize, e.numPatches
+	h := make([]float32, np*hidden)
+	linalg.MatmulBT(patches, e.patchW, h, np, c.NumChannels*c.PatchSize*c.PatchSize, hidden)
+	addBias(h, e.patchB, np, hidden)
+	addResidual(h, e.posEmb)
+	return h
 }
 
 // encScratch holds the SigLIP encoder's per-layer working buffers, allocated once
