@@ -21,7 +21,9 @@ It used to be bilinear. `Gemma4PreprocessResize(data, budget, Gemma4Bilinear)` k
 - In goinfer, transformers' `Gemma4ImageProcessor` gives the same pixels (SHA-256 equal) on four real images.
 - EmbeddingGemma 2's image embeddings read 1.000000000 against sentence-transformers through it.
 
-The resize was moved here from goinfer's `embeddinggemma2`, so Gemma 4 and EmbeddingGemma 2 share one copy. Also
+The [0, 1] rescale is the processor's to the bit: a multiply by `float32(0.00392156862745098)`, as torch does it.
+Dividing by 255 differs from it by one ulp on 126 of the 256 byte values, which on one real Gemma 4 prompt was enough to
+change the greedy reply. The resize was moved here from goinfer's `embeddinggemma2`, so Gemma 4 and EmbeddingGemma 2 share one copy. Also
 corrected: `vision/preprocess.go`'s note said Gemma 3's processor is bicubic; its config says bilinear (`resample: 2`).
 
 ### Added — `audio`: Gemma 4's audio tower (gemma4_audio) and its log-mel front end, in pure Go

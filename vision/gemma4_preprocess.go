@@ -118,7 +118,7 @@ func Gemma4PreprocessResize(data []byte, maxSoftTokens int, resize Gemma4Resize)
 }
 
 // gemma4BicubicToHWC01 is the reference resize (ResizeBicubicAA on the uint8 RGB image, alpha dropped as PIL's
-// convert("RGB") drops it) and the [0,1] rescale (x/255 in f32, as the processor's rescale).
+// convert("RGB") drops it) and the processor's [0,1] rescale, bit for bit (gemma4Rescale).
 func gemma4BicubicToHWC01(img image.Image, h, w, targetH, targetW int) []float32 {
 	nr := toNRGBA(img)
 	rgb := make([]uint8, h*w*3)
@@ -131,10 +131,15 @@ func gemma4BicubicToHWC01(img image.Image, h, w, targetH, targetW int) []float32
 	px := ResizeBicubicAA(rgb, h, w, targetH, targetW)
 	out := make([]float32, len(px))
 	for i, v := range px {
-		out[i] = float32(v) / 255
+		out[i] = float32(v) * gemma4Rescale
 	}
 	return out
 }
+
+// gemma4Rescale is the processor's rescale_factor (1/255 as the float64 0.00392156862745098) as torch applies it to a
+// float32 image: a multiply by the factor rounded to float32. A division by 255 differs from it by one ulp on 126 of
+// the 256 byte values.
+var gemma4Rescale = float32(0.00392156862745098)
 
 // gemma4ResizeToHWC01 bilinearly resizes img to targetH×targetW (independent
 // axes — NOT the square-only newXMap/yTap callers in preprocess.go, though it
