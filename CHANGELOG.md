@@ -9,6 +9,22 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added — a Qwen3.5+ vision tower from a llama.cpp GGUF mmproj; a `TensorSource` seam; GGUF BF16
+
+- **`vision.LoadQwen3VisionEncoderMMProj(path, quant)`** loads the Qwen3.5+ tower from a `clip` mmproj with projector
+  type `qwen3vl_merger`: unsloth's mmproj files, or Ollama's `qwen3.5`/`qwen3.6` projector blobs.
+  - The tensors map onto HF's by name, and the patch conv's two temporal halves are recombined.
+  - The merger runs HF's erf GELU, not llama.cpp's tanh.
+  - It refuses another projector type, DeepStack, an epsilon the tower does not run, and an unsplit patch conv.
+- **`vision.ReadQwen3MMProjConfig(path)`** reads the config with the same refusals and no weights.
+- **The seam:** `vision.TensorSource` and `LoadQwen3VisionEncoderFrom(cfg, src, quant)`. `LoadQwen3VisionEncoder`
+  (safetensors) now goes through it too; its tiny parity is unchanged at 1.000000000.
+- **`embed`'s GGUF reader reads BF16 tensors** (ggml type 30), which Ollama's projector blobs use.
+
+**Checked** in goinfer on Qwen3.5-0.8B:
+- the F32 and BF16 mmproj files and Ollama's blob give the safetensors tower's features bit for bit (F16 within 7e-5);
+- Ollama's 9B projector matches the 9B checkpoint bit for bit.
+
 ### Changed — `vision.Gemma4Preprocess` resizes like the reference processor: torchvision's antialiased bicubic, bit for bit
 
 `Gemma4Preprocess` now resizes with **`ResizeBicubicAA`** (new, exported): torchvision's antialiased bicubic on the uint8
