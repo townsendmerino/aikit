@@ -113,7 +113,10 @@ func TestQwen3Deepstack_tiny(t *testing.T) {
 // block, the main merger and each DeepStack set, at worst-row cosine >= 0.9999; the first stage under it is named, and
 // a worst stage in 0.999-0.9999 is ambiguous (parked).
 func TestQwen3VisionEncoder_realDeepstack(t *testing.T) {
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home directory: %v", err)
+	}
 	ckpt := os.Getenv("AIKIT_QWEN3VL_2B")
 	if ckpt == "" {
 		ckpt = home + "/models/qwen3-vl-2b-instruct"

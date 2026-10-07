@@ -9,6 +9,64 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.59.0] — 2026-10-07
+
+`perfgate` VERDICT: not run — the package it benchmarks compiles to the same code as v1.58.0
+
+> **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
+> `./linalg` only. Since v1.58.0 no file under `linalg/` or `mmap/` changed (`git diff --stat v1.58.0..HEAD -- linalg/ mmap/`
+> is empty), and `go list -deps -test ./linalg` names only those two. This release extends `vision` (float32 device-tower
+> exports for SigLIP, Qwen3.5+/Qwen3-VL and GLM-OCR, and Qwen3-VL's DeepStack). None of that is on perfgate's path.
+
+### Added — float32 device-tower exports for three more vision towers; Qwen3-VL DeepStack
+
+A device tower (goinfer's Metal and CUDA towers) needs a tower's weights in the CPU tower's own layout, and the CPU tower's
+host-side tail, so that its output can be compared with the CPU's and finished the same way. Gemma 4 had this since
+v1.57.0. Added:
+
+- **SigLIP (Gemma 3):** `Encoder.Weights()` returns `SiglipWeights` (float32, blocks as `SiglipBlock`), and
+  `Encoder.FinishHidden(h)` applies the post-layernorm.
+  - `Forward` is split into its patch embed, its blocks and that tail, with no operation changed.
+  - The recomposition is bit-exact on the tiny tower with its norms randomised.
+- **Qwen3.5+ and Qwen3-VL:** `Qwen3VisionEncoder.Weights()` (`Qwen3Weights`, `Qwen3Block`), `RopeTables`,
+  `PositionEmbeds` and `FinishHidden` (the merger).
+- **GLM-OCR:** `GlmOcrVisionEncoder.Weights()` (`GlmOcrWeights`, `GlmOcrBlock`), `RopeTables` and `FinishHidden`.
+- **Shared by the two:** `VisionProj`, and `VisionSegments(gridTHW)` (each image's attention segments).
+- **Qwen3-VL DeepStack.** A checkpoint declaring `deepstack_visual_indexes` loads instead of being refused.
+  - The DeepStack mergers run their LayerNorm after the merge-unit shuffle, as transformers does.
+  - **`Qwen3VisionEncoder.ForwardDeepstack`** returns each tapped block's merged rows beside the main ones. `Forward`
+    is unchanged.
+  - **`DeepstackFromHidden(k, h, gridTHW)`** is the host tail a device tower calls for set k.
+  - The export covers a DeepStack tower: the tapped outputs, put through the tails, recompose `ForwardDeepstack` bit
+    for bit.
+
+**Checked:**
+- **Tiny:** a Qwen3-VL tower with DeepStack (`testdata/qwen3vl-vision-tiny`, norms randomised) matches transformers
+  exactly: the main rows and both DeepStack sets. With the post-shuffle norm dropped, the sets read 0.888 and 0.823.
+- **Real:** in goinfer, Qwen3-VL-2B's tower matches transformers at every stage on four images, and its served image
+  turns match.
+
+### Fixed — `gpu/qwencuda`, `gpu/qwenmetal`: an allocation failure is an error, not a dead process
+
+- **What went wrong:** `ForwardViT` grew its scratch unrecovered. So an image too large for the memory left beside a
+  resident decoder panicked the serving process (goinfer S4: a 5,504-patch image on an 8 GB card).
+- **A second fault:** the old buffers were released before the new ones were allocated. So the next forward after a
+  failure died with "buffer is closed".
+- **Now:** the new scratch is built first and installed only on success. On a failure the encoder retries once after
+  releasing the old set, and otherwise is left cold, never dangling. `ForwardViT` returns the error.
+- **Tested:** each backend has a test that forces a real failure and checks for an error, no leak, and a bit-identical
+  forward afterwards. They ran on CUDA (nobara) and on Metal (an M1 Pro).
+- These backends get their own tags, `gpu/qwencuda/v0.1.1` and `gpu/qwenmetal/v0.1.1`.
+
+### Tests
+
+- **`gpu`:** a Metal test of the fused W8A8 register kernels (`GEMMW8A8Bias`, `GEMMW8A8BiasAdd`) at SigLIP-so400m's
+  shapes, ragged N = 4304 included. Before it, only their CUDA twins were tested.
+  - It came from goinfer's S3: `visionmetal` disagreed with the CPU tower at real size.
+  - That disagreement turned out to be int8 against int8. SigLIP's int8 tower is itself far from its float32 tower at
+    real size (relative L2 0.16-0.52, the CPU tower and `visionmetal` alike). goinfer records it in
+    `docs/measurements/siglip-int8-fidelity-2026-10-07.md`.
+
 ## [1.58.0] — 2026-10-06
 
 `perfgate` VERDICT: not run — the package it benchmarks compiles to the same code as v1.57.0
@@ -5223,7 +5281,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.57.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.59.0...HEAD
+[1.59.0]: https://github.com/townsendmerino/aikit/compare/v1.58.0...v1.59.0
 [1.58.0]: https://github.com/townsendmerino/aikit/compare/v1.57.0...v1.58.0
 [1.57.0]: https://github.com/townsendmerino/aikit/compare/v1.56.1...v1.57.0
 [1.56.1]: https://github.com/townsendmerino/aikit/compare/v1.56.0...v1.56.1
