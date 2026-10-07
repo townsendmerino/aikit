@@ -56,9 +56,6 @@ type Qwen3Weights struct {
 
 // Weights exports the tower's weights (the slices alias the encoder's; do not write them).
 func (e *Qwen3VisionEncoder) Weights() (Qwen3Weights, error) {
-	if len(e.deepstack) > 0 { // a device tower built from this would return the main rows and drop DeepStack's
-		return Qwen3Weights{}, fmt.Errorf("vision: a DeepStack tower (Qwen3-VL, deepstack_visual_indexes %v) has no device export yet; run it with ForwardDeepstack", e.Cfg.DeepstackVisualIndexes)
-	}
 	var err error
 	w := Qwen3Weights{Cfg: e.Cfg, PatchW: e.patchW, PatchB: e.patchB, Blocks: make([]Qwen3Block, len(e.blocks)), LNEps: qwen3LNEps}
 	for i := range e.blocks {
@@ -73,6 +70,21 @@ func (e *Qwen3VisionEncoder) Weights() (Qwen3Weights, error) {
 		return Qwen3Weights{}, err
 	}
 	return w, nil
+}
+
+// DeepstackFromHidden is DeepStack merger k's tail (Qwen3-VL; goinfer S10): block Cfg.DeepstackVisualIndexes[k]'s output
+// h [n_patches, hidden], tapped by a device tower, into that set's rows [n_patches/merge², out_hidden] (the post-shuffle
+// LayerNorm, fc1, GELU erf, fc2), on the host, as FinishHidden is the main merger's. A device tower built from Weights
+// runs the blocks; a DeepStack tower's caller must tap these blocks and call this for each, or the sets are lost
+// (ForwardDeepstack is the CPU reference).
+func (e *Qwen3VisionEncoder) DeepstackFromHidden(k int, h []float32, gridTHW [][3]int) ([]float32, error) {
+	if k < 0 || k >= len(e.deepstack) {
+		return nil, fmt.Errorf("vision: DeepStack set %d of %d", k, len(e.deepstack))
+	}
+	if _, err := e.checkHidden(h, gridTHW); err != nil {
+		return nil, err
+	}
+	return e.deepMerge(k, h), nil
 }
 
 // PositionEmbeds is the learned position table bilinearly resampled to the grids, one [hidden] row per patch in the

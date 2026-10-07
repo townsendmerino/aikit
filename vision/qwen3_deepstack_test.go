@@ -143,6 +143,9 @@ func TestQwen3VisionEncoder_realDeepstack(t *testing.T) {
 	if g.Hidden <= 0 || g.OutHidden <= 0 || g.Depth <= 0 || len(g.Images) == 0 {
 		t.Fatalf("golden.json did not parse into usable shapes: %+v", g)
 	}
+	if _, err := os.Stat(art + "/" + g.Images[0].Name + ".merged.f32"); err != nil {
+		t.Skipf("artifacts at %s hold no stage files (a copy taken for something else?): %v", art, err)
+	}
 	e, err := LoadQwen3VisionEncoder(ckpt, false)
 	if err != nil {
 		t.Fatal(err)
@@ -220,5 +223,50 @@ func TestQwen3VisionEncoder_realDeepstack(t *testing.T) {
 		case first != "":
 			t.Errorf("%s: G-S10b ambiguous (parked), first stage under 0.9999: %s (worst %.9f)", im.Image, first, minW)
 		}
+	}
+}
+
+// TestQwen3Deepstack_exportRecomposes: a device tower's recomposition, the tapped block outputs through
+// DeepstackFromHidden and the last through FinishHidden, is ForwardDeepstack bit for bit (the same host code, called
+// from outside), on the tiny DeepStack tower.
+func TestQwen3Deepstack_exportRecomposes(t *testing.T) {
+	const dir = "../testdata/qwen3vl-vision-tiny"
+	e, err := LoadQwen3VisionEncoder(dir, false)
+	if err != nil {
+		t.Skipf("no fixture: %v", err)
+	}
+	if _, err := e.Weights(); err != nil {
+		t.Fatalf("a DeepStack tower's export: %v", err)
+	}
+	grid := [][3]int{{1, 4, 6}, {1, 6, 4}}
+	c := e.Cfg
+	pd := c.InChannels * c.TemporalPatchSize * c.PatchSize * c.PatchSize
+	px := make([]float32, 48*pd)
+	for i := range px {
+		px[i] = float32(math.Sin(float64(i) * 0.37))
+	}
+	merged, deep, err := e.ForwardDeepstack(px, grid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	taps := map[int][]float32{}
+	last, err := e.forwardBlocks(px, grid, func(li int, h []float32) { taps[li] = append([]float32(nil), h...) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	m2, err := e.FinishHidden(last, grid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bitEqual(t, "merged", m2, merged)
+	for k, idx := range c.DeepstackVisualIndexes {
+		d, err := e.DeepstackFromHidden(k, taps[idx], grid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bitEqual(t, fmt.Sprintf("DeepStack set %d", k), d, deep[k])
+	}
+	if _, err := e.DeepstackFromHidden(len(deep), last, grid); err == nil {
+		t.Error("an out-of-range set must be refused")
 	}
 }
