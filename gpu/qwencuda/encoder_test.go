@@ -192,3 +192,54 @@ func TestQwenCUDA_repeatable(t *testing.T) {
 	}
 	t.Log("4 forwards on reused scratch: bit-identical")
 }
+
+// TestQwenCUDA_allocationFailureIsAnErrorAndTheEncoderRecovers forces a real device allocation failure in the scratch growth (a patch count whose buffers are terabytes,
+// which cuMemAlloc refuses at once, so nothing is actually consumed) and checks the three things that were wrong: it comes back as an error and not a panic (gpu's
+// NewBufferLenOf panics by contract, and an unrecovered panic on the request goroutine killed a serving process), no buffer made on the way is leaked, and the encoder still
+// produces the bit-identical result afterwards (the old non-atomic growth released the working buffers first, so a failure left the encoder pointing at freed memory).
+func TestQwenCUDA_allocationFailureIsAnErrorAndTheEncoderRecovers(t *testing.T) {
+	src := load(t, false)
+	e, err := newEncoder(src)
+	if err != nil {
+		t.Skipf("no CUDA device for the Qwen tower: %v", err)
+	}
+	defer e.Close()
+	w := src.GPUWeights()
+	px := synthPixels(nPatches(grid), w.PatchDim)
+	first, err := e.ForwardViT(px, grid)
+	if err != nil {
+		t.Fatalf("forward before the failure: %v", err)
+	}
+	allocsBefore, _ := e.dev.LedgerLen()
+
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("ensure panicked instead of returning the allocation failure: %v", r)
+			}
+		}()
+		if err := e.ensure(1 << 31); err == nil {
+			t.Fatal("ensure(2^31 patches) succeeded; the failure this test needs did not happen")
+		} else {
+			t.Logf("allocation failure came back as an error: %.140s", err)
+		}
+	}()
+
+	again, err := e.ForwardViT(px, grid)
+	if err != nil {
+		t.Fatalf("forward after the failure: %v", err)
+	}
+	for i := range first {
+		if again[i] != first[i] {
+			t.Fatalf("the encoder disagrees with itself after a failed growth at %d: %v vs %v", i, again[i], first[i])
+		}
+	}
+	if allocsAfter, _ := e.dev.LedgerLen(); allocsAfter != allocsBefore {
+		t.Errorf("a failed growth leaked device allocations: %d before, %d after", allocsBefore, allocsAfter)
+	}
+	// And a growth that works still works after the failure.
+	bigger := [][3]int{{1, 8, 8}}
+	if _, err := e.ForwardViT(synthPixels(nPatches(bigger), w.PatchDim), bigger); err != nil {
+		t.Fatalf("a larger image after the failure: %v", err)
+	}
+}

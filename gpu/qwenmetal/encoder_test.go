@@ -191,3 +191,46 @@ func TestQwenMetal_repeatable(t *testing.T) {
 	}
 	t.Log("4 forwards on reused scratch: bit-identical")
 }
+
+// TestQwenMetal_allocationFailureIsAnErrorAndTheEncoderRecovers is gpu/qwencuda's test of the same name, mirrored: a scratch growth that cannot be allocated (2^31 patches)
+// returns an error and not a panic, and the encoder still produces the bit-identical result afterwards. WRITTEN ON LINUX, COMPILED FOR DARWIN, NOT RUN ON METAL: the Mac
+// runs it. (The CUDA twin also checks the device ledger; Metal's ledger semantics were not read, so this one does not.)
+func TestQwenMetal_allocationFailureIsAnErrorAndTheEncoderRecovers(t *testing.T) {
+	src := load(t, false)
+	e, err := newEncoder(src)
+	if err != nil {
+		t.Skipf("no Metal device for the Qwen tower: %v", err)
+	}
+	defer e.Close()
+	w := src.GPUWeights()
+	px := synthPixels(nPatches(grid), w.PatchDim)
+	first, err := e.ForwardViT(px, grid)
+	if err != nil {
+		t.Fatalf("forward before the failure: %v", err)
+	}
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				t.Fatalf("ensure panicked instead of returning the allocation failure: %v", r)
+			}
+		}()
+		if err := e.ensure(1 << 31); err == nil {
+			t.Fatal("ensure(2^31 patches) succeeded; the failure this test needs did not happen")
+		} else {
+			t.Logf("allocation failure came back as an error: %.140s", err)
+		}
+	}()
+	again, err := e.ForwardViT(px, grid)
+	if err != nil {
+		t.Fatalf("forward after the failure: %v", err)
+	}
+	for i := range first {
+		if again[i] != first[i] {
+			t.Fatalf("the encoder disagrees with itself after a failed growth at %d: %v vs %v", i, again[i], first[i])
+		}
+	}
+	bigger := [][3]int{{1, 8, 8}}
+	if _, err := e.ForwardViT(synthPixels(nPatches(bigger), w.PatchDim), bigger); err != nil {
+		t.Fatalf("a larger image after the failure: %v", err)
+	}
+}

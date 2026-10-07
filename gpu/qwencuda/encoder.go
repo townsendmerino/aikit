@@ -129,35 +129,95 @@ func newEncoder(src *vision.QwenVisionEncoder) (enc *encoder, err error) {
 	return e, nil
 }
 
-// ensure grows the per-call scratch to hold n patches. Buffers are released and
-// reallocated rather than kept at a high-water mark for every shape, because a
-// dynamic-resolution tower can see a huge image once and small ones thereafter.
-func (e *encoder) ensure(n int) {
+// scratchSet is every per-call scratch buffer, so a growth can build the new set whole and install it in one step.
+type scratchSet struct {
+	pix, h, n1, n2     gpu.Buffer
+	qkv, att, projOut  gpu.Buffer
+	gate, up           gpu.Buffer
+	qi8, qs            gpu.Buffer
+	cosB, sinB         gpu.Buffer
+	segSWin, segEWin   gpu.Buffer
+	segSFull, segEFull gpu.Buffer
+}
+
+func (s *scratchSet) all() []gpu.Buffer {
+	return []gpu.Buffer{s.pix, s.h, s.n1, s.n2, s.qkv, s.att, s.projOut, s.gate, s.up, s.qi8, s.qs, s.cosB, s.sinB, s.segSWin, s.segEWin, s.segSFull, s.segEFull}
+}
+
+func (e *encoder) scratch() scratchSet {
+	return scratchSet{pix: e.pix, h: e.h, n1: e.n1, n2: e.n2, qkv: e.qkv, att: e.att, projOut: e.projOut, gate: e.gate, up: e.up, qi8: e.qi8, qs: e.qs,
+		cosB: e.cosB, sinB: e.sinB, segSWin: e.segSWin, segEWin: e.segEWin, segSFull: e.segSFull, segEFull: e.segEFull}
+}
+
+func (e *encoder) setScratch(s scratchSet, cap int) {
+	e.pix, e.h, e.n1, e.n2, e.qkv, e.att, e.projOut, e.gate, e.up, e.qi8, e.qs = s.pix, s.h, s.n1, s.n2, s.qkv, s.att, s.projOut, s.gate, s.up, s.qi8, s.qs
+	e.cosB, e.sinB, e.segSWin, e.segEWin, e.segSFull, e.segEFull = s.cosB, s.sinB, s.segSWin, s.segEWin, s.segSFull, s.segEFull
+	e.cap = cap
+}
+
+// allocScratch builds a scratch set for n patches. gpu.NewBufferLenOf PANICS on an allocation failure (its contract), so this recovers: every buffer already made
+// is released and the failure comes back as an error, never as a panic on the caller's goroutine.
+func (e *encoder) allocScratch(n int) (s scratchSet, err error) {
+	var made []gpu.Buffer
+	defer func() {
+		if r := recover(); r != nil {
+			for _, b := range made {
+				e.dev.ReleaseBuf(b)
+			}
+			s, err = scratchSet{}, fmt.Errorf("qwencuda: scratch for %d patches: %v", n, r)
+		}
+	}()
+	H, I, hd := e.w.Hidden, e.w.Inter, e.w.HeadDim
+	f32 := func(c int) gpu.Buffer { b := gpu.NewBufferLenOf[float32](e.dev, c); made = append(made, b); return b }
+	i32 := func(c int) gpu.Buffer { b := gpu.NewBufferLenOf[int32](e.dev, c); made = append(made, b); return b }
+	s.pix = f32(n * e.w.PatchDim)
+	s.h, s.n1, s.n2 = f32(n*H), f32(n*H), f32(n*H)
+	s.qkv = f32(n * 3 * H)
+	s.att, s.projOut = f32(n*H), f32(n*H)
+	s.gate, s.up = f32(n*I), f32(n*I)
+	wide := max(I, H)
+	s.qi8 = func(c int) gpu.Buffer { b := gpu.NewBufferLenOf[int8](e.dev, c); made = append(made, b); return b }(n * wide)
+	s.qs = f32(n)
+	s.cosB, s.sinB = f32(n*hd), f32(n*hd)
+	s.segSWin, s.segEWin, s.segSFull, s.segEFull = i32(n), i32(n), i32(n), i32(n)
+	return s, nil
+}
+
+// ensure grows the per-call scratch to hold n patches. The new set is allocated BEFORE the old one is released and installed only if every buffer was made, so a
+// failed growth leaves the encoder exactly as it was (it used to release the old buffers first and allocate in place: a failure then left e.cap pointing at buffers
+// that had been freed). Releasing first is what let a growth that fits alone succeed under a tight budget, so when the new-first attempt fails the old set is released
+// and the allocation retried once; if that fails too the encoder is left cold (cap 0, no buffers) and the next call reallocates. Either way: an error, never a panic and
+// never a dangling buffer. Buffers are not kept at a high-water mark for every shape, because a dynamic-resolution tower can see a huge image once and small ones thereafter.
+func (e *encoder) ensure(n int) error {
 	if n <= e.cap {
+		return nil
+	}
+	s, err := e.allocScratch(n)
+	if err == nil {
+		e.releaseScratch()
+		e.setScratch(s, n)
+		return nil
+	}
+	if e.cap == 0 {
+		return err
+	}
+	e.releaseScratch()
+	e.setScratch(scratchSet{}, 0)
+	if s, err2 := e.allocScratch(n); err2 == nil {
+		e.setScratch(s, n)
+		return nil
+	}
+	return err
+}
+
+func (e *encoder) releaseScratch() {
+	if e.cap == 0 {
 		return
 	}
-	if e.cap > 0 {
-		for _, b := range []gpu.Buffer{e.pix, e.h, e.n1, e.n2, e.qkv, e.att, e.projOut, e.gate, e.up, e.qi8, e.qs, e.cosB, e.sinB, e.segSWin, e.segEWin, e.segSFull, e.segEFull} {
-			e.dev.ReleaseBuf(b)
-		}
+	cur := e.scratch()
+	for _, b := range cur.all() {
+		e.dev.ReleaseBuf(b)
 	}
-	H, I, hd := e.w.Hidden, e.w.Inter, e.w.HeadDim
-	f32 := func(c int) gpu.Buffer { return gpu.NewBufferLenOf[float32](e.dev, c) }
-	e.pix = f32(n * e.w.PatchDim)
-	e.h, e.n1, e.n2 = f32(n*H), f32(n*H), f32(n*H)
-	e.qkv = f32(n * 3 * H)
-	e.att, e.projOut = f32(n*H), f32(n*H)
-	e.gate, e.up = f32(n*I), f32(n*I)
-	wide := max(I, H)
-	e.scratchWide = wide
-	e.qi8 = gpu.NewBufferLenOf[int8](e.dev, n*wide)
-	e.qs = f32(n)
-	e.cosB, e.sinB = f32(n*hd), f32(n*hd)
-	e.segSWin = gpu.NewBufferLenOf[int32](e.dev, n)
-	e.segEWin = gpu.NewBufferLenOf[int32](e.dev, n)
-	e.segSFull = gpu.NewBufferLenOf[int32](e.dev, n)
-	e.segEFull = gpu.NewBufferLenOf[int32](e.dev, n)
-	e.cap = n
 }
 
 // proj runs one projection: dst[M,N] = src[M,K] · w[N,K]ᵀ + bias, quantizing the
@@ -249,7 +309,7 @@ func (e *encoder) rms(src, w, dst gpu.Buffer, rows, dim int) error {
 
 // ForwardViT runs the ViT blocks on the device and returns the pre-merge hidden state
 // in ORIGINAL patch order, matching the CPU contract.
-func (e *encoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32, error) {
+func (e *encoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) (out []float32, err error) {
 	plan, err := e.src.BuildWindowPlan(gridTHW)
 	if err != nil {
 		return nil, err
@@ -266,7 +326,19 @@ func (e *encoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.ensure(n)
+	defer func() {
+		// A panic anywhere below (a device allocation failure is a panic by gpu's contract) comes back as an error, and a failed forward is drained before
+		// returning: kernels still queued against the scratch must not outlive the call that owns it, or the next growth would free buffers they are reading.
+		if r := recover(); r != nil {
+			out, err = nil, fmt.Errorf("qwencuda: forward failed on the device: %v", r)
+		}
+		if err != nil {
+			_ = e.q.Sync()
+		}
+	}()
+	if err := e.ensure(n); err != nil {
+		return nil, err
+	}
 
 	// Permute pixel rows into WINDOW order on the host — the patch embed is row-wise,
 	// so this makes the device's hidden state window-ordered without a gather kernel.
@@ -397,7 +469,7 @@ func (e *encoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32
 		return nil, err
 	}
 	// de-window back to original patch order
-	out := make([]float32, n*H)
+	out = make([]float32, n*H)
 	for g := range groups {
 		dst := plan.WinIdx[g]
 		for u := range mergeUnit {
