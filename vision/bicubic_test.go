@@ -12,7 +12,7 @@ import (
 
 // TestResizeBicubicAA_matchesTorchvision holds ResizeBicubicAA to torchvision's antialiased bicubic on uint8
 // (tvF.resize(..., BICUBIC, antialias=True)) bit for bit, on seeded noise and gradients over downscales, upscales,
-// mixed and single-axis resizes (testdata/bicubic-resize/golden.json, scripts/pin_bicubic_resize.py). The float64
+// mixed and single-axis resizes (testdata/bicubic-resize/golden.json, scripts/oracle/pin_bicubic_resize.py). The float64
 // variant, one rounding at the end, must differ somewhere: the control that shows the comparison sees a
 // rounding-level change.
 func TestResizeBicubicAA_matchesTorchvision(t *testing.T) {

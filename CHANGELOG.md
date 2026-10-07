@@ -47,7 +47,7 @@ It used to be bilinear. `Gemma4PreprocessResize(data, budget, Gemma4Bilinear)` k
 
 **Checked:**
 - `TestResizeBicubicAA_matchesTorchvision` equals torchvision 0.29.1 on 12 seeded cases, every value (golden and pin
-  script in `testdata/bicubic-resize/`, `scripts/pin_bicubic_resize.py`). Three planted defects turn it red.
+  script in `testdata/bicubic-resize/`, `scripts/oracle/pin_bicubic_resize.py`). Three planted defects turn it red.
 - In goinfer, transformers' `Gemma4ImageProcessor` gives the same pixels (SHA-256 equal) on four real images.
 - EmbeddingGemma 2's image embeddings read 1.000000000 against sentence-transformers through it.
 
