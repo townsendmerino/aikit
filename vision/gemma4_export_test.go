@@ -70,6 +70,30 @@ func TestGemma4Weights_reproduceForward(t *testing.T) {
 	if cs < 0.999999 {
 		t.Fatalf("cosine %.9f", cs)
 	}
+	// standardize (26B-A4B's tail; the fixture has none): with random std_bias/std_scale switched on, the export path
+	// (FinishHidden after the export's tower) still equals Forward, and it differs from the same tower without it, so
+	// a device tower that relies on FinishHidden gets standardize, and a dropped standardize would show.
+	enc.Cfg.Standardize = true
+	enc.stdBias, enc.stdScale = make([]float32, c.HiddenSize), make([]float32, c.HiddenSize)
+	for i := range enc.stdBias {
+		enc.stdBias[i], enc.stdScale[i] = r.Float32()-0.5, 0.5+r.Float32()
+	}
+	wantStd, err := enc.Forward(patches, pos)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotStd, err := enc.FinishHidden(h, pos)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs := cosineSim(gotStd, wantStd); cs < 0.999999 {
+		t.Fatalf("standardize on: export path against Forward, cosine %.9f", cs)
+	}
+	if cs := cosineSim(got, wantStd); cs > 0.9999 {
+		t.Fatalf("standardize on and off give cosine %.9f: the comparison cannot see a dropped standardize", cs)
+	}
+	enc.Cfg.Standardize, enc.stdBias, enc.stdScale = false, nil, nil
+
 	q, err := LoadGemma4Encoder(dir, true)
 	if err != nil {
 		t.Fatal(err)
