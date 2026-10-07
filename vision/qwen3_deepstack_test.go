@@ -3,8 +3,10 @@ package vision
 import (
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -100,6 +102,123 @@ func TestQwen3Deepstack_tiny(t *testing.T) {
 		t.Logf("planted: DeepStack set %d without its post-shuffle norm: worst cosine %.6f", k, w)
 		if w >= 0.9999 {
 			t.Errorf("planted defect left DeepStack set %d green (worst %.9f): the fixture cannot see a dropped norm", k, w)
+		}
+	}
+}
+
+// TestQwen3VisionEncoder_realDeepstack is G-S10b's real half (goinfer's task-multimodal-support-2026-10.md, S10): the
+// Qwen3-VL-2B tower (AIKIT_QWEN3VL_2B, default ~/models/qwen3-vl-2b-instruct) against transformers on the four F2a
+// images, from HF's own pixel values (AIKIT_QWEN3VL_TOWER_ARTIFACTS, written by goinfer's
+// scripts/pin_qwen3vl_tower_real.py). Every stage, the embed (patch embed plus position rows, block 0's input), each
+// block, the main merger and each DeepStack set, at worst-row cosine >= 0.9999; the first stage under it is named, and
+// a worst stage in 0.999-0.9999 is ambiguous (parked).
+func TestQwen3VisionEncoder_realDeepstack(t *testing.T) {
+	home, _ := os.UserHomeDir()
+	ckpt := os.Getenv("AIKIT_QWEN3VL_2B")
+	if ckpt == "" {
+		ckpt = home + "/models/qwen3-vl-2b-instruct"
+	}
+	art := os.Getenv("AIKIT_QWEN3VL_TOWER_ARTIFACTS")
+	if art == "" {
+		art = home + "/goinfer-logs/qwen3vl-tower"
+	}
+	raw, err := os.ReadFile(art + "/golden.json")
+	if err != nil {
+		t.Skipf("no artifacts at %s: %v", art, err)
+	}
+	var g struct {
+		Hidden    int   `json:"hidden"`
+		OutHidden int   `json:"out_hidden"`
+		Depth     int   `json:"depth"`
+		Deepstack []int `json:"deepstack"`
+		Images    []struct {
+			Image string `json:"image"`
+			Name  string `json:"name"`
+			Grid  [3]int `json:"grid"`
+		} `json:"images"`
+	}
+	if err := json.Unmarshal(raw, &g); err != nil {
+		t.Fatal(err)
+	}
+	if g.Hidden <= 0 || g.OutHidden <= 0 || g.Depth <= 0 || len(g.Images) == 0 {
+		t.Fatalf("golden.json did not parse into usable shapes: %+v", g)
+	}
+	e, err := LoadQwen3VisionEncoder(ckpt, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func(name string) []float32 {
+		b, err := os.ReadFile(art + "/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := make([]float32, len(b)/4)
+		for i := range out {
+			out[i] = math.Float32frombits(uint32(b[4*i]) | uint32(b[4*i+1])<<8 | uint32(b[4*i+2])<<16 | uint32(b[4*i+3])<<24)
+		}
+		return out
+	}
+	worst := func(got, want []float32, d int) float64 {
+		if len(got) != len(want) {
+			t.Fatalf("%d values, HF %d", len(got), len(want))
+		}
+		w := 1.0
+		for r := range len(want) / d {
+			var dot, na, nb float64
+			for j := range d {
+				x, y := float64(got[r*d+j]), float64(want[r*d+j])
+				dot, na, nb = dot+x*y, na+x*x, nb+y*y
+			}
+			w = math.Min(w, dot/math.Sqrt(na*nb))
+		}
+		return w
+	}
+	for _, im := range g.Images {
+		px := read(im.Name + ".pixels.f32")
+		grid := [][3]int{im.Grid}
+		type stage struct {
+			name string
+			got  []float32
+			d    int
+		}
+		var stages []stage
+		emb, err := e.Embed(px, grid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stages = append(stages, stage{"embed", emb, g.Hidden})
+		blocks := map[int][]float32{}
+		if _, err := e.forwardBlocks(px, grid, func(li int, h []float32) { blocks[li] = append([]float32(nil), h...) }); err != nil {
+			t.Fatal(err)
+		}
+		for L := range g.Depth {
+			stages = append(stages, stage{fmt.Sprintf("block%d", L), blocks[L], g.Hidden})
+		}
+		merged, deep, err := e.ForwardDeepstack(px, grid)
+		if err != nil {
+			t.Fatal(err)
+		}
+		stages = append(stages, stage{"merged", merged, g.OutHidden})
+		for k := range deep {
+			stages = append(stages, stage{fmt.Sprintf("deep%d", k), deep[k], g.OutHidden})
+		}
+		first, minW, line := "", 1.0, ""
+		for _, s := range stages {
+			w := worst(s.got, read(im.Name+"."+s.name+".f32"), s.d)
+			minW = math.Min(minW, w)
+			if w < 0.9999 && first == "" {
+				first = s.name
+			}
+			if s.name == "embed" || s.name == "merged" || strings.HasPrefix(s.name, "deep") || s.name == fmt.Sprintf("block%d", g.Depth-1) {
+				line += fmt.Sprintf(" %s %.9f", s.name, w)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "[G-S10b] %-30s grid %v: worst %.9f;%s\n", im.Image, im.Grid, minW, line)
+		switch {
+		case minW < 0.999:
+			t.Errorf("%s: G-S10b FAIL, first stage under 0.9999: %s (worst %.9f)", im.Image, first, minW)
+		case first != "":
+			t.Errorf("%s: G-S10b ambiguous (parked), first stage under 0.9999: %s (worst %.9f)", im.Image, first, minW)
 		}
 	}
 }
