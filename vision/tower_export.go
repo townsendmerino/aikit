@@ -56,6 +56,9 @@ type Qwen3Weights struct {
 
 // Weights exports the tower's weights (the slices alias the encoder's; do not write them).
 func (e *Qwen3VisionEncoder) Weights() (Qwen3Weights, error) {
+	if len(e.deepstack) > 0 { // a device tower built from this would return the main rows and drop DeepStack's
+		return Qwen3Weights{}, fmt.Errorf("vision: a DeepStack tower (Qwen3-VL, deepstack_visual_indexes %v) has no device export yet; run it with ForwardDeepstack", e.Cfg.DeepstackVisualIndexes)
+	}
 	var err error
 	w := Qwen3Weights{Cfg: e.Cfg, PatchW: e.patchW, PatchB: e.patchB, Blocks: make([]Qwen3Block, len(e.blocks)), LNEps: qwen3LNEps}
 	for i := range e.blocks {

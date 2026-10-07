@@ -40,8 +40,11 @@ import (
 // QwenVisionEncoder does. Added ADDITIVELY: QwenVisionEncoder and Encoder are untouched (the
 // fused-attention body they used is shared via packedAttentionInto, moved verbatim).
 //
-// A checkpoint that DOES declare deepstack_visual_indexes (Qwen3-VL proper) is refused at load, not
-// half-run: its extra mergers and the decoder-side injection are a different program (P8c).
+// DeepStack (Qwen3-VL proper, deepstack_visual_indexes non-empty; goinfer S10): at each listed block a separate merger
+// turns that block's output into one row per merged token. Its LayerNorm runs AFTER the merge-unit shuffle, over the
+// hidden·merge² row (use_postshuffle_norm=True), unlike the main merger's. ForwardDeepstack returns those rows beside the
+// main ones; the decoder adds the i-th set to the image positions' hidden state after its i-th layer. Forward still
+// returns the main rows alone, so a caller that ignores DeepStack gets exactly what it got before.
 
 // Qwen3EncoderConfig mirrors the HF Qwen3_5VisionConfig fields the forward needs.
 type Qwen3EncoderConfig struct {
@@ -67,8 +70,8 @@ const (
 
 func (c Qwen3EncoderConfig) validate() error {
 	switch {
-	case len(c.DeepstackVisualIndexes) != 0:
-		return fmt.Errorf("deepstack_visual_indexes %v is non-empty: this is a Qwen3-VL DeepStack tower, not the Qwen3.5+ tower (P8c, unimplemented)", c.DeepstackVisualIndexes)
+	case !deepstackIndexesOK(c.DeepstackVisualIndexes, c.Depth):
+		return fmt.Errorf("deepstack_visual_indexes %v must be distinct, increasing block indexes below depth %d", c.DeepstackVisualIndexes, c.Depth)
 	case c.HiddenSize <= 0:
 		return fmt.Errorf("hidden_size must be > 0, got %d", c.HiddenSize)
 	case c.IntermediateSize <= 0:
@@ -99,6 +102,17 @@ func (c Qwen3EncoderConfig) validate() error {
 		return fmt.Errorf("hidden_act %q unsupported (%s only)", c.HiddenAct, qwen3ActBlockMLP)
 	}
 	return nil
+}
+
+// deepstackIndexesOK: strictly increasing, each a block index (HF looks each block up in the list, so the order of the
+// returned sets is the order of the blocks).
+func deepstackIndexesOK(idx []int, depth int) bool {
+	for i, v := range idx {
+		if v < 0 || v >= depth || (i > 0 && v <= idx[i-1]) {
+			return false
+		}
+	}
+	return true
 }
 
 // gridSide is G = sqrt(num_position_embeddings), int(x**0.5) as HF computes it.
@@ -139,7 +153,18 @@ type Qwen3VisionEncoder struct {
 	merger1b   []float32
 	merger2w   linalg.WeightMat // fc2 [out_hidden, hidden*merge²]
 	merger2b   []float32
-	rotInvFreq []float32 // head_dim/4 rotary frequencies
+	rotInvFreq []float32       // head_dim/4 rotary frequencies
+	deepstack  []qwen3DSMerger // one per Cfg.DeepstackVisualIndexes entry (Qwen3-VL); empty for Qwen3.5+
+}
+
+// qwen3DSMerger is one DeepStack merger: LayerNorm over the merged hidden·merge² row (post-shuffle), fc1, GELU (erf),
+// fc2, all biased.
+type qwen3DSMerger struct {
+	lnW, lnB []float32 // [hidden*merge²]
+	fc1w     linalg.WeightMat
+	fc1b     []float32
+	fc2w     linalg.WeightMat
+	fc2b     []float32
 }
 
 // LoadQwen3VisionEncoder reads a Qwen3.5+ checkpoint (config.json vision_config + safetensors) and
@@ -242,6 +267,14 @@ func LoadQwen3VisionEncoderFrom(cfg Qwen3EncoderConfig, src TensorSource, quant 
 	e.mergerLNw, e.mergerLNb = get("merger.norm.weight", hidden), get("merger.norm.bias", hidden)
 	e.merger1w, e.merger1b = qm("merger.linear_fc1.weight", mh, mh), get("merger.linear_fc1.bias", mh)
 	e.merger2w, e.merger2b = qm("merger.linear_fc2.weight", cfg.OutHiddenSize, mh), get("merger.linear_fc2.bias", cfg.OutHiddenSize)
+	for i := range cfg.DeepstackVisualIndexes {
+		p := fmt.Sprintf("deepstack_merger_list.%d.", i)
+		e.deepstack = append(e.deepstack, qwen3DSMerger{
+			lnW: get(p+"norm.weight", mh), lnB: get(p+"norm.bias", mh),
+			fc1w: qm(p+"linear_fc1.weight", mh, mh), fc1b: get(p+"linear_fc1.bias", mh),
+			fc2w: qm(p+"linear_fc2.weight", cfg.OutHiddenSize, mh), fc2b: get(p+"linear_fc2.bias", cfg.OutHiddenSize),
+		})
+	}
 	if err != nil {
 		return nil, fmt.Errorf("vision: load weights: %w", err)
 	}
@@ -423,6 +456,47 @@ func (e *Qwen3VisionEncoder) Forward(pixelValues []float32, gridTHW [][3]int) ([
 // ForwardViT runs embed + the transformer blocks (no merger): the pre-merge hidden state
 // [n_patches, hidden], HF's last_hidden_state — the parity gate's S2 stage.
 func (e *Qwen3VisionEncoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32, error) {
+	return e.forwardBlocks(pixelValues, gridTHW, nil)
+}
+
+// ForwardDeepstack is Forward for a DeepStack tower (Qwen3-VL): the main merged rows [n_merged, out_hidden] and, per
+// Cfg.DeepstackVisualIndexes entry in order, that block's DeepStack rows [n_merged, out_hidden]. A tower without
+// DeepStack returns no sets.
+func (e *Qwen3VisionEncoder) ForwardDeepstack(pixelValues []float32, gridTHW [][3]int) (merged []float32, deep [][]float32, err error) {
+	deep = make([][]float32, len(e.deepstack))
+	h, err := e.forwardBlocks(pixelValues, gridTHW, func(li int, h []float32) {
+		for k, idx := range e.Cfg.DeepstackVisualIndexes {
+			if idx == li {
+				deep[k] = e.deepMerge(k, h)
+			}
+		}
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return e.merge(h), deep, nil
+}
+
+// deepMerge is DeepStack merger k on a block's output h [n_patches, hidden]: the merge² consecutive patches viewed as
+// one hidden·merge² row, LayerNorm over that row (post-shuffle), fc1 → GELU(erf) → fc2.
+func (e *Qwen3VisionEncoder) deepMerge(k int, h []float32) []float32 {
+	c, m := e.Cfg, &e.deepstack[k]
+	mh := c.HiddenSize * c.SpatialMergeSize * c.SpatialMergeSize
+	groups := len(h) / mh
+	nrm := layerNorm(h, m.lnW, m.lnB, groups, mh, qwen3LNEps)
+	mid := make([]float32, groups*mh)
+	m.fc1w.MatmulBT(nrm, mid, groups)
+	addBias(mid, m.fc1b, groups, mh)
+	geluErf(mid)
+	out := make([]float32, groups*c.OutHiddenSize)
+	m.fc2w.MatmulBT(mid, out, groups)
+	addBias(out, m.fc2b, groups, c.OutHiddenSize)
+	return out
+}
+
+// forwardBlocks is ForwardViT's body; tap, when set, sees each block's output (li, h) right after the block, before the
+// next one overwrites h.
+func (e *Qwen3VisionEncoder) forwardBlocks(pixelValues []float32, gridTHW [][3]int, tap func(li int, h []float32)) ([]float32, error) {
 	h, err := e.Embed(pixelValues, gridTHW)
 	if err != nil {
 		return nil, err
@@ -456,6 +530,9 @@ func (e *Qwen3VisionEncoder) ForwardViT(pixelValues []float32, gridTHW [][3]int)
 		b.fc2w.MatmulBT(fc1, mlpOut, nPatches)
 		addBias(mlpOut, b.fc2b, nPatches, hidden)
 		addResidual(h, mlpOut)
+		if tap != nil {
+			tap(li, h)
+		}
 	}
 	return h, nil
 }

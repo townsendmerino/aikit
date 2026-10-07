@@ -191,8 +191,9 @@ func TestQwen3VisionEncoder_realParity(t *testing.T) {
 	checkQwen3Tower(t, ckpt, readQwen3Golden(t, gold), 2e-5)
 }
 
-// TestQwen3VisionEncoder_refusesWhatItCannotRun pins the loader's refusals: a DeepStack tower
-// (Qwen3-VL proper) and an activation the block MLP does not implement must fail at load, loudly.
+// TestQwen3VisionEncoder_refusesWhatItCannotRun pins the loader's refusals: DeepStack indexes that are not distinct,
+// increasing block indexes, and an activation the block MLP does not implement, must fail at load, loudly. A valid
+// DeepStack list (Qwen3-VL proper) is accepted since goinfer's S10.
 func TestQwen3VisionEncoder_refusesWhatItCannotRun(t *testing.T) {
 	base := Qwen3EncoderConfig{Depth: 1, HiddenSize: 64, IntermediateSize: 96, NumHeads: 4, InChannels: 3,
 		PatchSize: 4, SpatialMergeSize: 2, TemporalPatchSize: 2, OutHiddenSize: 48, NumPositionEmbeddings: 64,
@@ -200,13 +201,20 @@ func TestQwen3VisionEncoder_refusesWhatItCannotRun(t *testing.T) {
 	if err := base.validate(); err != nil {
 		t.Fatalf("valid config rejected: %v", err)
 	}
+	ds := base
+	ds.Depth, ds.DeepstackVisualIndexes = 3, []int{0, 2}
+	if err := ds.validate(); err != nil {
+		t.Fatalf("a valid DeepStack config rejected: %v", err)
+	}
 	for name, mut := range map[string]func(*Qwen3EncoderConfig){
-		"deepstack":       func(c *Qwen3EncoderConfig) { c.DeepstackVisualIndexes = []int{8, 16, 24} },
-		"silu":            func(c *Qwen3EncoderConfig) { c.HiddenAct = "silu" },
-		"empty act":       func(c *Qwen3EncoderConfig) { c.HiddenAct = "" },
-		"non-square pos":  func(c *Qwen3EncoderConfig) { c.NumPositionEmbeddings = 60 },
-		"zero pos table":  func(c *Qwen3EncoderConfig) { c.NumPositionEmbeddings = 0 },
-		"head_dim not /4": func(c *Qwen3EncoderConfig) { c.HiddenSize = 24 },
+		"deepstack past depth": func(c *Qwen3EncoderConfig) { c.DeepstackVisualIndexes = []int{8, 16, 24} },
+		"deepstack repeated":   func(c *Qwen3EncoderConfig) { c.Depth, c.DeepstackVisualIndexes = 3, []int{1, 1} },
+		"deepstack decreasing": func(c *Qwen3EncoderConfig) { c.Depth, c.DeepstackVisualIndexes = 3, []int{2, 0} },
+		"silu":                 func(c *Qwen3EncoderConfig) { c.HiddenAct = "silu" },
+		"empty act":            func(c *Qwen3EncoderConfig) { c.HiddenAct = "" },
+		"non-square pos":       func(c *Qwen3EncoderConfig) { c.NumPositionEmbeddings = 60 },
+		"zero pos table":       func(c *Qwen3EncoderConfig) { c.NumPositionEmbeddings = 0 },
+		"head_dim not /4":      func(c *Qwen3EncoderConfig) { c.HiddenSize = 24 },
 	} {
 		c := base
 		mut(&c)
