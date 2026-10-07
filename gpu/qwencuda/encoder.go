@@ -86,7 +86,6 @@ type encoder struct {
 	// the loop only chooses which pair to BIND. See the note at the upload.
 	segSWin, segEWin   gpu.Buffer
 	segSFull, segEFull gpu.Buffer
-	scratchWide        int
 }
 
 func newEncoder(src *vision.QwenVisionEncoder) (enc *encoder, err error) {
@@ -333,7 +332,9 @@ func (e *encoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) (out []flo
 			out, err = nil, fmt.Errorf("qwencuda: forward failed on the device: %v", r)
 		}
 		if err != nil {
-			_ = e.q.Sync()
+			if serr := e.q.Sync(); serr != nil {
+				err = fmt.Errorf("%w (and draining the queue: %v)", err, serr)
+			}
 		}
 	}()
 	if err := e.ensure(n); err != nil {
