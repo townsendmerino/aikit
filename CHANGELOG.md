@@ -13,6 +13,8 @@ excluded from that promise and may change in any release until it graduates.
 
 `perfgate` VERDICT: not run — the package it benchmarks compiles to the same code as v1.57.0
 
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 07d3642 (2026-10-07T00:40:23Z). `nobara-pc` (linux/amd64). 07d3642 is the commit before this line was added.
+
 > **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
 > `./linalg` only. Since v1.57.0 no file under `linalg/` changed (`git diff --stat v1.57.0..HEAD -- linalg/` is empty), and
 > nothing `linalg` or its tests import changed either: `go list -deps -test ./linalg` names only `linalg` and `mmap`, and
