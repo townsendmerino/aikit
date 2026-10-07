@@ -36,8 +36,14 @@ func TestResizeBicubicAA_matchesTorchvision(t *testing.T) {
 	}
 	floatDiffers := 0
 	for _, c := range g.Cases {
-		src, _ := base64.StdEncoding.DecodeString(c.Src)
-		want, _ := base64.StdEncoding.DecodeString(c.Dst)
+		src, err := base64.StdEncoding.DecodeString(c.Src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := base64.StdEncoding.DecodeString(c.Dst)
+		if err != nil {
+			t.Fatal(err)
+		}
 		got := ResizeBicubicAA(src, c.H, c.W, c.TH, c.TW)
 		if len(got) != len(want) {
 			t.Fatalf("%s: %d values, torchvision %d", c.Name, len(got), len(want))

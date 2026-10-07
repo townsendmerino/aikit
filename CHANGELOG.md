@@ -9,6 +9,18 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.58.0] — 2026-10-06
+
+`perfgate` VERDICT: not run — the package it benchmarks compiles to the same code as v1.57.0
+
+> **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
+> `./linalg` only. Since v1.57.0 no file under `linalg/` changed (`git diff --stat v1.57.0..HEAD -- linalg/` is empty), and
+> nothing `linalg` or its tests import changed either: `go list -deps -test ./linalg` names only `linalg` and `mmap`, and
+> `mmap/` is unchanged too. This release adds `audio`, extends `vision` (the Gemma 4 tower export and resize, the Qwen3.5
+> mmproj loader) and adds a BF16 case to `embed`'s GGUF dequant. None of those is on perfgate's path; the two benchmark
+> binaries it would build are the same code.
+
+
 ### Added — a Qwen3.5+ vision tower from a llama.cpp GGUF mmproj; a `TensorSource` seam; GGUF BF16
 
 - **`vision.LoadQwen3VisionEncoderMMProj(path, quant)`** loads the Qwen3.5+ tower from a `clip` mmproj with projector
@@ -5210,6 +5222,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.57.0...HEAD
+[1.58.0]: https://github.com/townsendmerino/aikit/compare/v1.57.0...v1.58.0
 [1.57.0]: https://github.com/townsendmerino/aikit/compare/v1.56.1...v1.57.0
 [1.56.1]: https://github.com/townsendmerino/aikit/compare/v1.56.0...v1.56.1
 [1.56.0]: https://github.com/townsendmerino/aikit/compare/v1.55.0...v1.56.0
