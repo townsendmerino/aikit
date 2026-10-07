@@ -30,6 +30,10 @@ func dequantRange(typ uint32, raw []byte, start int, dst []float32, blockElems i
 		for i := range dst {
 			dst[i] = halfBitsToF32(binary.LittleEndian.Uint16(raw[2*(start+i):]))
 		}
+	case ggmlTypeBF16:
+		for i := range dst {
+			dst[i] = math.Float32frombits(uint32(binary.LittleEndian.Uint16(raw[2*(start+i):])) << 16)
+		}
 	default:
 		first := start / blockElems
 		for k := 0; k*blockElems < len(dst); k++ {

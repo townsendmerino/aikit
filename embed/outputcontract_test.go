@@ -40,7 +40,7 @@ func TestOutputContract_dequantWritersOverwrite(t *testing.T) {
 		rng.Read(b)
 		return b
 	}
-	types := map[string]uint32{"F32": ggmlTypeF32, "F16": ggmlTypeF16, "Q8_0": ggmlTypeQ8_0, "Q4_0": ggmlTypeQ4_0, "Q5_0": ggmlTypeQ5_0, "Q2_K": ggmlTypeQ2_K, "Q3_K": ggmlTypeQ3_K,
+	types := map[string]uint32{"F32": ggmlTypeF32, "F16": ggmlTypeF16, "BF16": ggmlTypeBF16, "Q8_0": ggmlTypeQ8_0, "Q4_0": ggmlTypeQ4_0, "Q5_0": ggmlTypeQ5_0, "Q2_K": ggmlTypeQ2_K, "Q3_K": ggmlTypeQ3_K,
 		"Q4_K": ggmlTypeQ4_K, "Q5_K": ggmlTypeQ5_K, "Q6_K": ggmlTypeQ6_K, "IQ4_NL": ggmlTypeIQ4NL, "IQ4_XS": ggmlTypeIQ4XS, "IQ2_S": ggmlTypeIQ2S, "IQ3_S": ggmlTypeIQ3S, "MXFP4": ggmlTypeMXFP4}
 	for name, typ := range types {
 		be, ok := ggmlBlockElems(typ)

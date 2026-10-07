@@ -27,6 +27,7 @@ const ggufMagic = 0x46554747 // "GGUF" little-endian
 const (
 	ggmlTypeF32   uint32 = 0
 	ggmlTypeF16   uint32 = 1
+	ggmlTypeBF16  uint32 = 30 // bfloat16: the top half of an f32 (Ollama's projector blobs store their matrices this way)
 	ggmlTypeQ4_0  uint32 = 2
 	ggmlTypeQ5_0  uint32 = 6
 	ggmlTypeQ8_0  uint32 = 8
@@ -480,7 +481,7 @@ func (g *GGUFFile) RowDequantizer(name string) (dims []int, into func(start int,
 // (1 for the unquantized F32/F16), and whether the type is supported.
 func ggmlBlockElems(typ uint32) (int, bool) {
 	switch typ {
-	case ggmlTypeF32, ggmlTypeF16:
+	case ggmlTypeF32, ggmlTypeF16, ggmlTypeBF16:
 		return 1, true
 	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ5_0, ggmlTypeIQ4NL, ggmlTypeMXFP4:
 		return 32, true
@@ -498,7 +499,7 @@ func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
 	switch info.typ {
 	case ggmlTypeF32:
 		nbytes = n * 4
-	case ggmlTypeF16:
+	case ggmlTypeF16, ggmlTypeBF16:
 		nbytes = n * 2
 	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ5_0, ggmlTypeIQ4NL, ggmlTypeMXFP4:
 		if n%32 != 0 {

@@ -172,15 +172,45 @@ func LoadQwen3VisionEncoder(dir string, quant bool) (*Qwen3VisionEncoder, error)
 		return nil, fmt.Errorf("vision: open safetensors: %w", err)
 	}
 	defer st.Close()
+	return LoadQwen3VisionEncoderFrom(cfg, prefixedSource{st, qwen3TensorPrefix(st)}, quant)
+}
 
+// TensorSource supplies a vision tower's tensors as float32 by their Hugging Face name (without a checkpoint's
+// "model.visual." prefix) and shape, so a tower can load from a safetensors directory or from another container, such
+// as a GGUF mmproj (LoadQwen3VisionEncoderMMProj). The returned slice may alias the source; loaders copy it.
+type TensorSource interface {
+	TensorF32(name string, want ...int) ([]float32, error)
+}
+
+// prefixedSource is a safetensors checkpoint's tensors under a name prefix.
+type prefixedSource struct {
+	st interface {
+		TensorF32(name string, want ...int) ([]float32, error)
+	}
+	pfx string
+}
+
+func (p prefixedSource) TensorF32(name string, want ...int) ([]float32, error) {
+	return p.st.TensorF32(p.pfx+name, want...)
+}
+
+// LoadQwen3VisionEncoderFrom builds a Qwen3.5+ tower from cfg and a tensor source (LoadQwen3VisionEncoder's body for
+// any container). cfg is validated here.
+func LoadQwen3VisionEncoderFrom(cfg Qwen3EncoderConfig, src TensorSource, quant bool) (*Qwen3VisionEncoder, error) {
+	if cfg.InChannels == 0 {
+		cfg.InChannels = 3
+	}
+	if err := cfg.validate(); err != nil {
+		return nil, fmt.Errorf("vision: %w", err)
+	}
+	var err error
 	e := &Qwen3VisionEncoder{Cfg: cfg}
-	pfx := qwen3TensorPrefix(st)
 	get := func(name string, want ...int) []float32 {
 		if err != nil {
 			return nil
 		}
 		var v []float32
-		v, err = st.TensorF32(pfx+name, want...)
+		v, err = src.TensorF32(name, want...)
 		if err != nil {
 			return nil
 		}
