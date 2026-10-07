@@ -13,6 +13,8 @@ excluded from that promise and may change in any release until it graduates.
 
 `perfgate` VERDICT: not run — the package it benchmarks compiles to the same code as v1.58.0
 
+STATEMENT: no reachable vulnerabilities in 16/16 modules at e9f1310 (2026-10-07T23:18:20Z). `nobara-pc` (linux/amd64). e9f1310 is the commit before this line was added.
+
 > **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
 > `./linalg` only. Since v1.58.0 no file under `linalg/` or `mmap/` changed (`git diff --stat v1.58.0..HEAD -- linalg/ mmap/`
 > is empty), and `go list -deps -test ./linalg` names only those two. This release extends `vision` (float32 device-tower
