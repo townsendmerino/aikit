@@ -36,6 +36,22 @@ func LoadQwen3VisionEncoderMMProj(path string, quant bool) (*Qwen3VisionEncoder,
 	return enc, nil
 }
 
+// ReadQwen3MMProjConfig reads a GGUF mmproj's tower config without loading the weights, with
+// LoadQwen3VisionEncoderMMProj's refusals (another projector type, DeepStack, an unsupported epsilon, an unsplit patch
+// embedding), so a server can check it against its text model at startup.
+func ReadQwen3MMProjConfig(path string) (Qwen3EncoderConfig, error) {
+	g, err := embed.OpenGGUFMmap(path)
+	if err != nil {
+		return Qwen3EncoderConfig{}, fmt.Errorf("vision: open mmproj: %w", err)
+	}
+	defer g.Close()
+	cfg, err := qwen3MMProjConfig(g)
+	if err != nil {
+		return cfg, fmt.Errorf("vision: %s: %w", path, err)
+	}
+	return cfg, nil
+}
+
 // qwen3MMProjConfig reads the tower's config from an mmproj's metadata.
 func qwen3MMProjConfig(g *embed.GGUFFile) (Qwen3EncoderConfig, error) {
 	var c Qwen3EncoderConfig
