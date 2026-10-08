@@ -50,7 +50,7 @@
 // CORRECTS the shell, which set GOWORK=off once as a global export (correct in effect, but
 // invisible and not per-command) and used whatever golangci-lint was on PATH — a build that
 // drifts by the Go it was compiled with (see gpumod.GolangciLint). This runs the linter
-// build-pinned via `go run @v2.13.0`, the same one CI's goinstall v2.13.0 and the gpu gate
+// build-pinned via `go run @v2.14.0`, the same one CI's goinstall v2.14.0 and the gpu gate
 // resolve to.
 //
 // THE RELATIONSHIP TO ci.yml IS GUARDED. This check list mirrors the core job; a silent
@@ -253,7 +253,7 @@ func goTest(root string) gate.Cell {
 
 // checkLint runs the pinned golangci-lint on the ROOT module. A preflight `version` run
 // separates "the linter could not be built/run" (INCONCLUSIVE — an external tool the check
-// depends on) from "the linter found issues" (FAIL). Build-pinned via `go run @v2.13.0`.
+// depends on) from "the linter found issues" (FAIL). Build-pinned via `go run @v2.14.0`.
 func checkLint(root string) gate.Cell {
 	if _, rc := gpumod.Exec(root, "", nil, "go", "run", gpumod.GolangciLint, "version"); rc != 0 {
 		return cell("golangci-lint", gate.Inconclusive, "GOWORK=off CGO_ENABLED=0")

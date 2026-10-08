@@ -13,7 +13,13 @@ excluded from that promise and may change in any release until it graduates.
 
 `perfgate` VERDICT: not run — the package it benchmarks compiles to the same code as v1.59.0
 
-STATEMENT: no reachable vulnerabilities in 16/16 modules at a76d6a9 (2026-10-08T22:59:53Z). `nobara-pc` (linux/amd64). a76d6a9 is the commit before this line was added.
+STATEMENT: no reachable vulnerabilities in 16/16 modules at af5cf29 (2026-10-08T23:17:14Z). CI (ubuntu, linux/amd64), Go 1.27.2, govulncheck v1.8.0.
+
+> **The toolchain moved to Go 1.27.2 in this release.** The Go 1.27.0 standard library carries advisories GO-2026-6607 to
+> 6617 (net/http, its http2, net/textproto, crypto/tls), fixed in 1.27.2, which govulncheck v1.8.0 finds reachable from
+> `benchmarks`. `go.mod` gains `toolchain go1.27.2` (CI's setup-go reads it; a consumer's build ignores it). golangci-lint
+> moves from v2.13.0 to v2.14.0 everywhere it is pinned, because v2.13.0 cannot read Go 1.27.2's export data (version 5)
+> and type-checked nothing; v2.14.0 reports 0 issues on the tree.
 
 > **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
 > `./linalg` only. Since v1.59.0 no file under `linalg/` or `mmap/` changed (`git diff --stat v1.59.0..HEAD -- linalg/ mmap/`

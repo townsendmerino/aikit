@@ -44,7 +44,7 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9
         with:
-          version: v2.13.0
+          version: v2.14.0
           install-mode: goinstall
 
       # Core-cleanliness guard (migration-plan §7/§9): the root module must
@@ -349,7 +349,7 @@ jobs:
     # union covers all nine gpu modules: the four *metal build and lint only on darwin, the
     # four *cuda only on Linux. golangci-lint across the nine modules is now actually RUN
     # here (it was installed-but-never-invoked before — a check that could not fail); the
-    # gate pins its BUILD via `go run @v2.13.0`, so its bundled staticcheck matches every box.
+    # gate pins its BUILD via `go run @v2.14.0`, so its bundled staticcheck matches every box.
     strategy:
       fail-fast: false
       matrix:
