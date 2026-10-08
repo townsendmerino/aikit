@@ -13,6 +13,8 @@ excluded from that promise and may change in any release until it graduates.
 
 `perfgate` VERDICT: not run — the package it benchmarks compiles to the same code as v1.59.0
 
+STATEMENT: no reachable vulnerabilities in 16/16 modules at a76d6a9 (2026-10-08T22:59:53Z). `nobara-pc` (linux/amd64). a76d6a9 is the commit before this line was added.
+
 > **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
 > `./linalg` only. Since v1.59.0 no file under `linalg/` or `mmap/` changed (`git diff --stat v1.59.0..HEAD -- linalg/ mmap/`
 > is empty). This release changes how `vision` loads the SigLIP tower, which is not on perfgate's path.
