@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/townsendmerino/aikit/embed"
 	"github.com/townsendmerino/aikit/linalg"
 )
 
@@ -86,12 +87,34 @@ type Encoder struct {
 	layers           []encLayer
 	postLNw, postLNb []float32
 	resident         ResidentEncoder // device-resident GPU forward (EnableResident); nil = CPU path
+
+	// A head-only encoder (LoadEncoderHead) holds no blocks until something needs them: dir and quant say where and how
+	// to load them, and blocksMu guards the one load (ensureBlocks).
+	dir      string
+	quant    bool
+	blocksMu sync.Mutex
 }
 
 // LoadEncoder reads a SigLIP vision checkpoint (config.json + model.safetensors)
 // and returns a ready Encoder. Weights are copied out, so the safetensors file is
 // closed before return (no retained mmap).
 func LoadEncoder(dir string, quant bool) (*Encoder, error) {
+	e, err := LoadEncoderHead(dir, quant)
+	if err != nil {
+		return nil, err
+	}
+	if err := e.ensureBlocks(); err != nil {
+		return nil, err
+	}
+	return e, nil
+}
+
+// LoadEncoderHead is LoadEncoder without the encoder blocks: the config, the patch embed, the position table and the
+// post-layernorm, a few MB where the blocks of a real tower are GBs (Gemma 3's so400m: 2.17 GB in float32). A device
+// tower builds from it one block at a time (ForEachSiglipBlock), so its weights are never all on the host at once.
+// Everything that needs the blocks on the host (the CPU Forward, Weights, GPUWeights) loads them at quant on its first
+// call and keeps them, so a head-only encoder is still a complete one: its CPU path is slower the first time, not absent.
+func LoadEncoderHead(dir string, quant bool) (*Encoder, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
 	if err != nil {
 		return nil, fmt.Errorf("vision: read config: %w", err)
@@ -124,62 +147,138 @@ func LoadEncoder(dir string, quant bool) (*Encoder, error) {
 	}
 	defer st.Close()
 
-	e := &Encoder{Cfg: cfg}
+	e := &Encoder{Cfg: cfg, dir: dir, quant: quant}
 	e.grid = cfg.ImageSize / cfg.PatchSize
 	e.numPatches = e.grid * e.grid
-	// "" for the tiny stripped tower, "vision_tower.vision_model." inside a real
-	// gemma-3-4b-it (where the SigLIP tower lives in the model shards).
-	pfx := tensorPrefix(st, "embeddings.patch_embedding.weight", "vision_tower.vision_model.")
-	// get reads a tensor and, when want dims are given, shape-checks it (H7):
-	// without this a mismatched/hostile checkpoint panics deep in QuantizeRowsInt8
-	// or MatmulBT at load/Forward instead of returning a clean error. Shapes
-	// follow HF SiglipVisionModel (Linear weights [out,in], the Conv2d
-	// patch-embed [hidden,C,P,P], position_embedding [numPatches,hidden], 1-D
-	// biases/LayerNorms) — the parity test (testdata/siglip-tiny) is the gate.
-	get := func(name string, want ...int) []float32 {
-		if err != nil {
-			return nil
-		}
-		var v []float32
-		v, err = st.TensorF32(pfx+name, want...)
-		if err != nil {
-			return nil
-		}
-		return append([]float32(nil), v...) // copy out so st can close
-	}
-	hidden, inter := cfg.HiddenSize, cfg.IntermediateSize
-	// qm wraps a matmul weight as f32 or int8 (W8A8). Attention/FFN projections
-	// quantize under -vision-quant; the patch-embed conv stays f32 (input
-	// embedding — quant error there propagates through every layer).
-	qm := func(name string, rows, cols int) linalg.WeightMat {
-		w := get(name, rows, cols)
-		if err != nil {
-			return linalg.WeightMat{}
-		}
-		return newQMat(w, rows, cols, quant)
-	}
-	numChan := cfg.NumChannels
-	e.patchW = get("embeddings.patch_embedding.weight", hidden, numChan, cfg.PatchSize, cfg.PatchSize) // Conv2d
-	e.patchB = get("embeddings.patch_embedding.bias", hidden)
-	e.posEmb = get("embeddings.position_embedding.weight", e.numPatches, hidden)
-	e.layers = make([]encLayer, cfg.NumHiddenLayers)
-	for l := range e.layers {
-		p := fmt.Sprintf("encoder.layers.%d.", l)
-		lw := &e.layers[l]
-		lw.ln1w, lw.ln1b = get(p+"layer_norm1.weight", hidden), get(p+"layer_norm1.bias", hidden)
-		lw.qw, lw.qb = qm(p+"self_attn.q_proj.weight", hidden, hidden), get(p+"self_attn.q_proj.bias", hidden)
-		lw.kw, lw.kb = qm(p+"self_attn.k_proj.weight", hidden, hidden), get(p+"self_attn.k_proj.bias", hidden)
-		lw.vw, lw.vb = qm(p+"self_attn.v_proj.weight", hidden, hidden), get(p+"self_attn.v_proj.bias", hidden)
-		lw.ow, lw.ob = qm(p+"self_attn.out_proj.weight", hidden, hidden), get(p+"self_attn.out_proj.bias", hidden)
-		lw.ln2w, lw.ln2b = get(p+"layer_norm2.weight", hidden), get(p+"layer_norm2.bias", hidden)
-		lw.fc1w, lw.fc1b = qm(p+"mlp.fc1.weight", inter, hidden), get(p+"mlp.fc1.bias", inter)
-		lw.fc2w, lw.fc2b = qm(p+"mlp.fc2.weight", hidden, inter), get(p+"mlp.fc2.bias", hidden)
-	}
-	e.postLNw, e.postLNb = get("post_layernorm.weight", hidden), get("post_layernorm.bias", hidden)
-	if err != nil {
-		return nil, fmt.Errorf("vision: load weights: %w", err)
+	r := newSiglipReader(st)
+	hidden := cfg.HiddenSize
+	e.patchW = r.get("embeddings.patch_embedding.weight", hidden, cfg.NumChannels, cfg.PatchSize, cfg.PatchSize) // Conv2d
+	e.patchB = r.get("embeddings.patch_embedding.bias", hidden)
+	e.posEmb = r.get("embeddings.position_embedding.weight", e.numPatches, hidden)
+	e.postLNw, e.postLNb = r.get("post_layernorm.weight", hidden), r.get("post_layernorm.bias", hidden)
+	if r.err != nil {
+		return nil, fmt.Errorf("vision: load weights: %w", r.err)
 	}
 	return e, nil
+}
+
+// siglipReader reads a SigLIP tower's tensors from an open checkpoint, recording the first error. "" is the prefix for
+// the tiny stripped tower, "vision_tower.vision_model." inside a real gemma-3-4b-it (where the SigLIP tower lives in the
+// model shards).
+type siglipReader struct {
+	st  *embed.SafetensorsFile
+	pfx string
+	err error
+}
+
+func newSiglipReader(st *embed.SafetensorsFile) *siglipReader {
+	return &siglipReader{st: st, pfx: tensorPrefix(st, "embeddings.patch_embedding.weight", "vision_tower.vision_model.")}
+}
+
+// get reads a tensor and, when want dims are given, shape-checks it (H7): without this a mismatched/hostile checkpoint
+// panics deep in QuantizeRowsInt8 or MatmulBT at load/Forward instead of returning a clean error. Shapes follow HF
+// SiglipVisionModel (Linear weights [out,in], the Conv2d patch-embed [hidden,C,P,P], position_embedding
+// [numPatches,hidden], 1-D biases/LayerNorms) — the parity test (testdata/siglip-tiny) is the gate.
+func (r *siglipReader) get(name string, want ...int) []float32 {
+	if r.err != nil {
+		return nil
+	}
+	v, err := r.st.TensorF32(r.pfx+name, want...)
+	if err != nil {
+		r.err = err
+		return nil
+	}
+	return append([]float32(nil), v...) // copy out so st can close
+}
+
+// block reads layer l's float32 weights.
+func (r *siglipReader) block(l int, cfg EncoderConfig) SiglipBlock {
+	hidden, inter := cfg.HiddenSize, cfg.IntermediateSize
+	p := fmt.Sprintf("encoder.layers.%d.", l)
+	proj := func(name string, rows, cols int) VisionProj {
+		return VisionProj{W: r.get(p+name+".weight", rows, cols), B: r.get(p+name+".bias", rows), Out: rows, In: cols}
+	}
+	return SiglipBlock{
+		LN1W: r.get(p+"layer_norm1.weight", hidden), LN1B: r.get(p+"layer_norm1.bias", hidden),
+		Q: proj("self_attn.q_proj", hidden, hidden), K: proj("self_attn.k_proj", hidden, hidden),
+		V: proj("self_attn.v_proj", hidden, hidden), O: proj("self_attn.out_proj", hidden, hidden),
+		LN2W: r.get(p+"layer_norm2.weight", hidden), LN2B: r.get(p+"layer_norm2.bias", hidden),
+		FC1: proj("mlp.fc1", inter, hidden), FC2: proj("mlp.fc2", hidden, inter),
+	}
+}
+
+// ensureBlocks loads the encoder blocks at e.quant if they are not loaded yet: LoadEncoder's second half, and a
+// head-only encoder's first CPU forward or host export.
+func (e *Encoder) ensureBlocks() error {
+	e.blocksMu.Lock()
+	defer e.blocksMu.Unlock()
+	if e.layers != nil {
+		return nil
+	}
+	st, err := openWeights(e.dir)
+	if err != nil {
+		return fmt.Errorf("vision: open safetensors: %w", err)
+	}
+	defer st.Close()
+	r := newSiglipReader(st)
+	layers := make([]encLayer, e.Cfg.NumHiddenLayers)
+	// qm wraps a matmul weight as f32 or int8 (W8A8). Attention/FFN projections quantize under -vision-quant; the
+	// patch-embed conv stays f32 (input embedding — quant error there propagates through every layer).
+	qm := func(p VisionProj) linalg.WeightMat {
+		if r.err != nil {
+			return linalg.WeightMat{}
+		}
+		return newQMat(p.W, p.Out, p.In, e.quant)
+	}
+	for l := range layers {
+		b := r.block(l, e.Cfg)
+		lw := &layers[l]
+		lw.ln1w, lw.ln1b, lw.ln2w, lw.ln2b = b.LN1W, b.LN1B, b.LN2W, b.LN2B
+		lw.qw, lw.qb = qm(b.Q), b.Q.B
+		lw.kw, lw.kb = qm(b.K), b.K.B
+		lw.vw, lw.vb = qm(b.V), b.V.B
+		lw.ow, lw.ob = qm(b.O), b.O.B
+		lw.fc1w, lw.fc1b = qm(b.FC1), b.FC1.B
+		lw.fc2w, lw.fc2b = qm(b.FC2), b.FC2.B
+	}
+	if r.err != nil {
+		return fmt.Errorf("vision: load weights: %w", r.err)
+	}
+	e.layers = layers
+	return nil
+}
+
+// ForEachSiglipBlock calls fn with each encoder block's float32 weights, in order, read from the checkpoint one block at
+// a time: what a device tower uploads, without the host ever holding the whole tower (LoadEncoderHead). The block's
+// slices are fn's to keep or drop. It reads the checkpoint whether or not the blocks are loaded, and works on a full
+// encoder too.
+func (e *Encoder) ForEachSiglipBlock(fn func(l int, b SiglipBlock) error) error {
+	if e.dir == "" {
+		return fmt.Errorf("vision: this encoder has no checkpoint directory to read blocks from")
+	}
+	st, err := openWeights(e.dir)
+	if err != nil {
+		return fmt.Errorf("vision: open safetensors: %w", err)
+	}
+	defer st.Close()
+	r := newSiglipReader(st)
+	for l := range e.Cfg.NumHiddenLayers {
+		b := r.block(l, e.Cfg)
+		if r.err != nil {
+			return fmt.Errorf("vision: block %d: %w", l, r.err)
+		}
+		if err := fn(l, b); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// SiglipHead is a head-only encoder's weights a device tower needs beside the blocks: the patch embed, its bias and the
+// position table (the slices alias the encoder's; do not write them). The post-layernorm stays on the host
+// (FinishHidden).
+func (e *Encoder) SiglipHead() (patchW, patchB, posEmb []float32, numPatches int) {
+	return e.patchW, e.patchB, e.posEmb, e.numPatches
 }
 
 // Forward runs the encoder on pixel_values [NumChannels*ImageSize*ImageSize]
@@ -204,6 +303,9 @@ func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 			return nil, err
 		}
 		return e.resident.ForwardPatches(patches)
+	}
+	if err := e.ensureBlocks(); err != nil {
+		return nil, err
 	}
 	h, err := e.forwardBlocks(pixels)
 	if err != nil {
@@ -541,4 +643,17 @@ func addResidual(h, delta []float32) {
 	for i := nh4; i < nh; i++ {
 		h[i] += delta[i]
 	}
+}
+
+// Quantized reports whether the encoder was loaded with quant=true (LoadEncoder, LoadEncoderHead): its CPU path is then
+// W8A8, and a device tower may choose its own int8 form from the float32 blocks ForEachSiglipBlock streams.
+func (e *Encoder) Quantized() bool { return e.quant }
+
+// HasBlocks reports whether the encoder holds its blocks on the host (LoadEncoder, or a head-only encoder after
+// something loaded them). A device tower uploads those when they are float32 (Weights), so a caller's in-memory changes
+// reach it, and streams from the checkpoint otherwise (ForEachSiglipBlock).
+func (e *Encoder) HasBlocks() bool {
+	e.blocksMu.Lock()
+	defer e.blocksMu.Unlock()
+	return e.layers != nil
 }

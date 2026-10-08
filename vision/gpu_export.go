@@ -41,6 +41,9 @@ type GPUWeights struct {
 // GPUWeights exports the tower for the GPU resident encoder. Requires int8
 // matmul weights (LoadEncoder quant=true) — errors otherwise.
 func (e *Encoder) GPUWeights() (GPUWeights, error) {
+	if err := e.ensureBlocks(); err != nil {
+		return GPUWeights{}, err
+	}
 	c := e.Cfg
 	gm := func(m linalg.WeightMat) (GPUMat, error) {
 		q, scales, _, ok := m.Int8()
