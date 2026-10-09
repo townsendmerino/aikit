@@ -9,6 +9,35 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.61.0] — 2026-10-08
+
+`perfgate` VERDICT: not run — nothing it benchmarks changed (no file under `linalg/` or `mmap/` differs from v1.60.0)
+
+STATEMENT: PENDING (filled from `go run -C tools ./vulncheck` before the tag)
+
+> **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
+> `./linalg` only, and `git diff --stat v1.60.0..HEAD -- linalg/ mmap/` is empty. This release adds files to `audio/` and
+> changes nothing else of consequence (the eight gpu backends' pins moved to v1.60.0 in the previous release's follow-up).
+
+### Added — speech front ends and encoders in `audio` (goinfer S14)
+
+All float32, pure Go, no new dependency. Each one carries planted-defect seams (`*ForTest`) so a consumer's gate can prove
+it goes red on a wrong implementation; those are test hooks, not a supported surface.
+
+- **`WhisperFeatures(samples, mels)`:** the Whisper log-mel front end (transformers' `WhisperFeatureExtractor`, NumPy path,
+  bit-exact on its goldens), for 80 and 128 mel bins; a mixed-radix 400-point FFT. `WhisperValidFrames(n)` is the frame
+  count of `n` samples.
+- **`QwenASRFeatures(samples)`:** Qwen3-ASR's variant of the same front end: variable length (no 30 s pad), a minimum
+  length, the mel axis padded to a multiple of 100, and the validity mask (`QwenASRFeats`). It shares the log-mel core.
+- **`LoadQwenASREncoder(dir)`, `QwenASREncoder.Forward` / `.Tower`, `QwenASRTokenCount(valid)`:** the AuT audio encoder
+  (three stride-2 Conv2d, per-chunk sinusoid positions, 104-position attention windows) and its projector into the
+  decoder's width; `QwenASRTokenCount` is the number of soft tokens `valid` frames produce.
+- **`LoadWhisperEncoder(dir)`, `WhisperEncoder.Forward`:** the Whisper encoder (two Conv1d with GELU, learned positions,
+  pre-LN layers, full 1500-position attention, final LayerNorm). The key projection has no bias, as in the checkpoint.
+
+Gates live in goinfer (G-S14a, G-S14b, G-S14c, G-S14d), against transformers float32 references; aikit's own tests cover
+the front end's FFT and edge cases and that each planted defect moves the output.
+
 ## [1.60.0] — 2026-10-08
 
 `perfgate` VERDICT: not run — the package it benchmarks compiles to the same code as v1.59.0
@@ -5319,7 +5348,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.60.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.61.0...HEAD
+[1.61.0]: https://github.com/townsendmerino/aikit/compare/v1.60.0...v1.61.0
 [1.60.0]: https://github.com/townsendmerino/aikit/compare/v1.59.0...v1.60.0
 [1.59.0]: https://github.com/townsendmerino/aikit/compare/v1.58.0...v1.59.0
 [1.58.0]: https://github.com/townsendmerino/aikit/compare/v1.57.0...v1.58.0
