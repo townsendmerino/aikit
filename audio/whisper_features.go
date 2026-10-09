@@ -78,42 +78,7 @@ func whisperFeatures(samples []float32, mels, defect int) ([]float32, int, error
 			x[half+WhisperChunkLen-1+i] = x[half+WhisperChunkLen-1-i]
 		}
 	}
-	window := whisperHann(defect == whisperDefectSymmetricHann)
-	bank := whisperMelBank(mels, defect == whisperDefectHTK)
-	frames := 1 + (len(x)-whisperNFFT)/whisperHop // 3001: the last one is dropped below
-	spec := make([]float64, whisperBins)
-	logmel := make([]float32, mels*frames) // [mels][frames], before the drop
-	buf := make([]complex128, whisperNFFT)
-	out := make([]complex128, whisperNFFT)
-	tmp := make([]complex128, whisperNFFT)
-	for f := range frames {
-		fr := x[f*whisperHop : f*whisperHop+whisperNFFT]
-		for i := range buf {
-			buf[i] = complex(fr[i]*window[i], 0)
-		}
-		whisperFFT(buf, out, tmp)
-		for k := range whisperBins {
-			// complex64 storage in the reference's NumPy path: round both parts to float32, then |.|^2 in float64 via the modulus.
-			re, im := float64(float32(real(out[k]))), float64(float32(imag(out[k])))
-			if defect == whisperDefectMagnitude {
-				spec[k] = math.Hypot(re, im)
-			} else {
-				h := math.Hypot(re, im)
-				spec[k] = h * h
-			}
-		}
-		for m := range mels {
-			row := bank[m*whisperBins : (m+1)*whisperBins]
-			var s float64
-			for k, v := range row {
-				s += v * spec[k]
-			}
-			if s < whisperMelFloor {
-				s = whisperMelFloor
-			}
-			logmel[m*frames+f] = float32(math.Log10(s)) // cast to float32 here, as np.asarray(spectrogram, float32) does
-		}
-	}
+	logmel, frames := whisperLogMel(x, mels, defect)
 	// Drop the last frame, clamp to the clip's maximum minus 8, scale.
 	feat := make([]float32, mels*WhisperFrames)
 	mx := float32(math.Inf(-1))
@@ -138,6 +103,48 @@ func whisperFeatures(samples []float32, mels, defect int) ([]float32, int, error
 		}
 	}
 	return feat, valid, nil
+}
+
+// whisperLogMel is the STFT, power spectrum, mel projection and log10 of an already centre-padded signal x (len >= 400): [mels][frames] float32, frames = 1 + (len(x)-400)/160, the
+// last of them not yet dropped. It is the part Whisper's extractor and Qwen3-ASR's share; the padding around it differs.
+func whisperLogMel(x []float64, mels, defect int) ([]float32, int) {
+	window := whisperHann(defect == whisperDefectSymmetricHann)
+	bank := whisperMelBank(mels, defect == whisperDefectHTK)
+	frames := 1 + (len(x)-whisperNFFT)/whisperHop
+	spec := make([]float64, whisperBins)
+	logmel := make([]float32, mels*frames)
+	buf := make([]complex128, whisperNFFT)
+	out := make([]complex128, whisperNFFT)
+	tmp := make([]complex128, whisperNFFT)
+	for f := range frames {
+		fr := x[f*whisperHop : f*whisperHop+whisperNFFT]
+		for i := range buf {
+			buf[i] = complex(fr[i]*window[i], 0)
+		}
+		whisperFFT(buf, out, tmp)
+		for k := range whisperBins {
+			// complex64 storage in the reference's NumPy path: round both parts to float32, then |.|^2 in float64 via the modulus.
+			re, im := float64(float32(real(out[k]))), float64(float32(imag(out[k])))
+			h := math.Hypot(re, im)
+			if defect == whisperDefectMagnitude {
+				spec[k] = h
+			} else {
+				spec[k] = h * h
+			}
+		}
+		for m := range mels {
+			row := bank[m*whisperBins : (m+1)*whisperBins]
+			var s float64
+			for k, v := range row {
+				s += v * spec[k]
+			}
+			if s < whisperMelFloor {
+				s = whisperMelFloor
+			}
+			logmel[m*frames+f] = float32(math.Log10(s)) // cast to float32 here, as np.asarray(spectrogram, float32) does
+		}
+	}
+	return logmel, frames
 }
 
 // whisperHann is np.hanning(401)[:-1], the periodic Hann the extractor uses (window_function(400, "hann")), or the symmetric np.hanning(400) for the planted defect.
