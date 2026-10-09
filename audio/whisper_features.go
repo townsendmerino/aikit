@@ -105,6 +105,56 @@ func whisperFeatures(samples []float32, mels, defect int) ([]float32, int, error
 	return feat, valid, nil
 }
 
+// WhisperFeaturesWindows is the feature computation of Voxtral's processor (VoxtralProcessor._retrieve_input_features): the clip is zero-padded UP to a multiple of 480,000 samples (never
+// truncated; a clip already a whole number of windows is not padded further, and an empty one is an error), ONE log-mel is computed over the whole padded signal (so the reflect padding sits at the
+// true ends and the clamp's maximum is the whole signal's, not each window's), and the result is split along time into 3000-frame windows. Each window is [mels x 3000] row-major, exactly
+// WhisperFeatures' layout. For a clip of up to 30 s it returns one window equal to WhisperFeatures'.
+func WhisperFeaturesWindows(samples []float32, mels int) ([][]float32, error) {
+	if mels != 80 && mels != 128 {
+		return nil, fmt.Errorf("audio: Whisper features take 80 or 128 mels, not %d", mels)
+	}
+	if len(samples) == 0 {
+		return nil, fmt.Errorf("audio: empty clip")
+	}
+	windows := (len(samples) + WhisperChunkLen - 1) / WhisperChunkLen
+	padded := windows * WhisperChunkLen
+	const half = whisperNFFT / 2
+	x := make([]float64, padded+whisperNFFT)
+	for i, v := range samples {
+		x[half+i] = float64(v)
+	}
+	for i := 1; i <= half; i++ {
+		x[half-i] = x[half+i]
+		x[half+padded-1+i] = x[half+padded-1-i]
+	}
+	logmel, frames := whisperLogMel(x, mels, whisperDefectNone)
+	total := windows * WhisperFrames // the last STFT frame is dropped
+	mx := float32(math.Inf(-1))
+	for m := range mels {
+		for f := range total {
+			if v := logmel[m*frames+f]; v > mx {
+				mx = v
+			}
+		}
+	}
+	thr := mx - 8
+	out := make([][]float32, windows)
+	for w := range windows {
+		feat := make([]float32, mels*WhisperFrames)
+		for m := range mels {
+			for f := range WhisperFrames {
+				v := logmel[m*frames+w*WhisperFrames+f]
+				if v < thr {
+					v = thr
+				}
+				feat[m*WhisperFrames+f] = (v + 4) / 4
+			}
+		}
+		out[w] = feat
+	}
+	return out, nil
+}
+
 // whisperLogMel is the STFT, power spectrum, mel projection and log10 of an already centre-padded signal x (len >= 400): [mels][frames] float32, frames = 1 + (len(x)-400)/160, the
 // last of them not yet dropped. It is the part Whisper's extractor and Qwen3-ASR's share; the padding around it differs.
 func whisperLogMel(x []float64, mels, defect int) ([]float32, int) {

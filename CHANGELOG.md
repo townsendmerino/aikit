@@ -9,6 +9,13 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added — Voxtral's audio path in `audio` (goinfer S14.4b)
+
+- `LoadVoxtralAudio` / `VoxtralAudio.Embed`: Voxtral Mini's audio tower (the Whisper encoder), the four-frame stacking and the two-linear projector, float32 on the CPU; a clip's windows go in, the audio tokens' embeddings come out.
+- `WhisperFeaturesWindows`: the front end of Voxtral's processor for clips of any length: padded UP to a multiple of 30 s, one log-mel over the whole signal (so the clamp's maximum and the reflect padding are the whole signal's), split into 3000-frame windows.
+- `LoadWhisperEncoder` reads Voxtral's config spelling (`hidden_size`, `num_hidden_layers`, `num_attention_heads`, `intermediate_size` under `audio_config`) and the `audio_tower.` tensor prefix.
+- Experimental tier; the `*ForTest` defect seams are test hooks, not a supported surface.
+
 ## [1.61.0] — 2026-10-08
 
 `perfgate` VERDICT: not run — nothing it benchmarks changed (no file under `linalg/` or `mmap/` differs from v1.60.0)

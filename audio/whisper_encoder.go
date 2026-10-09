@@ -72,38 +72,74 @@ const WhisperEncDefectCountForTest = whisperEncDefectPostNorm
 // SetDefectForTest plants one defect (0 clears it). Never call it in production.
 func (e *WhisperEncoder) SetDefectForTest(d int) { e.defect = d }
 
-// LoadWhisperEncoder reads the encoder from a Whisper checkpoint directory (config.json at the top, or under audio_config; model.safetensors or a shard index with the tensors under
-// "model.encoder.", "encoder." or no prefix).
+// parseWhisperEncoderConfig reads an encoder config in either spelling: Whisper's own (d_model, encoder_layers, encoder_attention_heads, encoder_ffn_dim) or the one transformers
+// writes for Voxtral's audio tower (hidden_size, num_hidden_layers, num_attention_heads, intermediate_size: the FFN width, which Voxtral's projector then also reads as its input width).
+func parseWhisperEncoderConfig(raw []byte) (WhisperEncoderConfig, error) {
+	var c struct {
+		WhisperEncoderConfig
+		HiddenSize        int `json:"hidden_size"`
+		NumHiddenLayers   int `json:"num_hidden_layers"`
+		NumAttentionHeads int `json:"num_attention_heads"`
+		IntermediateSize  int `json:"intermediate_size"`
+	}
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return WhisperEncoderConfig{}, err
+	}
+	out := c.WhisperEncoderConfig
+	if out.DModel == 0 {
+		out.DModel = c.HiddenSize
+	}
+	if out.Layers == 0 {
+		out.Layers = c.NumHiddenLayers
+	}
+	if out.Heads == 0 {
+		out.Heads = c.NumAttentionHeads
+	}
+	if out.FFN == 0 {
+		out.FFN = c.IntermediateSize
+	}
+	return out, nil
+}
+
+// openSafetensorsDir opens a checkpoint directory's weights: a shard index when there is one, else model.safetensors.
+func openSafetensorsDir(dir string) (*embed.SafetensorsFile, error) {
+	if idx := filepath.Join(dir, "model.safetensors.index.json"); fileExists(idx) {
+		return embed.OpenSafetensorsShardedMmap(idx)
+	}
+	return embed.OpenSafetensorsMmap(filepath.Join(dir, "model.safetensors"))
+}
+
+// LoadWhisperEncoder reads the encoder from a Whisper checkpoint directory (config.json at the top, or under audio_config, in Whisper's key names or Voxtral's; model.safetensors or a
+// shard index with the tensors under "model.encoder.", "encoder.", "audio_tower." (Voxtral) or no prefix).
 func LoadWhisperEncoder(dir string) (*WhisperEncoder, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
 	if err != nil {
 		return nil, err
 	}
 	var top struct {
-		WhisperEncoderConfig
-		Audio *WhisperEncoderConfig `json:"audio_config"`
+		Audio json.RawMessage `json:"audio_config"`
 	}
 	if err := json.Unmarshal(raw, &top); err != nil {
 		return nil, fmt.Errorf("audio: %s/config.json: %w", dir, err)
 	}
-	e := &WhisperEncoder{Cfg: top.WhisperEncoderConfig}
-	if top.Audio != nil {
-		e.Cfg = *top.Audio
+	cfgRaw := raw
+	if len(top.Audio) > 0 && string(top.Audio) != "null" {
+		cfgRaw = top.Audio
 	}
+	cfg, err := parseWhisperEncoderConfig(cfgRaw)
+	if err != nil {
+		return nil, fmt.Errorf("audio: %s/config.json: %w", dir, err)
+	}
+	e := &WhisperEncoder{Cfg: cfg}
 	if err := e.Cfg.validate(); err != nil {
 		return nil, err
 	}
-	var st *embed.SafetensorsFile
-	if idx := filepath.Join(dir, "model.safetensors.index.json"); fileExists(idx) {
-		st, err = embed.OpenSafetensorsShardedMmap(idx)
-	} else {
-		st, err = embed.OpenSafetensorsMmap(filepath.Join(dir, "model.safetensors"))
-	}
+	st, err := openSafetensorsDir(dir)
 	if err != nil {
 		return nil, err
 	}
 	prefix := ""
-	for _, p := range []string{"model.encoder.", "encoder.", ""} {
+	for _, p := range []string{"model.encoder.", "encoder.", "audio_tower.", ""} {
 		if _, err := st.Tensor(p + "conv1.weight"); err == nil {
 			prefix = p
 			break
