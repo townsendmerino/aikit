@@ -30,6 +30,9 @@ type SiglipWeights struct {
 // Weights exports the tower's float32 weights (the slices alias the encoder's; do not write them). It errors on a
 // tower loaded with quant=true.
 func (e *Encoder) Weights() (SiglipWeights, error) {
+	if err := e.ensureBlocks(); err != nil {
+		return SiglipWeights{}, err
+	}
 	var err error
 	w := SiglipWeights{Cfg: e.Cfg, NumPatches: e.numPatches, PatchW: e.patchW, PatchB: e.patchB, PosEmb: e.posEmb,
 		Blocks: make([]SiglipBlock, len(e.layers))}

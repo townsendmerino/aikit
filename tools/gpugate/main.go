@@ -173,7 +173,7 @@ func checkLint(root string, mods []string) gate.Cell {
 	if len(bad) > 0 {
 		return cell("lint", gate.Fail, "golangci-lint issues in: "+strings.Join(bad, " "))
 	}
-	return cell("lint", gate.OK, fmt.Sprintf("%d applicable modules clean (pinned v2.13.0)", n))
+	return cell("lint", gate.OK, fmt.Sprintf("%d applicable modules clean (pinned v2.14.0)", n))
 }
 
 var reTestLine = regexp.MustCompile(`_test\.go:[0-9]+`)

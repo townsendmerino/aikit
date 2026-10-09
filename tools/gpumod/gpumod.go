@@ -20,7 +20,7 @@ func nowUTC() string { return time.Now().UTC().Format("2006-01-02T15:04:05Z") }
 // compiles golangci-lint with the caller's Go toolchain, so its bundled staticcheck is
 // identical on every box and in CI — pinning the version alone does not pin that. CI's
 // core and gpu jobs, and the preflight mirror, all resolve to this one string.
-const GolangciLint = "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.13.0"
+const GolangciLint = "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0"
 
 // RepoRoot finds the checkout root regardless of the caller's cwd (the tools run as
 // `go run -C tools ./gpugate`, whose cwd is tools/). git is the authority; a walk up to a

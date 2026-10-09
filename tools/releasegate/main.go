@@ -6,7 +6,7 @@
 // FOUR CHECKS:
 //  1. CHANGELOG.md has a `## [X.Y.Z]` section AND a `[X.Y.Z]:` compare link — a release
 //     deliverable; its failure messages name exactly what is missing.
-//  2. golangci-lint clean against .golangci.yml, build-pinned via `go run @v2.13.0` (the
+//  2. golangci-lint clean against .golangci.yml, build-pinned via `go run @v2.14.0` (the
 //     same the gpu gate, preflight, and CI resolve to) so a local gate reports identically.
 //  3. apidiff shows NO incompatible change in any Hard-tier package vs the previous tag —
 //     the 1.0 compatibility bar — with documented-Experimental symbols/members exempted.
