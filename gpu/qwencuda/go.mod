@@ -3,7 +3,7 @@ module github.com/townsendmerino/aikit/gpu/qwencuda
 go 1.27.0
 
 require (
-	github.com/townsendmerino/aikit v1.63.0
+	github.com/townsendmerino/aikit v1.64.0
 	github.com/townsendmerino/aikit/gpu v0.33.5
 )
 
