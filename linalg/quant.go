@@ -655,7 +655,7 @@ func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales 
 		inv := 1.0 / s
 		k := ks
 		if k&1 == 1 && k < ke {
-			q := int(math.Round(float64(row[k] * inv)))
+			q := roundInt4(row[k] * inv)
 			if q > 7 {
 				q = 7
 			} else if q < -7 {
@@ -667,13 +667,13 @@ func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales 
 			k++
 		}
 		for ; k+1 < ke; k += 2 {
-			q0 := int(math.Round(float64(row[k] * inv)))
+			q0 := roundInt4(row[k] * inv)
 			if q0 > 7 {
 				q0 = 7
 			} else if q0 < -7 {
 				q0 = -7
 			}
-			q1 := int(math.Round(float64(row[k+1] * inv)))
+			q1 := roundInt4(row[k+1] * inv)
 			if q1 > 7 {
 				q1 = 7
 			} else if q1 < -7 {
@@ -682,7 +682,7 @@ func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales 
 			packed[k/2] = (byte(q0+8) & 0x0F) | (byte(q1+8) << 4)
 		}
 		if k < ke {
-			q := int(math.Round(float64(row[k] * inv)))
+			q := roundInt4(row[k] * inv)
 			if q > 7 {
 				q = 7
 			} else if q < -7 {

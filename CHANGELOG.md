@@ -11,12 +11,6 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [1.65.0] — 2026-10-10
 
-`perfgate` VERDICT: not run — nothing it benchmarks changed (no file under `linalg/` or `mmap/` differs from v1.64.0)
-
-> **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
-> `./linalg` only, and `git diff --stat v1.64.0..HEAD -- linalg/ mmap/` is empty. This release adds one method to `embed`
-> (`Tensor.SubF32Transposed`), its test, and its entries in the README's Experimental list and in `releasegate`.
-
 ### Added — `embed.Tensor.SubF32Transposed` (goinfer's `.giw` transcode, T5)
 
 - `Tensor.SubF32Transposed(start, rows, cols)`: reads the row-major `[rows, cols]` matrix that starts at element `start`
@@ -27,6 +21,22 @@ excluded from that promise and may change in any release until it graduates.
 - It works through 16×16 tiles held in a local buffer and writes the output in contiguous runs, where a plain transpose
   writes one element per output row. It is for a fused expert stack stored with its inner axes swapped (transformers
   4.57's `[E, H, 2I]`), read one expert at a time. Experimental, like `SubF32`.
+
+### Changed — the int4 weight quantizer rounds without `math.Round` on amd64 (goinfer's `.giw` transcode, T4a)
+
+- `QuantizeGroupInt4Row` (and `QuantizeGroupsInt4` / `QuantizeInt4`, which call it) rounds each scaled weight through
+  `roundInt4`. On amd64 that is `int(f + math.Copysign(0.5, f))`; everywhere else it is `int(math.Round(f))`, as before.
+  **The output does not change on any architecture**: the two agree on every one of the 2³² float32 bit patterns, NaN
+  and the infinities included, checked on amd64 (nobara, and under Rosetta) and on arm64
+  (`TestRoundInt4_matchesMathRound` with `AIKIT_ROUND_EXHAUSTIVE=1`; a stride of the same sweep runs by default).
+- `TestQuantizeGroupInt4Row_matchesReference` holds the kernel to a reference written with `math.Round`, byte for byte:
+  random rows at scales from 1e-6 to 1e6, all-zero, all-equal and one-outlier groups, signed zeros, subnormals,
+  infinities and NaN, odd widths with the pad nibble's contract, and single-element groups over the float32s in [−8, 8].
+- Why amd64 only, measured in one process, interleaved, 31 rounds of 9.2M normal weights (a kernel microbenchmark, so
+  direction and not size): on amd64 (Ryzen 7 3700X) the new form takes 0.70× the time of `math.Round`, faster in 31 of
+  31 rounds, in two passes. On arm64 (M1 Pro) it takes 1.007×, faster in 2 of 31, because `math.Round` is one
+  instruction there. A third form, `if f < 0 { int(f - 0.5) } else { int(f + 0.5) }`, is slower than `math.Round` on
+  both (1.16× on amd64, 1.78× on arm64): its branch follows the weights' signs.
 
 ## [1.64.0] — 2026-10-09
 
