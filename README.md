@@ -371,6 +371,9 @@ no such consumer has surfaced yet.
 - `embed.Tensor.SubF32` — zero-copy element sub-range of a tensor, for widening or
   quantizing a fused stack one slice at a time. Aliasing and lifetime rules match
   `Float32s`; new surface.
+- `embed.Tensor.SubF32Transposed` — the same read for a slice stored with its two
+  axes swapped: one `[rows, cols]` matrix of the stack, returned transposed in a
+  fresh slice. Experimental with `SubF32`.
 - `encoder.CrossEncoder.ScoreBatch` — the batch form of `CrossEncoder.Score`
   (7.56× over a `Score` loop at 50 documents, bit-identical scores). Covered by
   `CrossEncoder`'s existing Experimental status; listed here so the batch API is

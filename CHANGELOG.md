@@ -9,6 +9,17 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added — `embed.Tensor.SubF32Transposed` (goinfer's `.giw` transcode, T5)
+
+- `Tensor.SubF32Transposed(start, rows, cols)`: reads the row-major `[rows, cols]` matrix that starts at element `start`
+  and returns its transpose as a fresh `[]float32`, converting F32, BF16 or F16 on the way. Each element is converted as
+  `SubF32` converts it, so the result is `SubF32(start, rows*cols)` transposed, bit for bit
+  (`TestTensor_SubF32Transposed`: every dtype, shapes on and off the tile edge, a matrix that starts inside the tensor,
+  NaN, Inf and subnormal halves, and the out-of-bounds errors).
+- It works through 16×16 tiles held in a local buffer and writes the output in contiguous runs, where a plain transpose
+  writes one element per output row. It is for a fused expert stack stored with its inner axes swapped (transformers
+  4.57's `[E, H, 2I]`), read one expert at a time. Experimental, like `SubF32`.
+
 ## [1.64.0] — 2026-10-09
 
 `perfgate` VERDICT: not run — nothing it benchmarks changed (no file under `linalg/` or `mmap/` differs from v1.63.0)

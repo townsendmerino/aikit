@@ -373,3 +373,80 @@ func TestUint8s(t *testing.T) {
 		t.Error("Uint8s accepted a shape/payload mismatch; want an error")
 	}
 }
+
+// TestTensor_SubF32Transposed: SubF32Transposed(start, rows, cols) is SubF32(start, rows*cols) transposed, bit for bit,
+// in every dtype, for shapes on and off the tile edge and for a matrix that starts inside the tensor; and a range
+// outside the tensor is an error.
+func TestTensor_SubF32Transposed(t *testing.T) {
+	const lead, maxRows, maxCols = 7, 37, 50
+	n := lead + maxRows*maxCols
+	f32s, halves := make([]float32, n), make([]uint16, n)
+	for i := range n {
+		f32s[i] = float32(i%251-125) * 0.375    // exact in bf16's 8 significant bits
+		halves[i] = uint16(i * 2654435761 >> 7) // every binary16 class, NaN and Inf included
+	}
+	halves[lead], halves[lead+1], halves[lead+2] = 0x0001, 0x7C00, 0x7E01 // subnormal, +Inf, NaN at known places
+	blob := buildSafetensors(map[string]stEntry{
+		"f32":  {"F32", []int{n}, f32raw(f32s...)},
+		"bf16": {"BF16", []int{n}, bf16raw(f32s...)},
+		"f16":  {"F16", []int{n}, f16raw(halves...)},
+		"i32":  {"I32", []int{4}, i32raw(1, 2, 3, 4)},
+	})
+	sf, err := OpenSafetensorsFromFS(fstest.MapFS{"m.safetensors": &fstest.MapFile{Data: blob}}, "m.safetensors")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sf.Close()
+
+	for _, name := range []string{"f32", "bf16", "f16"} {
+		tn, err := sf.Tensor(name)
+		if err != nil {
+			t.Fatalf("Tensor(%s): %v", name, err)
+		}
+		for _, sh := range [][3]int{
+			{lead, 37, 50}, {lead, 50, 37}, {0, 16, 16}, {3, 32, 48}, {0, 1, 50}, {lead, 37, 1}, {5, 17, 15}, {0, 0, 9}, {0, 9, 0},
+		} {
+			start, rows, cols := sh[0], sh[1], sh[2]
+			flat, err := tn.SubF32(start, rows*cols)
+			if err != nil {
+				t.Fatalf("%s SubF32(%d, %d): %v", name, start, rows*cols, err)
+			}
+			got, err := tn.SubF32Transposed(start, rows, cols)
+			if err != nil {
+				t.Fatalf("%s SubF32Transposed(%d, %d, %d): %v", name, start, rows, cols, err)
+			}
+			if len(got) != rows*cols {
+				t.Fatalf("%s [%d x %d]: %d elements, want %d", name, rows, cols, len(got), rows*cols)
+			}
+			for r := range rows {
+				for c := range cols {
+					if w, g := math.Float32bits(flat[r*cols+c]), math.Float32bits(got[c*rows+r]); w != g {
+						t.Fatalf("%s [%d x %d] at %d: out[%d,%d] = %08x, want element (%d,%d) = %08x", name, rows, cols, start, c, r, g, r, c, w)
+					}
+				}
+			}
+		}
+		if rows, cols := 4, 5; name == "f32" {
+			got, err := tn.SubF32Transposed(0, rows, cols)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got[0] = 12345 // a fresh slice: writing it must not reach the tensor
+			if again, _ := tn.SubF32(0, 1); again[0] != f32s[0] {
+				t.Errorf("SubF32Transposed aliased the tensor: element 0 reads %g after a write to the result", again[0])
+			}
+		}
+		for _, bad := range [][3]int{{0, maxRows + 1, maxCols}, {lead + 1, maxRows, maxCols}, {-1, 2, 2}, {0, -1, 2}, {0, 2, -1}, {n + 1, 0, 0}, {0, 1 << 62, 4}} {
+			if _, err := tn.SubF32Transposed(bad[0], bad[1], bad[2]); err == nil {
+				t.Errorf("%s SubF32Transposed(%d, %d, %d): expected an out-of-bounds error", name, bad[0], bad[1], bad[2])
+			}
+		}
+	}
+	tn, err := sf.Tensor("i32")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tn.SubF32Transposed(0, 2, 2); err == nil {
+		t.Error("an I32 tensor: expected an unsupported-dtype error")
+	}
+}

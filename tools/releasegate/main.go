@@ -49,7 +49,7 @@ var experimentalSyms = map[string][]string{
 // experimentalMembers: Experimental MEMBERS on Hard-tier types — matched as whole apidiff
 // symbol paths so listing one member never exempts the rest of its type.
 var experimentalMembers = map[string][]string{
-	"embed": {"(*SafetensorsFile).ReleaseTensors", "Tensor.SubF32"},
+	"embed": {"(*SafetensorsFile).ReleaseTensors", "Tensor.SubF32", "Tensor.SubF32Transposed"},
 }
 
 const apidiffPkg = "golang.org/x/exp/cmd/apidiff@latest"

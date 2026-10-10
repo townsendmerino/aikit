@@ -763,6 +763,85 @@ func (t Tensor) SubF32(start, count int) ([]float32, error) {
 	}
 }
 
+// subF32TransposeTile is SubF32Transposed's tile edge. A tile's 256 floats fit in L1 beside the source lines being
+// read, so the strided half of the transpose happens inside the tile and the output is written in contiguous runs.
+const subF32TransposeTile = 16
+
+// SubF32Transposed reads the row-major [rows, cols] matrix whose first element is element start of the tensor, and
+// returns its transpose, row-major [cols, rows], as a freshly-allocated []float32: out[c*rows+r] is element
+// start + r*cols + c. Each element is converted exactly as SubF32 converts it, so the result equals SubF32(start,
+// rows*cols) transposed, element for element. It is for a fused stack stored with its two inner axes swapped, read one
+// slice at a time.
+//
+// start is in ELEMENTS (row-major); [start, start+rows*cols) must lie within Elements(). Unlike SubF32 on an F32 tensor
+// it never aliases the mapping.
+//
+// Experimental, like SubF32.
+func (t Tensor) SubF32Transposed(start, rows, cols int) ([]float32, error) {
+	defer runtime.KeepAlive(t.owner) // §2.5: guard the read against a mid-decode munmap
+	elems := t.Elements()
+	if elems < 0 {
+		return nil, fmt.Errorf("tensor %q: SubF32Transposed shape %v overflows", t.Name, t.Shape)
+	}
+	if start < 0 || rows < 0 || cols < 0 || (cols != 0 && rows > (elems-start)/cols) || start > elems {
+		return nil, fmt.Errorf("tensor %q: SubF32Transposed [%d rows x %d cols] at %d out of bounds (elements %d)", t.Name, rows, cols, start, elems)
+	}
+	// rowInto converts elements [at, at+len(dst)) into dst.
+	var rowInto func(at int, dst []float32)
+	switch t.DType {
+	case "F32":
+		all, err := reinterpretLE[float32](t.Name, t.raw)
+		if err != nil {
+			return nil, err
+		}
+		rowInto = func(at int, dst []float32) { copy(dst, all[at:]) }
+	case "BF16":
+		if len(t.raw) != 2*elems {
+			return nil, fmt.Errorf("tensor %q: BF16 raw size %d != 2*%d", t.Name, len(t.raw), elems)
+		}
+		raw := t.raw
+		rowInto = func(at int, dst []float32) {
+			src := raw[2*at : 2*(at+len(dst))]
+			for i := range dst {
+				dst[i] = math.Float32frombits(uint32(uint16(src[2*i])|uint16(src[2*i+1])<<8) << 16)
+			}
+		}
+	case "F16":
+		if len(t.raw) != 2*elems {
+			return nil, fmt.Errorf("tensor %q: F16 raw size %d != 2*%d", t.Name, len(t.raw), elems)
+		}
+		raw := t.raw
+		rowInto = func(at int, dst []float32) {
+			src := raw[2*at : 2*(at+len(dst))]
+			for i := range dst {
+				dst[i] = halfBitsToF32(uint16(src[2*i]) | uint16(src[2*i+1])<<8)
+			}
+		}
+	default:
+		return nil, fmt.Errorf("tensor %q: SubF32Transposed unsupported dtype %s (want F32/BF16/F16)", t.Name, t.DType)
+	}
+	const tile = subF32TransposeTile
+	out := make([]float32, rows*cols)
+	var line [tile]float32       // one source row's run inside the tile
+	var buf [tile * tile]float32 // the tile, already transposed: buf[c*tile+r]
+	for r0 := 0; r0 < rows; r0 += tile {
+		tr := min(tile, rows-r0)
+		for c0 := 0; c0 < cols; c0 += tile {
+			tc := min(tile, cols-c0)
+			for r := range tr {
+				rowInto(start+(r0+r)*cols+c0, line[:tc])
+				for c := range tc {
+					buf[c*tile+r] = line[c]
+				}
+			}
+			for c := range tc {
+				copy(out[(c0+c)*rows+r0:], buf[c*tile:c*tile+tr])
+			}
+		}
+	}
+	return out, nil
+}
+
 // halfBitsToF32 converts one IEEE-754 binary16 bit pattern to float32.
 // Standard three-case decode: subnormal/zero (exp==0), Inf/NaN
 // (exp==0x1f), and normal (rebias the 5-bit exponent to f32's 8-bit one).
