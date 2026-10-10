@@ -9,6 +9,27 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.63.0] — 2026-10-09
+
+`perfgate` VERDICT: not run — nothing it benchmarks changed (no file under `linalg/` or `mmap/` differs from v1.62.0)
+
+> **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
+> `./linalg` only, and `git diff --stat v1.62.0..HEAD -- linalg/ mmap/` is empty. This release adds one file to `vision/` (and its
+> test and tiny fixture) and changes nothing else of consequence (the eight gpu backends' pins moved to v1.62.0 in the previous
+> release's follow-up).
+
+### Added — the Pixtral vision tower in `vision` (goinfer S10, Ministral 3)
+
+- `LoadPixtralVisionEncoder` / `PixtralVisionEncoder.Forward`: Mistral 3's Pixtral tower (patch conv without bias, RMSNorm
+  `ln_pre`, the 2-D RoPE whose rows take the even-indexed frequencies and columns the odd-indexed ones, pre-norm blocks with a
+  SiLU-gated MLP), float32 on the CPU (or weight-quantized with `quant`). Several images run as one sequence under a
+  block-diagonal mask; each comes out as its own patch rows, row-major. Reads a `Mistral3ForConditionalGeneration` save
+  (`vision_tower.` prefix) or a nested one.
+- `PixtralPatchify`: a channels-first image to the tower's patch rows and its patch grid.
+- `ForwardStages`: every stage's output (the patch conv, `ln_pre`, each block), for a parity gate.
+- Matches transformers at worst row cosine 0.999999994 over every stage on the real Ministral 3 3B (goinfer's G-S10m-b), and
+  two images in one call are bit-identical to each alone. Experimental tier.
+
 ## [1.62.0] — 2026-10-09
 
 `perfgate` VERDICT: not run — nothing it benchmarks changed (no file under `linalg/` or `mmap/` differs from v1.61.0)
@@ -5366,7 +5387,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.62.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.63.0...HEAD
+[1.63.0]: https://github.com/townsendmerino/aikit/compare/v1.62.0...v1.63.0
 [1.62.0]: https://github.com/townsendmerino/aikit/compare/v1.61.0...v1.62.0
 [1.61.0]: https://github.com/townsendmerino/aikit/compare/v1.60.0...v1.61.0
 [1.60.0]: https://github.com/townsendmerino/aikit/compare/v1.59.0...v1.60.0
