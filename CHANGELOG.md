@@ -9,6 +9,14 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.65.0] — 2026-10-10
+
+`perfgate` VERDICT: not run — nothing it benchmarks changed (no file under `linalg/` or `mmap/` differs from v1.64.0)
+
+> **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
+> `./linalg` only, and `git diff --stat v1.64.0..HEAD -- linalg/ mmap/` is empty. This release adds one method to `embed`
+> (`Tensor.SubF32Transposed`), its test, and its entries in the README's Experimental list and in `releasegate`.
+
 ### Added — `embed.Tensor.SubF32Transposed` (goinfer's `.giw` transcode, T5)
 
 - `Tensor.SubF32Transposed(start, rows, cols)`: reads the row-major `[rows, cols]` matrix that starts at element `start`
@@ -5425,7 +5433,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.64.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.65.0...HEAD
+[1.65.0]: https://github.com/townsendmerino/aikit/compare/v1.64.0...v1.65.0
 [1.64.0]: https://github.com/townsendmerino/aikit/compare/v1.63.0...v1.64.0
 [1.63.0]: https://github.com/townsendmerino/aikit/compare/v1.62.0...v1.63.0
 [1.62.0]: https://github.com/townsendmerino/aikit/compare/v1.61.0...v1.62.0
