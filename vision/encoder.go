@@ -317,8 +317,7 @@ func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
 // forwardBlocks is Forward's CPU path up to the last block's output [numPatches, hidden], before the post-layernorm:
 // split out so a device tower built from Weights can be checked against the same stage (FinishHidden is the rest).
 func (e *Encoder) forwardBlocks(pixels []float32) ([]float32, error) {
-	c := e.Cfg
-	hidden, np := c.HiddenSize, e.numPatches
+	np := e.numPatches
 
 	// 1. im2col patch extraction in the Conv2d weight's (c,kh,kw) order, patches in
 	// (gh,gw) row-major — matching HF's embeddings.flatten(2).transpose. Shared
@@ -328,6 +327,18 @@ func (e *Encoder) forwardBlocks(pixels []float32) ([]float32, error) {
 		return nil, err
 	}
 	h := e.embedPatches(patches)
+	if err := e.runBlocks(h, np, nil); err != nil {
+		return nil, err
+	}
+	return h, nil
+}
+
+// runBlocks runs the encoder blocks over h [np, hidden] in place: forwardBlocks' loop, taking the patch count so a tower
+// whose tiles vary in size (SigLIP2 NaFlex, Siglip2NaFlexEncoder) shares it. stage, when non-nil, sees each block's
+// output.
+func (e *Encoder) runBlocks(h []float32, np int, stage func([]float32)) error {
+	c := e.Cfg
+	hidden := c.HiddenSize
 
 	// Allocate every per-layer scratch buffer ONCE (all layers share one shape) and
 	// reuse across the layer loop. The old code re-make'd n1/att/o/n2/mid/mlp plus
@@ -344,7 +355,7 @@ func (e *Encoder) forwardBlocks(pixels []float32) ([]float32, error) {
 		// attention block (pre-LN, residual)
 		layerNormInto(s.n1, h, lw.ln1w, lw.ln1b, np, hidden, c.LayerNormEps)
 		if err := e.attentionInto(s.att, s.n1, lw, np, s); err != nil {
-			return nil, err
+			return err
 		}
 		lw.ow.MatmulBTInto(&s.ws, s.att, s.o, np)
 		addBias(s.o, lw.ob, np, hidden)
@@ -357,8 +368,11 @@ func (e *Encoder) forwardBlocks(pixels []float32) ([]float32, error) {
 		lw.fc2w.MatmulBTInto(&s.ws, s.mid, s.mlp, np)
 		addBias(s.mlp, lw.fc2b, np, hidden)
 		addResidual(h, s.mlp)
+		if stage != nil {
+			stage(h)
+		}
 	}
-	return h, nil
+	return nil
 }
 
 // embedPatches is the patch embed over GridPatches' rows: h[np,hidden] = patches[np,cpp] · patchW[hidden,cpp]ᵀ + bias,

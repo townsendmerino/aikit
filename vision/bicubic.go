@@ -16,8 +16,26 @@ var bicubicFloatForTest = false
 
 // ResizeBicubicAA resizes packed 8-bit RGB (HWC) from h x w to th x tw with torchvision's antialiased bicubic on uint8.
 func ResizeBicubicAA(src []uint8, h, w, th, tw int) []uint8 {
-	return resizeBicubicRGB(src, h, w, th, tw)
+	return resizeRGB(src, h, w, th, tw, aaBicubic)
 }
+
+// ResizeBilinearAA is ResizeBicubicAA with torchvision's antialiased bilinear (the triangle filter, support 1): the resize
+// of the processors that ask for BILINEAR with antialias=True on the torchvision backend (LFM2-VL's; goinfer S10).
+func ResizeBilinearAA(src []uint8, h, w, th, tw int) []uint8 {
+	return resizeRGB(src, h, w, th, tw, aaBilinear)
+}
+
+// aaFilter is one antialiased interpolation filter: its kernel and its support at scale 1 (widened by the scale on
+// downscale).
+type aaFilter struct {
+	kernel  func(float64) float64
+	support float64
+}
+
+var (
+	aaBicubic  = aaFilter{bicubicAA, 2}
+	aaBilinear = aaFilter{func(x float64) float64 { return max(0, 1-math.Abs(x)) }, 1}
+)
 
 // aaWeights are one axis's antialiased bicubic taps: for output i, inputs [start[i], start[i]+len(w[i])).
 type aaWeights struct {
@@ -38,12 +56,12 @@ func bicubicAA(x float64) float64 {
 	return 0
 }
 
-// aaTaps computes torchvision's antialiased taps from in samples to out (align_corners false).
-func aaTaps(in, out int) aaWeights {
+// aaTaps computes torchvision's antialiased taps from in samples to out (align_corners false) for filter f.
+func aaTaps(in, out int, f aaFilter) aaWeights {
 	scale := float64(in) / float64(out)
-	support, invscale := 2.0, 1.0
+	support, invscale := f.support, 1.0
 	if scale >= 1 {
-		support, invscale = 2*scale, 1/scale
+		support, invscale = f.support*scale, 1/scale
 	}
 	t := aaWeights{start: make([]int, out), w: make([][]float64, out)}
 	for i := range out {
@@ -53,7 +71,7 @@ func aaTaps(in, out int) aaWeights {
 		w := make([]float64, xmax-xmin)
 		var total float64
 		for j := range w {
-			w[j] = bicubicAA((float64(j+xmin) - center + 0.5) * invscale)
+			w[j] = f.kernel((float64(j+xmin) - center + 0.5) * invscale)
 			total += w[j]
 		}
 		if total != 0 {
@@ -66,28 +84,28 @@ func aaTaps(in, out int) aaWeights {
 	return t
 }
 
-// resizeBicubicRGB resizes HWC RGB from (h, w) to (th, tw), the horizontal pass first, each pass skipped when its
+// resizeRGB resizes HWC RGB from (h, w) to (th, tw) with filter f, the horizontal pass first, each pass skipped when its
 // size does not change.
-func resizeBicubicRGB(src []uint8, h, w, th, tw int) []uint8 {
+func resizeRGB(src []uint8, h, w, th, tw int, f aaFilter) []uint8 {
 	cur, cw := src, w
 	if tw != w {
-		cur = resizePass(cur, h, w, tw, true)
+		cur = resizePass(cur, h, w, tw, true, f)
 		cw = tw
 	}
 	if th != h {
-		cur = resizePass(cur, h, cw, th, false)
+		cur = resizePass(cur, h, cw, th, false, f)
 	}
 	return cur
 }
 
 // resizePass resizes along one axis: horizontal (w -> n) or vertical (h -> n), in torchvision's uint8 fixed point
 // (or in float64 under bicubicFloatForTest).
-func resizePass(src []uint8, h, w, n int, horizontal bool) []uint8 {
+func resizePass(src []uint8, h, w, n int, horizontal bool, f aaFilter) []uint8 {
 	in := w
 	if !horizontal {
 		in = h
 	}
-	taps := aaTaps(in, n)
+	taps := aaTaps(in, n, f)
 	oh, ow := h, n
 	if !horizontal {
 		oh, ow = n, w
@@ -148,6 +166,65 @@ func resizePass(src []uint8, h, w, n int, horizontal bool) []uint8 {
 				}
 				v := acc >> prec
 				dst[(oy*ow+ox)*3+c] = uint8(max(0, min(255, v)))
+			}
+		}
+	}
+	return dst
+}
+
+// ResizeBilinearAAFloat resizes a channels-last float32 grid (h x w x c) to th x tw the way torch's
+// F.interpolate(mode="bilinear", align_corners=False, antialias=True) does: the same separable antialiased taps as
+// ResizeBilinearAA, each output accumulated in float64 and rounded to float32 once per pass (SigLIP2 NaFlex's position-table resize;
+// goinfer S10). Upscaling, antialias changes nothing and this is plain bilinear with edge clamping.
+func ResizeBilinearAAFloat(src []float32, h, w, c, th, tw int) []float32 {
+	cur, cw := src, w
+	if tw != w {
+		cur = resizePassFloat(cur, h, w, c, tw, true)
+		cw = tw
+	}
+	if th != h {
+		cur = resizePassFloat(cur, h, cw, c, th, false)
+	}
+	if &cur[0] == &src[0] {
+		cur = append([]float32(nil), src...)
+	}
+	return cur
+}
+
+func resizePassFloat(src []float32, h, w, c, n int, horizontal bool) []float32 {
+	in := w
+	if !horizontal {
+		in = h
+	}
+	taps := aaTaps(in, n, aaBilinear)
+	oh, ow := h, n
+	if !horizontal {
+		oh, ow = n, w
+	}
+	dst := make([]float32, oh*ow*c)
+	acc := make([]float64, c)
+	for oy := range oh {
+		for ox := range ow {
+			i := ox
+			if !horizontal {
+				i = oy
+			}
+			s := taps.start[i]
+			clear(acc)
+			for j, wt := range taps.w[i] {
+				var row []float32
+				if horizontal {
+					row = src[(oy*w+s+j)*c : (oy*w+s+j+1)*c]
+				} else {
+					row = src[((s+j)*w+ox)*c : ((s+j)*w+ox+1)*c]
+				}
+				for k := range acc {
+					acc[k] += wt * float64(row[k])
+				}
+			}
+			out := dst[(oy*ow+ox)*c : (oy*ow+ox+1)*c]
+			for k := range out {
+				out[k] = float32(acc[k])
 			}
 		}
 	}

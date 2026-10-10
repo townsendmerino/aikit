@@ -30,6 +30,7 @@ testdata/gemma-3-270m
 !testdata/qwen35vl-vision-tiny/model.safetensors
 !testdata/qwen3vl-vision-tiny/model.safetensors
 !testdata/pixtral-vision-tiny/model.safetensors
+!testdata/siglip2-naflex-tiny/model.safetensors
 
 # Go
 *.test
