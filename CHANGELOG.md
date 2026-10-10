@@ -11,6 +11,15 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [1.65.0] — 2026-10-10
 
+`perfgate` VERDICT: PASS — no regression vs v1.64.0 above each shape's floor — 15/47 shapes resolve the 5.0% class
+
+sensitivity: 15/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), 395f5ba vs v1.64.0, 2026-10-10, under the timing lock.
+
+> **Read this verdict for what it is.** No shape regressed above its floor, and 32 of the 47 shapes cannot see 5% in this run. perfgate's shapes are the matmul, GEMV and activation-quantizing kernels; none of them is a benchmark of
+> `QuantizeGroupInt4Row`, the one function this release changes in `linalg` (a few use it to build their inputs), so the verdict says the release did not disturb them and says nothing about the change itself. That is measured in the entry below.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 395f5ba (2026-10-10T18:49:10Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2).
+
 ### Added — `embed.Tensor.SubF32Transposed` (goinfer's `.giw` transcode, T5)
 
 - `Tensor.SubF32Transposed(start, rows, cols)`: reads the row-major `[rows, cols]` matrix that starts at element `start`
