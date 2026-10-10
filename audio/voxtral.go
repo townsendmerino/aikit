@@ -101,15 +101,29 @@ func (v *VoxtralAudio) gelu(x float32) float32 {
 // Embed runs each 30 s window's features ([mels][3000], WhisperFeatures' layout, one entry per window, in time order) through the tower and projector and returns the audio tokens'
 // embeddings, window after window: [len(chunks) x Rows()][TextHidden], flattened.
 func (v *VoxtralAudio) Embed(chunks [][]float32) ([]float32, error) {
+	rows, _, err := v.embed(chunks, false)
+	return rows, err
+}
+
+// EmbedWithTower is Embed that also returns the tower's own output, [len(chunks) x 1500][d_model] flattened, for the gate that compares the encoder and the projector separately.
+func (v *VoxtralAudio) EmbedWithTower(chunks [][]float32) (rows, tower []float32, err error) {
+	return v.embed(chunks, true)
+}
+
+func (v *VoxtralAudio) embed(chunks [][]float32, keepTower bool) ([]float32, []float32, error) {
 	if len(chunks) == 0 {
-		return nil, fmt.Errorf("audio: no audio windows")
+		return nil, nil, fmt.Errorf("audio: no audio windows")
 	}
+	var tower []float32
 	d, inter, H, rows := v.Enc.Cfg.DModel, v.Enc.Cfg.DModel*v.Stack, v.TextHidden, v.Rows()
 	out := make([]float32, 0, len(chunks)*rows*H)
 	for ci, f := range chunks {
 		hid, err := v.Enc.Forward(f) // [1500][d]
 		if err != nil {
-			return nil, fmt.Errorf("audio: window %d: %w", ci, err)
+			return nil, nil, fmt.Errorf("audio: window %d: %w", ci, err)
+		}
+		if keepTower {
+			tower = append(tower, hid...)
 		}
 		x := hid // [1500][d] is [rows][stack*d] row-major: four consecutive frames per row, which is the reshape
 		if v.defect == voxtralDefectNoStack {
@@ -141,5 +155,5 @@ func (v *VoxtralAudio) Embed(chunks [][]float32) ([]float32, error) {
 		}
 		out = rev
 	}
-	return out, nil
+	return out, tower, nil
 }
