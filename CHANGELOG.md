@@ -9,6 +9,29 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.64.0] — 2026-10-09
+
+`perfgate` VERDICT: not run — nothing it benchmarks changed (no file under `linalg/` or `mmap/` differs from v1.63.0)
+
+> **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
+> `./linalg` only, and `git diff --stat v1.63.0..HEAD -- linalg/ mmap/` is empty. This release adds a file to `vision/` (and its
+> test and tiny fixture), generalises the antialiased resize in `vision/bicubic.go` over its filter (bicubic unchanged), and
+> splits SigLIP's block loop out of `forwardBlocks` (`runBlocks`, Gemma 3's tower unchanged; its parity test green).
+
+### Added — SigLIP2's NaFlex tower and antialiased bilinear resizes in `vision` (goinfer S10, LFM2.5-VL)
+
+- `LoadSiglip2NaFlexEncoder` / `Siglip2NaFlexEncoder.Forward`: SigLIP2's NaFlex vision tower (transformers'
+  Siglip2VisionModel without its head), LFM2-VL's: a tile of any patch grid, embedded by a linear layer over each patch's
+  (row, column, channel) vector plus the learned square position table resized to the tile's grid with antialiased
+  bilinear interpolation, then SigLIP's blocks and post-layernorm. One tile per call (HF's batched padding with a key mask
+  gives each tile the same rows). Reads a flat siglip2_vision_model config or a VL model's vision_config, the tensors bare,
+  under `vision_tower.vision_model.` or under `model.vision_tower.vision_model.`. `ForwardStages` returns every stage.
+- `PatchifyNaFlex`: a channels-first image to SigLIP2's patch rows, as HF's convert_image_to_patches lays them out.
+- `ResizeBilinearAA`: torchvision's antialiased bilinear on uint8 RGB (bit-identical on the pinned sizes), beside
+  `ResizeBicubicAA`; `ResizeBilinearAAFloat`: torch's `F.interpolate(bilinear, antialias=True)` on a float grid.
+- Matches transformers at worst row cosine 0.999999950 over every stage of 23 tiles of the real LFM2.5-VL-1.6B (goinfer's
+  G-S10l-b). Experimental tier.
+
 ## [1.63.0] — 2026-10-09
 
 `perfgate` VERDICT: not run — nothing it benchmarks changed (no file under `linalg/` or `mmap/` differs from v1.62.0)
@@ -5389,7 +5412,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.63.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.64.0...HEAD
+[1.64.0]: https://github.com/townsendmerino/aikit/compare/v1.63.0...v1.64.0
 [1.63.0]: https://github.com/townsendmerino/aikit/compare/v1.62.0...v1.63.0
 [1.62.0]: https://github.com/townsendmerino/aikit/compare/v1.61.0...v1.62.0
 [1.61.0]: https://github.com/townsendmerino/aikit/compare/v1.60.0...v1.61.0
