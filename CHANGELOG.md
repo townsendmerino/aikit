@@ -11,6 +11,15 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [1.66.0] — 2026-10-10
 
+`perfgate` VERDICT: PASS — no regression vs v1.65.0 above each shape's floor — 15/47 shapes resolve the 5.0% class
+
+sensitivity: 15/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), 244a10e vs v1.65.0, 2026-10-10, under the timing lock.
+
+> **Read this verdict for what it is.** No shape regressed above its floor, and 32 of the 47 shapes cannot see 5% in this run. perfgate's shapes are the matmul, GEMV and activation-quantizing kernels; none of them is a benchmark of
+> `QuantizeGroupInt4Row`, the function this release vectorizes (a few use it to build their inputs), so the verdict says the release did not disturb them. The change itself is measured in the entry below.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 244a10e (2026-10-10T23:34:25Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2).
+
 ### Changed — the int4 weight quantizer is vectorized on arm64 and amd64 (goinfer's `.giw` transcode, T4b)
 
 - `QuantizeGroupInt4Row` (and `QuantizeGroupsInt4` / `QuantizeInt4`, which call it) quantizes a group through a vector
