@@ -115,6 +115,16 @@ func TestQuantizeGroupInt4Row_matchesReference(t *testing.T) {
 		if !bytes.Equal(pw, pg) {
 			t.Fatalf("%s (cols %d, group %d): packed differs from the reference", name, cols, group)
 		}
+		ps, ss := bytes.Repeat([]byte{0xA5}, bpr), make([]float32, nGroups)
+		quantizeGroupInt4RowScalar(row, cols, group, ps, ss)
+		if !bytes.Equal(ps, pg) {
+			t.Fatalf("%s (cols %d, group %d): packed differs from quantizeGroupInt4RowScalar", name, cols, group)
+		}
+		for g := range ss {
+			if math.Float32bits(ss[g]) != math.Float32bits(sg[g]) {
+				t.Fatalf("%s (cols %d, group %d): scale %d is %g, quantizeGroupInt4RowScalar's %g", name, cols, group, g, sg[g], ss[g])
+			}
+		}
 		for g := range sw {
 			if math.Float32bits(sw[g]) != math.Float32bits(sg[g]) {
 				t.Fatalf("%s (cols %d, group %d): scale %d is %g, the reference's %g", name, cols, group, g, sg[g], sw[g])
@@ -152,6 +162,12 @@ func TestQuantizeGroupInt4Row_matchesReference(t *testing.T) {
 				row[i] = math.SmallestNonzeroFloat32 * float32(i%5)
 			}
 			same("subnormals", row, cols, group)
+			for _, tiny := range []float64{1e-37, 4e-38, 3e-39, 1e-41, 1e-44} { // scales around the point where 1/scale overflows
+				for i := range row {
+					row[i] = float32(rng.NormFloat64() * tiny)
+				}
+				same("a scale near the subnormals", row, cols, group)
+			}
 			for _, special := range []float32{inf, -inf, nan} {
 				for i := range row {
 					row[i] = float32(rng.NormFloat64())

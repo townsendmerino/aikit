@@ -633,66 +633,101 @@ func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales 
 	for g := range nGroups {
 		ks := g * group
 		ke := min(ks+group, cols)
-		if ke > ks {
-			_ = row[ke-1]
-			_ = packed[(ke-1)/2]
+		// A group that starts on a byte boundary and is a whole number of kernel blocks goes through the vector
+		// kernel: its max is maxAbsF32's (exact, so the fold order cannot show), its scale and inverse are the scalar's
+		// two float32 divisions, and the kernel rounds and packs as quantizeInt4GroupScalar does
+		// (TestQuantizeInt4Block_matchesScalar). Every other group, and every group on an arch with no kernel, is scalar.
+		if int4GroupHasKernel(ks, ke-ks) {
+			maxAbs := maxAbsF32(row[ks:ke])
+			s := float32(1)
+			if maxAbs > 0 {
+				s = maxAbs / 7
+			}
+			scales[g] = s
+			quantizeInt4Block(row[ks:ke], packed[ks/2:ke/2], 1.0/s)
+			continue
 		}
-		var maxAbs float32
-		for k := ks; k < ke; k++ {
-			v := row[k]
-			if v < 0 {
-				v = -v
-			}
-			if v > maxAbs {
-				maxAbs = v
-			}
+		scales[g] = quantizeInt4GroupScalar(row, ks, ke, packed)
+	}
+}
+
+// quantizeGroupInt4RowScalar is QuantizeGroupInt4Row's default scheme with every group quantized by the scalar body:
+// the oracle the vector kernels are held to, byte for byte (TestQuantizeGroupInt4Row_matchesReference).
+func quantizeGroupInt4RowScalar(row []float32, cols, group int, packed []byte, scales []float32) {
+	if cols <= 0 {
+		return
+	}
+	nGroups := (cols + group - 1) / group
+	for g := range nGroups {
+		ks := g * group
+		scales[g] = quantizeInt4GroupScalar(row, ks, min(ks+group, cols), packed)
+	}
+}
+
+// quantizeInt4GroupScalar quantizes row[ks:ke] as one group into its nibbles of packed (nibble k/2, low for even k)
+// and returns the group's scale: max|x|/7 over the group, NaN skipped, or 1 for an all-zero group. Each weight is
+// clamp(roundInt4(x * (1/scale)), -7, 7) + 8. It never writes a nibble outside [ks, ke), which is the pad-nibble
+// contract of QuantizeGroupInt4Row.
+func quantizeInt4GroupScalar(row []float32, ks, ke int, packed []byte) float32 {
+	if ke > ks {
+		_ = row[ke-1]
+		_ = packed[(ke-1)/2]
+	}
+	var maxAbs float32
+	for k := ks; k < ke; k++ {
+		v := row[k]
+		if v < 0 {
+			v = -v
 		}
-		s := float32(1)
-		if maxAbs > 0 {
-			s = maxAbs / 7
-		}
-		scales[g] = s
-		inv := 1.0 / s
-		k := ks
-		if k&1 == 1 && k < ke {
-			q := roundInt4(row[k] * inv)
-			if q > 7 {
-				q = 7
-			} else if q < -7 {
-				q = -7
-			}
-			nib := byte(q + 8)
-			bi := k / 2
-			packed[bi] = (packed[bi] &^ 0xF0) | (nib << 4)
-			k++
-		}
-		for ; k+1 < ke; k += 2 {
-			q0 := roundInt4(row[k] * inv)
-			if q0 > 7 {
-				q0 = 7
-			} else if q0 < -7 {
-				q0 = -7
-			}
-			q1 := roundInt4(row[k+1] * inv)
-			if q1 > 7 {
-				q1 = 7
-			} else if q1 < -7 {
-				q1 = -7
-			}
-			packed[k/2] = (byte(q0+8) & 0x0F) | (byte(q1+8) << 4)
-		}
-		if k < ke {
-			q := roundInt4(row[k] * inv)
-			if q > 7 {
-				q = 7
-			} else if q < -7 {
-				q = -7
-			}
-			nib := byte(q + 8)
-			bi := k / 2
-			packed[bi] = (packed[bi] &^ 0x0F) | (nib & 0x0F)
+		if v > maxAbs {
+			maxAbs = v
 		}
 	}
+	s := float32(1)
+	if maxAbs > 0 {
+		s = maxAbs / 7
+	}
+	inv := 1.0 / s
+	k := ks
+	if k&1 == 1 && k < ke {
+		q := roundInt4(row[k] * inv)
+		if q > 7 {
+			q = 7
+		} else if q < -7 {
+			q = -7
+		}
+		nib := byte(q + 8)
+		bi := k / 2
+		packed[bi] = (packed[bi] &^ 0xF0) | (nib << 4)
+		k++
+	}
+	for ; k+1 < ke; k += 2 {
+		q0 := roundInt4(row[k] * inv)
+		if q0 > 7 {
+			q0 = 7
+		} else if q0 < -7 {
+			q0 = -7
+		}
+		q1 := roundInt4(row[k+1] * inv)
+		if q1 > 7 {
+			q1 = 7
+		} else if q1 < -7 {
+			q1 = -7
+		}
+		packed[k/2] = (byte(q0+8) & 0x0F) | (byte(q1+8) << 4)
+	}
+	if k < ke {
+		q := roundInt4(row[k] * inv)
+		if q > 7 {
+			q = 7
+		} else if q < -7 {
+			q = -7
+		}
+		nib := byte(q + 8)
+		bi := k / 2
+		packed[bi] = (packed[bi] &^ 0x0F) | (nib & 0x0F)
+	}
+	return s
 }
 
 // DequantizeRowInt4 reconstructs one row into dst[:cols] from its packed nibbles

@@ -9,6 +9,34 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.66.0] — 2026-10-10
+
+### Changed — the int4 weight quantizer is vectorized on arm64 and amd64 (goinfer's `.giw` transcode, T4b)
+
+- `QuantizeGroupInt4Row` (and `QuantizeGroupsInt4` / `QuantizeInt4`, which call it) quantizes a group through a vector
+  kernel when the group starts on a byte boundary and is a whole number of kernel blocks: 16 weights on arm64 (NEON),
+  8 on amd64 (AVX2). Every production group (32 or 64 wide) qualifies. Other groups, and other architectures, take the
+  scalar body, which is kept as `quantizeGroupInt4RowScalar`, the oracle. **The output does not change.**
+- Per group: the max is `maxAbsF32`'s (the activation quantizer's, exact); the scale and its inverse are the scalar's
+  two float32 divisions; the kernel multiplies, rounds half away from zero, clamps to ±7, adds the bias and packs two
+  nibbles to a byte. arm64 rounds with `FCVTAS`. amd64 has no ties-away mode: it truncates `y + copysign(h, y)` with
+  `h = nextafter32(0.5, 0)`, as the activation quantizer does, and sets a finite positive product in [2^31, 2^63) to 7,
+  the one place where an int32 conversion and the scalar's int64 one disagree.
+- Held to the scalar byte for byte: `TestQuantizeInt4Block_matchesScalar` puts every float32 bit pattern through the
+  kernel in every lane (`AIKIT_ROUND_EXHAUSTIVE=1`; a stride by default) and the conversion edges under ten inverses;
+  `TestQuantizeGroupInt4Row_matchesReference` compares whole rows with both scalar references, now including scales
+  around the subnormals. Run with the full sweeps natively on arm64 (M1 Pro) and amd64 (Ryzen 7 3700X), and on amd64
+  under Rosetta. Four planted kernel defects each turn the tests red.
+- Measured in one process, interleaved, 31 rounds of 9.2M normal weights at group 32 (a kernel microbenchmark:
+  direction, not the transcode's size): the new path takes 0.094 of the scalar's time on the M1 Pro (6.23 to 0.59 ns a
+  weight, faster in 31 of 31) and 0.097 on the Ryzen (7.2 to 0.70 ns, faster in 31 of 31, two passes).
+- **A trap this found, in case it is met again.** The first AVX2 kernel built its constants as the activation
+  quantizer does (`MOVL` to a general register, `MOVQ` to an XMM register, broadcast). Go assembles that `MOVQ` as a
+  legacy-SSE instruction, and with the YMM upper halves already in use each one costs a state transition. Called once
+  per 32-weight group, that kernel was correct and 1.77 times SLOWER than the scalar on the Ryzen (12.98 ns a weight),
+  while Rosetta showed it faster. Its constants are now read from memory. `quantizeF32AVX2` has three such moves per
+  call; it runs once per row, so the cost is small there, and it is not changed in this release.
+
 ## [1.65.0] — 2026-10-10
 
 `perfgate` VERDICT: PASS — no regression vs v1.64.0 above each shape's floor — 15/47 shapes resolve the 5.0% class
@@ -5452,7 +5480,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.65.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.66.0...HEAD
+[1.66.0]: https://github.com/townsendmerino/aikit/compare/v1.65.0...v1.66.0
 [1.65.0]: https://github.com/townsendmerino/aikit/compare/v1.64.0...v1.65.0
 [1.64.0]: https://github.com/townsendmerino/aikit/compare/v1.63.0...v1.64.0
 [1.63.0]: https://github.com/townsendmerino/aikit/compare/v1.62.0...v1.63.0
