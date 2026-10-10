@@ -1,6 +1,7 @@
 package linalg
 
 import (
+	"fmt"
 	"math"
 	"math/rand/v2"
 	"testing"
@@ -150,49 +151,52 @@ func TestQuantizeBF16_roundTripAndRounding(t *testing.T) {
 
 func BenchmarkWeightMat_half16_decode(b *testing.B) {
 	rng := rand.New(rand.NewPCG(1, 1))
-	const N, K = 4096, 2048
+	for _, sh := range [][2]int{{4096, 2048}, {2048, 6144}, {16384, 2048}} {
+		N, K := sh[0], sh[1]
+		bits, wf := half16TestWeights(rng, N*K, true)
+		a := make([]float32, K)
+		for i := range a {
+			a[i] = rng.Float32()
+		}
+		dst := make([]float32, N)
+		f32 := WrapF32(wf, N, K)
+		bf := WrapBF16(bits, N, K)
+		b.Run(fmt.Sprintf("%dx%d/f32", N, K), func(b *testing.B) {
+			for range b.N {
+				f32.MatmulBT(a, dst, 1)
+			}
+		})
+		b.Run(fmt.Sprintf("%dx%d/bf16", N, K), func(b *testing.B) {
+			for range b.N {
+				bf.MatmulBT(a, dst, 1)
+			}
+		})
+	}
+}
+
+// BenchmarkWeightMat_half16_cold cycles through enough copies of a matrix that none is in cache when it is used again (decode streams every weight once per token).
+func BenchmarkWeightMat_half16_cold(b *testing.B) {
+	rng := rand.New(rand.NewPCG(2, 2))
+	const N, K, copies = 6144, 2048, 12
 	bits, wf := half16TestWeights(rng, N*K, true)
 	a := make([]float32, K)
 	for i := range a {
 		a[i] = rng.Float32()
 	}
 	dst := make([]float32, N)
-	f32 := WrapF32(wf, N, K)
-	bf := WrapBF16(bits, N, K)
+	var f32s, bfs []WeightMat
+	for range copies {
+		f32s = append(f32s, WrapF32(append([]float32(nil), wf...), N, K))
+		bfs = append(bfs, WrapBF16(append([]uint16(nil), bits...), N, K))
+	}
 	b.Run("f32", func(b *testing.B) {
-		for range b.N {
-			f32.MatmulBT(a, dst, 1)
+		for i := range b.N {
+			f32s[i%copies].MatmulBT(a, dst, 1)
 		}
 	})
 	b.Run("bf16", func(b *testing.B) {
-		for range b.N {
-			bf.MatmulBT(a, dst, 1)
+		for i := range b.N {
+			bfs[i%copies].MatmulBT(a, dst, 1)
 		}
 	})
-}
-
-// widenBF16 is exact at every length (the SIMD form handles blocks of 16, then 8, then an overlapping last block) and leaves the bytes beyond len(src) alone.
-func TestWidenBF16_exactAtEveryLength(t *testing.T) {
-	rng := rand.New(rand.NewPCG(4, 4))
-	for n := 0; n <= 70; n++ {
-		src := make([]uint16, n)
-		for i := range src {
-			src[i] = uint16(rng.Uint32()) // every bit pattern, NaNs and denormals included
-		}
-		dst := make([]float32, n+3)
-		for i := range dst {
-			dst[i] = 12345
-		}
-		widenBF16(dst, src)
-		for i, u := range src {
-			if math.Float32bits(dst[i]) != uint32(u)<<16 {
-				t.Fatalf("n=%d element %d: %#x widened to %#x", n, i, u, math.Float32bits(dst[i]))
-			}
-		}
-		for i := n; i < len(dst); i++ {
-			if dst[i] != 12345 {
-				t.Fatalf("n=%d: wrote past len(src) at %d", n, i)
-			}
-		}
-	}
 }

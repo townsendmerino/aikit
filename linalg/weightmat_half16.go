@@ -21,9 +21,9 @@ const (
 	half16F16
 )
 
-// half16Tile is the weight rows widened at a time. A multiple of 8 so every tile but a shard's last is a whole number of the f32
+// half16Tile is the weight rows widened at a time (32 measured best on the M=1 decode shapes; 64 and 16 within noise of it). A multiple of 8 so every tile but a shard's last is a whole number of the f32
 // kernel's 8-column groups (the last tile can be shorter only where the matrix itself ends or the shard does, as in the f32 path).
-const half16Tile = 64
+const half16Tile = 32
 
 type half16Scratch struct{ w, out []float32 }
 
