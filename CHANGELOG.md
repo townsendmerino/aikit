@@ -9,9 +9,18 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.62.0] — 2026-10-09
+
+`perfgate` VERDICT: not run — nothing it benchmarks changed (no file under `linalg/` or `mmap/` differs from v1.61.0)
+
+> **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
+> `./linalg` only, and `git diff --stat v1.61.0..HEAD -- linalg/ mmap/` is empty. This release adds files to `audio/` and
+> changes one function of the shared Whisper encoder's loader (a config-key alias and a tensor prefix); nothing else of consequence
+> (the eight gpu backends' pins moved to v1.61.0 in the previous release's follow-up).
+
 ### Added — Voxtral's audio path in `audio` (goinfer S14.4b)
 
-- `LoadVoxtralAudio` / `VoxtralAudio.Embed`: Voxtral Mini's audio tower (the Whisper encoder), the four-frame stacking and the two-linear projector, float32 on the CPU; a clip's windows go in, the audio tokens' embeddings come out.
+- `LoadVoxtralAudio` / `VoxtralAudio.Embed` / `EmbedWithTower`: Voxtral Mini's audio tower (the Whisper encoder), the four-frame stacking and the two-linear projector, float32 on the CPU; a clip's windows go in, the audio tokens' embeddings come out.
 - `WhisperFeaturesWindows`: the front end of Voxtral's processor for clips of any length: padded UP to a multiple of 30 s, one log-mel over the whole signal (so the clamp's maximum and the reflect padding are the whole signal's), split into 3000-frame windows.
 - `LoadWhisperEncoder` reads Voxtral's config spelling (`hidden_size`, `num_hidden_layers`, `num_attention_heads`, `intermediate_size` under `audio_config`) and the `audio_tower.` tensor prefix.
 - Experimental tier; the `*ForTest` defect seams are test hooks, not a supported surface.
@@ -5355,7 +5364,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.61.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.62.0...HEAD
+[1.62.0]: https://github.com/townsendmerino/aikit/compare/v1.61.0...v1.62.0
 [1.61.0]: https://github.com/townsendmerino/aikit/compare/v1.60.0...v1.61.0
 [1.60.0]: https://github.com/townsendmerino/aikit/compare/v1.59.0...v1.60.0
 [1.59.0]: https://github.com/townsendmerino/aikit/compare/v1.58.0...v1.59.0
