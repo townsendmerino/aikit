@@ -13,6 +13,8 @@ excluded from that promise and may change in any release until it graduates.
 
 `perfgate` VERDICT: not run — nothing it benchmarks changed (no file under `linalg/` or `mmap/` differs from v1.62.0)
 
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 0f5a008 (2026-10-10T01:55:49Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2: the submodules carry no toolchain line, so a bare run scans them with the box's Go 1.27.0 and reports the stdlib advisories fixed in 1.27.2), govulncheck v1.8.0.
+
 > **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
 > `./linalg` only, and `git diff --stat v1.62.0..HEAD -- linalg/ mmap/` is empty. This release adds one file to `vision/` (and its
 > test and tiny fixture) and changes nothing else of consequence (the eight gpu backends' pins moved to v1.62.0 in the previous
