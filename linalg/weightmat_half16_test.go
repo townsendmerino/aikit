@@ -170,3 +170,29 @@ func BenchmarkWeightMat_half16_decode(b *testing.B) {
 		}
 	})
 }
+
+// widenBF16 is exact at every length (the SIMD form handles blocks of 16, then 8, then an overlapping last block) and leaves the bytes beyond len(src) alone.
+func TestWidenBF16_exactAtEveryLength(t *testing.T) {
+	rng := rand.New(rand.NewPCG(4, 4))
+	for n := 0; n <= 70; n++ {
+		src := make([]uint16, n)
+		for i := range src {
+			src[i] = uint16(rng.Uint32()) // every bit pattern, NaNs and denormals included
+		}
+		dst := make([]float32, n+3)
+		for i := range dst {
+			dst[i] = 12345
+		}
+		widenBF16(dst, src)
+		for i, u := range src {
+			if math.Float32bits(dst[i]) != uint32(u)<<16 {
+				t.Fatalf("n=%d element %d: %#x widened to %#x", n, i, u, math.Float32bits(dst[i]))
+			}
+		}
+		for i := n; i < len(dst); i++ {
+			if dst[i] != 12345 {
+				t.Fatalf("n=%d: wrote past len(src) at %d", n, i)
+			}
+		}
+	}
+}

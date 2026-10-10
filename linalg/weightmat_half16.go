@@ -36,14 +36,6 @@ func growF32(s []float32, n int) []float32 {
 	return s[:n]
 }
 
-// widenBF16 widens src to dst[:len(src)]. Exact.
-func widenBF16(dst []float32, src []uint16) {
-	dst = dst[:len(src)]
-	for i, u := range src {
-		dst[i] = math.Float32frombits(uint32(u) << 16)
-	}
-}
-
 // F32ToBF16 rounds f to bfloat16, nearest-even; a NaN stays a NaN.
 func F32ToBF16(f float32) uint16 {
 	b := math.Float32bits(f)
