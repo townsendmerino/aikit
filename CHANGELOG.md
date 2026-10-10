@@ -13,6 +13,8 @@ excluded from that promise and may change in any release until it graduates.
 
 `perfgate` VERDICT: not run — nothing it benchmarks changed (no file under `linalg/` or `mmap/` differs from v1.61.0)
 
+STATEMENT: no reachable vulnerabilities in 16/16 modules at a93f507 (2026-10-10T01:35:09Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2: the submodules carry no toolchain line, so a bare run scans them with the box's Go 1.27.0 and reports the stdlib advisories fixed in 1.27.2), govulncheck v1.8.0.
+
 > **PERFGATE EXCEPTION: perfgate was not run for this release, because it would compare identical code.** perfgate benchmarks
 > `./linalg` only, and `git diff --stat v1.61.0..HEAD -- linalg/ mmap/` is empty. This release adds files to `audio/` and
 > changes one function of the shared Whisper encoder's loader (a config-key alias and a tensor prefix); nothing else of consequence
