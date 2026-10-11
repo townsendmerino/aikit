@@ -9,6 +9,24 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.68.0] — 2026-10-11
+
+`perfgate` VERDICT: PASS — no regression vs v1.67.1 above each shape's floor — 14/47 shapes resolve the 5.0% class
+
+sensitivity: 14/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), a077a2e vs v1.67.1, 2026-10-11, under the timing lock.
+
+> **Read this verdict for what it is.** No `linalg` shape regressed above its floor, and 33 of the 47 shapes cannot see 5% in this run. This release changes `audio/` only, and perfgate has no audio shape: the verdict says `linalg` did not move, not that the encoder got faster. The speed is measured directly, in the entry below.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at a077a2e (2026-10-11T18:42:30Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2).
+
+### Changed — the Whisper-style audio encoder (Whisper, and Voxtral's tower) is 6 to 7.5 times faster on the CPU
+
+- `WhisperEncoder.Forward` (`audio/whisper_encoder.go`) ran its attention softmax as float64 `math.Exp` over one row at a time on one goroutine, and its GELU as float64 `math.Erf`. In a profile of `whisper-small` those were 20% and 5% of the CPU samples and most of the wall time: the matrix multiplies were already spread over every core, the softmax was not. It now uses `linalg.SoftmaxRowScaledContractInto` (the scale and the row softmax in one contract kernel) with the rows of a head spread over the cores, and `linalg.GELUContractInto` over the cores in chunks; one score block is reused across heads and layers. The planted tanh-GELU defect keeps its scalar form.
+- **Measured** (same box, idle, old build against new in alternating rounds, one 10 s synthetic window): `whisper-small`, one 30 s window, **12.55 s to 1.68 s** (7.5 times; rounds 12.42 to 12.65 against 1.66 to 1.70); Voxtral-Mini's tower for one window **53.9 s to 8.8 s** (6.1 times; 53.84 to 53.89 against 8.81 to 8.84). In goinfer the 73-clip LibriSpeech Whisper run went from 1,088 s to about 5 minutes.
+- **Not bit-identical to v1.67.1**, and not meant to be: the contracted f32 exp differs from float64 `math.Exp` in the last bits of an f32. Held against transformers float32, the new encoder is slightly closer: `whisper-small`, worst per-frame cosine 0.999999995 to 0.999999998 (max |diff| 1.49e-3 to 8.31e-4) on the LibriSpeech clip with the reference's features, 0.999999935 to 0.999999957 on 25 s of synthetic signal; the tiny fixture reads 1.000000000 and 0.999999999 as before, with all seven planted defects still red. goinfer's greedy transcripts of 73 clips are byte-equal to transformers' and to its own previous ones on 73 of 73, and Voxtral served on the CPU is byte-equal to transformers' reference at float32 on a 5.9 s and a 36 s clip, with int4 at 0 word edits against float32.
+- `parallelRows` (unexported) and the record `TestEncoderSpeed_record` (skipped unless asked) are new; `TestParallelRows_coversEveryIndexOnce` and `TestWhisperGeluInto_isTheKernelAndKeepsTheDefect` hold the helpers.
+- **Not changed here:** Qwen3-ASR's encoder (`audio/qwen3asr_encoder.go`) and Gemma 4's audio tower (`audio/gemma4_encoder.go`) carry the same scalar softmax; Qwen3-ASR does not pad to 30 s (about 1.4 s a clip), and the Gemma 4 tower was not measured.
+
 ## [1.67.1] — 2026-10-10
 
 `perfgate` VERDICT: PASS — no regression vs v1.67.0 above each shape's floor — 7/47 shapes resolve the 5.0% class
@@ -5573,7 +5591,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.67.1...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.68.0...HEAD
+[1.68.0]: https://github.com/townsendmerino/aikit/compare/v1.67.1...v1.68.0
 [1.67.1]: https://github.com/townsendmerino/aikit/compare/v1.67.0...v1.67.1
 [1.67.0]: https://github.com/townsendmerino/aikit/compare/v1.66.0...v1.67.0
 [1.66.0]: https://github.com/townsendmerino/aikit/compare/v1.65.0...v1.66.0
