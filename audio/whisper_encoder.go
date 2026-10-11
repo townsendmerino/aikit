@@ -54,6 +54,7 @@ type WhisperEncoder struct {
 	layers         []whisperLayer
 	lnW, lnB       []float32
 	defect         int
+	device         WhisperDevice
 }
 
 // Planted defects for G-S14d's red runs. Zero is the shipped computation.
@@ -226,6 +227,9 @@ func (e *WhisperEncoder) Forward(feats []float32) ([]float32, error) {
 	const T = WhisperFrames
 	if len(feats) != c.MelBins*T {
 		return nil, fmt.Errorf("audio: %d feature values, want %d mels x %d frames", len(feats), c.MelBins, T)
+	}
+	if e.device != nil && e.defect == whisperEncDefectNone {
+		return e.device.Forward(feats)
 	}
 	D := c.DModel
 	// conv1: [mels][3000] -> [3000][D], k3 p1 s1
