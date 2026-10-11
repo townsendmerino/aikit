@@ -6,6 +6,8 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sync"
 
 	"github.com/townsendmerino/aikit/embed"
 	"github.com/townsendmerino/aikit/linalg"
@@ -183,6 +185,41 @@ func (e *WhisperEncoder) gelu(v float32) float32 {
 	return float32(0.5 * float64(v) * (1 + math.Erf(float64(v)/math.Sqrt2)))
 }
 
+// geluInto applies the activation to buf in place: aikit's exact-GELU contract kernel (HF's "gelu", x times Phi(x)), spread over the cores in chunks, unless the planted
+// tanh defect is on, which keeps its scalar form.
+func (e *WhisperEncoder) geluInto(buf []float32) {
+	if e.defect == whisperEncDefectTanhGELU {
+		for i, v := range buf {
+			buf[i] = e.gelu(v)
+		}
+		return
+	}
+	const chunk = 1 << 14
+	parallelRows((len(buf)+chunk-1)/chunk, func(c0, c1 int) {
+		lo, hi := c0*chunk, min(c1*chunk, len(buf))
+		linalg.GELUContractInto(buf[lo:hi], buf[lo:hi])
+	})
+}
+
+// parallelRows runs fn over [0,n) in contiguous blocks, one per core. The blocks are disjoint, so the result does not depend on the split. Small n runs inline.
+func parallelRows(n int, fn func(lo, hi int)) {
+	w := min(runtime.GOMAXPROCS(0), n)
+	if w <= 1 {
+		fn(0, n)
+		return
+	}
+	var wg sync.WaitGroup
+	for k := range w {
+		lo, hi := k*n/w, (k+1)*n/w
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			fn(lo, hi)
+		}()
+	}
+	wg.Wait()
+}
+
 // Forward runs the encoder over feats [mels][3000] (WhisperFeatures' layout) and returns the [1500][DModel] last hidden state.
 func (e *WhisperEncoder) Forward(feats []float32) ([]float32, error) {
 	c := e.Cfg
@@ -208,9 +245,10 @@ func (e *WhisperEncoder) Forward(feats []float32) ([]float32, error) {
 	for t := range T {
 		row := x[t*D : (t+1)*D]
 		for j := range row {
-			row[j] = e.gelu(row[j] + e.conv1B[j])
+			row[j] += e.conv1B[j]
 		}
 	}
+	e.geluInto(x)
 	// conv2: [3000][D] -> [1500][D], k3 p1 s2
 	N := c.MaxPositions
 	col2 := make([]float32, N*D*3)
@@ -232,9 +270,10 @@ func (e *WhisperEncoder) Forward(feats []float32) ([]float32, error) {
 	for t := range N {
 		row := h[t*D : (t+1)*D]
 		for j := range row {
-			row[j] = e.gelu(row[j] + e.conv2B[j])
+			row[j] += e.conv2B[j]
 		}
 	}
+	e.geluInto(h)
 	switch e.defect {
 	case whisperEncDefectNoPos:
 	case whisperEncDefectPosShifted:
@@ -284,6 +323,7 @@ func (e *WhisperEncoder) layer(ly *whisperLayer, h []float32, n, window int) {
 	}
 	att := make([]float32, n*D)
 	qh, kh, vt := make([]float32, n*hd), make([]float32, n*hd), make([]float32, hd*n)
+	scBuf := make([]float32, min(window, n)*min(window, n)) // one score block, reused by every head and window
 	for hh := range c.Heads {
 		off := hh * hd
 		for i := range n {
@@ -296,27 +336,15 @@ func (e *WhisperEncoder) layer(ly *whisperLayer, h []float32, n, window int) {
 		for lo := 0; lo < n; lo += window {
 			hi := min(lo+window, n)
 			m := hi - lo
-			sc := make([]float32, m*m)
+			sc := scBuf[:m*m]
 			linalg.MatmulBT(qh[lo*hd:hi*hd], kh[lo*hd:hi*hd], sc, m, hd, m)
-			for i := range m {
-				row := sc[i*m : (i+1)*m]
-				mx := float32(math.Inf(-1))
-				for j := range row {
-					row[j] *= scale
-					if row[j] > mx {
-						mx = row[j]
-					}
+			// The scale and the row softmax in one contract kernel (SoftmaxRowScaledContractInto), the rows independent and spread over the cores.
+			parallelRows(m, func(r0, r1 int) {
+				for i := r0; i < r1; i++ {
+					row := sc[i*m : (i+1)*m]
+					linalg.SoftmaxRowScaledContractInto(row, row, scale)
 				}
-				var sum float32
-				for j := range row {
-					row[j] = float32(math.Exp(float64(row[j] - mx)))
-					sum += row[j]
-				}
-				inv := 1 / sum
-				for j := range row {
-					row[j] *= inv
-				}
-			}
+			})
 			// out[i][d] = sum_j sc[i][j] * v[lo+j][d]: with vt [hd][n], take the window's columns
 			vtw := make([]float32, hd*m)
 			for d := range hd {
@@ -342,9 +370,7 @@ func (e *WhisperEncoder) layer(ly *whisperLayer, h []float32, n, window int) {
 		layerNorm(y, ly.ln2W, ly.ln2B, n, D)
 	}
 	f := linear(y, ly.fc1W, ly.fc1B, n, D, c.FFN)
-	for i, vv := range f {
-		f[i] = e.gelu(vv)
-	}
+	e.geluInto(f)
 	g := linear(f, ly.fc2W, ly.fc2B, n, c.FFN, D)
 	for i := range h {
 		h[i] += g[i]
