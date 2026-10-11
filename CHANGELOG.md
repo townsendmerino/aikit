@@ -11,6 +11,15 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [1.67.0] — 2026-10-10
 
+`perfgate` VERDICT: PASS — no regression vs v1.66.0 above each shape's floor — 14/47 shapes resolve the 5.0% class
+
+sensitivity: 14/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), c7975b2 vs v1.66.0, 2026-10-10, under the timing lock.
+
+> **Read this verdict for what it is.** No shape regressed above its floor, and 33 of the 47 shapes cannot see 5% in this run. The one `linalg/` change in this release is a CPU check in front of the int4 weight quantizer's
+> AVX2 kernel, which no perfgate shape benchmarks; perfgate does not cover `embed`, where the dequantizer kernels are. They are measured in the entry below.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at c7975b2 (2026-10-11T02:59:42Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2).
+
 ### Changed — the Q4_K and Q6_K GGUF dequantizers are vectorized on arm64 and amd64 (goinfer's `.giw` transcode, T8)
 
 - `dequantQ4KBlock` and `dequantQ6KBlock`, which every read of a Q4_K or Q6_K GGUF tensor goes through, write a
