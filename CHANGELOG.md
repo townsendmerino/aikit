@@ -9,6 +9,41 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.67.1] — 2026-10-10
+
+`perfgate` VERDICT: PASS — no regression vs v1.67.0 above each shape's floor — 7/47 shapes resolve the 5.0% class
+
+sensitivity: 7/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), 3f4f061 vs v1.67.0, 2026-10-10, under the timing lock. **This is the second run.** The first returned
+`VERDICT: INCONCLUSIVE — 1 regression(s) did not reproduce on a second measurement`: `BenchmarkAttendTileFused_expKind/np2048/f64math`, +4.94% against a floor of ±4.78%, a benchmark of the attention exp
+kernels that this change does not touch; the second measurement did not reproduce it, and the re-run is the PASS above.
+
+> **Read this verdict for what it is.** No shape regressed above its floor, and 40 of the 47 shapes cannot see 5% in this run. The shapes that matter here, `BenchmarkQuantizeRowInt8/dispatched/K1536` and `K8960`,
+> are among those: floors of ±22% and ±19%, read -10.4% and +12.5%, both flat. They are 0.5 µs and 2 µs calls and perfgate cannot resolve a branch in front of them. The question was therefore also measured directly,
+> interleaved in one session on the same box (exploratory, not a gate): `BenchmarkQuantizeRowInt8/dispatched`, v1.67.0 against this tree, six alternating rounds of three samples. K1536: 502.1 ns against 501.8 ns
+> (ratio of medians 0.9994); K8960: 1979.5 ns against 1976.5 ns (0.9985); per-round differences between -2.6% and +1.3%, four rounds down and two up in both. No speedup is claimed and no cost was found.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 3f4f061 (2026-10-11T03:56:17Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2).
+
+### Fixed — the amd64 activation quantizer ran its AVX2 kernels on every CPU
+
+- `maxAbsF32` and `quantizeRowScaled` (`linalg/quant_act_amd64.go`) called `maxAbsF32AVX2` and `quantizeF32AVX2` on the 8-aligned prefix of every row with no CPU check. `quantizeRowInt8Core` runs before every W8A8 and
+  W4A8 matmul and GEMV, so on an amd64 CPU without AVX2, or an OS that does not save YMM state, the first quantized forward was an illegal instruction, against `linalg/doc.go`'s promise of a scalar fallback.
+  Both functions now take the scalar passes when `hasAVX2` is false (`maxAbsF32Scalar`, `quantizeRowScaledScalar`, the oracles the kernels are held to). **On an AVX2 CPU the output is unchanged to the bit.**
+  v1.67.0 had closed the same gap in the int4 weight quantizer and the `embed` dequantizers and named this one as not changed.
+- **Every amd64 kernel was audited by call path**: all 35 `TEXT` symbols in the 21 `*_amd64.s` files, with every Go caller and the CPU flag on the way to it (and `cpuid` and `xgetbv`, which only the detection functions
+  call). This was the only symbol reached unguarded. The split-half W4A8 kernels have no check in their callers by design: a split-half weight can only be built through constructors that test `splitHalfUsable()`
+  (`hasAVX2 && !hasAVX512VNNIVL`). `embed`'s two kernels branch on `golang.org/x/sys/cpu`'s `HasAVX2`, which includes the OS state check.
+- **One guard was weaker than its kernel needs.** `widenF16` branched on `hasF16C`, a CPUID bit alone, in front of `VCVTPH2PS` on YMM, a VEX instruction that also needs the OS to save YMM state. `detectF16C` now
+  includes that check (`osSavesYMM`, the XCR0 test `detectAVX2` already made). A CPU with F16C and AVX but no AVX2 (Ivy Bridge) still takes the kernel.
+- **How it was found and proved.** The `linalg` and `embed` test binaries (`go test -c`) were run under Intel SDE with a pre-AVX model: `sde64 -nhm -- ./linalg.test -test.v`. Without the check the run dies at the 15th test
+  (`TestActGroup_wholeRowGroupIsThePerRowKernel`) in `maxAbsF32AVX2`: `SDE-ERROR: Executed instruction not valid for specified chip (NEHALEM)`. With it, `linalg` under `-nhm` is 143 passed, 44 skipped, 0 failed, `embed`
+  83 passed, 12 skipped, 0 failed, and `linalg` under `-ivb` (AVX and F16C, no AVX2) is 143 passed, 44 skipped, 0 failed. The same binary under `-hsw` fails only `TestFMAPeakAMD64_empirical`, a timing test that is
+  not meaningful under emulation. Setting `hasAVX2 = false` in a test cannot show this: the kernel and the scalar give the same bytes, so such a test passes with or without the check. The `aikit_noavx2` build tag
+  has the same property.
+- Tests: `TestQuantizeRowInt8_withoutAVX2` (the bytes-equal half; its comment says what it cannot show); `TestQuantActAVX2Kernels_matchScalar`, `TestQuantActAVX2Kernels_adversarialInfDoesNotFlipSign` and
+  `TestQuantizeInt4Block_matchesScalar` call kernels directly and now skip where the CPU cannot run them (the last was v1.67.0's, and was the second test to die under `-nhm`).
+- Not changed here: `quantizeF32AVX2` builds three constants through a general register (legacy-SSE moves under dirty YMM state); and what any kernel computes.
+
 ## [1.67.0] — 2026-10-10
 
 `perfgate` VERDICT: PASS — no regression vs v1.66.0 above each shape's floor — 14/47 shapes resolve the 5.0% class
@@ -5538,7 +5573,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.67.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.67.1...HEAD
+[1.67.1]: https://github.com/townsendmerino/aikit/compare/v1.67.0...v1.67.1
 [1.67.0]: https://github.com/townsendmerino/aikit/compare/v1.66.0...v1.67.0
 [1.66.0]: https://github.com/townsendmerino/aikit/compare/v1.65.0...v1.66.0
 [1.65.0]: https://github.com/townsendmerino/aikit/compare/v1.64.0...v1.65.0
