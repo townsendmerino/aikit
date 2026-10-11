@@ -324,11 +324,31 @@ func dequantIQ3SBlock(raw []byte, sb int, out []float32) {
 	}
 }
 
-// dequantQ4KBlock dequantizes one 256-element Q4_K super-block (sb) into out[:256].
+// q4kBlockScales reads a Q4_K super-block's prologue: dmin, and for each of its eight 32-weight sub-blocks the
+// multiplier d·scale (one float32 product, as dequantQ4KBlockScalar computes it) and the 6-bit min as a float32.
+func q4kBlockScales(raw []byte, base int) (mul, mins [8]float32, dmin float32) {
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	dmin = halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))
+	scales := raw[base+4 : base+16]
+	for j := range 8 {
+		sc, m := q4kScaleMin(j, scales)
+		mul[j], mins[j] = d*float32(sc), float32(m)
+	}
+	return mul, mins, dmin
+}
+
+// dequantQ4KBlockScalar dequantizes one 256-element Q4_K super-block (sb) into out[:256]: the portable body, and the
+// oracle the vector kernels behind dequantQ4KBlock are held to bit for bit (TestDequantQ4KBlock_matchesScalar).
 // Layout (144 bytes): d (f16), dmin (f16), scales[12] (6-bit scales+mins, packed),
 // qs[128] (4-bit quants). Mirrors ggml's dequantize_row_q4_K: y = d·scale·q −
 // dmin·min, with scale/min unpacked by get_scale_min_k4.
-func dequantQ4KBlock(raw []byte, sb int, out []float32) {
+//
+// The operations differ by architecture. Go's arm64 code multiplies d·scale by q and then subtracts dmin·min in one
+// fused operation; its amd64 code computes dmin·min first and subtracts it. For finite inputs the weights are the
+// same either way, because every product here is exact in float32 (an 11-bit half-float significand times a 6-bit
+// and a 4-bit integer); the forms differ only in which NaN a non-finite d or dmin propagates. A kernel reproduces its
+// own architecture's order.
+func dequantQ4KBlockScalar(raw []byte, sb int, out []float32) {
 	base := sb * 144
 	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
 	dmin := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))

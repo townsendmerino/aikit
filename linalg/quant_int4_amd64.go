@@ -13,10 +13,10 @@ const int4QuantBlock = 8
 //go:noescape
 func quantizeInt4F32AVX2(row *float32, packed *byte, n int, inv float32)
 
-// int4GroupHasKernel reports whether a group of n weights starting at weight ks goes through the kernel: it must start
-// on a byte boundary and be a whole number of blocks.
+// int4GroupHasKernel reports whether a group of n weights starting at weight ks goes through the kernel: the CPU must
+// have AVX2, and the group must start on a byte boundary and be a whole number of blocks.
 func int4GroupHasKernel(ks, n int) bool {
-	return ks&1 == 0 && n >= int4QuantBlock && n%int4QuantBlock == 0
+	return hasAVX2 && ks&1 == 0 && n >= int4QuantBlock && n%int4QuantBlock == 0
 }
 
 // quantizeInt4Block is the kernel behind QuantizeGroupInt4Row's vector path. len(row) must be a positive multiple of
