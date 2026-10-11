@@ -9,6 +9,46 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.67.0] — 2026-10-10
+
+### Changed — the Q4_K and Q6_K GGUF dequantizers are vectorized on arm64 and amd64 (goinfer's `.giw` transcode, T8)
+
+- `dequantQ4KBlock` and `dequantQ6KBlock`, which every read of a Q4_K or Q6_K GGUF tensor goes through, write a
+  super-block's 256 weights through a vector kernel: NEON on arm64, AVX2 on amd64 when the CPU has it
+  (`golang.org/x/sys/cpu`). The block's prologue (the half-floats, the scales, their products) stays in Go and is the
+  scalar's arithmetic (`q4kBlockScales`, `q6kBlockScales`). The scalar bodies are kept as `dequantQ4KBlockScalar` and
+  `dequantQ6KBlockScalar`: the oracles, and the path on every other architecture and on an amd64 CPU without AVX2.
+  **The weights do not change.**
+- Q4_K: `d*scale*nibble - dmin*min`. Go's arm64 code is a multiply and then a subtract fused with `dmin*min`; its
+  amd64 code is a multiply and a subtract. Each kernel follows its own architecture's scalar. Both products are exact
+  in float32, so the two architectures give the same finite weights; they can differ only in which NaN comes out of a
+  non-finite `d` or `dmin`.
+- Q6_K: `d*scale*(quant-32)`, one multiply per weight in the kernel, with the 6-bit quants assembled from `ql` and
+  `qh` as bytes (NEON) or dwords (AVX2).
+- Held to the scalar bit for bit by `TestDequantQ4KBlock_matchesScalar` and `TestDequantQ6KBlock_matchesScalar`: 20,000
+  random blocks, every half-float as `d` (and as `dmin`), every byte value in every scale position, and every byte
+  value of the quant bytes in every lane. `TestDequantQ4KBlock_realFile` and `TestDequantQ6KBlock_realFile` do the
+  same over a GGUF named by `AIKIT_GGUF_ORACLE` and log a crc32 of every weight. On Qwen2.5-Coder 1.5B Q4_K_M: 169
+  Q4_K tensors (1,345,388,544 weights, crc32 `a7454364`) and 29 Q6_K tensors (431,554,560 weights, `67f2a56d`), the
+  same on arm64 (M1 Pro) and amd64 (Ryzen 7 3700X), both run natively. Planted kernel defects turn the tests red on
+  both.
+- These tests **skip on a CPU that runs no kernel**, where they would compare the scalar with itself. That is the
+  case under Rosetta, which does not advertise AVX to the process unless `ROSETTA_ADVERTISE_AVX=1` is set.
+- Measured as goinfer's single-thread transcode CPU of that GGUF to int4 (`GOMAXPROCS=1`, five interleaved pairs a
+  step, identical output bytes): the Q4_K kernel takes it to 0.847 of v1.66.0's on the M1 Pro (3.20 to 2.71 s) and
+  0.809 on the Ryzen (3.73 to 3.02 s); the Q6_K kernel takes that to 0.931 (2.74 to 2.56 s) and 0.864 (3.05 to
+  2.63 s).
+- `gguf_dequant_q4k_arm64.s` and `gguf_dequant_q6k_arm64.s` are written with the assembler's mnemonics, not raw
+  instruction words.
+
+### Fixed — the amd64 int4 quantizer kernel checks the CPU for AVX2
+
+- v1.66.0's `QuantizeGroupInt4Row` reached its AVX2 kernel on every amd64 CPU. `int4GroupHasKernel` now requires
+  `hasAVX2`, so a CPU without AVX2 takes the scalar body, as it did before v1.66.0
+  (`TestQuantizeGroupInt4Row_withoutAVX2`).
+- Not changed here: the activation quantizer (`maxAbsF32` and `quantizeRowScaled` on amd64) still calls its AVX2
+  kernels without that check, as it has since it was vectorized.
+
 ## [1.66.0] — 2026-10-10
 
 `perfgate` VERDICT: PASS — no regression vs v1.65.0 above each shape's floor — 15/47 shapes resolve the 5.0% class
@@ -5489,7 +5529,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.66.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.67.0...HEAD
+[1.67.0]: https://github.com/townsendmerino/aikit/compare/v1.66.0...v1.67.0
 [1.66.0]: https://github.com/townsendmerino/aikit/compare/v1.65.0...v1.66.0
 [1.65.0]: https://github.com/townsendmerino/aikit/compare/v1.64.0...v1.65.0
 [1.64.0]: https://github.com/townsendmerino/aikit/compare/v1.63.0...v1.64.0

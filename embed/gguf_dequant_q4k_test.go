@@ -33,6 +33,9 @@ func q4kSame(t *testing.T, what string, raw []byte, sb int) bool {
 // random scales and nibbles; every byte value in every scales position; and blocks whose nibble bytes run through all
 // 256 values in every lane. A block read at an offset checks the block index.
 func TestDequantQ4KBlock_matchesScalar(t *testing.T) {
+	if !dequantKernelsActive() {
+		t.Skip("no vector kernel runs on this CPU: this would compare the scalar with itself (under Rosetta, set ROSETTA_ADVERTISE_AVX=1)")
+	}
 	rng := rand.New(rand.NewSource(20261010))
 	raw := make([]byte, 3*144)
 	fill := func() {
@@ -87,8 +90,12 @@ func TestDequantQ4KBlock_matchesScalar(t *testing.T) {
 }
 
 // TestDequantQ4KBlock_realFile holds the kernel to the scalar on every Q4_K block of a real GGUF, named by
-// AIKIT_GGUF_ORACLE. It skips without one: no real checkpoint lives in this repository.
+// AIKIT_GGUF_ORACLE, and logs one checksum of every weight's bits. It skips without one: no real checkpoint lives in
+// this repository.
 func TestDequantQ4KBlock_realFile(t *testing.T) {
+	if !dequantKernelsActive() {
+		t.Skip("no vector kernel runs on this CPU: this would compare the scalar with itself (under Rosetta, set ROSETTA_ADVERTISE_AVX=1)")
+	}
 	path := os.Getenv("AIKIT_GGUF_ORACLE")
 	if path == "" {
 		t.Skip("set AIKIT_GGUF_ORACLE to a Q4_K GGUF")
@@ -98,11 +105,19 @@ func TestDequantQ4KBlock_realFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer g.Close()
-	tensors, blocks := 0, 0
+	var names []string
 	for name, info := range g.tensors {
-		if info.typ != ggmlTypeQ4_K {
-			continue
+		if info.typ == ggmlTypeQ4_K {
+			names = append(names, name)
 		}
+	}
+	sort.Strings(names)
+	h := crc32.NewIEEE()
+	var w [256]float32
+	buf := make([]byte, 4*256)
+	blocks := 0
+	for _, name := range names {
+		info := g.tensors[name]
 		n := 1
 		for _, d := range info.dims {
 			n *= int(d)
@@ -115,40 +130,17 @@ func TestDequantQ4KBlock_realFile(t *testing.T) {
 			if !q4kSame(t, name, raw, sb) {
 				return
 			}
-			blocks++
-		}
-		tensors++
-	}
-	if blocks == 0 {
-		t.Fatalf("%s holds no Q4_K block: nothing was compared", path)
-	}
-	t.Logf("%d Q4_K tensors, %d blocks (%d weights): the kernel's weights are the scalar's", tensors, blocks, blocks*256)
-	// One checksum of every weight's bits, to set beside another architecture's: the products are exact, so a file with
-	// finite scales dequantizes to the same weights everywhere.
-	names := make([]string, 0, len(g.tensors))
-	for name, info := range g.tensors {
-		if info.typ == ggmlTypeQ4_K {
-			names = append(names, name)
-		}
-	}
-	sort.Strings(names)
-	h := crc32.NewIEEE()
-	var w [256]float32
-	buf := make([]byte, 4*256)
-	for _, name := range names {
-		info := g.tensors[name]
-		n := 1
-		for _, d := range info.dims {
-			n *= int(d)
-		}
-		raw, _ := g.tensorBytes(info, n)
-		for sb := 0; sb < n/256; sb++ {
 			dequantQ4KBlock(raw, sb, w[:])
 			for i, x := range w {
 				binary.LittleEndian.PutUint32(buf[4*i:], math.Float32bits(x))
 			}
 			h.Write(buf)
+			blocks++
 		}
 	}
+	if blocks == 0 {
+		t.Fatalf("%s holds no Q4_K block: nothing was compared", path)
+	}
+	t.Logf("%d Q4_K tensors, %d blocks (%d weights): the kernel's weights are the scalar's", len(names), blocks, blocks*256)
 	t.Logf("crc32 of every Q4_K weight's bits, tensors in name order: %08x", h.Sum32())
 }

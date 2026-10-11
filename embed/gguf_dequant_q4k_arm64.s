@@ -6,16 +6,7 @@
 // dmin*min, fused. That is the scalar's order on arm64: an FMULS, then an FMSUBS whose product is dmin*min. The
 // operand roles are the scalar's too, so a NaN in d or dmin propagates identically.
 //
-// USHR, USHLL, UCVTF, FMUL and FMLS (vector) have no Go arm64 assembler mnemonic: raw WORDs, the convention of
-// linalg/quant_act_arm64.s. All base ARMv8-A NEON, no feature detection.
-//
-// Encodings (Rn<<5 | Rd, Rm<<16 where present):
-//   USHR   Vd.16B, Vn.16B, #4     = 0x6F0C0400
-//   USHLL  Vd.8H,  Vn.8B,  #0     = 0x2F08A400      USHLL2 Vd.8H, Vn.16B, #0 = 0x6F08A400
-//   USHLL  Vd.4S,  Vn.4H,  #0     = 0x2F10A400      USHLL2 Vd.4S, Vn.8H,  #0 = 0x6F10A400
-//   UCVTF  Vd.4S,  Vn.4S          = 0x6E21D800
-//   FMUL   Vd.4S,  Vn.4S, Vm.4S   = 0x6E20DC00
-//   FMLS   Vd.4S,  Vn.4S, Vm.4S   = 0x4EA0CC00      (Vd = Vd - Vn*Vm)
+// All base ARMv8-A NEON, no feature detection.
 
 #include "textflag.h"
 
@@ -48,46 +39,46 @@ group:
 half:
 	VLD1.P 16(R0), [V0.B16]
 	VAND   V30.B16, V0.B16, V1.B16   // low nibbles
-	WORD   $0x6F0C0402        // USHR   V2.16B, V0.16B, #4     (high nibbles)
+	VUSHR  $4, V0.B16, V2.B16   // high nibbles
 
-	WORD   $0x2F08A424        // USHLL  V4.8H, V1.8B,  #0
-	WORD   $0x6F08A425        // USHLL2 V5.8H, V1.16B, #0
-	WORD   $0x2F10A486        // USHLL  V6.4S, V4.4H,  #0
-	WORD   $0x6F10A487        // USHLL2 V7.4S, V4.8H,  #0
-	WORD   $0x2F10A4A8        // USHLL  V8.4S, V5.4H,  #0
-	WORD   $0x6F10A4A9        // USHLL2 V9.4S, V5.8H,  #0
-	WORD   $0x6E21D8C6        // UCVTF  V6.4S, V6.4S
-	WORD   $0x6E21D8E7        // UCVTF  V7.4S, V7.4S
-	WORD   $0x6E21D908        // UCVTF  V8.4S, V8.4S
-	WORD   $0x6E21D929        // UCVTF  V9.4S, V9.4S
-	WORD   $0x6E34DCC6        // FMUL   V6.4S, V6.4S, V20.4S    (q * mul)
-	WORD   $0x6E34DCE7        // FMUL   V7.4S, V7.4S, V20.4S
-	WORD   $0x6E34DD08        // FMUL   V8.4S, V8.4S, V20.4S
-	WORD   $0x6E34DD29        // FMUL   V9.4S, V9.4S, V20.4S
-	WORD   $0x4EB6CF06        // FMLS   V6.4S, V24.4S, V22.4S   (- dmin*min, fused)
-	WORD   $0x4EB6CF07        // FMLS   V7.4S, V24.4S, V22.4S
-	WORD   $0x4EB6CF08        // FMLS   V8.4S, V24.4S, V22.4S
-	WORD   $0x4EB6CF09        // FMLS   V9.4S, V24.4S, V22.4S
+	VUSHLL $0, V1.B8, V4.H8
+	VUSHLL2 $0, V1.B16, V5.H8
+	VUSHLL $0, V4.H4, V6.S4
+	VUSHLL2 $0, V4.H8, V7.S4
+	VUSHLL $0, V5.H4, V8.S4
+	VUSHLL2 $0, V5.H8, V9.S4
+	VUCVTF V6.S4, V6.S4
+	VUCVTF V7.S4, V7.S4
+	VUCVTF V8.S4, V8.S4
+	VUCVTF V9.S4, V9.S4
+	VFMUL  V20.S4, V6.S4, V6.S4   // q * mul
+	VFMUL  V20.S4, V7.S4, V7.S4
+	VFMUL  V20.S4, V8.S4, V8.S4
+	VFMUL  V20.S4, V9.S4, V9.S4
+	VFMLS  V22.S4, V24.S4, V6.S4   // - dmin*min, fused
+	VFMLS  V22.S4, V24.S4, V7.S4
+	VFMLS  V22.S4, V24.S4, V8.S4
+	VFMLS  V22.S4, V24.S4, V9.S4
 	VST1.P [V6.S4, V7.S4, V8.S4, V9.S4], 64(R1)
 
-	WORD   $0x2F08A444        // USHLL  V4.8H, V2.8B,  #0
-	WORD   $0x6F08A445        // USHLL2 V5.8H, V2.16B, #0
-	WORD   $0x2F10A486        // USHLL  V6.4S, V4.4H,  #0
-	WORD   $0x6F10A487        // USHLL2 V7.4S, V4.8H,  #0
-	WORD   $0x2F10A4A8        // USHLL  V8.4S, V5.4H,  #0
-	WORD   $0x6F10A4A9        // USHLL2 V9.4S, V5.8H,  #0
-	WORD   $0x6E21D8C6        // UCVTF  V6.4S, V6.4S
-	WORD   $0x6E21D8E7        // UCVTF  V7.4S, V7.4S
-	WORD   $0x6E21D908        // UCVTF  V8.4S, V8.4S
-	WORD   $0x6E21D929        // UCVTF  V9.4S, V9.4S
-	WORD   $0x6E35DCC6        // FMUL   V6.4S, V6.4S, V21.4S
-	WORD   $0x6E35DCE7        // FMUL   V7.4S, V7.4S, V21.4S
-	WORD   $0x6E35DD08        // FMUL   V8.4S, V8.4S, V21.4S
-	WORD   $0x6E35DD29        // FMUL   V9.4S, V9.4S, V21.4S
-	WORD   $0x4EB7CF06        // FMLS   V6.4S, V24.4S, V23.4S
-	WORD   $0x4EB7CF07        // FMLS   V7.4S, V24.4S, V23.4S
-	WORD   $0x4EB7CF08        // FMLS   V8.4S, V24.4S, V23.4S
-	WORD   $0x4EB7CF09        // FMLS   V9.4S, V24.4S, V23.4S
+	VUSHLL $0, V2.B8, V4.H8
+	VUSHLL2 $0, V2.B16, V5.H8
+	VUSHLL $0, V4.H4, V6.S4
+	VUSHLL2 $0, V4.H8, V7.S4
+	VUSHLL $0, V5.H4, V8.S4
+	VUSHLL2 $0, V5.H8, V9.S4
+	VUCVTF V6.S4, V6.S4
+	VUCVTF V7.S4, V7.S4
+	VUCVTF V8.S4, V8.S4
+	VUCVTF V9.S4, V9.S4
+	VFMUL  V21.S4, V6.S4, V6.S4
+	VFMUL  V21.S4, V7.S4, V7.S4
+	VFMUL  V21.S4, V8.S4, V8.S4
+	VFMUL  V21.S4, V9.S4, V9.S4
+	VFMLS  V23.S4, V24.S4, V6.S4
+	VFMLS  V23.S4, V24.S4, V7.S4
+	VFMLS  V23.S4, V24.S4, V8.S4
+	VFMLS  V23.S4, V24.S4, V9.S4
 	VST1.P [V6.S4, V7.S4, V8.S4, V9.S4], 64(R7)
 
 	SUBS $1, R8, R8

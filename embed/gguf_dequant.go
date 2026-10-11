@@ -120,11 +120,28 @@ func dequantQ5_0Block(raw []byte, blk int, out []float32) {
 	}
 }
 
-// dequantQ6KBlock dequantizes one 256-element Q6_K super-block (sb) into out[:256].
+// q6kBlockScales is the prologue the Q6_K kernels share with the scalar's arithmetic: the sixteen multipliers d·scale
+// of the super-block at raw[base:], each one float32 product, as dequantQ6KBlockScalar computes it. They are in the
+// order the kernels read them: ds[4*(2*chunk+is)+k] scales the 16 weights at out[128*chunk+32*k+16*is:].
+func q6kBlockScales(raw []byte, base int) (ds [16]float32) {
+	sc := raw[base+192 : base+208]
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+208:]))
+	for chunk := range 2 {
+		for is := range 2 {
+			for k := range 4 {
+				ds[4*(2*chunk+is)+k] = d * float32(int8(sc[8*chunk+is+2*k]))
+			}
+		}
+	}
+	return ds
+}
+
+// dequantQ6KBlockScalar dequantizes one 256-element Q6_K super-block (sb) into out[:256]: the portable body, and the
+// oracle the vector kernels behind dequantQ6KBlock are held to bit for bit (TestDequantQ6KBlock_matchesScalar).
 // Layout (210 bytes): ql[128] (low 4 bits), qh[64] (high 2 bits), scales[16]
 // (int8), d (f16 super-scale). Mirrors ggml's dequantize_row_q6_K: a 6-bit quant
 // q∈[0,63] recentered by -32, scaled by its sub-block int8 scale and d.
-func dequantQ6KBlock(raw []byte, sb int, out []float32) {
+func dequantQ6KBlockScalar(raw []byte, sb int, out []float32) {
 	base := sb * 210
 	ql := raw[base : base+128]
 	qh := raw[base+128 : base+192]
