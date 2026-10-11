@@ -15,6 +15,9 @@ import (
 // AIKIT_ROUND_EXHAUSTIVE=1, in every lane position of a block. A second pass uses other inverses, a zero and an
 // infinite one among them, on the patterns near the rounding and conversion edges.
 func TestQuantizeInt4Block_matchesScalar(t *testing.T) {
+	if !int4GroupHasKernel(0, int4QuantBlock) {
+		t.Skip("the vector kernel is not usable on this CPU: QuantizeGroupInt4Row never offers it a group, and calling it directly would be an illegal instruction")
+	}
 	nib := func(x, inv float32) byte {
 		q := roundInt4(x * inv)
 		if q > 7 {

@@ -8,10 +8,11 @@ func dotQ4KAVX2(row *byte, aq *int8, aS *float32, asumf *float32, nSB int) float
 // hasQ4KAVX2: the AVX2 Q4_K kernel also needs F16C (VCVTPH2PS) for the super-block's d and dmin.
 var hasQ4KAVX2 = hasAVX2 && detectF16C()
 
-// detectF16C reports CPUID.1:ECX bit 29 (every AVX2 CPU ships it; checked rather than assumed).
+// detectF16C reports CPUID.1:ECX bit 29 (every AVX2 CPU ships it; checked rather than assumed) and that the OS saves YMM state: VCVTPH2PS is a VEX
+// instruction, so the CPUID bit alone is not enough to run it.
 func detectF16C() bool {
 	_, _, ecx1, _ := cpuid(1, 0)
-	return ecx1&(1<<29) != 0
+	return ecx1&(1<<29) != 0 && osSavesYMM()
 }
 
 // dotQ4K is the per-row Q4_K dot (q4k.go): the AVX2 kernel when available, the Go oracle otherwise.

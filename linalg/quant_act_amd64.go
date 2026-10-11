@@ -48,6 +48,10 @@ package linalg
 // quant_act_test.go's corner cases (posinf-in-body, both-inf, nan-is-largest-slot, …) exercise
 // them through the real quantizeRowInt8Core entry point.
 
+// The AVX2 forms run only where hasAVX2 holds (CPUID plus XGETBV, detectAVX2 in dot_amd64.go); on any other amd64 CPU, or an OS that does not
+// save YMM state, both passes take the scalar loops, which are the oracle the kernels are held to. The one caller of each is
+// quantizeRowInt8Core, so the check is a single predictable branch per row.
+
 // maxAbsF32AVX2 returns max |row[i]| over the first n elements (n a multiple of 8, n > 0),
 // skipping quiet NaNs the way the scalar comparisons do. Implemented in quant_act_amd64.s.
 //
@@ -63,6 +67,9 @@ func quantizeF32AVX2(row *float32, q *int8, n int, inv float32)
 // maxAbsF32 is the abs/max pass: the 8-aligned prefix in AVX2, the tail in the scalar loop
 // continuing from the vector result (max is exact, so the split is invisible in the value).
 func maxAbsF32(row []float32) float32 {
+	if !hasAVX2 {
+		return maxAbsF32Scalar(row, 0)
+	}
 	n := len(row) &^ 7
 	var m float32
 	if n > 0 {
@@ -81,6 +88,10 @@ func quantizeRowScaled(row []float32, q []int8, inv float32) {
 		return
 	}
 	_ = q[len(row)-1]
+	if !hasAVX2 {
+		quantizeRowScaledScalar(row, q, inv)
+		return
+	}
 	n := len(row) &^ 7
 	if n > 0 {
 		quantizeF32AVX2(&row[0], &q[0], n, inv)

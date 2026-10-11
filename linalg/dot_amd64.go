@@ -58,6 +58,18 @@ func xgetbv() (eax, edx uint32)
 // state save. Computed once at init; the kernels branch on it.
 var hasAVX2 = detectAVX2()
 
+// osSavesYMM reports whether the OS preserves XMM and YMM state across context switches (CPUID.1:ECX OSXSAVE and AVX set, XCR0 bits 1 and 2): the
+// precondition for executing any VEX-encoded instruction, whatever feature bit the instruction itself needs.
+func osSavesYMM() bool {
+	const bitOSXSAVE, bitAVX = 1 << 27, 1 << 28
+	_, _, ecx1, _ := cpuid(1, 0)
+	if ecx1&(bitOSXSAVE|bitAVX) != bitOSXSAVE|bitAVX {
+		return false
+	}
+	xcr0, _ := xgetbv()
+	return xcr0&(1<<1|1<<2) == 1<<1|1<<2
+}
+
 func detectAVX2() bool {
 	maxLeaf, _, _, _ := cpuid(0, 0)
 	if maxLeaf < 7 {
