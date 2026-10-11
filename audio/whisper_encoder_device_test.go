@@ -37,7 +37,9 @@ func TestWhisperEncoder_deviceTakesForward(t *testing.T) {
 	e.SetDefectForTest(whisperEncDefectNoPos)
 	func() {
 		defer func() { _ = recover() }() // the empty weights make the CPU path panic: all that matters is that the device was not called
-		_, _ = e.Forward(feats)
+		if _, err := e.Forward(feats); err != nil {
+			t.Log(err)
+		}
 	}()
 	if d.calls != 2 {
 		t.Fatalf("a planted defect must run the CPU computation, but the device was called (%d)", d.calls)
