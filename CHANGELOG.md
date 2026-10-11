@@ -9,6 +9,21 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.69.0] — 2026-10-11
+
+`perfgate` VERDICT: PASS — no regression vs v1.68.0 above each shape's floor — 12/47 shapes resolve the 5.0% class
+
+sensitivity: 12/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), 05dba33 vs v1.68.0, 2026-10-11, under the timing lock.
+
+> **Read this verdict for what it is.** This release adds an `audio` hook and changes no `linalg` code, so the verdict says `linalg` did not move; 35 of the 47 shapes cannot see 5% in this run, and perfgate has no audio shape.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 05dba33 (2026-10-11T22:25:12Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2).
+
+### Added — a device hook for the Whisper-style audio encoder
+
+- `audio.WhisperDevice` (`Forward(feats) ([]float32, error)`, `Close() error`), `(*WhisperEncoder).SetDevice(d)` and `(*WhisperEncoder).Weights()` returning `audio.WhisperWeights` / `audio.WhisperLayerWeights`: a read-only view of the loaded tensors (the two Conv1d stems, the positions, every layer, the final LayerNorm, and the LayerNorm epsilon) for a backend to upload, and the one place it plugs the whole encoder in. Whisper's encoder and Voxtral's audio tower are both `WhisperEncoder`, so one device moves both. With a device set, `Forward` returns the device's result (after the same input-length check); a planted defect (`SetDefectForTest`) still runs the CPU computation. `SetDevice(nil)` returns to the CPU.
+- Additive: nothing existing changes, and with no device set `Forward` is byte-for-byte the v1.68.0 computation. goinfer's CUDA encoder is the first user: `whisper-small`'s 30 s window 1.74 s to 0.13 s (13.6 times) and Voxtral-Mini's tower 8.84 s to 0.75 s (11.9 times), float32, per-position cosine against the CPU encoder at least 0.99999999.
+
 ## [1.68.0] — 2026-10-11
 
 `perfgate` VERDICT: PASS — no regression vs v1.67.1 above each shape's floor — 14/47 shapes resolve the 5.0% class
@@ -5591,7 +5606,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.68.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.69.0...HEAD
+[1.69.0]: https://github.com/townsendmerino/aikit/compare/v1.68.0...v1.69.0
 [1.68.0]: https://github.com/townsendmerino/aikit/compare/v1.67.1...v1.68.0
 [1.67.1]: https://github.com/townsendmerino/aikit/compare/v1.67.0...v1.67.1
 [1.67.0]: https://github.com/townsendmerino/aikit/compare/v1.66.0...v1.67.0
