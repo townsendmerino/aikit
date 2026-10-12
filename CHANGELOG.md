@@ -9,6 +9,23 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.70.0] — 2026-10-11
+
+`perfgate` VERDICT: PASS — no regression vs v1.69.0 above each shape's floor — 12/47 shapes resolve the 5.0% class
+
+sensitivity: 12/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), b545f56 vs v1.69.0, 2026-10-11, under the timing lock.
+
+> **Read this verdict for what it is.** This release adds a `WeightMat` kind and one dispatch case per method; no existing kind's kernel changed, so the verdict says the existing shapes did not move. 35 of the 47 shapes cannot see 5% in this run, and perfgate has no 16-bit shape (the kind's own timing is in the entry below).
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at b545f56 (2026-10-12T03:08:12Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2).
+
+### Added — a 16-bit `WeightMat`: bf16 or binary16 weights held at half f32's bytes, widened a tile at a time
+
+- `linalg.WrapBF16(u, rows, cols)` and `linalg.WrapF16` wrap raw bit patterns without copying; `linalg.QuantizeBF16(w, rows, cols)` and `linalg.QuantizeF16` round an f32 matrix to the kind; `(*WeightMat).Half16()` returns the stored bits and which format they are (`ok` is false for every other kind); `linalg.F32ToBF16` and `linalg.BF16ToF32` convert one value (round to nearest even, a NaN stays a NaN; widening is exact). `WeightMat.Kind()` reads `"bf16"` or `"f16"`.
+- The matmul (`MatmulBT`, `MatmulBTInto`) widens a tile of 32 weight rows into a scratch buffer and runs the same blocked f32 kernel over it, so every output is **bit-identical to `MatmulBT` over the widened f32 weights** (`TestWeightMat_half16_bitIdenticalToF32` and its parallel twin, `linalg/weightmat_half16_test.go`). `Row` widens a row; `F32()` reports `!ok` for this kind, as for the quantized ones. CPU only: an accelerator dispatches through `Half16`.
+- **Measured** (nobara, a 4096x2048 matrix, M=1): bf16 1.24 ms against f32's 1.39 ms, because half the bytes cross the memory bus; the widen is AVX2 on amd64 (`VPMOVZXWD` + `VPSLLD`, eight per instruction), scalar elsewhere (arm64 has no NEON form yet, so a Mac pays a scalar widen per tile). binary16 widens through `F16ToF32Slice`.
+- Additive: nothing existing changes, and no existing kind's matmul takes a new branch. goinfer's `Options.Quant "bf16"` / `"f16"` is the first user.
+
 ## [1.69.0] — 2026-10-11
 
 `perfgate` VERDICT: PASS — no regression vs v1.68.0 above each shape's floor — 12/47 shapes resolve the 5.0% class
@@ -5606,7 +5623,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.69.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.70.0...HEAD
+[1.70.0]: https://github.com/townsendmerino/aikit/compare/v1.69.0...v1.70.0
 [1.69.0]: https://github.com/townsendmerino/aikit/compare/v1.68.0...v1.69.0
 [1.68.0]: https://github.com/townsendmerino/aikit/compare/v1.67.1...v1.68.0
 [1.67.1]: https://github.com/townsendmerino/aikit/compare/v1.67.0...v1.67.1
