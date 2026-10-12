@@ -9,6 +9,15 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Changed — arm64 widens bf16 weights with NEON
+
+The 16-bit `WeightMat` (v1.70.0) widened bf16 to f32 with a scalar loop on every architecture but amd64. arm64 now has `cvtBF16ToF32x8NEON`
+(`SHLL` / `SHLL2`, sixteen elements per iteration), the twin of the AVX2 widen. The result is unchanged bit for bit: `TestWidenBF16_exhaustive`
+runs all 65,536 patterns from every start offset 0 to 7, `TestWidenBF16_everyLengthAndNoOverrun` every length to 70 with sentinels either side
+of dst, on amd64 natively and on arm64 under qemu-user (where `TestWeightMat_half16_bitIdenticalToF32` and its parallel twin also pass); a
+planted wrong encoding turns the exhaustive test red. **Not measured on real hardware:** emulation says nothing about speed, so the gain on an M-series
+Mac is unread; `BenchmarkWidenBF16` and `BenchmarkWidenBF16_scalarLoop` are the pair that reads it.
+
 ## [1.70.0] — 2026-10-11
 
 `perfgate` VERDICT: PASS — no regression vs v1.69.0 above each shape's floor — 12/47 shapes resolve the 5.0% class
