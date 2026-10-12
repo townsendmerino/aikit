@@ -15,8 +15,12 @@ The 16-bit `WeightMat` (v1.70.0) widened bf16 to f32 with a scalar loop on every
 (`SHLL` / `SHLL2`, sixteen elements per iteration), the twin of the AVX2 widen. The result is unchanged bit for bit: `TestWidenBF16_exhaustive`
 runs all 65,536 patterns from every start offset 0 to 7, `TestWidenBF16_everyLengthAndNoOverrun` every length to 70 with sentinels either side
 of dst, on amd64 natively and on arm64 under qemu-user (where `TestWeightMat_half16_bitIdenticalToF32` and its parallel twin also pass); a
-planted wrong encoding turns the exhaustive test red. **Not measured on real hardware:** emulation says nothing about speed, so the gain on an M-series
-Mac is unread; `BenchmarkWidenBF16` and `BenchmarkWidenBF16_scalarLoop` are the pair that reads it.
+planted wrong encoding turns the exhaustive test red. **Measured on an M1 Pro** (16 GB, by day at load 2.0 to 2.5, so exploratory, not a graded number; the two kernel arms ran as
+consecutive blocks, not interleaved): the 32 x 4096 tile widens in a median **7.26 us against the scalar loop's 56.4 us (7.76 times;
+36.1 GB/s against 4.65 GB/s; the ranges do not overlap)**. Served by goinfer (`qwen2.5-0.5b-instruct`, bf16 safetensors, `--backend cpu`,
+temperature 0, 128 tokens, three rounds with the arm order rotated): `--quant bf16` decodes **36.4 tok/s with this widen against 19.5 on
+v1.70.0 (1.86 times) and 12.9 for f32 (2.82 times, at 0.35 of f32's resident memory: 1,562 MB against 4,412 MB)**; the greedy reply is
+byte-equal across all three arms and all nine runs. Record: goinfer `docs/measurements/bf16-neon-widen-2026-10-11.md`.
 
 ## [1.70.0] — 2026-10-11
 
