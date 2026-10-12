@@ -9,6 +9,16 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.70.1] — 2026-10-11
+
+`perfgate` VERDICT: PASS — no regression vs v1.70.0 above each shape's floor — 12/47 shapes resolve the 5.0% class
+
+sensitivity: 12/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), eda6d2e vs v1.70.0, 2026-10-11, under the timing lock.
+
+> **Read this verdict for what it is.** The change is an arm64 assembly routine, which this amd64 box cannot run: the verdict says no amd64 `linalg` shape moved, and nothing about arm64. The arm64 reading is the M1 Pro's, below.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at eda6d2e (2026-10-12T04:46:34Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2).
+
 ### Changed — arm64 widens bf16 weights with NEON
 
 The 16-bit `WeightMat` (v1.70.0) widened bf16 to f32 with a scalar loop on every architecture but amd64. arm64 now has `cvtBF16ToF32x8NEON`
@@ -5636,7 +5646,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.70.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.70.1...HEAD
+[1.70.1]: https://github.com/townsendmerino/aikit/compare/v1.70.0...v1.70.1
 [1.70.0]: https://github.com/townsendmerino/aikit/compare/v1.69.0...v1.70.0
 [1.69.0]: https://github.com/townsendmerino/aikit/compare/v1.68.0...v1.69.0
 [1.68.0]: https://github.com/townsendmerino/aikit/compare/v1.67.1...v1.68.0
