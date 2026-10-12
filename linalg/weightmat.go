@@ -30,14 +30,16 @@ import (
 // MatmulBT for CPU). Dispatch reuses the existing kernels — no new asm; outputs are
 // bit-identical to each consumer's prior kernel call.
 type WeightMat struct {
-	f32    []float32 // non-nil ⇒ f32 path
-	q8     []int8    // non-nil ⇒ per-row int8 (weight-only Q8, or W8A8 if w8a8)
-	scales []float32 // [rows] per-row int8 scales
-	q4     []byte    // non-nil ⇒ group-wise int4 packed nibbles
-	q4s16  []uint16  // [rows*nGroups] per-group int4 scales, IEEE binary16 (f16scale.go)
-	group  int       // int4 group size (0 unless int4)
-	q4k    []byte    // non-nil ⇒ GGUF Q4_K super-blocks, verbatim (q4k.go); activations always per-32
-	w8a8   bool      // int8 weights run full int8×int8 (W8A8) instead of weight-only Q8
+	f32     []float32 // non-nil ⇒ f32 path
+	q8      []int8    // non-nil ⇒ per-row int8 (weight-only Q8, or W8A8 if w8a8)
+	scales  []float32 // [rows] per-row int8 scales
+	q4      []byte    // non-nil ⇒ group-wise int4 packed nibbles
+	q4s16   []uint16  // [rows*nGroups] per-group int4 scales, IEEE binary16 (f16scale.go)
+	group   int       // int4 group size (0 unless int4)
+	q4k     []byte    // non-nil ⇒ GGUF Q4_K super-blocks, verbatim (q4k.go); activations always per-32
+	w8a8    bool      // int8 weights run full int8×int8 (W8A8) instead of weight-only Q8
+	h16     []uint16  // non-nil ⇒ 16-bit weights (weightmat_half16.go): bf16 or binary16 bit patterns, widened a tile at a time
+	h16Kind uint8     // half16BF16 or half16F16 when h16 is set
 	// actGroup is this weight's per-group activation-quantization size (SetActQuantGroup): the
 	// consumer stamps it per model at load, and the WeightMat methods use it when the workspace
 	// sets none. 0 = defer to the workspace / process-wide setting.
@@ -400,6 +402,8 @@ func (w *WeightMat) MatmulBT(a, dst []float32, M int) {
 		MatmulBTW8A8(a, w.q8, w.scales, dst, M, w.cols, w.rows)
 	case w.q8 != nil:
 		MatmulBTQ8(a, w.q8, w.scales, dst, M, w.cols, w.rows)
+	case w.h16 != nil:
+		w.matmulHalf16(nil, a, dst, M)
 	default:
 		MatmulBT(a, w.f32, dst, M, w.cols, w.rows)
 	}
@@ -436,6 +440,8 @@ func (w *WeightMat) MatmulBTInto(ws *Workspace, a, dst []float32, M int) {
 		MatmulBTW8A8Into(ws, a, w.q8, w.scales, dst, M, w.cols, w.rows)
 	case w.q8 != nil:
 		MatmulBTQ8Into(ws, a, w.q8, w.scales, dst, M, w.cols, w.rows)
+	case w.h16 != nil:
+		w.matmulHalf16(ws, a, dst, M)
 	default:
 		ws.MatmulBT(a, w.f32, dst, M, w.cols, w.rows)
 	}
@@ -471,6 +477,8 @@ func (w *WeightMat) Row(i int, dst []float32) {
 	case w.q8 != nil:
 		lo := i * w.cols
 		DequantizeRowInt8(w.q8[lo:lo+w.cols], w.scales[i], dst)
+	case w.h16 != nil:
+		w.widenHalf16(dst[:w.cols], w.h16[i*w.cols:i*w.cols+w.cols])
 	default:
 		copy(dst, w.f32[i*w.cols:i*w.cols+w.cols])
 	}
@@ -479,7 +487,7 @@ func (w *WeightMat) Row(i int, dst []float32) {
 func (w *WeightMat) Rows() int { return w.rows }
 func (w *WeightMat) Cols() int { return w.cols }
 
-// Kind reports the stored precision: "q4k", "int4", "int8", "f32", or "" (empty/zero value).
+// Kind reports the stored precision: "q4k", "int4", "int8", "bf16", "f16", "f32", or "" (empty/zero value).
 // Reports "int4" for a repacked-only WeightMat too (audit M-22) — Kind is a
 // precision label, not a "canonical bytes present" check; use Int4() for that.
 func (w *WeightMat) Kind() string {
@@ -490,6 +498,11 @@ func (w *WeightMat) Kind() string {
 		return "int4"
 	case w.q8 != nil:
 		return "int8"
+	case w.h16 != nil:
+		if w.h16Kind == half16BF16 {
+			return "bf16"
+		}
+		return "f16"
 	case w.f32 != nil:
 		return "f32"
 	default:
