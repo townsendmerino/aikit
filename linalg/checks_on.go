@@ -19,10 +19,6 @@ func assertf(cond bool, format string, a ...any) {
 	}
 }
 
-func checkDequantInt8(q []int8, dst []float32) {
-	assertf(len(dst) >= len(q), "DequantizeRowInt8: dst len %d < q len %d", len(dst), len(q))
-}
-
 func checkDequantInt4(packed []byte, scales []float32, group, cols int, dst []float32) {
 	assertf(group > 0, "DequantizeRowInt4: group must be > 0, got %d", group)
 	assertf(cols >= 0, "DequantizeRowInt4: cols must be >= 0, got %d", cols)

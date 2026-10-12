@@ -461,7 +461,10 @@ func (w *WeightMat) MatmulBTInto(ws *Workspace, a, dst []float32, M int) {
 // output and code path are UNCHANGED from before this case existed.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:cols].
+//
+// len(dst) >= cols is checked in every build, before any layout's kernel runs (the int8 widen writes through &dst[0] unbounded).
 func (w *WeightMat) Row(i int, dst []float32) {
+	requireLen("WeightMat.Row", "dst", len(dst), w.cols)
 	switch {
 	case w.q4k != nil:
 		rb := Q4KRowBytes(w.cols)

@@ -142,8 +142,11 @@ func QuantizeRowInt8(row []float32, q []int8) (scale float32) {
 // Used for the tied embedding lookup when the table is stored int8.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:len(q)].
+//
+// len(dst) >= len(q) is checked in every build: the AVX2/NEON kernel writes len(q) floats through &dst[0] with no bound of its
+// own, so a short dst would be a heap overwrite, and q comes from a model file.
 func DequantizeRowInt8(q []int8, scale float32, dst []float32) {
-	checkDequantInt8(q, dst)
+	requireLen("DequantizeRowInt8", "dst", len(dst), len(q))
 	dequantRowInt8(dst, q, scale)
 }
 

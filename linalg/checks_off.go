@@ -19,7 +19,6 @@ package linalg
 //nolint:unused // build-mode introspection constant; symmetric with checks_on.go
 const checksEnabled = false
 
-func checkDequantInt8(q []int8, dst []float32)                                         {}
 func checkDequantInt4(packed []byte, scales []float32, group, cols int, dst []float32) {}
 func checkGroupMatmul(name string, aLen int, packed []byte, scales []float32, dstLen, M, K, N, group int) {
 }

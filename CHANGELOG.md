@@ -9,6 +9,15 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Fixed — a short destination slice could overrun the heap in `DequantizeRowInt8` and `WeightMat.Row`
+
+`DequantizeRowInt8` and the int8 branch of `WeightMat.Row` widen through an AVX2/NEON kernel that writes `len(q)` floats at `&dst[0]` with
+no bound of its own. Its only length check lived behind `-tags aikit_checks`, so a production build with `len(dst) < len(q)` wrote past
+the slice. Both now check `len(dst) >= len(q)` (`>= cols` for `Row`, before any layout's kernel) in every build and panic with the kernel's
+name, the way the matmul entry points already do. A caller that sized `dst` correctly sees no change. The int8 case is the only one that
+reached an unbounded write; `DequantizeRowInt4` was already bounds-checked in Go. The new `TestDequantizeRowInt8_shortDstPanicsInEveryBuild`
+runs in the default build (the tag-gated check it replaces could not have caught this in production).
+
 ## [1.70.1] — 2026-10-11
 
 `perfgate` VERDICT: PASS — no regression vs v1.70.0 above each shape's floor — 12/47 shapes resolve the 5.0% class
