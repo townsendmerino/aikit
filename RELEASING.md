@@ -11,7 +11,12 @@ Automated and CI-enforced.
    link at the bottom. Additive changes bump the **minor**; bug fixes the **patch**.
 2. Run the gate locally first: `go run -C tools ./releasegate X.Y.Z` — it checks the CHANGELOG
    section, `golangci-lint`, `apidiff` (no Hard-tier API breakage vs the previous tag),
-   and the cgo-free dependency invariant.
+   the cgo-free dependency invariant, the perfgate evidence line, and that **every exported symbol added
+   since the previous tag, in any public package, is named in the release's CHANGELOG section** (a
+   whole-word match; a new type covers its members; a name ending `ForTest` is exempt; anything else
+   not worth a line goes in `tools/releasegate/api-waivers.txt` as `<package> <symbol> <reason>`, the
+   reason mandatory). Run on v1.60.0 to v1.68.0 it flagged one real omission (v1.62.0's
+   `VoxtralDefectCountForTest`, now exempt by name).
 2b. **On a real box (not a shared CI runner), run the perf gate: `go run -C tools ./perfgate`.**
    It builds the working tree and the previous tag into two benchmark binaries and runs them
    INTERLEAVED in one session — never a stored baseline, which measures the machine, not the
