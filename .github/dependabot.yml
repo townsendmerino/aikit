@@ -17,3 +17,9 @@ updates:
     open-pull-requests-limit: 0 # never open a bump PR for the canary fixture
     ignore:
       - dependency-name: "golang.org/x/text" # the vulnerable pin is the positive control
+  # Workflow actions are pinned by commit SHA (a moved tag can no longer run on the next push); Dependabot proposes the bump, with the
+  # new SHA, as a pull request to read before it is merged.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"

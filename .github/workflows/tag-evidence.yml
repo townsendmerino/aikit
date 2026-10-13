@@ -35,8 +35,9 @@ jobs:
     name: both device verdicts present in the tag message
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
+          persist-credentials: false
           fetch-depth: 0          # annotated tag OBJECTS, not just the ref
       - name: Fetch tag objects
         # actions/checkout gives the commit; the annotation (where the verdicts live) needs

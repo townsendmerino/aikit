@@ -3,7 +3,11 @@
     "allow": [
       "Bash(go version)",
       "Bash(go doc *)",
-      "Bash(go list *)",
+      "Bash(go list)",
+      "Bash(go list ./...)",
+      "Bash(go list -m)",
+      "Bash(go list -m all)",
+      "Bash(go list -m -json all)",
       "Bash(gh run watch *)",
       "mcp__ken__search"
     ]

@@ -202,3 +202,11 @@ testdata/siglip-bench-l/
 # treats them as scratch. Ignored rather than left untracked so they cannot make
 # the release gates report a DIRTY tree and refuse a verdict.
 docs/prompts/
+
+# Local settings and secrets: never committed. (go list -toolexec=<prog> runs a program, so .claude/settings.json allows only exact
+# `go list` forms, not `go list *`.)
+.claude/settings.local.json
+.env
+.env.*
+*.pem
+*.key

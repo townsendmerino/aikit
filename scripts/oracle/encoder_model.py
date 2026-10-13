@@ -20,6 +20,8 @@ from typing import Iterable
 
 QUERY_PREFIX = "Represent this query for searching relevant code: "
 MODEL_ID = "nomic-ai/CodeRankEmbed"
+# trust_remote_code runs Python from this repo, so it is loaded at a commit, never at `main`. Move it only after reading what changed.
+MODEL_REVISION = "3c4b60807d71f79b43f3c4363786d9493691f8b1"
 
 
 def _pick_device(requested: str | None) -> str:
@@ -60,7 +62,7 @@ class CodeRankReranker:
             f"(max_seq_length={max_seq_length})...\n"
         )
         self.model = SentenceTransformer(
-            MODEL_ID, trust_remote_code=True, device=self.device
+            MODEL_ID, trust_remote_code=True, revision=MODEL_REVISION, device=self.device
         )
         # tokenizer_config caps at 512; the plan truncates chunk-sized
         # candidates here to keep latency bounded (§5).

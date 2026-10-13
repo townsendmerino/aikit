@@ -42,6 +42,8 @@ sys.path.insert(0, str(REPO_ROOT / "scripts"))
 # Mandatory query prefix from the model card; mirrors encoder.QueryPrefix.
 QUERY_PREFIX = "Represent this query for searching relevant code: "
 MAX_SEQ_LEN = 512
+# trust_remote_code runs Python from this repo, so it is loaded at a commit, never at `main`. Move it only after reading what changed.
+MODEL_REVISION = "3c4b60807d71f79b43f3c4363786d9493691f8b1"
 
 
 def main() -> int:
@@ -53,9 +55,9 @@ def main() -> int:
 
     sys.stderr.write("[pin_encoder] loading nomic-ai/CodeRankEmbed (CPU; deterministic) ...\n")
     sys.stderr.flush()
-    model = SentenceTransformer("nomic-ai/CodeRankEmbed", trust_remote_code=True, device="cpu")
+    model = SentenceTransformer("nomic-ai/CodeRankEmbed", trust_remote_code=True, revision=MODEL_REVISION, device="cpu")
     model.max_seq_length = MAX_SEQ_LEN
-    tok = AutoTokenizer.from_pretrained("nomic-ai/CodeRankEmbed", trust_remote_code=True)
+    tok = AutoTokenizer.from_pretrained("nomic-ai/CodeRankEmbed", trust_remote_code=True, revision=MODEL_REVISION)
 
     # ── cases — small, hand-curated, deliberately covers the failure modes ──
     cases: list[tuple[str, bool, str]] = [
