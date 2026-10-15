@@ -26,6 +26,14 @@ type Backend interface {
 	// Output contract: overwrites dst[:M*N]; do not pre-zero. Every implementation does,
 	// so do not rely on dst's prior contents either (the CPU backend zeroes internally
 	// and accumulates; the device backends write each element once on readback).
+	//
+	// No-retention contract: the host slices a, b and dst belong to the caller again the
+	// moment MatmulBT returns. Do not read a or b, or write dst, after returning (no
+	// async readback into dst, no deferred upload from a), and do not cache anything
+	// keyed on their addresses. They are views into the forward's pooled scratch slab,
+	// where the attention and MLP phases share bytes (see scratch's PHASES): the same
+	// address holds different data a phase later. encmetal and enccuda copy in, wait,
+	// and copy out inside the call.
 	MatmulBT(a, b, dst []float32, M, K, N int)
 	// Close releases backend resources (GPU buffers, etc.). No-op on CPU.
 	Close() error

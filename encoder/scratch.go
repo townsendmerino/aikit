@@ -70,12 +70,38 @@ var scratchPutHook func(*scratch)
 // Buffers are sized for the maximum L and D the forward will see.
 // For single-sequence: cap=L; for batched: cap=B*Lmax. Caller passes
 // the right cap via ensure*.
+//
+// PHASES. Each layer runs in two phases, attention then MLP, and every buffer
+// ensureLayer sizes belongs to exactly one of them. Nothing written in one phase is
+// read in the other: the only state that crosses is the residual h, which is not in
+// the scratch. So both phases are carved out of ONE slab, each from offset 0, and
+// the slab is the larger of the two instead of their sum (half the footprint for
+// nomic/CodeRankEmbed). The phase table:
+//
+//	attention: qkv Q K V ctx out qH kH vH ctxHead scores   slab views, from offset 0
+//	MLP:       val gate mid upGate                         slab views, from offset 0
+//	MLP:       moeAllScores moeWeight moeGathered moeAcc   own storage (sized inside moeMLP)
+//	MLP:       moeExpert moeTokens                         own storage (int32)
+//	attention: workerScratch                               own storage (head-parallel sets)
+//	both:      deqW                                        own storage: every q8 matmul, either phase
+//
+// THE RULE this buys: an MLP must never read an attention buffer, and attention must
+// never read an MLP buffer, not even one it "knows" is still intact. They share bytes.
+// Every forward marks the boundary with s.phaseBoundary(), and
+// TestScratchPhases_poisonedBoundaryIsInert overwrites every phase-scoped buffer there,
+// so a cross-phase read fails that gate rather than corrupting an embedding.
+// docs/task-encoder-scratch-aliasing.md has the full lifetime map.
 type scratch struct {
 	// be is the compute backend for this forward's f32 matmuls — nil means the
 	// pure-Go path, which is the default and is BIT-IDENTICAL to not having this
 	// field at all (mm dispatches to exactly the function the call sites used to
 	// call). Set from the model at each getScratch site; cleared by putScratch.
 	be Backend
+
+	// slab backs every view ensureLayer carves: the attention views and the MLP views
+	// overlap in it (see PHASES above). The fields below are views, re-carved by every
+	// ensureLayer; never hold one across forwards.
+	slab []float32
 
 	// Linear-layer scratch (sized to L*3*D = QKV output, or L*D for
 	// projections). qkv is reused across the 12 selfAttention calls;
@@ -172,13 +198,15 @@ type scratchLayout struct {
 	upGate    bool // upGate [L,2I]: GTE's fused GeGLU projection.
 }
 
-// ensureLayer sizes the scratch buffers for one forward pass.
+// ensureLayer sizes the scratch buffers for one forward pass. It carves every
+// phase-scoped view out of s.slab, the attention views from offset 0 and the MLP views
+// from offset 0 again, so the slab holds the larger phase rather than both (see PHASES
+// on scratch). It re-carves on every call and never caches a layout: the pool is shared
+// across models, so the next forward may want different sizes.
 //
-//   - lay says which optional buffers (qkv, gate, upGate) this forward reads.
-//     One it does not read keeps its storage, since the pool is shared across
-//     models and the next forward may want it, but gets length 0. A read the
-//     layout did not declare then panics on the bounds check instead of seeing a
-//     previous forward's values.
+//   - lay says which optional buffers (qkv, gate, upGate) this forward reads. One it
+//     does not read gets an empty view, so a read the layout did not declare panics on
+//     the bounds check instead of seeing another phase's bytes.
 //   - L is the per-row count for the BATCHED scratch slices
 //     (qkv/Q/K/V/ctx/out/val/gate/mid) — pass B*Lmax in the batched
 //     path, L in the single-seq path.
@@ -189,30 +217,58 @@ type scratchLayout struct {
 //     in the batched path — wasted memory the M11 attention alloc
 //     fix surfaced.
 func (s *scratch) ensureLayer(lay scratchLayout, L, D, intermediate, heads, headDim, perHeadLen int) {
-	s.qkv = ensureOptF32(lay.packedQKV, s.qkv, L*3*D)
-	s.Q = ensureF32(s.Q, L*D)
-	s.K = ensureF32(s.K, L*D)
-	s.V = ensureF32(s.V, L*D)
-	s.ctx = ensureF32(s.ctx, L*D)
-	s.out = ensureF32(s.out, L*D)
-	s.val = ensureF32(s.val, L*intermediate)
-	s.gate = ensureOptF32(lay.gate, s.gate, L*intermediate)
-	s.mid = ensureF32(s.mid, L*D)
-	s.upGate = ensureOptF32(lay.upGate, s.upGate, L*2*intermediate)
-	s.qH = ensureF32(s.qH, perHeadLen*headDim)
-	s.kH = ensureF32(s.kH, perHeadLen*headDim)
-	s.vH = ensureF32(s.vH, perHeadLen*headDim)
-	s.ctxHead = ensureF32(s.ctxHead, perHeadLen*headDim)
-	s.scores = ensureF32(s.scores, perHeadLen*perHeadLen)
+	opt := func(want bool, n int) int {
+		if want {
+			return n
+		}
+		return 0
+	}
+	ph := perHeadLen * headDim
+
+	var a slabCarver // attention, from offset 0
+	qkv := a.take(opt(lay.packedQKV, L*3*D))
+	Q, K, V := a.take(L*D), a.take(L*D), a.take(L*D)
+	ctx, out := a.take(L*D), a.take(L*D)
+	qH, kH, vH, ctxHead := a.take(ph), a.take(ph), a.take(ph), a.take(ph)
+	scores := a.take(perHeadLen * perHeadLen)
+
+	var m slabCarver // MLP, from offset 0 again: the same bytes as attention
+	val := m.take(L * intermediate)
+	gate := m.take(opt(lay.gate, L*intermediate))
+	mid := m.take(L * D)
+	upGate := m.take(opt(lay.upGate, L*2*intermediate))
+
+	s.slab = ensureF32(s.slab, max(a.end, m.end))
+	s.qkv, s.Q, s.K, s.V = qkv.of(s.slab), Q.of(s.slab), K.of(s.slab), V.of(s.slab)
+	s.ctx, s.out = ctx.of(s.slab), out.of(s.slab)
+	s.qH, s.kH, s.vH, s.ctxHead = qH.of(s.slab), kH.of(s.slab), vH.of(s.slab), ctxHead.of(s.slab)
+	s.scores = scores.of(s.slab)
+	s.val, s.gate, s.mid, s.upGate = val.of(s.slab), gate.of(s.slab), mid.of(s.slab), upGate.of(s.slab)
 }
 
-// ensureOptF32 is ensureF32 for a buffer the forward may not read: wanted, it is
-// ensureF32; unwanted, it keeps its storage but has length 0 (see ensureLayer).
-func ensureOptF32(want bool, b []float32, n int) []float32 {
-	if !want {
-		return b[:0]
-	}
-	return ensureF32(b, n)
+// slabAlign is the float offset every slab view starts on: 1024 floats = 4 KiB. Before
+// the slab each large buffer was its own make, which Go page-aligns, so this keeps the
+// kernels seeing the alignment they always saw. A latency comparison across the slab
+// change then measures the aliasing, not an alignment change.
+const slabAlign = 1024
+
+// slabCarver lays views end to end from offset 0, each on a slabAlign boundary.
+type slabCarver struct{ end int }
+
+// slabSpan is one view's place in the slab.
+type slabSpan struct{ off, n int }
+
+func (c *slabCarver) take(n int) slabSpan {
+	off := (c.end + slabAlign - 1) &^ (slabAlign - 1)
+	c.end = off + n
+	return slabSpan{off, n}
+}
+
+// of cuts the view with a full slice expression, so cap == len: a write past the end
+// panics on the bounds check instead of landing in the next view, which separate makes
+// guaranteed for free.
+func (sp slabSpan) of(slab []float32) []float32 {
+	return slab[sp.off : sp.off+sp.n : sp.off+sp.n]
 }
 
 // mm is the encoder's f32 matmul dispatch point: dst[M,N] = a[M,K] · b[N,K]ᵀ.

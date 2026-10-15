@@ -3,6 +3,7 @@ package encoder
 import (
 	"sync"
 	"testing"
+	"unsafe"
 )
 
 const mib = 1 << 20
@@ -11,7 +12,19 @@ const mib = 1 << 20
 // workerScratch included — as lenB (what the forward asked for) and capB (what is
 // actually pinned, including ensureF32's 25% growth headroom). Both are reported:
 // cap is the real memory, len is what a layout change moves.
+//
+// The slab counts once. The views carved from it are skipped, because their bytes are
+// the slab's: counting both would report the aliasing as a footprint increase.
 func scratchBytes(s *scratch) (lenB, capB int) {
+	inSlab := func(b []float32) bool {
+		if cap(b) == 0 || cap(s.slab) == 0 {
+			return cap(b) == 0 // an empty view costs nothing either way
+		}
+		lo := uintptr(unsafe.Pointer(unsafe.SliceData(s.slab[:1])))
+		p := uintptr(unsafe.Pointer(unsafe.SliceData(b)))
+		return p >= lo && p < lo+uintptr(cap(s.slab))*4
+	}
+	lenB, capB = 4*len(s.slab), 4*cap(s.slab)
 	f32 := [][]float32{
 		s.qkv, s.Q, s.K, s.V, s.ctx, s.out,
 		s.val, s.gate, s.mid, s.upGate,
@@ -24,6 +37,9 @@ func scratchBytes(s *scratch) (lenB, capB int) {
 		f32 = append(f32, hs.qH, hs.kH, hs.vH, hs.ctxHead, hs.scores)
 	}
 	for _, b := range f32 {
+		if inSlab(b) {
+			continue
+		}
 		lenB += 4 * len(b)
 		capB += 4 * cap(b)
 	}

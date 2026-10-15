@@ -81,5 +81,11 @@ func (g *GTE) UseBackend(be Backend) {
 type Q8Backend interface {
 	// Output contract: overwrites dst[:M*N]; do not pre-zero. That holds when it returns true; on false
 	// (declined) dst is left untouched and the CPU path writes it.
+	//
+	// No-retention contract: as for Backend.MatmulBT, dst and a are pooled scratch
+	// views and belong to the caller again once this returns; never touch them later
+	// or key a cache on their addresses. wq and wscales are model weights, loaded once
+	// and never written, so caching keyed on them is sound and is what the device
+	// backends do.
 	MatmulBTQ8(dst, a []float32, wq []int8, wscales []float32, M, K, N int) bool
 }

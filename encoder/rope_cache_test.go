@@ -129,9 +129,11 @@ func TestScratchUpGate_fullyOverwritten(t *testing.T) {
 	poisoned := make([]*scratch, 0, 16)
 	for range 16 {
 		s := getScratch()
-		s.upGate = ensureF32(s.upGate, 4096*2*3072)
-		for i := range s.upGate {
-			s.upGate[i] = 7777.0
+		// upGate is a view into the slab (re-carved by every ensureLayer), so
+		// poison the slab it will be carved from.
+		s.slab = ensureF32(s.slab, 4096*2*3072)
+		for i := range s.slab {
+			s.slab[i] = 7777.0
 		}
 		poisoned = append(poisoned, s)
 	}
