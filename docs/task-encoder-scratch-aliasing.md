@@ -21,8 +21,37 @@
 > At 8 workers on the batched shape, that is 1.41 GiB → 0.74 GiB of pinned scratch. The
 > 180 MiB figure matches the lens scan's 188.7 MB arena; that number was in decimal MB.
 >
-> **Status: IN PROGRESS. A-0, A-1 and A-2 landed 2026-10-15.** The single real risk is a stale read across the
-> phase boundary. A-2 builds the gate for that *before* A-3 changes any layout.
+> **Status: A-0 to A-3 LANDED 2026-10-15** (`11a5baa`, `61987d4`, `f79a5d0`, `3640d44`). A-4 was
+> measured and dropped (§3). A-5 is out of this round.
+>
+> **Measured** (M1 Pro, `scratch-len-MiB`, the benchmarks' real inputs rather than the base
+> shape above):
+>
+> | benchmark | A-0 | A-1 | A-3 | A-3 vs A-0 |
+> |---|--:|--:|--:|--:|
+> | `BERT_embed` (MiniLM, ~60 tokens) | 1.54 | 0.92 | **0.49** | −68% |
+> | `GTEEncode/L512` (~720 tokens) | 54.8 | 46.4 | **27.1** | −50% |
+> | `GTEEncode/L128` (head-parallel) | 15.8 | 13.7 | **9.2** | −42% |
+> | `EncodeBatch_rerankN50`, per worker | 23.8 | 23.8 | **12.6** | −47% |
+> | `EncodeBatch_rerankN50`, all workers | 169 | 169 | **89** | −47% |
+> | `Encode_singleLong` (L=512, head-parallel) | 39.0 | 39.0 | **25.5** | −35% |
+> | `Q8Encode/w256` | 30.0 | 30.0 | **19.6** | −35% |
+>
+> Wherever a shape stops short of −50%, the gap is storage A-3 leaves alone on purpose: the
+> head-parallel worker sets (12 MiB at L=512 with 8 workers; see A-4, dropped) and q8's 9 MiB `deqW`.
+> Pinned `cap` is 1.25× these figures throughout, from `ensureF32`'s growth headroom.
+>
+> **Latency:** A-0 against A-3, 10 interleaved rounds per machine.
+> - **M1 Pro:** every benchmark `~` (p ≥ 0.25), geomean −0.45%.
+> - **3700X:** geomean −0.37%. `Encode_singleLong` −1.1%, `GTEEncode/L16` −0.9% and `/L512`
+>   −0.7% (all significant); rerank, BERT and q8 `~`. **One regression: `GTEEncode/L128`.**
+>   It read +2.1% in the full run. A focused rerun (15 rounds, 3 s benchtime, four binaries)
+>   put it at **+1.25%**, with two findings. A-2 alone, which adds only two nil-checked
+>   branches per layer and no layout change, already reads +0.43%: that is code layout, not
+>   work. And 64-byte instead of 4 KiB view alignment reads +1.18%, so it is not a 4K-offset
+>   set conflict. The slab's own share is about +0.8% on one head-parallel shape on one
+>   machine. That is under §4's ~2% investigate threshold, alignment is ruled out, and it is
+>   **accepted 2026-10-15 for the footprint halving**, recorded rather than claimed as free.
 
 ---
 
@@ -174,12 +203,22 @@ instead of the whole arena:
 - Write the "must not retain `a` / `dst` after return" rule into the `Backend` and
   `Q8Backend` interface docs.
 
-### A-4 · Fold `workerScratch` into the attention region (optional, measure first)
+### A-4 · Fold `workerScratch` into the attention region (DROPPED 2026-10-15)
 
-The head-parallel worker sets are attention-only and can reach 15 MiB at a lone L=512 forward
-(A-0 confirms). Carved inside the attention region, they would alias the MLP too. The
-serial-path `qH`…`scores` set can also double as worker 0's set. Do this only if A-0 shows the
-worker sets engaging at shapes people run. Rerank batches never engage them.
+**Decision: not doing it. The measurement says it buys almost nothing.** A-0 shows the worker
+sets engaging for any lone forward from L≈128 up, at 12 MiB at L=512 with 8 workers. But
+folding them into the slab only saves what fits in the MLP region's spare room above the
+attention region. Nomic's phases are balanced, at 13.5 MiB each, so they have none:
+max(13.5 + 12, 13.5) = 25.5 MiB, the same as today. The only real gain is letting worker 0
+reuse the serial `qH`…`scores` set, about 1.5 MiB. GTE has ≤6 MiB of MLP slack, and BERT's
+attention region is the larger one.
+
+The cost is real. The fan-out width is decided per attention call from `inflightForwards`,
+which can change after `ensureLayer` runs. Pre-sizing for the worst case would bloat every
+`EncodeBatch` scratch that never fans out. Growing the slab lazily inside attention would leave
+the caller's `Q`/`K`/`V` views pointing at the old array, which is wrong values with no panic.
+If the 12 MiB ever matters, the lever is the fan-out width on long lone forwards, a perf
+question with its own benchmark.
 
 ### A-5 · Vision towers: same treatment for `newQwenScratch`
 
