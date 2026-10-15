@@ -9,6 +9,16 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.70.2] — 2026-10-15
+
+`perfgate` VERDICT: PASS — no regression vs v1.70.1 above each shape's floor — 5/47 shapes resolve the 5.0% class
+
+sensitivity: 5/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), 60dc2d8 vs v1.70.1, 2026-10-15, under the timing lock.
+
+> **Read this verdict for what it is.** It is weaker than the last three releases' (12/47): only 5 of the 47 shapes can see 5% in this run, so on the other 42 a green is evidence against a larger regression only. `linalg` changed only by the bounds check in the entry below, which perfgate has no shape for. The encoder change has no perfgate shape either; its speed was measured directly, A/B on both machines, in the entry below.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 60dc2d8 (2026-10-15T14:37:41Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2).
+
 ### Fixed — a short destination slice could overrun the heap in `DequantizeRowInt8` and `WeightMat.Row`
 
 `DequantizeRowInt8` and the int8 branch of `WeightMat.Row` widen through an AVX2/NEON kernel that writes `len(q)` floats at `&dst[0]` with
@@ -5685,7 +5695,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.70.1...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.70.2...HEAD
+[1.70.2]: https://github.com/townsendmerino/aikit/compare/v1.70.1...v1.70.2
 [1.70.1]: https://github.com/townsendmerino/aikit/compare/v1.70.0...v1.70.1
 [1.70.0]: https://github.com/townsendmerino/aikit/compare/v1.69.0...v1.70.0
 [1.69.0]: https://github.com/townsendmerino/aikit/compare/v1.68.0...v1.69.0
