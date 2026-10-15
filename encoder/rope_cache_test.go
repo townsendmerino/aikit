@@ -129,7 +129,7 @@ func TestScratchUpGate_fullyOverwritten(t *testing.T) {
 	poisoned := make([]*scratch, 0, 16)
 	for range 16 {
 		s := getScratch()
-		s.ensureFusedMLP(4096, 3072)
+		s.upGate = ensureF32(s.upGate, 4096*2*3072)
 		for i := range s.upGate {
 			s.upGate[i] = 7777.0
 		}

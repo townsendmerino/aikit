@@ -31,7 +31,7 @@ func (w *Weights) forwardTokens(ids []int32) []float32 {
 	s := getScratch()
 	s.be = w.be
 	defer putScratch(s)
-	s.ensureLayer(L, D, intermediate, heads, headDim, L)
+	s.ensureLayer(w.scratchLayout(), L, D, intermediate, heads, headDim, L)
 
 	h := make([]float32, L*D)
 	tte0 := w.TokenTypeEmb[:D]

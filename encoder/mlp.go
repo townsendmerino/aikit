@@ -178,9 +178,9 @@ func geluMLP(h, fc1, fc1b, fc2, fc2b []float32, D, intermediate, L int, tanh boo
 // The softmax runs over all experts (not just the top-k) and the top-k weights are
 // taken from it as-is, so they do not sum to 1.
 //
-// All working buffers come from the scratch arena: moeScores/moeOut are dedicated,
-// x1 and contrib reuse val/mid (as gelu/swigluMLP do), so the MoE layers allocate
-// nothing after warmup.
+// All working buffers come from the scratch arena: the moe* routing and gather
+// buffers are dedicated, x1 and contrib reuse val/mid (as gelu/swigluMLP do), so the
+// MoE layers allocate nothing after warmup.
 func moeMLP(h, router, w1, w2t, bias []float32, numExperts, topK, D, intermediate, L int, tanh bool, s *scratch) {
 	s.moeAllScores = ensureF32(s.moeAllScores, L*numExperts)
 	s.moeWeight = ensureF32(s.moeWeight, L*topK)
@@ -297,6 +297,20 @@ func applyMLP(w *Weights, l *LayerWeights, h []float32, D, intermediate, L int, 
 	default:
 		geluMLP(h, l.Fc1, l.Fc1B, l.Fc2, l.Fc2B, D, intermediate, L, w.Cfg.geluTanh(), s)
 	}
+}
+
+// scratchLayout is the optional-buffer set this model's single-sequence forwards
+// read: always the packed QKV projection (selfAttention), and gate only when some
+// layer takes applyMLP's SwiGLU branch. MoE and dense GELU layers use val/mid only.
+func (w *Weights) scratchLayout() scratchLayout {
+	lay := scratchLayout{packedQKV: true}
+	for i := range w.Layers {
+		if l := &w.Layers[i]; !l.IsMoE && l.Fc11 != nil {
+			lay.gate = true
+			break
+		}
+	}
+	return lay
 }
 
 // hasMoE reports whether any layer uses the MoE FFN.

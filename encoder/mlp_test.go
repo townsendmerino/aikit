@@ -70,7 +70,7 @@ func TestGeluMLP_tanhDispatch(t *testing.T) {
 		}
 		s := getScratch()
 		defer putScratch(s)
-		s.ensureLayer(L, D, inter, 1, D, L)
+		s.ensureLayer(scratchLayout{}, L, D, inter, 1, D, L)
 		geluMLP(hh, fc1, nil, fc2, nil, D, inter, L, tanh, s)
 		return hh
 	}

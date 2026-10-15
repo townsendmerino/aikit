@@ -119,7 +119,7 @@ func BenchmarkAttentionCore(b *testing.B) {
 	}
 
 	s := new(scratch)
-	s.ensureLayer(L, D, D*4, heads, headDim, L)
+	s.ensureLayer(scratchLayout{}, L, D, D*4, heads, headDim, L)
 
 	b.SetBytes(int64(L * D * 4))
 	b.ReportAllocs()

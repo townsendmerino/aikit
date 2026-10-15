@@ -72,7 +72,7 @@ func (w *Weights) forwardInner(ids []int32) []float32 {
 	s := getScratch()
 	s.be = w.be
 	defer putScratch(s)
-	s.ensureLayer(L, D, intermediate, heads, headDim, L)
+	s.ensureLayer(w.scratchLayout(), L, D, intermediate, heads, headDim, L)
 
 	// 1) Build the input hidden state h = word_emb[id] + token_type_emb[0].
 	// Single-segment input ⇒ every row gets token_type_emb row 0 added.

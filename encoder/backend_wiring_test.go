@@ -86,7 +86,7 @@ func (f *attnFixture) run(be Backend) []float32 {
 	s := getScratch()
 	defer putScratch(s)
 	s.be = be
-	s.ensureLayer(f.L, f.D, 4*f.D, f.heads, f.headDim, f.L)
+	s.ensureLayer(scratchLayout{packedQKV: true}, f.L, f.D, 4*f.D, f.heads, f.headDim, f.L)
 	h := append([]float32(nil), f.h...)
 	return selfAttention(h, f.wqkv, f.wqkvb, f.outProj, f.outProjB, f.heads, f.headDim, f.D, f.L, f.L, f.rope, s)
 }
@@ -187,7 +187,7 @@ func TestBackend_mlpIsRouted(t *testing.T) {
 	defer putScratch(s)
 	spy := &spyBackend{}
 	s.be = spy
-	s.ensureLayer(L, D, inter, 2, D/2, L)
+	s.ensureLayer(scratchLayout{}, L, D, inter, 2, D/2, L)
 	geluMLP(append([]float32(nil), h...), fc1, fc1b, fc2, fc2b, D, inter, L, false, s)
 
 	if spy.calls == 0 {
@@ -270,7 +270,7 @@ func runQ8MLP(be Backend) []float32 {
 	s := getScratch()
 	defer putScratch(s)
 	s.be = be
-	s.ensureLayer(L, D, inter, 2, D/2, L)
+	s.ensureLayer(q8ScratchLayout, L, D, inter, 2, D/2, L)
 	s.ensureDeqW(D, inter)
 	swigluMLPQ8(h, fc11, fc12, fc2, D, inter, L, s)
 	return h

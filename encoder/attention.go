@@ -27,8 +27,7 @@ import (
 // M8c: takes a *scratch arena so qkv / Q / K / V / ctx / qH/kH/vH /
 // scores buffers are reused across the 12 layers per forward (and
 // across forwards on the same worker via sync.Pool). Caller must have
-// run s.ensureLayer(L, D, intermediate, heads, headDim) at the top of
-// the forward.
+// run s.ensureLayer with a packedQKV layout at the top of the forward.
 //
 // WqkvB / OutProjB are the optional projection biases: Nomic's original
 // checkpoints (CodeRankEmbed, nomic-embed-text-v1.5) carry none, so they pass nil

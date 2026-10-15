@@ -98,7 +98,8 @@ func (w *Weights) forwardBatch(idsList [][]int32) [][]float32 {
 	s := getScratch()
 	s.be = w.be
 	defer putScratch(s)
-	s.ensureLayer(B*Lmax, D, intermediate, heads, headDim, Lmax)
+	// SwiGLU only: the guard above sent every other MLP to forwardInner.
+	s.ensureLayer(scratchLayout{packedQKV: true, gate: true}, B*Lmax, D, intermediate, heads, headDim, Lmax)
 
 	// 1) Build padded input [B, Lmax, D] flattened to [B*Lmax, D].
 	// Pad positions stay all-zero — they get LN'd along with real

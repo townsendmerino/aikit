@@ -293,7 +293,7 @@ func (b *BERT) forward(ids, segs []int32, clsOnly bool) []float32 {
 	s := getScratch()
 	s.be = b.be
 	defer putScratch(s)
-	s.ensureLayer(L, D, c.Intermediate, c.Heads, headDim, L)
+	s.ensureLayer(scratchLayout{}, L, D, c.Intermediate, c.Heads, headDim, L) // separate Q/K/V, GELU MLP
 
 	// Embeddings: word + learned position (offset for RoBERTa/XLM-R) + optional
 	// token-type[seg], then LayerNorm.

@@ -221,8 +221,7 @@ func (g *GTE) forward(ids []int32, clsOnly bool) []float32 {
 	s := getScratch()
 	s.be = g.be
 	defer putScratch(s)
-	s.ensureLayer(L, D, I, c.Heads, headDim, L)
-	s.ensureFusedMLP(L, I)
+	s.ensureLayer(scratchLayout{packedQKV: true, upGate: true}, L, D, I, c.Heads, headDim, L)
 	rope := g.ropeCache.get(L, headDim, c.RopeTheta)
 
 	// Embeddings: word + token_type[0] (positions come from RoPE), then LayerNorm.

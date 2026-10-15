@@ -75,8 +75,9 @@ type scratch struct {
 	// models (GTE) whose MLP does ONE 2I-wide matmul instead of two I-wide ones.
 	// It cannot be served by val+gate: those are two separate [L,I] buffers,
 	// while this is one row-major block whose rows interleave up and gate —
-	// which is exactly what the single fused matmul writes. Sized only on
-	// request (ensureFusedMLP), so the BERT/Nomic scratches never carry it.
+	// which is exactly what the single fused matmul writes. Sized only when the
+	// layout asks for it (scratchLayout.upGate), so the BERT/Nomic scratches
+	// never carry it.
 	upGate []float32
 	// Per-head extracts (sized perHeadLen*headDim each). vH holds V
 	// TRANSPOSED to [headDim, perHeadLen] so the scores·V context step can run
@@ -89,13 +90,10 @@ type scratch struct {
 	ctxHead []float32
 	// Attention scores [L, L].
 	scores []float32
-	// MoE scratch (moeMLP only): moeScores holds the per-token router logits
-	// [numExperts]; moeOut is the per-token expert-combination accumulator [D].
-	// x1 (the W1 output) and contrib (the per-expert W2 output) reuse val/mid,
-	// exactly as gelu/swigluMLP reuse them. All are pooled so the MoE layers of a
-	// forward allocate nothing after warmup (audit #10).
-	moeScores []float32
-	moeOut    []float32
+	// MoE scratch (moeMLP only). x1 (the W1 output) and contrib (the per-expert W2
+	// output) reuse val/mid, exactly as gelu/swigluMLP reuse them. All are pooled so
+	// the MoE layers of a forward allocate nothing after warmup (audit #10).
+	//
 	// Expert-grouping scratch (perf-campaign item 33). moeMLP used to run both
 	// expert projections at M=1, once per (token, rank) — 2048 single-row GEMM
 	// calls per MoE layer at L=512, top-k 2. These let it batch the tokens
@@ -145,8 +143,23 @@ func ensureI32(b []int32, n int) []int32 {
 	return make([]int32, n, n+n/4)
 }
 
+// scratchLayout names the optional buffers a forward actually reads, so ensureLayer
+// sizes only those. Every other buffer ensureLayer sizes is read by every forward.
+// Sizing a buffer nothing reads cost BERT 10.5 MiB and GTE 6 MiB at L=512
+// (docs/task-encoder-scratch-aliasing.md, A-1).
+type scratchLayout struct {
+	packedQKV bool // qkv [L,3D]: selfAttention's fused projection. BERT projects Q/K/V separately.
+	gate      bool // gate [L,I]: SwiGLU's second up-projection (swigluMLP, swigluMLPQ8).
+	upGate    bool // upGate [L,2I]: GTE's fused GeGLU projection.
+}
+
 // ensureLayer sizes the scratch buffers for one forward pass.
 //
+//   - lay says which optional buffers (qkv, gate, upGate) this forward reads.
+//     One it does not read keeps its storage, since the pool is shared across
+//     models and the next forward may want it, but gets length 0. A read the
+//     layout did not declare then panics on the bounds check instead of seeing a
+//     previous forward's values.
 //   - L is the per-row count for the BATCHED scratch slices
 //     (qkv/Q/K/V/ctx/out/val/gate/mid) — pass B*Lmax in the batched
 //     path, L in the single-seq path.
@@ -156,16 +169,17 @@ func ensureI32(b []int32, n int) []int32 {
 //     this was conflated with L which over-sized scores to (B*Lmax)²
 //     in the batched path — wasted memory the M11 attention alloc
 //     fix surfaced.
-func (s *scratch) ensureLayer(L, D, intermediate, heads, headDim, perHeadLen int) {
-	s.qkv = ensureF32(s.qkv, L*3*D)
+func (s *scratch) ensureLayer(lay scratchLayout, L, D, intermediate, heads, headDim, perHeadLen int) {
+	s.qkv = ensureOptF32(lay.packedQKV, s.qkv, L*3*D)
 	s.Q = ensureF32(s.Q, L*D)
 	s.K = ensureF32(s.K, L*D)
 	s.V = ensureF32(s.V, L*D)
 	s.ctx = ensureF32(s.ctx, L*D)
 	s.out = ensureF32(s.out, L*D)
 	s.val = ensureF32(s.val, L*intermediate)
-	s.gate = ensureF32(s.gate, L*intermediate)
+	s.gate = ensureOptF32(lay.gate, s.gate, L*intermediate)
 	s.mid = ensureF32(s.mid, L*D)
+	s.upGate = ensureOptF32(lay.upGate, s.upGate, L*2*intermediate)
 	s.qH = ensureF32(s.qH, perHeadLen*headDim)
 	s.kH = ensureF32(s.kH, perHeadLen*headDim)
 	s.vH = ensureF32(s.vH, perHeadLen*headDim)
@@ -173,12 +187,13 @@ func (s *scratch) ensureLayer(L, D, intermediate, heads, headDim, perHeadLen int
 	s.scores = ensureF32(s.scores, perHeadLen*perHeadLen)
 }
 
-// ensureFusedMLP sizes the fused up/gate buffer. Kept out of ensureLayer so the
-// models that never use it (BERT, Nomic) do not carry an extra L*2*intermediate
-// span in every pooled scratch — at L=690/I=3072 that is 17 MB, the bulk of
-// perf-campaign item 8.
-func (s *scratch) ensureFusedMLP(L, intermediate int) {
-	s.upGate = ensureF32(s.upGate, L*2*intermediate)
+// ensureOptF32 is ensureF32 for a buffer the forward may not read: wanted, it is
+// ensureF32; unwanted, it keeps its storage but has length 0 (see ensureLayer).
+func ensureOptF32(want bool, b []float32, n int) []float32 {
+	if !want {
+		return b[:0]
+	}
+	return ensureF32(b, n)
 }
 
 // mm is the encoder's f32 matmul dispatch point: dst[M,N] = a[M,K] · b[N,K]ᵀ.

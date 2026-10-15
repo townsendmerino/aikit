@@ -46,7 +46,7 @@ func (w *WeightsQ8) forwardInner(ids []int32) []float32 {
 	s := getScratch()
 	s.be = w.be
 	defer putScratch(s)
-	s.ensureLayer(L, D, intermediate, heads, headDim, L)
+	s.ensureLayer(q8ScratchLayout, L, D, intermediate, heads, headDim, L)
 	s.ensureDeqW(D, intermediate)
 
 	h := make([]float32, L*D)
@@ -110,7 +110,7 @@ func (w *WeightsQ8) forwardBatch(idsList [][]int32) [][]float32 {
 	s := getScratch()
 	s.be = w.be
 	defer putScratch(s)
-	s.ensureLayer(BL, D, intermediate, heads, headDim, Lmax)
+	s.ensureLayer(q8ScratchLayout, BL, D, intermediate, heads, headDim, Lmax)
 	s.ensureDeqW(D, intermediate)
 
 	h := make([]float32, BL*D)
@@ -142,6 +142,10 @@ func (w *WeightsQ8) forwardBatch(idsList [][]int32) [][]float32 {
 	}
 	return out
 }
+
+// q8ScratchLayout is what both q8 forwards read: the packed QKV projection and
+// SwiGLU's gate (selfAttentionQ8* and swigluMLPQ8 are the only kernels they run).
+var q8ScratchLayout = scratchLayout{packedQKV: true, gate: true}
 
 // selfAttentionQ8 mirrors selfAttention (pooled scratch, vectorized QKᵀ + scores·V)
 // with Wqkv/OutProj in int8 via matmulBTQ8Into. Attention itself stays f32.

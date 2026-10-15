@@ -9,10 +9,10 @@ import (
 // per (token, rank). Kept as the oracle — item 33 claims to change only WHICH
 // tokens share a GEMM call, never the arithmetic.
 func moeReference(h, router, w1, w2t, bias []float32, numExperts, topK, D, intermediate, L int, s *scratch) {
-	s.moeScores = ensureF32(s.moeScores, numExperts)
-	s.moeOut = ensureF32(s.moeOut, D)
-	scores := s.moeScores
-	out := s.moeOut
+	// The oracle's own router-logit row and combination accumulator. Local, not
+	// pooled: the production moeMLP no longer has per-token buffers to share.
+	scores := make([]float32, numExperts)
+	out := make([]float32, D)
 	x1 := s.val[:intermediate]
 	contrib := s.mid[:D]
 
@@ -84,13 +84,13 @@ func TestMoEMLP_groupedMatchesPerToken(t *testing.T) {
 
 		want := append([]float32(nil), base...)
 		sRef := getScratch()
-		sRef.ensureLayer(tc.L, tc.D, tc.inter, 1, tc.D, tc.L)
+		sRef.ensureLayer(scratchLayout{}, tc.L, tc.D, tc.inter, 1, tc.D, tc.L)
 		moeReference(want, router, w1, w2t, bias, tc.experts, tc.topK, tc.D, tc.inter, tc.L, sRef)
 		putScratch(sRef)
 
 		got := append([]float32(nil), base...)
 		sGot := getScratch()
-		sGot.ensureLayer(tc.L, tc.D, tc.inter, 1, tc.D, tc.L)
+		sGot.ensureLayer(scratchLayout{}, tc.L, tc.D, tc.inter, 1, tc.D, tc.L)
 		moeMLP(got, router, w1, w2t, bias, tc.experts, tc.topK, tc.D, tc.inter, tc.L, false, sGot)
 		putScratch(sGot)
 
