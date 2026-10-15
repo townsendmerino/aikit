@@ -30,6 +30,7 @@ func BenchmarkQ8Encode(b *testing.B) {
 		}
 		text := sb.String()
 		b.Run(shapeName("w", words), func(b *testing.B) {
+			rec := trackScratch(b)
 			for b.Loop() {
 				v, err := m.Encode(text, false)
 				if err != nil {
@@ -37,6 +38,7 @@ func BenchmarkQ8Encode(b *testing.B) {
 				}
 				sinkF32 = v
 			}
+			rec.report(b)
 		})
 	}
 }

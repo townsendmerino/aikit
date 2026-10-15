@@ -43,6 +43,7 @@ func BenchmarkMoEEncode(b *testing.B) {
 		text := moeText(words)
 		b.Run(shapeName("w", words), func(b *testing.B) {
 			b.ReportAllocs()
+			rec := trackScratch(b)
 			for b.Loop() {
 				v, err := m.Encode(text, false)
 				if err != nil {
@@ -50,6 +51,7 @@ func BenchmarkMoEEncode(b *testing.B) {
 				}
 				sinkF32 = v
 			}
+			rec.report(b)
 		})
 	}
 }

@@ -39,6 +39,7 @@ func BenchmarkGTEEncode(b *testing.B) {
 		text := gteBenchText(L)
 		b.Run(shapeName("L", L), func(b *testing.B) {
 			b.ReportAllocs()
+			rec := trackScratch(b)
 			for b.Loop() {
 				v, err := g.Encode(text)
 				if err != nil {
@@ -46,6 +47,7 @@ func BenchmarkGTEEncode(b *testing.B) {
 				}
 				sinkF32 = v
 			}
+			rec.report(b)
 		})
 	}
 }

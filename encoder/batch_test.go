@@ -290,6 +290,7 @@ func BenchmarkEncodeBatch_rerankN50(b *testing.B) {
 		name := names[i%len(names)]
 		texts[i] = fmt.Sprintf(tmpl, name, name, name)
 	}
+	rec := trackScratch(b)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := m.EncodeBatch(texts, isQ, 0)
@@ -297,6 +298,7 @@ func BenchmarkEncodeBatch_rerankN50(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
+	rec.report(b)
 }
 
 // TestEncodeBatch_rerankN50: the M0 reference workload — 50

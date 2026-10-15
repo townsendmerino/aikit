@@ -20,9 +20,18 @@ func getScratch() *scratch { return scratchPool.Get().(*scratch) }
 // pooled and shared across models, so a backend left on one would silently leak into the
 // next forward — including a forward on a model that never opted in.
 func putScratch(s *scratch) {
+	if scratchPutHook != nil {
+		scratchPutHook(s)
+	}
 	s.be = nil
 	scratchPool.Put(s)
 }
+
+// scratchPutHook, when non-nil, sees every scratch on its way back to the pool. It is
+// test-only: the benchmarks use it to report the pooled footprint (scratch-MiB), which a
+// sync.Pool gives no other way to observe. Nil in production, where it costs one
+// predictable branch per forward.
+var scratchPutHook func(*scratch)
 
 // scratch is a per-forward scratchpad of reusable float32 buffers. The
 // alternative (allocating inside every selfAttention call) burns ~432

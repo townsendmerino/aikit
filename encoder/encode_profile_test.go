@@ -27,10 +27,12 @@ func BenchmarkEncode_singleLong(b *testing.B) {
 	// A few hundred tokens of code — a realistic rerank passage length, long
 	// enough that the L²·D attention term is non-trivial relative to L·D².
 	text := strings.Repeat("func scale(x, y int) int { return x*y + add(x, y) } // helper line\n", 48)
+	rec := trackScratch(b)
 	b.ResetTimer()
 	for range b.N {
 		if _, err := m.Encode(text, false); err != nil {
 			b.Fatal(err)
 		}
 	}
+	rec.report(b)
 }

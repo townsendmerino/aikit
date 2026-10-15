@@ -21,8 +21,10 @@ func BenchmarkBERT_embed(b *testing.B) {
 	}
 	ids := m.tok.Encode(strings.Repeat("the quick brown fox jumps over the lazy dog. ", 6))
 	b.ReportAllocs()
+	rec := trackScratch(b)
 	b.ResetTimer()
 	for range b.N {
 		_ = m.Embed(ids)
 	}
+	rec.report(b)
 }
