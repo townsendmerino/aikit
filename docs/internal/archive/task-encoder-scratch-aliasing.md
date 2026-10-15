@@ -233,9 +233,13 @@ about −21% B/op and no measurable speed: allocating and zeroing 28 MB is milli
 count: ≈28 MB at 1024 patches, ≈150 MB at ~5,000. The per-encoder phase of `n1`, `n2`, `o`,
 `att` and `mlpOut` was not traced, so this is a lower bound. **Parked:** a modest
 allocation cut with no speed gain, on a path goinfer mostly runs on the GPU backends.
-**Trigger:** CPU-path vision peak RSS becomes a complaint. A bigger lever than A-5 sits beside it:
-the vision scratch is allocated fresh per Forward, so pooling it (as the text encoder does) would
-remove most of the ≈96 MB per Forward, at the cost of memory pinned between calls.
+**Trigger:** CPU-path vision peak RSS becomes a complaint. **Pooling the vision scratch across
+Forwards (as the text encoder does) was measured the same day and is not the bigger lever.** The
+scratch is 118 MB at 1024 patches (87% of B/op) and 599 MB at 5184. Allocating and first-touching
+it costs 1.9 ms and 7–9 ms, 0.2–0.3% of a 0.55–1.07 s forward at 1024 patches. Pooling would cut
+B/op without changing peak RSS, since a forward still needs the whole scratch, while holding up
+to 600 MB between calls. A-5's aliasing is the lever on peak RSS. Details are in
+`perf-dead-ends.md`, "Reasoned out, not built".
 
 The original scope follows.
 

@@ -584,6 +584,20 @@ analysis kept predicting load-reduction wins that do not exist on arm64.
 
 ## Reasoned out, not built — recorded so nobody re-chases them
 
+- **Pooling the vision towers' per-Forward scratch across calls** (`newQwenScratch`:
+  qwen, qwen3, glm_ocr, pixtral), measured 2026-10-15 on `apple-m1pro`. It looks like the
+  big lever, because the scratch is allocated fresh per Forward and is most of B/op: 118 MB
+  of `BenchmarkQwenViT`'s 135.5 MB at Qwen2.5-VL dims and 1024 patches, 599 MB at 5184.
+  The cost it would remove, allocation plus first touch, measured **1.9 ms at 1024 patches**
+  against a 0.55–1.07 s forward (0.2–0.3%), and 7–9 ms at 5184. **Peak RSS is unchanged**,
+  since a forward still needs the whole scratch. Pooling would only stop the
+  free-and-reallocate between calls, while holding up to 600 MB in a `sync.Pool` after a large
+  image. The pool would also be shared by four encoders of different dims. That leaves −87%
+  B/op, which matters only as GC pressure under concurrent allocation-heavy load, which no
+  caller produces. goinfer runs this CPU forward only when no GPU tower is registered. Item 18
+  (`eaaac5b`, July campaign) already took the large win: per-layer to per-Forward, −70% to
+  −85% B/op but −3% latency. Reuse across calls was out of its scope, never considered and
+  rejected. The peak-RSS lever is aliasing (A-5, parked in `roadmap.md` §3).
 - **Folding the head-parallel `workerScratch` sets into the encoder's scratch slab**
   (2026-10-15, A-4 of [`archive/task-encoder-scratch-aliasing.md`](archive/task-encoder-scratch-aliasing.md)).
   The worker sets are 12 MiB at L=512 on 8 workers, and they look like the obvious next cut
