@@ -21,7 +21,7 @@
 > At 8 workers on the batched shape, that is 1.41 GiB → 0.74 GiB of pinned scratch. The
 > 180 MiB figure matches the lens scan's 188.7 MB arena; that number was in decimal MB.
 >
-> **Status: SCOPED 2026-10-14, nothing built.** The single real risk is a stale read across the
+> **Status: IN PROGRESS. A-0, A-1 and A-2 landed 2026-10-15.** The single real risk is a stale read across the
 > phase boundary. A-2 builds the gate for that *before* A-3 changes any layout.
 
 ---
@@ -124,20 +124,30 @@ Two contracts already in the tree make aliasing safe:
 Modeled on `vision`'s `TestQwenScratch_poisonedArenaIsInert`, but aimed at the boundary
 instead of the whole arena:
 
-- Add `s.beginPhase(p)` calls: one before each layer's attention projection, one before each
-  MLP. Normally it is a predictable branch on a package-level `var poisonPhases bool`; with
-  ~24 calls per forward the cost is negligible. Tests set the flag, and the call then NaN-fills
-  every buffer belonging to the phase being *entered*, `workerScratch` included.
-- Run every forward twice, serial and with head-parallel engaged. A lone forward fans the
-  head loop out from L ≈ 128 (`mOut·L·hd` ≥ 1<<20), so a gate that only ran short sequences
-  would never see the worker sets, and A-4 folds those into the slab.
-- Gate: for each forward (nomic single, nomic batched, BERT, BERT `clsOnly`, GTE, GTE
-  `clsOnly`, MoE, q8 single, q8 batched), the output under poisoning must be **bit-identical
-  to a fresh-scratch reference**. Compare raw bits, not cosine. Per the vision test's own
-  note, comparing two poisoned runs with each other cannot catch this.
-- **Mutation check (one-off, recorded in the commit message):** make `swigluMLP` read
-  `s.out[0]` into `mid[0]` and confirm the gate fails. Without that, a green gate proves
-  nothing.
+- **As built:** every forward calls `s.phaseBoundary()` before each attention and before each
+  MLP (14 call sites in 7 forwards). In production it is one branch on a nil test-only hook.
+  The gate (`scratch_phase_test.go`) installs a hook that overwrites **every** phase-scoped
+  buffer to its full capacity, `workerScratch` and the MoE tables included, with NaN and then
+  with 1e4. NaN alone would slip past a comparison, such as top-k routing. The int32 tables
+  get 1<<30, so a stale index panics. The buffers are found by reflection, so a field added
+  later is covered automatically; a field of unknown type panics until someone decides its
+  phase. `deqW` is the one exempt buffer.
+- **Correction to the scoped design:** the scope said to poison only the phase being
+  *entered*. On today's separate-buffer layout that cannot catch the cross-phase read A-3
+  creates: at the MLP boundary `s.out` still holds valid attention output, so the doc's own
+  mutation would stay green. What aliasing looks like from the inside is that *both* phases'
+  buffers are dead at every boundary, so the gate poisons both.
+- Every forward runs on synthetic models (no checkpoint, so it runs in CI): nomic mixed
+  SwiGLU+MoE+GELU layers, nomic SwiGLU, `forwardTokens`, q8, BERT, BERT `clsOnly`, GTE,
+  GTE `clsOnly`. Each runs at a short input (serial) and at L=160, which takes the
+  head-parallel path; that path is asserted, not assumed. q8 never fans out:
+  `selfAttentionQ8` has its own serial head loop. Nomic and q8 batched run too. Output must
+  be **bit-identical to a fresh-scratch reference**, compared on raw bits, each poisoned
+  run twice so the lazily sized MoE tables hold stale values the second time. Comparing two
+  poisoned runs with each other cannot catch a stale read.
+- **Mutation checks (recorded in the A-2 commit):** MLP reads `s.out` → 7 subtests red.
+  Attention reads `s.mid` → 14 red. A head worker reads its `ctxHead` before writing it →
+  the 7 head-parallel subtests red.
 - A-2 lands green on today's layout first. It then becomes A-3's acceptance test.
 
 ### A-3 · One slab, both phases from offset 0

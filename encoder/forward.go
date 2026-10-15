@@ -97,9 +97,11 @@ func (w *Weights) forwardInner(ids []int32) []float32 {
 		// Attention sub-layer + residual (in place on h). mOut=L: every row is
 		// read downstream (CLS pooling happens after the full stack, not via a
 		// trimmed last layer), so this never actually trims.
+		s.phaseBoundary()
 		h = selfAttention(h, l.Wqkv, l.WqkvB, l.OutProj, l.OutProjB, heads, headDim, D, L, L, rope, s)
 		layerNorm(h, l.Norm1W, l.Norm1B, L, D, eps)
 		// MLP sub-layer + residual (SwiGLU, dense GELU, or MoE per layer).
+		s.phaseBoundary()
 		applyMLP(w, l, h, D, intermediate, L, s)
 		layerNorm(h, l.Norm2W, l.Norm2B, L, D, eps)
 	}

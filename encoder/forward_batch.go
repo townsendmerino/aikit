@@ -131,8 +131,10 @@ func (w *Weights) forwardBatch(idsList [][]int32) [][]float32 {
 	// 4) Twelve batched transformer blocks (post-norm).
 	for li := 0; li < w.Cfg.NumLayers; li++ {
 		l := &w.Layers[li]
+		s.phaseBoundary()
 		selfAttentionBatched(h, l.Wqkv, l.OutProj, heads, headDim, D, B, Lmax, realLen, rope, s)
 		layerNorm(h, l.Norm1W, l.Norm1B, B*Lmax, D, eps)
+		s.phaseBoundary()
 		swigluMLP(h, l.Fc11, l.Fc12, l.Fc2, D, intermediate, B*Lmax, s)
 		layerNorm(h, l.Norm2W, l.Norm2B, B*Lmax, D, eps)
 	}

@@ -62,9 +62,11 @@ func (w *WeightsQ8) forwardInner(ids []int32) []float32 {
 	rope := w.ropeCache.get(L, headDim, w.Cfg.RoPEBase)
 	for i := 0; i < w.Cfg.NumLayers; i++ {
 		l := &w.Layers[i]
+		s.phaseBoundary()
 		selfAttentionQ8(h, &l.Wqkv, &l.OutProj,
 			heads, headDim, D, L, rope, s)
 		layerNorm(h, l.Norm1W, l.Norm1B, L, D, eps)
+		s.phaseBoundary()
 		swigluMLPQ8(h, &l.Fc11, &l.Fc12, &l.Fc2, D, intermediate, L, s)
 		layerNorm(h, l.Norm2W, l.Norm2B, L, D, eps)
 	}
@@ -129,9 +131,11 @@ func (w *WeightsQ8) forwardBatch(idsList [][]int32) [][]float32 {
 	rope := w.ropeCache.get(Lmax, headDim, w.Cfg.RoPEBase)
 	for li := 0; li < w.Cfg.NumLayers; li++ {
 		l := &w.Layers[li]
+		s.phaseBoundary()
 		selfAttentionQ8Batched(h, &l.Wqkv, &l.OutProj,
 			heads, headDim, D, B, Lmax, realLen, rope, s)
 		layerNorm(h, l.Norm1W, l.Norm1B, BL, D, eps)
+		s.phaseBoundary()
 		swigluMLPQ8(h, &l.Fc11, &l.Fc12, &l.Fc2, D, intermediate, BL, s)
 		layerNorm(h, l.Norm2W, l.Norm2B, BL, D, eps)
 	}

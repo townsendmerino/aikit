@@ -339,6 +339,7 @@ func (b *BERT) forward(ids, segs []int32, clsOnly bool) []float32 {
 		// Self-attention (no RoPE): Q,K,V = hWᵀ + b, into scratch. Q is
 		// projected only for the mOut rows actually needed; K,V stay full L
 		// since attention reads every position regardless of mOut.
+		s.phaseBoundary()
 		Q, K, V := s.Q[:mOut*D], s.K[:L*D], s.V[:L*D]
 		s.mm(h, l.Wq, Q, mOut, D, D)
 		s.mm(h, l.Wk, K, L, D, D)
@@ -355,6 +356,7 @@ func (b *BERT) forward(ids, segs []int32, clsOnly bool) []float32 {
 		layerNorm(h, l.AttnLNW, l.AttnLNB, mOut, D, eps)
 
 		// GELU FFN: intermediate → gelu → output, residual, LayerNorm.
+		s.phaseBoundary()
 		inter := s.val[:mOut*c.Intermediate]
 		s.mm(h, l.Wi, inter, mOut, D, c.Intermediate)
 		addBias(inter, l.Bi, mOut, c.Intermediate)

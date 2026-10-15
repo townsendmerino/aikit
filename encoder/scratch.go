@@ -27,6 +27,25 @@ func putScratch(s *scratch) {
 	scratchPool.Put(s)
 }
 
+// phaseBoundary marks the line between a layer's two phases, attention and MLP. Every
+// phase-scoped buffer is dead there: nothing written before the boundary is read after
+// it, except h, which lives outside the scratch (and deqW, which every q8 matmul
+// rewrites in full). Every forward calls it before each attention and before each MLP.
+//
+// That property is what lets one phase reuse the other's bytes. The forwards state it by
+// calling this, and the phase-boundary poison gate (scratch_phase_test.go) checks it:
+// the gate's hook fills every dead buffer with garbage here and requires the output to
+// stay bit-identical. Nil hook in production, so the cost is one predictable branch,
+// twice per layer.
+func (s *scratch) phaseBoundary() {
+	if phaseBoundaryHook != nil {
+		phaseBoundaryHook(s)
+	}
+}
+
+// phaseBoundaryHook is phaseBoundary's test-only hook (the poison gate). Nil in production.
+var phaseBoundaryHook func(*scratch)
+
 // scratchPutHook, when non-nil, sees every scratch on its way back to the pool. It is
 // test-only: the benchmarks use it to report the pooled footprint (scratch-MiB), which a
 // sync.Pool gives no other way to observe. Nil in production, where it costs one

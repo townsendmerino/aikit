@@ -267,11 +267,13 @@ func (g *GTE) forward(ids []int32, clsOnly bool) []float32 {
 		// (also packed Wqkv + RoPE) via encoder/attention.go; BERT shares only
 		// the post-projection half (attentionCore), since it has neither RoPE
 		// nor a packed qkv.
+		s.phaseBoundary()
 		h = selfAttention(h, l.Wqkv, l.WqkvB, l.Wo, l.WoB, c.Heads, headDim, D, L, mOut, rope, s)
 		layerNorm(h, l.AttnLNW, l.AttnLNB, mOut, D, eps)
 
 		// GeGLU MLP: up_gate = h·UpGateᵀ [L,2I]; split up=[:I], gate=[I:2I];
 		// mid = gelu(gate) ⊙ up; ffn = mid·Downᵀ + b; residual; post-norm.
+		s.phaseBoundary()
 		s.mm(h, l.UpGate, upGate, mOut, D, 2*I)
 		mid := s.val[:mOut*I]
 		// Split by token row: each writes only its own mid[i], and the
