@@ -18,6 +18,36 @@ name, the way the matmul entry points already do. A caller that sized `dst` corr
 reached an unbounded write; `DequantizeRowInt4` was already bounds-checked in Go. The new `TestDequantizeRowInt8_shortDstPanicsInEveryBuild`
 runs in the default build (the tag-gated check it replaces could not have caught this in production).
 
+### Changed — the encoder's pooled scratch is half the size: attention and MLP share one slab
+
+Every per-forward buffer in the encoder's pooled scratch belongs to exactly one phase of a layer, attention or MLP, and nothing written in one
+phase is read in the other. The residual `h` is the only state that crosses, and it is not in the scratch. Each buffer used to get its own
+storage, so the scratch was the sum of the two phases. Now both phases are carved out of one slab from offset 0, and the scratch is the larger
+phase. Separately, a model no longer carries buffers it never reads: `qkv` on BERT, and `gate` on every GELU and GeGLU model. Measured on the
+encoder benchmarks (M1 Pro, MiB the forward requests; pinned memory is about 1.25 times this from the pool's growth headroom):
+
+| benchmark | v1.70.1 | now | change |
+|---|--:|--:|--:|
+| `BERT_embed` (MiniLM) | 1.54 | 0.49 | −68% |
+| `GTEEncode/L512` | 54.8 | 27.1 | −50% |
+| `EncodeBatch_rerankN50`, all workers | 169 | 89 | −47% |
+| `Encode_singleLong` (L=512) | 39.0 | 25.5 | −35% |
+| `Q8Encode/w256` | 30.0 | 19.6 | −35% |
+
+The last two stop short of half because of storage the slab leaves alone on purpose: the head-parallel worker sets (12 MiB at L=512 on 8
+cores) and q8's weight-dequant buffer, which every q8 matmul uses in both phases. No arithmetic changed, so every encoder output is
+**bit-identical**, and the goldens are unchanged at the raw-bit level. The property the aliasing rests on is now a gate.
+`TestScratchPhases_poisonedBoundaryIsInert` overwrites every phase-scoped buffer at each phase boundary, with NaN and then 1e4, and requires
+each forward to stay bit-identical to a fresh-scratch reference. It runs on synthetic models, so it runs in CI, and covers every forward
+(nomic mixed SwiGLU/MoE/GELU, q8, BERT, GTE, CLS-only, batched), serial and head-parallel. Three planted cross-phase reads each turn it red.
+
+**Latency, measured** (10 interleaved rounds against the previous layout): M1 Pro flat on every benchmark (geomean −0.45%). 3700X geomean
+−0.37%, with `Encode_singleLong` −1.1% and `GTEEncode/L16` and `/L512` −0.9% and −0.7%, and **one regression: `GTEEncode/L128` +1.25%**
+(a focused 15-round rerun). About a third of that already appears with no layout change, and it does not move with view alignment. It is
+accepted for the halved footprint, and recorded here rather than claimed away. `Backend.MatmulBT` and `Q8Backend` now document a no-retention
+contract: their host slices are pooled scratch views and must not be touched, or keyed on, after the call returns. `encmetal` and `enccuda`
+already comply. Details: [`docs/task-encoder-scratch-aliasing.md`](docs/task-encoder-scratch-aliasing.md).
+
 ## [1.70.1] — 2026-10-11
 
 `perfgate` VERDICT: PASS — no regression vs v1.70.0 above each shape's floor — 12/47 shapes resolve the 5.0% class
