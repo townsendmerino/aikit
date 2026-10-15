@@ -394,6 +394,17 @@ aikit-side retrieval and primitive work only.
 
 Rough effort key: **S** = a few days, **M** = a week or two, **L** = a month+.
 
+**Vision-tower scratch aliasing (A-5 of the encoder scratch task) — PARKED, 2026-10-15
+(Francis), trigger: CPU-path vision peak RSS becomes a complaint.** The text encoder's
+attention and MLP scratch now share one slab (v1.70.2). The same treatment for
+`vision.newQwenScratch` (qwen, qwen3, glm_ocr, pixtral) was measured before starting. At
+Qwen2.5-VL tower dims and 1024 patches it would alias ≈28 MB of the ≈96 MB scratch (−21% of
+the 135.6 MB allocated per Forward), with no speed gain (milliseconds of alloc and zero against
+a 0.6–1.1 s forward). Peak RSS is the only real win, and it scales with patches: ≈150 MB at
+~5,000. Pooling the per-Forward vision scratch is the larger lever, trading B/op for pinned
+memory. Numbers and the original scope:
+[`archive/task-encoder-scratch-aliasing.md`](archive/task-encoder-scratch-aliasing.md) §3 A-5.
+
 ### Tier 1 — retrieval-side depth
 
 #### 1. Late-interaction retrieval (ColBERT-style multi-vector)  ·  M

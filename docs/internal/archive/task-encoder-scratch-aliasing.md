@@ -21,8 +21,9 @@
 > At 8 workers on the batched shape, that is 1.41 GiB → 0.74 GiB of pinned scratch. The
 > 180 MiB figure matches the lens scan's 188.7 MB arena; that number was in decimal MB.
 >
-> **Status: A-0 to A-3 LANDED 2026-10-15** (`11a5baa`, `61987d4`, `f79a5d0`, `3640d44`). A-4 was
-> measured and dropped (§3). A-5 is out of this round.
+> **Status: CLOSED 2026-10-15, archived. A-0 to A-3 shipped in v1.70.2** (`11a5baa`, `61987d4`, `f79a5d0`, `3640d44`). A-4 was
+> measured and dropped (§3; also in `perf-dead-ends.md`). A-5 was measured and **parked** in
+> `roadmap.md` §3 with a trigger (§3 below has the numbers).
 >
 > **Measured** (M1 Pro, `scratch-len-MiB`, the benchmarks' real inputs rather than the base
 > shape above):
@@ -220,7 +221,23 @@ the caller's `Q`/`K`/`V` views pointing at the old array, which is wrong values 
 If the 12 MiB ever matters, the lever is the fan-out width on long lone forwards, a perf
 question with its own benchmark.
 
-### A-5 · Vision towers: same treatment for `newQwenScratch`
+### A-5 · Vision towers: same treatment for `newQwenScratch` (PARKED 2026-10-15, roadmap §3)
+
+**Measured before deciding (2026-10-15, M1 Pro):** `BenchmarkQwenViT` (Qwen2.5-VL tower dims:
+hidden 1280, inter 3420, 16 heads; 1024 patches) allocates 135.6 MB per Forward and takes
+609 ms (depth 4) or 1,089 ms (depth 8). From `newQwenScratch`'s buffer sizes, the scratch is
+≈96 MB of that. Aliasing could reach ≈28 MB, the smaller of the attention-only set
+(`qkv`, `q`, `k`, `v`, `headPool` ≈ 42 MB) and the MLP-only set (`gate`, `up` = 28 MB). That is
+about −21% B/op and no measurable speed: allocating and zeroing 28 MB is milliseconds against a
+0.6–1.1 s forward, and real towers are 32 deep. The win is peak RSS, which scales with patch
+count: ≈28 MB at 1024 patches, ≈150 MB at ~5,000. The per-encoder phase of `n1`, `n2`, `o`,
+`att` and `mlpOut` was not traced, so this is a lower bound. **Parked:** a modest
+allocation cut with no speed gain, on a path goinfer mostly runs on the GPU backends.
+**Trigger:** CPU-path vision peak RSS becomes a complaint. A bigger lever than A-5 sits beside it:
+the vision scratch is allocated fresh per Forward, so pooling it (as the text encoder does) would
+remove most of the ≈96 MB per Forward, at the cost of memory pinned between calls.
+
+The original scope follows.
 
 `newQwenScratch` is shared by the qwen, qwen3, glm_ocr and pixtral encoders. It is
 **allocated per `Forward`, not pooled**, so a footprint cut there shows up directly as B/op.

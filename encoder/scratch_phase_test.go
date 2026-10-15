@@ -12,7 +12,7 @@ import (
 	"github.com/townsendmerino/aikit/linalg"
 )
 
-// The phase-boundary poison gate (A-2 of docs/task-encoder-scratch-aliasing.md).
+// The phase-boundary poison gate (A-2 of docs/internal/archive/task-encoder-scratch-aliasing.md).
 //
 // Every forward calls s.phaseBoundary() before each attention and before each MLP, and
 // claims that every phase-scoped scratch buffer is dead there: nothing written before the

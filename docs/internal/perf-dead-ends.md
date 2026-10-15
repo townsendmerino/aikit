@@ -142,6 +142,10 @@ analysis kept predicting load-reduction wins that do not exist on arm64.
   variant for, so by the lens's own bar it does not ship here. **`nvidia-rtx2070s` may
   still ship it.** Its subsumed sibling — GTE's `upGate` [L,2I], campaign #8 — was not
   attempted once the base transform measured out (same fork/join structure).
+- **Superseded (2026-10-15, v1.70.2):** the footprint this was after is now taken another
+  way. The encoder scratch's attention and MLP phases share one slab, which halves it with no
+  extra fork/join (M1 Pro flat on every encoder benchmark). See
+  [`archive/task-encoder-scratch-aliasing.md`](archive/task-encoder-scratch-aliasing.md).
 
 ---
 
@@ -580,6 +584,18 @@ analysis kept predicting load-reduction wins that do not exist on arm64.
 
 ## Reasoned out, not built — recorded so nobody re-chases them
 
+- **Folding the head-parallel `workerScratch` sets into the encoder's scratch slab**
+  (2026-10-15, A-4 of [`archive/task-encoder-scratch-aliasing.md`](archive/task-encoder-scratch-aliasing.md)).
+  The worker sets are 12 MiB at L=512 on 8 workers, and they look like the obvious next cut
+  once attention and MLP share a slab. They aren't. Folding only saves what fits in the MLP
+  region's slack above the attention region, and nomic's phases are balanced (13.5 MiB each),
+  so max(13.5 + 12, 13.5) is the same 25.5 MiB. The only real gain is letting worker 0 reuse
+  the serial set, about 1.5 MiB; GTE has at most 6 MiB of slack, and BERT none. The fan-out
+  width comes from `inflightForwards` per attention call, after `ensureLayer` has laid out the
+  slab. Pre-sizing for the worst case bloats every `EncodeBatch` scratch that never fans out.
+  Growing the slab lazily inside attention leaves the caller's `Q`/`K`/`V` views on the old
+  array: wrong values, no panic. If the 12 MiB ever matters, the lever is the fan-out width
+  on long lone forwards.
 - **Native Q6_K K-quant matmul** — proven below the 1.3× gate by a byte-ratio ceiling:
   Q6_K reads 210 B/superblock vs int8's 256 → ≤ 1.22× if bandwidth-bound, ≤ 1.0× if
   compute-bound. `apple-m1pro` measured the built-and-correct SDOT path at 20–45× slower

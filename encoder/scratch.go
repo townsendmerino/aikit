@@ -90,7 +90,7 @@ var scratchPutHook func(*scratch)
 // Every forward marks the boundary with s.phaseBoundary(), and
 // TestScratchPhases_poisonedBoundaryIsInert overwrites every phase-scoped buffer there,
 // so a cross-phase read fails that gate rather than corrupting an embedding.
-// docs/task-encoder-scratch-aliasing.md has the full lifetime map.
+// docs/internal/archive/task-encoder-scratch-aliasing.md has the full lifetime map.
 type scratch struct {
 	// be is the compute backend for this forward's f32 matmuls — nil means the
 	// pure-Go path, which is the default and is BIT-IDENTICAL to not having this
@@ -191,7 +191,7 @@ func ensureI32(b []int32, n int) []int32 {
 // scratchLayout names the optional buffers a forward actually reads, so ensureLayer
 // sizes only those. Every other buffer ensureLayer sizes is read by every forward.
 // Sizing a buffer nothing reads cost BERT 10.5 MiB and GTE 6 MiB at L=512
-// (docs/task-encoder-scratch-aliasing.md, A-1).
+// (docs/internal/archive/task-encoder-scratch-aliasing.md, A-1).
 type scratchLayout struct {
 	packedQKV bool // qkv [L,3D]: selfAttention's fused projection. BERT projects Q/K/V separately.
 	gate      bool // gate [L,I]: SwiGLU's second up-projection (swigluMLP, swigluMLPQ8).

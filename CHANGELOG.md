@@ -56,7 +56,7 @@ each forward to stay bit-identical to a fresh-scratch reference. It runs on synt
 (a focused 15-round rerun). About a third of that already appears with no layout change, and it does not move with view alignment. It is
 accepted for the halved footprint, and recorded here rather than claimed away. `Backend.MatmulBT` and `Q8Backend` now document a no-retention
 contract: their host slices are pooled scratch views and must not be touched, or keyed on, after the call returns. `encmetal` and `enccuda`
-already comply. Details: [`docs/task-encoder-scratch-aliasing.md`](docs/task-encoder-scratch-aliasing.md).
+already comply. Details: [`docs/internal/archive/task-encoder-scratch-aliasing.md`](docs/internal/archive/task-encoder-scratch-aliasing.md).
 
 ## [1.70.1] — 2026-10-11
 
