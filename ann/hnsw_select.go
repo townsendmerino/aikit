@@ -66,7 +66,11 @@ func (h *HNSW) prune(id, layer int) {
 	}
 	h.bCand = cands
 	kept := h.selectNeighbors(cands, h.mmax(layer))
-	out := make([]int32, len(kept))
+	// Rewrite the list in place (memory campaign item 4): nbrs has been read
+	// into ids above and is not read again, and len(kept) ≤ len(nbrs). A fresh
+	// exact-size slice here was an allocation per prune, and the next back-link
+	// append then had to regrow it — two allocations per pruned neighbor.
+	out := nbrs[:len(kept)]
 	for i, c := range kept {
 		out[i] = int32(c.id)
 	}

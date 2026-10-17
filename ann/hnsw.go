@@ -86,6 +86,7 @@ type searchScratch struct {
 	vis     visitTracker
 	cands   candHeap // frontier, max-heap
 	results candHeap // bounded result set, min-heap
+	out     []cand   // searchLayer's returned slice; valid until the scratch's next search
 }
 
 // getScratch / putScratch lend a searchScratch to a Query from the per-index
@@ -232,6 +233,19 @@ func (h *HNSW) count() int {
 // added in order. Equivalent to NewHNSW + a loop of Add.
 func BuildHNSW(vecs [][]float32, cfg Config) *HNSW {
 	h := NewHNSW(cfg)
+	// n is known, so size the per-vector storage once instead of growing it by
+	// append through every Add (memory campaign item 4). Same graph: capacity
+	// is invisible to the build.
+	n := len(vecs)
+	h.nodes = make([]hnswNode, 0, n)
+	if h.int8 {
+		if n > 0 {
+			h.bq = make([]int8, 0, n*len(vecs[0]))
+		}
+		h.scales = make([]float32, 0, n)
+	} else {
+		h.vecs = make([][]float32, 0, n)
+	}
 	for _, v := range vecs {
 		h.Add(v)
 	}
@@ -441,8 +455,7 @@ func (h *HNSW) Add(vec []float32) int {
 		panic("ann: HNSW.Add dimension mismatch")
 	}
 	if h.int8 {
-		q8 := make([]int8, h.dim)
-		h.bq = append(h.bq, q8...) // grow, then quantize into the tail
+		h.bq = slices.Grow(h.bq, h.dim)[:len(h.bq)+h.dim] // grow, then quantize into the tail
 		s := linalg.QuantizeRowInt8(vec, h.bq[id*h.dim:id*h.dim+h.dim])
 		h.scales = append(h.scales, s)
 	} else {
@@ -470,8 +483,9 @@ func (h *HNSW) Add(vec []float32) int {
 	for layer := start; layer >= 0; layer-- {
 		w := h.searchLayer(qv, []int{ep}, h.efConstruction, layer, &h.buildScratch, nil)
 		neighbors := h.selectNeighbors(w, h.mmax(layer))
-		// Link id → neighbors.
-		ids := make([]int32, len(neighbors))
+		// Link id → neighbors. Capacity mmax+1: a back-link appends one id and
+		// prune (in place) cuts the list back to mmax, so the list never regrows.
+		ids := make([]int32, len(neighbors), h.mmax(layer)+1)
 		for i, c := range neighbors {
 			ids[i] = int32(c.id)
 		}
@@ -524,7 +538,9 @@ func (h *HNSW) greedyClosest(qv queryVec, ep, layer int) int {
 
 // searchLayer returns the ef vectors in `layer` most similar to q,
 // reachable from entryPoints, as a slice sorted by descending
-// similarity. This is the HNSW inner loop (paper Algorithm 2).
+// similarity. This is the HNSW inner loop (paper Algorithm 2). The slice is
+// sc's (sc.out) and is overwritten by sc's next search, so copy what must
+// outlive that.
 // keep, if non-nil, restricts the COLLECTED results to ids where keep(id) is
 // true. Filtered-out nodes still route the search (pushed to the frontier) — graph
 // connectivity is preserved — they're just not added to the result set.
@@ -586,9 +602,9 @@ func (h *HNSW) searchLayer(qv queryVec, entryPoints []int, ef, layer int, sc *se
 		}
 	}
 
-	out := make([]cand, results.len())
-	copy(out, results.items)
+	out := append(sc.out[:0], results.items...)
 	slices.SortFunc(out, candCmp)
+	sc.out = out
 	return out
 }
 
@@ -640,7 +656,6 @@ func (h *HNSW) queryEf(q []float32, k, ef int, keep func(int) bool) []Hit {
 	}
 	sc := h.getScratch()
 	found := h.searchLayer(qv, []int{ep}, ef, 0, sc, keep)
-	h.putScratch(sc)
 	if len(found) > k {
 		found = found[:k]
 	}
@@ -648,5 +663,6 @@ func (h *HNSW) queryEf(q []float32, k, ef int, keep func(int) bool) []Hit {
 	for i, c := range found {
 		hits[i] = Hit{Index: c.id, Score: c.sim}
 	}
+	h.putScratch(sc) // found is the scratch's; release it only once copied out
 	return hits
 }

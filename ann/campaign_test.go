@@ -1,0 +1,133 @@
+package ann
+
+import (
+	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
+	"hash"
+	"math"
+	"math/rand/v2"
+	"testing"
+)
+
+// The memory campaign's HNSW gates (docs/internal/task-memory-campaign.md items 4 and 7) check one claim: a
+// change to how the graph is built or stored changes no search result. campaignHNSWHash is the fingerprint.
+
+// campaignUnitVecs is n seeded unit vectors. It uses only PCG's Uint64 stream (a fixed algorithm), not
+// NormFloat64, so the corpus cannot drift with a Go release.
+func campaignUnitVecs(seed uint64, n, dim int) [][]float32 {
+	rng := rand.New(rand.NewPCG(seed, seed^0x5bd1e995))
+	out := make([][]float32, n)
+	for i := range out {
+		v := make([]float32, dim)
+		var ss float64
+		for j := range v {
+			x := float64(rng.Uint64()>>11)/float64(1<<53)*2 - 1
+			v[j] = float32(x)
+			ss += x * x
+		}
+		inv := float32(1 / math.Sqrt(ss))
+		for j := range v {
+			v[j] *= inv
+		}
+		out[i] = v
+	}
+	return out
+}
+
+// campaignHNSWConfigs are the builds the gate covers: both storage modes, both neighbor selections, two seeds.
+func campaignHNSWConfigs() []Config {
+	var cs []Config
+	for _, int8 := range []bool{false, true} {
+		for _, simple := range []bool{false, true} {
+			for _, seed := range []uint64{1, 42} {
+				cs = append(cs, Config{Int8: int8, SimpleNeighbors: simple, Seed: seed})
+			}
+		}
+	}
+	return cs
+}
+
+const campaignHNSWN, campaignHNSWDim = 5000, 64
+
+func hashHits(h hash.Hash, hits []Hit) {
+	var b [8]byte
+	binary.LittleEndian.PutUint64(b[:], uint64(len(hits)))
+	h.Write(b[:])
+	for _, x := range hits {
+		binary.LittleEndian.PutUint64(b[:], uint64(x.Index))
+		h.Write(b[:])
+		binary.LittleEndian.PutUint64(b[:], math.Float64bits(x.Score))
+		h.Write(b[:])
+	}
+}
+
+// campaignQueryHash fingerprints what a query can observe of h: Query at k = 1, 10, 50 and QueryEf at ef = 16 and
+// 200, for 200 seeded queries.
+func campaignQueryHash(hh hash.Hash, h *HNSW) {
+	for _, q := range campaignUnitVecs(9001, 200, campaignHNSWDim) {
+		for _, k := range []int{1, 10, 50} {
+			hashHits(hh, h.Query(q, k))
+		}
+		hashHits(hh, h.QueryEf(q, 10, 16))
+		hashHits(hh, h.QueryEf(q, 10, 200))
+	}
+}
+
+// campaignHNSWHash builds each campaign config over the same seeded corpus and hashes its query results and its
+// MarshalBinary bytes (the graph itself, so a build change that happened to leave the results alone still shows).
+func campaignHNSWHash(t *testing.T, withBlob bool) string {
+	vecs := campaignUnitVecs(7, campaignHNSWN, campaignHNSWDim)
+	hh := sha256.New()
+	for _, cfg := range campaignHNSWConfigs() {
+		h := BuildHNSW(vecs, cfg)
+		campaignQueryHash(hh, h)
+		if withBlob {
+			blob, err := h.MarshalBinary()
+			if err != nil {
+				t.Fatal(err)
+			}
+			hh.Write(blob)
+		}
+	}
+	return hex.EncodeToString(hh.Sum(nil))
+}
+
+// campaignHNSWQueryHashBefore and campaignHNSWBlobHashBefore are campaignHNSWHash without and with the blob bytes,
+// captured on the tree before the build pre-sizing (item 4), whose blob format is v4.
+const (
+	campaignHNSWQueryHashBefore = "447c723ea62f87e1ea34f77f687c128354dd7e8864039edbbea3e3201a9cba53"
+	campaignHNSWBlobHashBefore  = "3178f09875d1f63869be6d53bb551045ca783b378886bd71d677206d9faf2d73"
+)
+
+// Item 4: pre-sizing the build changes neither a search result nor a byte of the serialized graph.
+func TestBuildHNSW_campaignHashMatchesBefore(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds 8 indexes of 5,000 vectors")
+	}
+	q, b := campaignHNSWHash(t, false), campaignHNSWHash(t, true)
+	t.Logf("query hash %s, blob hash %s", q, b)
+	if q != campaignHNSWQueryHashBefore {
+		t.Errorf("query hash %s, before %s: a search result changed", q, campaignHNSWQueryHashBefore)
+	}
+	if b != campaignHNSWBlobHashBefore {
+		t.Errorf("blob hash %s, before %s: the built graph changed", b, campaignHNSWBlobHashBefore)
+	}
+}
+
+// Item 4, reported: allocations per Add on a 5,000-vector build, f32 and int8.
+func TestHNSW_allocsPerAdd(t *testing.T) {
+	vecs := campaignUnitVecs(7, campaignHNSWN, campaignHNSWDim)
+	for _, int8 := range []bool{false, true} {
+		h := NewHNSW(Config{Int8: int8, Seed: 1})
+		for _, v := range vecs[:4000] {
+			h.Add(v)
+		}
+		i := 4000
+		allocs := testing.AllocsPerRun(999, func() {
+			h.Add(vecs[i])
+			i++
+		})
+		t.Logf("int8=%v: %.2f allocations per Add (vectors 4,001-5,000)", int8, allocs)
+	}
+}
