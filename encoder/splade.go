@@ -28,7 +28,9 @@ type SPLADE struct {
 // LoadSPLADE loads a BertForMaskedLM SPLADE model (config.json + model.safetensors)
 // from dir: the BERT encoder (via LoadBERT) plus the masked-LM head.
 func LoadSPLADE(dir string) (*SPLADE, error) {
-	b, err := LoadBERT(dir)
+	// f32 table: the MLM decoder is usually tied to it (see below), and the
+	// decoder multiplies the whole table, so a mapped 16-bit view would not do.
+	b, err := loadBERT(dir, false)
 	if err != nil {
 		return nil, err
 	}

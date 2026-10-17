@@ -60,15 +60,17 @@ type GTE struct {
 
 	cfg     gteConfig
 	wordEmb []float32  // [vocab, hidden]; nil when wordQ holds the table
-	wordQ   *wordTable // the table at a narrower precision (LoadGTEWithOptions), else nil
-	typeEmb []float32  // [typeVocab, hidden] — row 0 added to every token
-	embLNW  []float32
-	embLNB  []float32
-	layers  []gteLayer
-	tok     *embed.Tokenizer
-	maxSeq  int
-	pool    pooling
-	st      *embed.SafetensorsFile
+	wordQ   *wordTable // the table as a mapped 16-bit view or an opt-in heap copy (LoadGTEWithOptions), else nil
+	// wordEmbMapped is set when wordEmb is a view into the checkpoint's mapping (an aligned F32 table).
+	wordEmbMapped bool
+	typeEmb       []float32 // [typeVocab, hidden] — row 0 added to every token
+	embLNW        []float32
+	embLNB        []float32
+	layers        []gteLayer
+	tok           *embed.Tokenizer
+	maxSeq        int
+	pool          pooling
+	st            *embed.SafetensorsFile
 	// ropeCache holds the rotary table across Encodes instead of rebuilding it
 	// per call. Grows to the longest sequence seen; zero value ready to use.
 	ropeCache ropeCache
@@ -76,8 +78,13 @@ type GTE struct {
 
 // LoadGTE loads a GTE encoder (config.json + model.safetensors with GTE tensor
 // names) from dir. It validates the architecture assumptions this forward
-// implements: rotary positions, GELU activation, plain LayerNorm.
-func LoadGTE(dir string) (*GTE, error) {
+// implements: rotary positions, GELU activation, plain LayerNorm. The
+// word-embedding table stays in the checkpoint's own precision, read from the
+// mapping (WordEmbNative; see LoadGTEWithOptions).
+func LoadGTE(dir string) (*GTE, error) { return LoadGTEWithOptions(dir, LoadOptions{}) }
+
+// loadGTE is the load itself; native as in loadBERT.
+func loadGTE(dir string, native bool) (*GTE, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
 	if err != nil {
 		return nil, fmt.Errorf("encoder: read GTE config: %w", err)
@@ -119,7 +126,7 @@ func LoadGTE(dir string) (*GTE, error) {
 		v, err = loadF32(st, name, want)
 		return v
 	}
-	g.wordEmb = get("embeddings.word_embeddings.weight", c.VocabSize, D)
+	g.wordEmb, g.wordQ, g.wordEmbMapped = loadWordEmb(st, "embeddings.word_embeddings.weight", c.VocabSize, D, native, get)
 	if c.TypeVocab > 0 {
 		g.typeEmb = get("embeddings.token_type_embeddings.weight", c.TypeVocab, D)
 	}

@@ -44,13 +44,22 @@ annmetal stays opt-in, and this is now written on `EnableGPU`: a process must im
 in aikit, goinfer or ken does either on its own. On Apple silicon the Metal path has not beaten CPU scoring at any measured batch size
 (`docs/BENCH-gpu-results.md`). Ships in `gpu/annmetal` v0.2.0, which needs root v1.71.0 for `ann.MappedBackend`.
 
-### Added — f16 and int8 word-embedding tables for BERT and GTE (`LoadBERTWithOptions`, `LoadGTEWithOptions`)
+### Added — BERT/GTE word embeddings read from the mapping in the checkpoint's precision; f16 and int8 tables as options
 
 `encoder.LoadBERTWithOptions` and `encoder.LoadGTEWithOptions` take an `encoder.LoadOptions` whose `WordEmb` field
-(`encoder.WordEmbPrecision`: `WordEmbF32`, the default; `WordEmbF16`; `WordEmbInt8`, per-row symmetric with an f32 scale) sets how the
-word-embedding table is stored. The table is only gathered by row, so each token's row is widened at gather time. It is 45–69% of these
-models' weights. Quality gate, bars registered before the run, cosine of each output embedding against the f32 load over each fixture's
-golden texts plus 20 fixed ones:
+(`encoder.WordEmbPrecision`) sets how the word-embedding table is held. The table is only gathered by row, so each token's row is widened
+at gather time.
+
+- **`WordEmbNative` — the default, and what `LoadBERT`/`LoadGTE` now do.** The table stays in the checkpoint's own precision, read from
+  the mapping. An F32 table is a view, as before. **An F16 or BF16 table is now a 16-bit view widened one row per token**, where it used to
+  be widened whole onto the heap (twice the stored bytes). Outputs are bit-identical to the widened table: the row decode matches embed's
+  widening for all 65,536 patterns of each format, and minilm converted to F16 and to BF16 encodes identically both ways. The table adds no
+  heap: minilm as F16/BF16 holds 43.3 MiB after load against 88.0 MiB widened, for a 44.7 MiB table. When the 16-bit data is not 2-byte
+  aligned in the file (an odd data offset), the load falls back to the widened copy, with the same outputs. New `embed.Tensor.Uint16s`
+  returns an F16/BF16 tensor's raw patterns as a view (an error when misaligned). F32 checkpoints — every BERT/GTE fixture here — load
+  bit-identically to v1.70.2.
+- **`WordEmbF16` and `WordEmbInt8` — opt-in heap tables**, f16, or per-row symmetric int8 with an f32 scale. Quality gate, bars
+  registered before the run: cosine of each output embedding against the f32 load, over each fixture's golden texts plus 20 fixed ones.
 
 | fixture | f16 min (bar 0.9999) | int8 min (bar 0.999) | table f32 → f16 → int8 |
 |---|---|---|---|
@@ -59,8 +68,9 @@ golden texts plus 20 fixed ones:
 | SPLADE trunk (BERT) | 1.0000000 | 0.9999894 | 89.4 → 44.7 → 22.5 MiB |
 | arctic-embed-m-v2.0 (GTE) | 1.0000000 | 0.9999587 | 732.6 → 366.3 → 184.1 MiB |
 
-Both pass clearly. **The default stays f32** pending a decision on changing it. `LoadOptions{}` is `LoadBERT`/`LoadGTE` bit for bit, and
-SPLADE (tied decoder) keeps loading f32. An f32 table from an F32 checkpoint is mapped, file-backed pages; the narrow tables are heap.
+  For an F32 checkpoint, an opt-in heap table *adds* heap: the f32 table was a mapped view, costing only the touched rows as clean
+  page-cache pages. On arctic-embed-m-v2.0, f16 adds 366 MiB and ~0.5 s of load. Use them for a heap-read load or a deliberately
+  resident table; SPLADE (tied decoder) always loads f32.
 
 ### Changed — `embed.LoadFromFS` memory-maps a Model2Vec model on disk; new `LoadFromFSHeap` and `StaticModel.Close`
 

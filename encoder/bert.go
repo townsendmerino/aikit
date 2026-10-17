@@ -53,17 +53,19 @@ type BERT struct {
 
 	cfg     bertConfig
 	wordEmb []float32  // [vocab, hidden]; nil when wordQ holds the table
-	wordQ   *wordTable // the table at a narrower precision (LoadBERTWithOptions), else nil
-	posEmb  []float32  // [maxPos, hidden] — learned absolute positions
-	typeEmb []float32  // [typeVocab, hidden]
-	embLNW  []float32
-	embLNB  []float32
-	layers  []bertLayer
-	tok     *embed.Tokenizer       // WordPiece tokenizer (tokenizer.json)
-	maxSeq  int                    // sentence-transformers max_seq_length (right-truncation)
-	pool    pooling                // reduction read from 1_Pooling/config.json (mean default)
-	posOff  int                    // position-id offset (0 for BERT; pad_token_id+1 for RoBERTa/XLM-R)
-	st      *embed.SafetensorsFile // retained so the aliased weights stay valid
+	wordQ   *wordTable // the table as a mapped 16-bit view or an opt-in heap copy (LoadBERTWithOptions), else nil
+	// wordEmbMapped is set when wordEmb is a view into the checkpoint's mapping (an aligned F32 table).
+	wordEmbMapped bool
+	posEmb        []float32 // [maxPos, hidden] — learned absolute positions
+	typeEmb       []float32 // [typeVocab, hidden]
+	embLNW        []float32
+	embLNB        []float32
+	layers        []bertLayer
+	tok           *embed.Tokenizer       // WordPiece tokenizer (tokenizer.json)
+	maxSeq        int                    // sentence-transformers max_seq_length (right-truncation)
+	pool          pooling                // reduction read from 1_Pooling/config.json (mean default)
+	posOff        int                    // position-id offset (0 for BERT; pad_token_id+1 for RoBERTa/XLM-R)
+	st            *embed.SafetensorsFile // retained so the aliased weights stay valid
 }
 
 // positionOffset returns the learned-position-id offset for a BERT-family model.
@@ -87,8 +89,13 @@ func positionOffset(modelType string, padTokenID int) int {
 // LoadBERT loads a sentence-transformers BERT model (config.json +
 // model.safetensors with BERT tensor names) from dir. It validates the two
 // architecture assumptions this forward implements: GELU activation and learned
-// absolute positions.
-func LoadBERT(dir string) (*BERT, error) {
+// absolute positions. The word-embedding table stays in the checkpoint's own
+// precision, read from the mapping (WordEmbNative; see LoadBERTWithOptions).
+func LoadBERT(dir string) (*BERT, error) { return LoadBERTWithOptions(dir, LoadOptions{}) }
+
+// loadBERT is the load itself. native lets the word-embedding table be a mapped
+// 16-bit view (F16/BF16 checkpoints); without it the table is f32 (SPLADE).
+func loadBERT(dir string, native bool) (*BERT, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
 	if err != nil {
 		return nil, fmt.Errorf("encoder: read BERT config: %w", err)
@@ -141,7 +148,7 @@ func LoadBERT(dir string) (*BERT, error) {
 		return v
 	}
 	b.posOff = positionOffset(c.ModelType, c.PadTokenID)
-	b.wordEmb = get(prefix+"embeddings.word_embeddings.weight", c.VocabSize, D)
+	b.wordEmb, b.wordQ, b.wordEmbMapped = loadWordEmb(st, prefix+"embeddings.word_embeddings.weight", c.VocabSize, D, native, get)
 	b.posEmb = get(prefix+"embeddings.position_embeddings.weight", c.MaxPos, D)
 	// token_type_embeddings is optional — some BERT-family exports (type_vocab_size
 	// 0) omit it. When absent, the embedding sum simply skips the segment term.

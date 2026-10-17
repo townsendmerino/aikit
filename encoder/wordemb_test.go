@@ -64,7 +64,7 @@ func cosine(a, b []float32) float64 {
 type wordEmbModel interface {
 	Encode(string) ([]float32, error)
 	Close() error
-	wordEmbBytes() int
+	wordEmbHeapBytes() int
 }
 
 // Item 9's gate: the quality bars, per fixture and precision; the f32 option is bit-identical to the plain loader.
@@ -100,7 +100,7 @@ func TestWordEmbPrecision_qualityGate(t *testing.T) {
 				t.Fatalf("%s %q: %v", f.dir, s, err)
 			}
 		}
-		f32Bytes := ref.wordEmbBytes()
+		f32Bytes := wordEmbF32Bytes(t, dir)
 		_ = ref.Close()
 		for _, p := range []WordEmbPrecision{WordEmbF16, WordEmbInt8} {
 			m, err := f.load(dir, LoadOptions{WordEmb: p})
@@ -121,7 +121,7 @@ func TestWordEmbPrecision_qualityGate(t *testing.T) {
 				}
 			}
 			t.Logf("%-18s %-4v table %6.1f MiB (f32 %6.1f): cosine vs f32 over %d texts — min %.7f, mean %.7f (worst %.30q); bar %.4f",
-				f.dir, p, float64(m.wordEmbBytes())/(1<<20), float64(f32Bytes)/(1<<20), len(texts), minCos, sum/float64(len(texts)), worst, wordEmbBars[p])
+				f.dir, p, float64(m.wordEmbHeapBytes())/(1<<20), float64(f32Bytes)/(1<<20), len(texts), minCos, sum/float64(len(texts)), worst, wordEmbBars[p])
 			if minCos < wordEmbBars[p] {
 				t.Errorf("%s %v: min cosine %.7f below the registered bar %.4f", f.dir, p, minCos, wordEmbBars[p])
 			}
@@ -133,7 +133,8 @@ func TestWordEmbPrecision_qualityGate(t *testing.T) {
 	}
 }
 
-// The default option is the plain loader, bit for bit (it is the same code path; this pins that it stays so).
+// The default option is the plain loader, bit for bit; and on an F32 checkpoint it is the pre-v1.71.0 load (the
+// table as f32, which SPLADE's loadBERT(dir, false) still loads) bit for bit, with the table a mapped view.
 func TestLoadBERTWithOptions_defaultIsLoadBERT(t *testing.T) {
 	dir := filepath.Join("..", "testdata", "minilm-model")
 	if _, err := os.Stat(filepath.Join(dir, "model.safetensors")); err != nil {
@@ -158,9 +159,42 @@ func TestLoadBERTWithOptions_defaultIsLoadBERT(t *testing.T) {
 			}
 		}
 	}
+	old, err := loadBERT(dir, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer old.Close()
+	for _, s := range wordEmbFixedTexts {
+		x, _ := a.Encode(s)
+		y, _ := old.Encode(s)
+		for i := range x {
+			if math.Float32bits(x[i]) != math.Float32bits(y[i]) {
+				t.Fatalf("%q: the native load of an F32 checkpoint differs from the f32 load", s)
+			}
+		}
+	}
+	if a.wordQ != nil || !a.wordEmbMapped || a.wordEmbHeapBytes() != 0 {
+		t.Fatal("an F32 checkpoint's table is not a mapped f32 view under the default load")
+	}
 	if _, err := LoadBERTWithOptions(dir, LoadOptions{WordEmb: 9}); err == nil {
 		t.Fatal("an unknown precision loaded")
 	}
+}
+
+// wordEmbF32Bytes is the f32 size of a fixture's word-embedding table, from its config.
+func wordEmbF32Bytes(t *testing.T, dir string) int {
+	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Vocab  int `json:"vocab_size"`
+		Hidden int `json:"hidden_size"`
+	}
+	if err := json.Unmarshal(raw, &c); err != nil {
+		t.Fatal(err)
+	}
+	return 4 * c.Vocab * c.Hidden
 }
 
 // Model-free: the narrow tables round-trip a synthetic table within each format's own error.
@@ -194,7 +228,7 @@ func TestWordTable_rowInto(t *testing.T) {
 			}
 		}
 	}
-	if _, err := newWordTable(f32, vocab, dim, WordEmbF32); err == nil {
-		t.Fatal("newWordTable accepted f32")
+	if _, err := newWordTable(f32, vocab, dim, WordEmbNative); err == nil {
+		t.Fatal("newWordTable accepted native")
 	}
 }

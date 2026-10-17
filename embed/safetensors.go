@@ -663,6 +663,31 @@ func (t Tensor) Uint8s() ([]byte, error) {
 	return t.raw, nil
 }
 
+// Uint16s returns an F16 or BF16 tensor's raw 16-bit patterns, little-endian as stored, as a view into the file's
+// bytes — no copy and no widening. It is for a consumer that widens a part at a time (encoder's word-embedding
+// gather widens one row per token), so a 16-bit table never exists as f32. Do not mutate, and do not retain it past
+// the owning SafetensorsFile's Close.
+//
+// It never copies: when the data is not 2-byte aligned in the file (a header length that leaves the payload on an
+// odd offset), it returns an error, and the caller widens through Float16sToF32 / BFloat16sToF32 instead. Assumes a
+// little-endian host (x86, arm64), like Float32s.
+func (t Tensor) Uint16s() ([]uint16, error) {
+	defer runtime.KeepAlive(t.owner) // §2.5
+	if t.DType != "F16" && t.DType != "BF16" {
+		return nil, fmt.Errorf("tensor %q: expected F16 or BF16, got %s", t.Name, t.DType)
+	}
+	if len(t.raw)%2 != 0 {
+		return nil, fmt.Errorf("tensor %q: %s raw size %d not a multiple of 2", t.Name, t.DType, len(t.raw))
+	}
+	if len(t.raw) == 0 {
+		return nil, nil
+	}
+	if uintptr(unsafe.Pointer(&t.raw[0]))%2 != 0 {
+		return nil, fmt.Errorf("tensor %q: %s data is not 2-byte aligned in the file", t.Name, t.DType)
+	}
+	return unsafe.Slice((*uint16)(unsafe.Pointer(&t.raw[0])), len(t.raw)/2), nil
+}
+
 // Float64s returns the tensor data as []float64. Requires DType "F64". Aliases
 // when aligned, else a copy (see reinterpretLE).
 func (t Tensor) Float64s() ([]float64, error) {

@@ -318,10 +318,12 @@ no such consumer has surfaced yet.
   a unified-memory backend (`gpu/annmetal`) reads a `LoadFlatI8Mmap` index's codes
   from the mapping instead of copying them. New in v1.71.0.
 - `encoder.LoadBERTWithOptions` / `encoder.LoadGTEWithOptions` / `encoder.LoadOptions`
-  / `encoder.WordEmbPrecision` — store the word-embedding table as f16 or per-row
-  int8 instead of f32 (it is only gathered). Measured cosine against f32 on four
-  fixtures: f16 ≥ 0.9999999, int8 ≥ 0.99992; the table shrinks 2× / 4×. The
-  default stays f32. New in v1.71.0.
+  / `encoder.WordEmbPrecision` — how the word-embedding table is held. Default
+  `WordEmbNative`: the checkpoint's own precision, read from the mapping (an
+  F16/BF16 table is a 16-bit view widened per row, no heap). Opt-in heap tables:
+  f16 (cosine ≥ 0.9999999 vs f32) or per-row int8 (≥ 0.99992). New in v1.71.0.
+- `embed.Tensor.Uint16s` — an F16/BF16 tensor's raw 16-bit patterns as a view
+  (error when misaligned). New in v1.71.0.
 - `bm25.Builder` (`NewBuilder`, `Add`, `N`, `Build`) — builds an `Index` one
   document at a time, so a build holds the index plus one document instead of
   the whole tokenized corpus; identical to `bm25.Build` (which is now a loop over

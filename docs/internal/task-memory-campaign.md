@@ -188,6 +188,7 @@ data is not 2-byte aligned in the mapping, the load falls back to today's widene
 | 8 Model2Vec mapped by default | `6284cb0` | PASS: 1,753 texts bit-identical mapped/heap/MapFS; TTFR (M1 Pro, warm, 15 rounds) heap 40.2 → mapped 29.7 ms, 0.74× (nobara's July +17% is the other sign; re-measure there) |
 | 9 BERT/GTE f16/int8 word embeddings | `cb0c08b` | PASS, clearly: min cosine f16 1.0000000 on all 4 fixtures (bar 0.9999), int8 0.99993–0.999997 (bar 0.999); tables 2×/4× smaller. Default stays f32 until Francis agrees |
 | 10 annmetal no-copy + scratch reuse | `0f20f32` | PASS: (a) mapped ≡ copied bit for bit, both rank as the CPU (Δ 0); (b) mapped EnableGPU +0.44–0.47 MiB footprint (bar 1.76), copied +49.3 MiB — instrument changed, see below; (c) 60 batch calls add no device memory |
+| 9b word-embedding default: native, mapped | (this commit) | PASS: decode bit-identical over all 65,536 patterns of F16 and BF16; tiny BERT/GTE and minilm-as-F16/BF16 outputs identical to the widened path; table heap ≈ 0 (minilm 88.0 → 43.3 MiB after load, table 44.7); odd-offset fixture falls back to the copy, outputs identical |
 
 ### Item 5 (D6): stopped before making the release real
 
