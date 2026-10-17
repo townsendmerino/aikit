@@ -26,6 +26,40 @@ loader's file through a weak pointer. With the cycle broken (`Tensor.owner` set 
 loaders, 3/3 rounds. Without the test's pre-forward check, the forward over the unmapped weights is a SIGSEGV. BF16 checkpoints are widened
 into the heap, so they were never affected. Found by goinfer's memory campaign (MEM3).
 
+### Changed — `encoder.ModelQ8` reads its word embeddings from the checkpoint mapping, and `Close` now releases it
+
+`LoadWeightsQ8` cloned the f32 word-embedding table onto the heap (89.4 MiB on CodeRankEmbed). It is only ever gathered by row, so
+`WeightsQ8.WordEmb` is now a view into the checkpoint mapping, which the weights keep open. Heap after `LoadQ8` falls from 200.0 to
+110.5 MiB; every output is bit-identical (hash over 12 encodes on `testdata/encoder-model`). New `(*WeightsQ8).Close` releases the
+mapping. `(*ModelQ8).Close`, a no-op until now, calls it — **so a `ModelQ8` must not be used after `Close`**, which its doc always implied
+but which was harmless before. The refused-checkpoint paths and `LoadQ8`'s tokenizer error now close the file instead of dropping it.
+
+### Changed — SPLADE expansion holds 32 rows of vocabulary logits, not all of them
+
+`SPLADE.Expand` materialized the whole L × vocab logit matrix (59.6 MiB at L = 512) only to max-reduce it. It now computes 32 rows at a time
+and folds the max in. Bit-identical (the matmul is M-invariant, the max order-free; hash over L = 1…512 on `testdata/splade-model`).
+Allocation per 512-token `Expand`: 89.4 → 7.0 MiB. Speed unchanged within noise (L = 256: 359 vs 368 ms, M1 Pro).
+
+### Changed — BM25 keeps its postings in one arena
+
+Each term held its own `[]posting` (a 24 B header and ~32% append slack each); `Index` now keeps one flat arena with per-term offsets.
+Results bit-identical (hash over Scores, TopK and TopKBatch on a seeded 20,000-document corpus); a built index is 20% smaller (18.66 →
+14.89 MiB on that corpus). `Build` is ~5% slower from the final compaction copy (27.3 → 28.9 ms, `BenchmarkBuild`); queries unchanged.
+
+### Changed — HNSW builds allocate per insert only what they keep
+
+An `Add` made 69 allocations (71 int8), almost all from re-growing and re-making neighbor lists while back-linking. Lists are now
+created with their final capacity and pruned in place, `BuildHNSW` sizes its storage from n, and search reuses its result slice. 2
+allocations per `Add` (3 int8). Search results and the serialized graph are byte-identical (hash over 8 builds and 1,000 queries).
+
+### Documented — a dropped mmap'd `SafetensorsFile` is never unmapped
+
+The comments said a finalizer unmaps an mmap'd safetensors file once it is unreachable. It does not, for any file that holds a tensor:
+each `Tensor` points back at its file, and the runtime does not collect a finalized object in a cycle. The mapping lives until `Close` or
+process exit. The comments now say so, and `TestSafetensorsMmap_droppedFileWithTensorsIsNotFinalized` pins it. Making the release real is
+deliberately not done: views into the mapping do not keep the file alive, so it would need `runtime.KeepAlive` discipline in every
+view-holding type here and in goinfer first (`docs/internal/task-memory-campaign.md`, item 5).
+
 ## [1.70.2] — 2026-10-15
 
 `perfgate` VERDICT: PASS — no regression vs v1.70.1 above each shape's floor — 5/47 shapes resolve the 5.0% class
