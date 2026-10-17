@@ -51,8 +51,8 @@ func TestHNSW_v5LoadsMatchBefore(t *testing.T) {
 		}
 	}
 	for name, h := range map[string][]byte{"Load": heap.Sum(nil), "LoadHNSWMmap": mapped.Sum(nil)} {
-		if got := hex.EncodeToString(h); got != campaignHNSWQueryHashBefore {
-			t.Errorf("%s of v5 blobs: query hash %s, before %s", name, got, campaignHNSWQueryHashBefore)
+		if got := hex.EncodeToString(h); got != campaignHNSWQueryHashBefore(t) {
+			t.Errorf("%s of v5 blobs: query hash %s, before %s", name, got, campaignHNSWQueryHashBefore(t))
 		}
 	}
 }

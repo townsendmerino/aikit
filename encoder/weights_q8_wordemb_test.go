@@ -39,10 +39,6 @@ func q8EncodeHash(t *testing.T, m *ModelQ8) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// q8EncodeHashBefore is q8EncodeHash on testdata/encoder-model (CodeRankEmbed), captured on the tree that still
-// cloned WordEmb onto the heap (task-memory-campaign.md item 2).
-const q8EncodeHashBefore = "133525a31476c40e1c648dc33865ed68c6ca0b207fd7121f46dfac70ac25118e"
-
 // q8HeapAfterLoadBefore is HeapAlloc after LoadQ8 and two GCs on that tree (min of 3 loads, M1 Pro).
 var q8HeapAfterLoadBefore uint64 = 209_662_928
 
@@ -75,8 +71,8 @@ func TestModelQ8_wordEmbFromMapping(t *testing.T) {
 	}
 	got := q8EncodeHash(t, m)
 	t.Logf("Encode hash %s; heap after load %d B = %.1f MiB (before: %.1f MiB)", got, best, float64(best)/(1<<20), float64(q8HeapAfterLoadBefore)/(1<<20))
-	if got != q8EncodeHashBefore {
-		t.Errorf("Encode hash %s, before %s: reading WordEmb from the mapping changed an output", got, q8EncodeHashBefore)
+	if got != q8EncodeHashBefore(t) {
+		t.Errorf("Encode hash %s, before %s: reading WordEmb from the mapping changed an output", got, q8EncodeHashBefore(t))
 	}
 	if q8HeapAfterLoadBefore != 0 && best+80<<20 > q8HeapAfterLoadBefore {
 		t.Errorf("heap after load %.1f MiB, want ≤ %.1f MiB (before − 80 MiB)", float64(best)/(1<<20), float64(q8HeapAfterLoadBefore-80<<20)/(1<<20))
@@ -88,4 +84,18 @@ func closeQ8ForTest(m *ModelQ8) {
 	if err := m.Close(); err != nil {
 		panic(err)
 	}
+}
+
+// q8EncodeHashBefores are q8EncodeHash on testdata/encoder-model, on the tree that still cloned WordEmb (item 2), keyed by GOARCH: the SIMD kernels and the compiler's fused multiply-adds differ by
+// architecture, so each arch has its own capture, each taken on its own pre-change tree — arm64 on the M1 Pro, amd64
+// on nobara (2026-10-17, the pre-change commit checked out with this test file added). An arch with no capture skips.
+var q8EncodeHashBefores = map[string]string{"arm64": "133525a31476c40e1c648dc33865ed68c6ca0b207fd7121f46dfac70ac25118e", "amd64": "0a90653290fcb91a6167f578fec0d5449c7886a88f2be10337fd8cfba0f4be3f"}
+
+func q8EncodeHashBefore(tb testing.TB) string {
+	tb.Helper()
+	h, ok := q8EncodeHashBefores[runtime.GOARCH]
+	if !ok {
+		tb.Skipf("no before-hash recorded for GOARCH=%s", runtime.GOARCH)
+	}
+	return h
 }

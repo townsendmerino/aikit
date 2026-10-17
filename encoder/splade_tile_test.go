@@ -47,10 +47,6 @@ func spladeExpandHash(s *SPLADE) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// spladeExpandHashBeforeTiling is spladeExpandHash on testdata/splade-model, captured on the tree before the row
-// tiling (task-memory-campaign.md item 1), where expandIDs materialized the whole L × vocab logit matrix.
-const spladeExpandHashBeforeTiling = "86f33233fdd684488ff4e9465b7e34b4e39cff4128642023664215dbeabbe465"
-
 // Item 1, gate (a): tiling the vocabulary projection changes no bit of any expansion. Model-gated.
 func TestSPLADE_expandMatchesBeforeTiling(t *testing.T) {
 	const dir = "../testdata/splade-model"
@@ -64,8 +60,8 @@ func TestSPLADE_expandMatchesBeforeTiling(t *testing.T) {
 	defer s.Close()
 	got := spladeExpandHash(s)
 	t.Logf("expandIDs hash over L=%v: %s", spladeTileLs, got)
-	if got != spladeExpandHashBeforeTiling {
-		t.Fatalf("expandIDs hash %s, before tiling %s: the tiled expansion is not bit-identical", got, spladeExpandHashBeforeTiling)
+	if want := spladeExpandHashBeforeTiling(t); got != want {
+		t.Fatalf("expandIDs hash %s, before tiling %s: the tiled expansion is not bit-identical", got, want)
 	}
 }
 
@@ -152,4 +148,18 @@ func TestSpladePool_tiledMatchesWhole(t *testing.T) {
 			}
 		}
 	}
+}
+
+// spladeExpandHashesBeforeTiling are keyed by GOARCH (kernels differ by architecture); only arm64's was captured
+// (testdata/splade-model is not on nobara), so another arch skips the comparison — the model-free
+// TestSpladePool_tiledMatchesWhole still checks the identity there.
+var spladeExpandHashesBeforeTiling = map[string]string{"arm64": "86f33233fdd684488ff4e9465b7e34b4e39cff4128642023664215dbeabbe465"}
+
+func spladeExpandHashBeforeTiling(tb testing.TB) string {
+	tb.Helper()
+	h, ok := spladeExpandHashesBeforeTiling[runtime.GOARCH]
+	if !ok {
+		tb.Skipf("no before-hash recorded for GOARCH=%s", runtime.GOARCH)
+	}
+	return h
 }

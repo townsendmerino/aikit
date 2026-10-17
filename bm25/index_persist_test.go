@@ -46,8 +46,8 @@ func TestBuilder_campaignHashMatchesBuild(t *testing.T) {
 	if b.N() != 20000 {
 		t.Fatalf("N %d after 20,000 Adds", b.N())
 	}
-	if got := campaignHash(b.Build()); got != campaignHashBefore {
-		t.Fatalf("Builder hash %s, Build before the arena %s", got, campaignHashBefore)
+	if got := campaignHash(b.Build()); got != campaignHashBefore(t) {
+		t.Fatalf("Builder hash %s, Build before the arena %s", got, campaignHashBefore(t))
 	}
 }
 
@@ -157,16 +157,16 @@ func TestReadIndex_roundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := campaignHash(heap); got != campaignHashBefore {
-		t.Fatalf("ReadIndex hash %s, want %s", got, campaignHashBefore)
+	if got := campaignHash(heap); got != campaignHashBefore(t) {
+		t.Fatalf("ReadIndex hash %s, want %s", got, campaignHashBefore(t))
 	}
 	mapped, err := LoadIndexMmap(writeTemp(t, blob))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer mapped.Close()
-	if got := campaignHash(mapped); got != campaignHashBefore {
-		t.Fatalf("LoadIndexMmap hash %s, want %s", got, campaignHashBefore)
+	if got := campaignHash(mapped); got != campaignHashBefore(t) {
+		t.Fatalf("LoadIndexMmap hash %s, want %s", got, campaignHashBefore(t))
 	}
 	for name, ix := range map[string]*Index{"heap": heap, "mapped": mapped} {
 		var again bytes.Buffer

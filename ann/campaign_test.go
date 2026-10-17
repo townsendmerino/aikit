@@ -7,6 +7,7 @@ import (
 	"hash"
 	"math"
 	"math/rand/v2"
+	"runtime"
 	"testing"
 )
 
@@ -89,14 +90,8 @@ func campaignHNSWHash(t *testing.T, withBlob bool) string {
 	return hex.EncodeToString(hh.Sum(nil))
 }
 
-// campaignHNSWQueryHashBefore and campaignHNSWBlobHashBefore are campaignHNSWHash without and with the blob bytes,
-// captured on the tree before the build pre-sizing (item 4), whose blob format is v4. Since v5 (item 7) the blob part
-// hashes encodeV4ForTest, a test-only v4 writer, so the hash still proves the built graph unchanged byte for byte.
-const (
-	campaignHNSWQueryHashBefore = "447c723ea62f87e1ea34f77f687c128354dd7e8864039edbbea3e3201a9cba53"
-	campaignHNSWBlobHashBefore  = "3178f09875d1f63869be6d53bb551045ca783b378886bd71d677206d9faf2d73"
-)
-
+// The blob part of the hash is encodeV4ForTest's bytes since v5 (item 7): a test-only v4 writer, so the v4-era capture
+// below still proves the built graph unchanged byte for byte.
 // Item 4: pre-sizing the build changes neither a search result nor a byte of the serialized graph.
 func TestBuildHNSW_campaignHashMatchesBefore(t *testing.T) {
 	if testing.Short() {
@@ -104,11 +99,11 @@ func TestBuildHNSW_campaignHashMatchesBefore(t *testing.T) {
 	}
 	q, b := campaignHNSWHash(t, false), campaignHNSWHash(t, true)
 	t.Logf("query hash %s, blob hash %s", q, b)
-	if q != campaignHNSWQueryHashBefore {
-		t.Errorf("query hash %s, before %s: a search result changed", q, campaignHNSWQueryHashBefore)
+	if q != campaignHNSWQueryHashBefore(t) {
+		t.Errorf("query hash %s, before %s: a search result changed", q, campaignHNSWQueryHashBefore(t))
 	}
-	if b != campaignHNSWBlobHashBefore {
-		t.Errorf("blob hash %s, before %s: the built graph changed", b, campaignHNSWBlobHashBefore)
+	if b != campaignHNSWBlobHashBefore(t) {
+		t.Errorf("blob hash %s, before %s: the built graph changed", b, campaignHNSWBlobHashBefore(t))
 	}
 }
 
@@ -160,4 +155,32 @@ func encodeV4ForTest(h *HNSW) []byte {
 		}
 	}
 	return out
+}
+
+// campaignHNSWQueryHashBefores are campaignHNSWHash without the blob, on the tree before the build pre-sizing (item 4), keyed by GOARCH: the SIMD kernels and the compiler's fused multiply-adds differ by
+// architecture, so each arch has its own capture, each taken on its own pre-change tree — arm64 on the M1 Pro, amd64
+// on nobara (2026-10-17, the pre-change commit checked out with this test file added). An arch with no capture skips.
+var campaignHNSWQueryHashBefores = map[string]string{"arm64": "447c723ea62f87e1ea34f77f687c128354dd7e8864039edbbea3e3201a9cba53", "amd64": "529fc17d0a97dab78d1069bcc971b9ee29f6b42c584f19c5a7e94314345478c7"}
+
+func campaignHNSWQueryHashBefore(tb testing.TB) string {
+	tb.Helper()
+	h, ok := campaignHNSWQueryHashBefores[runtime.GOARCH]
+	if !ok {
+		tb.Skipf("no before-hash recorded for GOARCH=%s", runtime.GOARCH)
+	}
+	return h
+}
+
+// campaignHNSWBlobHashBefores are campaignHNSWHash with the (v4) blob, on the same tree, keyed by GOARCH: the SIMD kernels and the compiler's fused multiply-adds differ by
+// architecture, so each arch has its own capture, each taken on its own pre-change tree — arm64 on the M1 Pro, amd64
+// on nobara (2026-10-17, the pre-change commit checked out with this test file added). An arch with no capture skips.
+var campaignHNSWBlobHashBefores = map[string]string{"arm64": "3178f09875d1f63869be6d53bb551045ca783b378886bd71d677206d9faf2d73", "amd64": "10dfc0501a713ae523c0be54cb21340e6f6497d0252b7e9275e91d9b0cf30dd0"}
+
+func campaignHNSWBlobHashBefore(tb testing.TB) string {
+	tb.Helper()
+	h, ok := campaignHNSWBlobHashBefores[runtime.GOARCH]
+	if !ok {
+		tb.Skipf("no before-hash recorded for GOARCH=%s", runtime.GOARCH)
+	}
+	return h
 }

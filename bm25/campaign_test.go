@@ -109,16 +109,12 @@ func campaignHash(ix *Index) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// campaignHashBefore is campaignHash(Build(campaignCorpus(20000, true))), captured on the tree before the postings
-// arena (task-memory-campaign.md item 3), when each term held its own posting slice.
-const campaignHashBefore = "83b381ce0bcbed9bd23d1574a9016de7f373421ff4f242c4b12609137d52561d"
-
 // Items 3 and 6: Build's results are bit-identical to the pre-arena tree's.
 func TestBuild_campaignHashMatchesBeforeArena(t *testing.T) {
 	got := campaignHash(Build(campaignCorpus(20000, true)))
 	t.Logf("campaign hash %s", got)
-	if got != campaignHashBefore {
-		t.Fatalf("campaign hash %s, before the arena %s: a result changed", got, campaignHashBefore)
+	if got != campaignHashBefore(t) {
+		t.Fatalf("campaign hash %s, before the arena %s: a result changed", got, campaignHashBefore(t))
 	}
 }
 
@@ -151,4 +147,18 @@ func TestBuild_indexBytes(t *testing.T) {
 		t.Fatalf("index holds %d B, not less than before the arena (%d B)", got, indexHeapBefore)
 	}
 	runtime.KeepAlive(docs)
+}
+
+// campaignHashBefores are campaignHash(Build(campaignCorpus(20000, true))) on the tree before the postings arena (item 3), keyed by GOARCH: the SIMD kernels and the compiler's fused multiply-adds differ by
+// architecture, so each arch has its own capture, each taken on its own pre-change tree — arm64 on the M1 Pro, amd64
+// on nobara (2026-10-17, the pre-change commit checked out with this test file added). An arch with no capture skips.
+var campaignHashBefores = map[string]string{"arm64": "83b381ce0bcbed9bd23d1574a9016de7f373421ff4f242c4b12609137d52561d", "amd64": "689b49cc7a151373dee4aa604c9a8ef876cdb5bee42e0ca3cfd1d8d6fb3ced10"}
+
+func campaignHashBefore(tb testing.TB) string {
+	tb.Helper()
+	h, ok := campaignHashBefores[runtime.GOARCH]
+	if !ok {
+		tb.Skipf("no before-hash recorded for GOARCH=%s", runtime.GOARCH)
+	}
+	return h
 }
