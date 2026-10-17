@@ -49,7 +49,7 @@ func (ix *Index) IDF(term string) float64 { return ix.idf(term) }
 // near-hapax tokens that are too rare to predict) before ranking by IDF.
 func (ix *Index) DF(term string) int {
 	if e := ix.entry(term); e != nil {
-		return e.df
+		return int(e.df)
 	}
 	return 0
 }
@@ -176,7 +176,7 @@ func (ix *Index) scoreQuery(query []string) *accum.Accum {
 		// posting loop is free and keeps them live.
 		k1, bb := ix.K1, ix.B
 		k1p1 := k1 + 1
-		for _, p := range e.postings {
+		for _, p := range ix.list(e) {
 			tf := float64(p.tf)
 			denom := tf + k1*(1-bb+bb*ix.norm[p.doc])
 			a.Add(p.doc, idf*(tf*k1p1)/denom)

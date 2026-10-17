@@ -166,14 +166,14 @@ func (ix *Index) topKWANDState(query []string, k int, w *wandState) ([]Result, b
 			continue // one contribution per distinct term, exactly as scoreQuery
 		}
 		e := ix.entry(term)
-		if e == nil || len(e.postings) == 0 {
+		if e == nil || e.df == 0 {
 			continue
 		}
 		idf := ix.idfOf(e)
 		if idf == 0 {
 			continue
 		}
-		pl := e.postings
+		pl := ix.list(e)
 		tf := float64(e.maxTf)
 		ub := idf * (tf * k1p1) / (tf + k1*(1-bb+bb*ix.minNorm(e)))
 		cur = append(cur, wandCursor{post: pl, doc: pl[0].doc, idf: idf, ub: ub * ubSlack})

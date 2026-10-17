@@ -24,7 +24,7 @@ func (ix *Index) scoreReference(query []string) map[int]float64 {
 		if idf == 0 {
 			continue
 		}
-		for _, p := range ix.entry(term).postings {
+		for _, p := range ix.list(ix.entry(term)) {
 			var norm float64
 			if ix.avgdl > 0 {
 				norm = float64(ix.docLen[p.doc]) / ix.avgdl

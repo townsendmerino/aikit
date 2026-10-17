@@ -116,19 +116,19 @@ func TestBuild_termEntryMatchesBruteForce(t *testing.T) {
 			wantMinLen = min(wantMinLen, int32(len(toks)))
 		}
 
-		if e.df != len(wantPostings) {
+		if int(e.df) != len(wantPostings) {
 			t.Errorf("%q: df %d, want %d", term, e.df, len(wantPostings))
 		}
-		if len(e.postings) != len(wantPostings) {
-			t.Fatalf("%q: %d postings, want %d", term, len(e.postings), len(wantPostings))
+		if len(ix.list(e)) != len(wantPostings) {
+			t.Fatalf("%q: %d postings, want %d", term, len(ix.list(e)), len(wantPostings))
 		}
 		for i := range wantPostings {
-			if e.postings[i] != wantPostings[i] {
-				t.Errorf("%q posting %d: %+v, want %+v", term, i, e.postings[i], wantPostings[i])
+			if ix.list(e)[i] != wantPostings[i] {
+				t.Errorf("%q posting %d: %+v, want %+v", term, i, ix.list(e)[i], wantPostings[i])
 			}
 			// Doc-ordered, which the WAND cursors and the touched-run merge both
 			// depend on and neither would obviously fail without.
-			if i > 0 && e.postings[i].doc <= e.postings[i-1].doc {
+			if i > 0 && ix.list(e)[i].doc <= ix.list(e)[i-1].doc {
 				t.Errorf("%q: postings not strictly doc-ordered at %d", term, i)
 			}
 		}

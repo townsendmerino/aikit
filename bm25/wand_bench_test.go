@@ -108,7 +108,7 @@ func BenchmarkWANDQueryLength(b *testing.B) {
 		}
 		postings := 0
 		for _, t := range q {
-			postings += len(ix.entry(t).postings)
+			postings += len(ix.list(ix.entry(t)))
 		}
 		b.Run(fmt.Sprintf("terms%d/exhaustive", terms), func(b *testing.B) {
 			b.Logf("%d postings", postings)

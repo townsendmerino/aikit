@@ -50,20 +50,30 @@ type Index struct {
 	// corpus with 30k distinct terms does not also allocate 30k *termEntry.
 	terms   map[string]int32
 	entries []termEntry
+	// postings is every term's posting list, one after another: entries[i]'s list is
+	// postings[e.off : e.off+e.df], doc-ordered. One flat arena in place of a slice per
+	// term (memory campaign item 3), which spent a 24 B header and ~32% append slack on
+	// each of them; it is also the layout the saved index maps from disk as one block.
+	postings []posting
 }
 
 // termEntry is everything the index knows about one term. Grouping them is the
 // point: a single map probe now reaches the posting list, the document
 // frequency, and the extrema WAND's upper bound is built from.
 type termEntry struct {
-	postings []posting
-	df       int
+	off int64 // start of this term's list in Index.postings
+	df  int32 // the list's length: the number of documents containing the term
 	// maxTf and minLen are the parameter-free extrema item 39's bound is
 	// reconstructed from — see wand.go's termStat, which this absorbed. They are
 	// tracked here as Build goes rather than in a second pass over every posting
 	// list afterwards, which is where they used to come from.
 	maxTf  int32
 	minLen int32
+}
+
+// list returns e's posting list.
+func (ix *Index) list(e *termEntry) []posting {
+	return ix.postings[e.off : e.off+int64(e.df) : e.off+int64(e.df)]
 }
 
 // entry returns the term's data, or nil if the term is not indexed.
@@ -123,6 +133,10 @@ func Build(docs [][]string) *Index {
 	// processed in order, so postings[term] is doc-ordered regardless of the inner
 	// map-iteration order.
 	tf := make(map[string]int, 512)
+	// Each term's postings collect in their own list while documents arrive (a term's
+	// count is not known until the last one), then move into the one arena below.
+	var lists [][]posting
+	nPostings := 0
 	for d, toks := range docs {
 		ix.docLen[d] = len(toks)
 		total += len(toks)
@@ -145,12 +159,14 @@ func Build(docs [][]string) *Index {
 				i = int32(len(ix.entries))
 				ix.terms[strings.Clone(term)] = i
 				ix.entries = append(ix.entries, termEntry{minLen: math.MaxInt32})
+				lists = append(lists, nil)
 			}
 			// Indexed rather than held as a pointer: `ix.entries` may reallocate
 			// on the append above, and a pointer taken before it would dangle.
 			e := &ix.entries[i]
-			e.postings = append(e.postings, posting{doc: int32(d), tf: int32(f)})
+			lists[i] = append(lists[i], posting{doc: int32(d), tf: int32(f)})
 			e.df++
+			nPostings++
 			if tfi := int32(f); tfi > e.maxTf {
 				e.maxTf = tfi
 			}
@@ -158,6 +174,14 @@ func Build(docs [][]string) *Index {
 				e.minLen = l
 			}
 		}
+	}
+	// Compact into the arena: each term's list, in term order, dropped as it is copied.
+	ix.postings = make([]posting, nPostings)
+	var off int64
+	for i := range ix.entries {
+		ix.entries[i].off = off
+		off += int64(copy(ix.postings[off:], lists[i]))
+		lists[i] = nil
 	}
 	if len(docs) > 0 {
 		ix.avgdl = float64(total) / float64(len(docs))
