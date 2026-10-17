@@ -310,13 +310,19 @@ no such consumer has surfaced yet.
 - `bm25.Index.TopKBatch` — batch query API mirroring `ann.FlatI8.QueryBatch`'s
   work-stealing dispatch, for bulk workloads. New surface.
 - `bm25.MarshalTokens` / `bm25.UnmarshalTokens` — a cache for the *tokenized
-  corpus* (`Build`'s input), not a serialized `Index`; `bm25.Index` itself
-  gains no format or compatibility promise from this. Deliberately the
-  smaller half of the deferred N4 persistence question
-  (`docs/internal/roadmap.md` §2.14) — caches roughly half of BM25's measured
-  cold-start cost (tokenization), while `Build` itself still runs on load at
-  its own already-cheap cost. New surface, may be reworked or dropped without
-  touching `Index`.
+  corpus* (`Build`'s input), for callers who rebuild on load. Caches roughly
+  half of BM25's measured cold-start cost (tokenization), while `Build` still
+  runs. New surface, may be reworked or dropped.
+- `bm25.Builder` (`NewBuilder`, `Add`, `N`, `Build`) — builds an `Index` one
+  document at a time, so a build holds the index plus one document instead of
+  the whole tokenized corpus; identical to `bm25.Build` (which is now a loop over
+  it). New in v1.71.0.
+- `bm25.Index.WriteTo` / `bm25.ReadIndex` / `bm25.LoadIndexMmap` /
+  `bm25.Index.Close` — the saved index (roadmap N4). `LoadIndexMmap` reads the
+  postings arena straight from the mapping (no copy, no decode); every load
+  validates the file and returns `bm25.ErrFormat` for a bad one. Format version
+  1; later versions keep reading it (see "Serialized blob formats"). New in
+  v1.71.0.
 - `fuse.RSF` / `fuse.RSFWeighted` / `fuse.Scored` / `fuse.Scores` — new
   relative-score fusion alongside the rank-based `RRF`; new surface, settling.
 - `embed.Truncate` — new Matryoshka (MRL) embedding truncate + L2-renormalize

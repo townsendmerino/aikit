@@ -26,6 +26,24 @@ loader's file through a weak pointer. With the cycle broken (`Tensor.owner` set 
 loaders, 3/3 rounds. Without the test's pre-forward check, the forward over the unmapped weights is a SIGSEGV. BF16 checkpoints are widened
 into the heap, so they were never affected. Found by goinfer's memory campaign (MEM3).
 
+### Added — `bm25.Builder` and a saved BM25 index (`Index.WriteTo`, `ReadIndex`, `LoadIndexMmap`)
+
+`bm25.NewBuilder` / `Builder.Add` / `Builder.N` / `Builder.Build` build an index one document at a time, so a build holds the index under
+construction plus one document instead of the whole tokenized corpus (`Build`'s input, about 5× the finished index). The result is
+identical to `Build`, which is now a loop over it. Measured on a 20,000-document corpus: a `Builder` build allocates 4.4× the finished
+index, against a registered bar of 5×.
+
+The index now has a saved format (roadmap N4, deferred until `Builder` could be decided with it). `(*Index).WriteTo` writes it,
+`bm25.ReadIndex` reads it into the heap, and `bm25.LoadIndexMmap` maps the file and reads the postings arena — the bulk of the index — from
+the mapping with no copy. A mapped load of that corpus adds 0.66 MiB of heap for 14.16 MiB of postings. `(*Index).Close` releases the
+mapping; a query after it panics. Every load validates the file and returns an error wrapping `bm25.ErrFormat` for a bad one. The checks
+cover counts, ranges, list order, per-term statistics, and each document's length against its postings' term frequencies; every
+truncation and every structural byte flip is rejected (fuzzed). Format version 1. Policy: a later version keeps reading version 1. Results
+from either load are bit-identical to the built index's, and re-saving gives the same bytes.
+
+`bm25.ErrFormat`'s message is now "malformed or unsupported serialized data" (it was "… token cache"), since it covers both formats;
+`errors.Is` is unaffected.
+
 ### Changed — `encoder.ModelQ8` reads its word embeddings from the checkpoint mapping, and `Close` now releases it
 
 `LoadWeightsQ8` cloned the f32 word-embedding table onto the heap (89.4 MiB on CodeRankEmbed). It is only ever gathered by row, so

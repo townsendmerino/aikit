@@ -161,7 +161,8 @@ row). The table is only gathered, so the rows are dequantized at gather time. SP
 | 2 Q8 WordEmb from the mapping | `7bfd399` | PASS: hash identical; heap after load 200.0 → 110.5 MiB |
 | 3 BM25 postings arena | `74a9365` | PASS: hash identical; index 18.66 → 14.89 MiB; Build +5.6% (flagged for perfgate) |
 | 4 HNSW build pre-sizing | `e9f1c41` | PASS: query and blob hashes identical; allocations per Add 69 → 2 |
-| 5 D6 | (this commit) | STOPPED before the change — see below |
+| 5 D6 | `a25abff` | STOPPED before the change — see below |
+| 6 MEM14 Builder + saved index | (this commit) | PASS: Builder hash identical; allocates 4.38× the index (bar 5×); mapped load +0.66 MiB heap (bound 1.18); round trips identical; damage rejected (one gap found and closed: docLen now tied to the tf sums) |
 
 ### Item 5 (D6): stopped before making the release real
 

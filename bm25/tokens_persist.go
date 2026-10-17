@@ -1,6 +1,7 @@
 // Package bm25's tokens_persist.go is a cache for a TOKENIZED CORPUS — the
 // [][]string that Tokenize / TokenizePlain produce and Build consumes — not a
-// serialized Index.
+// serialized Index. (Since v1.71.0 the Index has a saved format of its own,
+// index_persist.go; this cache remains for callers who rebuild on load.)
 //
 // docs/internal/perf-amdahl-linux-amd64.md's W3 cold-start measurement (on
 // examples/embedded-corpus's real 1,747-chunk corpus) found Build itself is
@@ -37,15 +38,16 @@ import (
 	"github.com/townsendmerino/aikit/internal/cursor"
 )
 
-// ErrFormat is returned (wrapped) by UnmarshalTokens when the input is not a
-// valid serialized token cache: a bad magic, an unsupported format version,
-// or a truncated/inconsistent blob. Test with errors.Is:
+// ErrFormat is returned (wrapped) by UnmarshalTokens, ReadIndex and
+// LoadIndexMmap when the input is not valid serialized data: a bad magic, an
+// unsupported format version, or a truncated/inconsistent blob. Test with
+// errors.Is:
 //
 //	docs, err := bm25.UnmarshalTokens(blob)
 //	if errors.Is(err, bm25.ErrFormat) {
 //		// the bytes are not a usable token cache (corrupt, or a newer format)
 //	}
-var ErrFormat = errors.New("bm25: malformed or unsupported token cache")
+var ErrFormat = errors.New("bm25: malformed or unsupported serialized data")
 
 func errFormatf(format string, args ...any) error {
 	return fmt.Errorf(format+": %w", append(args, ErrFormat)...)

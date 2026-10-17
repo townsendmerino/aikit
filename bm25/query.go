@@ -2,6 +2,7 @@ package bm25
 
 import (
 	"math"
+	"runtime"
 	"slices"
 
 	"github.com/townsendmerino/aikit/internal/accum"
@@ -60,6 +61,8 @@ func (ix *Index) Scores(query []string) []float64 {
 	// Public API: must return a dense slice indexed by doc id, so this materializes
 	// one from the touched set. TopK does NOT go through here — it selects over the
 	// touched ids directly, which is the whole point of item 11.
+	ix.checkOpen()
+	defer runtime.KeepAlive(ix) // a mapped index's postings alias its mapping; see LoadIndexMmap
 	a := ix.scoreQuery(query)
 	defer accum.Put(a)
 	out := make([]float64, ix.N())
@@ -91,6 +94,8 @@ func (ix *Index) TopK(query []string, k int) []Result {
 	// bit for bit — so this is a pure implementation swap, not a mode. It
 	// declines for parameters that would invalidate its bound, and for k<0,
 	// which asks for every scoring document and so has nothing to prune.
+	ix.checkOpen()
+	defer runtime.KeepAlive(ix) // a mapped index's postings alias its mapping; see LoadIndexMmap
 	if k >= 0 {
 		if out, ok := ix.topKWAND(query, k); ok {
 			return out

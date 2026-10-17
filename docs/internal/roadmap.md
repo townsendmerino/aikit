@@ -345,6 +345,13 @@ duplication. One deduplication earns immediate work; the rest is gated (§2).
    roughly half the measured cost (~8.8 ms) as a low-commitment opt-in; full N4
    (serializing `Index` itself, eliminating the other half) and N6
    (`Builder.Add`) remain gated exactly as before, same trigger.
+   *✅ Shipped together, v1.71.0 (2026-10-17), as the memory campaign's MEM14:*
+   `bm25.Builder` (N6) and the saved index (N4: `Index.WriteTo`, `ReadIndex`,
+   `LoadIndexMmap`), decided as one API review, as this entry asked. The
+   format and its version-skew policy came first (`bm25/index_persist.go`:
+   versioned, magic-tagged, a later version keeps reading v1, a reserved flags
+   word for additive change); the postings arena it maps from disk is item 3's.
+   Gates and numbers: `docs/internal/task-memory-campaign.md` items 3 and 6.
 
 ---
 
