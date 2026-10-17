@@ -93,15 +93,9 @@ func (s *SPLADE) expandIDs(ids []int32) sparse.SparseVec {
 	gelu(t)
 	layerNorm(t, s.transLNW, s.transLNB, L, D, s.bert.cfg.LNEps)
 
-	// Vocabulary logits = t · decoderWᵀ + decoderB → [L, V].
-	//
-	// Fanned across the V columns, not the L rows: L is a query length here (a
-	// handful of tokens is normal), so the trunk's row split has nothing to
-	// split, while V=30522 always does. Bit-identical to the serial fill — see
-	// matmulBTColsInto.
-	logits := make([]float32, L*V)
-	matmulBTColsInto(t, s.decoderW, logits, L, D, V)
-	addBias(logits, s.decoderB, L, V)
+	// Vocabulary logits = t · decoderWᵀ + decoderB, max-pooled over the tokens.
+	pooled := make([]float32, V)
+	spladePoolInto(pooled, t, s.decoderW, s.decoderB, L, D, V)
 
 	// SPLADE pooling: max over tokens of log(1 + relu(logit)).
 	//
@@ -117,15 +111,6 @@ func (s *SPLADE) expandIDs(ids []int32) sparse.SparseVec {
 	// item 2). The saving scales with positive density, so it is largest on the
 	// dense-logit models and smaller on a trained SPLADE, whose logits are mostly
 	// negative by construction.
-	pooled := make([]float32, V)
-	for i := range L {
-		row := logits[i*V : (i+1)*V]
-		for v, x := range row {
-			if x > pooled[v] {
-				pooled[v] = x // raw max; log1p applied below
-			}
-		}
-	}
 	log1pPoolInto(pooled)
 	var out sparse.SparseVec
 	for v, w := range pooled {
@@ -135,4 +120,40 @@ func (s *SPLADE) expandIDs(ids []int32) sparse.SparseVec {
 		}
 	}
 	return out
+}
+
+// spladeTileRows is how many tokens' vocabulary logits spladePoolInto holds at once. The whole L × V matrix
+// was 59.6 MiB at L = 512 (V = 30,522) and existed only to be max-reduced; a tile of rows is enough, because
+// the max over rows can be folded in tile by tile. 32 is the matmul's own row block (linalg mBlockDefault), so
+// the 47 MB decoder table is streamed once per tile, as often as the whole-matrix call streamed it; 16 rows
+// streamed it twice as often and measured ~2% slower at L = 256 (in-process bench, M1 Pro, 2026-10-17).
+const spladeTileRows = 32
+
+// spladePoolInto sets pooled[v] = max(0, max_i logit[i][v]) over the L rows of t (L × D), where logit = t ·
+// decoderWᵀ + decoderB (V × D and V), one tile of spladeTileRows rows at a time. pooled must be zero on entry;
+// log1p is the caller's (see expandIDs).
+//
+// Bit-identical to computing the whole matrix first. Each logit is the same number either way: MatmulBT is
+// M-invariant (an output element does not depend on how many rows are computed with it; see linalg.MatmulBT
+// and TestMatmulBT_MConsistent), and the bias add is elementwise. The max is order-free over non-NaN values,
+// and `x > pooled[v]` skips a NaN in both forms. TestSpladePool_tiledMatchesWhole pins it on synthetic heads.
+//
+// Fanned across the V columns, not the L rows: L is a query length here (a handful of tokens is normal), so the
+// trunk's row split has nothing to split, while V = 30522 always does. Bit-identical to the serial fill (see
+// matmulBTColsInto).
+func spladePoolInto(pooled, t, decoderW, decoderB []float32, L, D, V int) {
+	logits := make([]float32, min(L, spladeTileRows)*V)
+	for r0 := 0; r0 < L; r0 += spladeTileRows {
+		n := min(spladeTileRows, L-r0)
+		tile := logits[:n*V]
+		matmulBTColsInto(t[r0*D:(r0+n)*D], decoderW, tile, n, D, V)
+		addBias(tile, decoderB, n, V)
+		for i := range n {
+			for v, x := range tile[i*V : (i+1)*V] {
+				if x > pooled[v] {
+					pooled[v] = x // raw max; log1p applied by the caller
+				}
+			}
+		}
+	}
 }
