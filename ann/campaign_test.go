@@ -83,18 +83,15 @@ func campaignHNSWHash(t *testing.T, withBlob bool) string {
 		h := BuildHNSW(vecs, cfg)
 		campaignQueryHash(hh, h)
 		if withBlob {
-			blob, err := h.MarshalBinary()
-			if err != nil {
-				t.Fatal(err)
-			}
-			hh.Write(blob)
+			hh.Write(encodeV4ForTest(h))
 		}
 	}
 	return hex.EncodeToString(hh.Sum(nil))
 }
 
 // campaignHNSWQueryHashBefore and campaignHNSWBlobHashBefore are campaignHNSWHash without and with the blob bytes,
-// captured on the tree before the build pre-sizing (item 4), whose blob format is v4.
+// captured on the tree before the build pre-sizing (item 4), whose blob format is v4. Since v5 (item 7) the blob part
+// hashes encodeV4ForTest, a test-only v4 writer, so the hash still proves the built graph unchanged byte for byte.
 const (
 	campaignHNSWQueryHashBefore = "447c723ea62f87e1ea34f77f687c128354dd7e8864039edbbea3e3201a9cba53"
 	campaignHNSWBlobHashBefore  = "3178f09875d1f63869be6d53bb551045ca783b378886bd71d677206d9faf2d73"
@@ -130,4 +127,37 @@ func TestHNSW_allocsPerAdd(t *testing.T) {
 		})
 		t.Logf("int8=%v: %.2f allocations per Add (vectors 4,001-5,000)", int8, allocs)
 	}
+}
+
+// encodeV4ForTest writes h in the v4 layout MarshalBinary used before v5 (item 7): the same header and vectors, no
+// int8 scale pad, and the graph as per-node layer/count/ids runs. Only for comparing against v4-era hashes.
+func encodeV4ForTest(h *HNSW) []byte {
+	b, err := h.MarshalBinary()
+	if err != nil {
+		panic(err)
+	}
+	binary.LittleEndian.PutUint32(b[4:], hnswV4)
+	vecEnd := hnswHeaderBytes + h.count()*h.dim*4
+	if h.int8 {
+		vecEnd = hnswHeaderBytes + len(h.bq) + len(h.scales)*4
+		codesEnd := hnswHeaderBytes + len(h.bq)
+		b = append(b[:codesEnd:codesEnd], b[codesEnd+pad4(len(h.bq)):]...) // drop the v5 pad
+	}
+	out := append([]byte{}, b[:vecEnd]...)
+	var w [4]byte
+	put := func(v int) {
+		binary.LittleEndian.PutUint32(w[:], uint32(int32(v)))
+		out = append(out, w[:]...)
+	}
+	for d := range h.count() {
+		put(h.nodeLayer(d))
+		for l := 0; l <= h.nodeLayer(d); l++ {
+			nb := h.nbrs(d, l)
+			put(len(nb))
+			for _, id := range nb {
+				put(int(id))
+			}
+		}
+	}
+	return out
 }

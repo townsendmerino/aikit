@@ -286,9 +286,10 @@ no such consumer has surfaced yet.
 - `ann.HNSW.MarshalBinary` / `ann.Load` — index persistence (the
   `//go:embed`-an-index pattern). The serialized format is versioned from day one
   but stays Experimental until the graph internals settle.
-- `ann.LoadHNSWMmap` — zero-copy mmap loader for HNSW (aliases the float32
-  vector block directly from a read-only mapping), added alongside the v4
-  format bump. Covered by `ann.Load`'s existing Experimental status above.
+- `ann.LoadHNSWMmap` — zero-copy mmap loader for HNSW: aliases the vectors and,
+  from a v5 blob (v1.71.0), the graph and int8 scales too, so a mapped load
+  costs almost no heap. Covered by `ann.Load`'s existing Experimental status
+  above.
 - `ann.FlatI8` / `ann.NewFlatI8` — int8-quantized dense index (¼ the memory,
   scored via the W8A8 kernel). Same `Hit`/`Query` shape as `Flat`; new surface, so
   Experimental.
@@ -495,31 +496,23 @@ promise and may change in any release until it graduates.
 
 ### Serialized blob formats
 
-The persisted index blobs (`ann.HNSW` / `ann.FlatI8` `MarshalBinary`) are
-magic-tagged and versioned. **Policy: rebuild per minor** — a blob is not a
-stable cross-version interchange format; re-serialize your index after an
-aikit minor upgrade. The safety net is loud, not silent: `Load*` rejects any
-version it doesn't recognize with `ann.ErrFormat` (never a crash or a
-misread), so a stale blob fails visibly and you regenerate. The format
-version is bumped freely when the layout improves. If you `//go:embed` blobs
-in your own releases, pin the aikit minor or rebuild in your pipeline (a
-`go generate` step, as [`examples/embedded-corpus`](examples/embedded-corpus)
-does).
+The persisted formats (`ann.HNSW` and `ann.FlatI8` `MarshalBinary`, the saved `bm25.Index`) are magic-tagged and
+versioned, and every load rejects a version it does not read with `ann.ErrFormat` / `bm25.ErrFormat` — loud, never a
+crash or a misread.
 
-**This was originally planned to tighten "at 1.0"** (read N−1, or
-reserved-field forward-compatibility). That milestone has passed — aikit is
-well past 1.0 now — without the tightening actually happening: rebuild-per-
-minor is still the real policy. HNSW's v4 bump reserves a header flags word
-as the mechanism for it (`ann/hnsw_persist.go`'s format note), and FlatI8's
-own format-bump checklist has the equivalent item pending — the plumbing
-exists, the guarantee doesn't yet. Read "at 1.0" here as retired language
-describing an unmet trigger, not a promise that was honored on schedule.
+Per format:
 
-That same v4 bump also padded HNSW's header to an 8-byte boundary, which is what lets
-[`ann.LoadHNSWMmap`](ann/hnsw_mmap.go) alias the float32 vector block directly from a
-read-only mapping instead of copying it — the zero-copy loader `ann.LoadFlatI8Mmap`
-already had, now mirrored on the higher-recall index (`ann.FlatI8`'s int8 codes never
-needed the alignment fix; HNSW's f32 vectors did).
+- `ann.HNSW`: **v5 and v4 both load** (since v1.71.0). v5 stores the graph as CSR — offsets plus one flat id
+  array — which [`ann.LoadHNSWMmap`](ann/hnsw_mmap.go) aliases from the mapping along with the vectors, so a mapped
+  load costs almost no heap. v4 (v1.x before it) keeps loading because indexes on disk outlive the release that
+  wrote them (ken keeps its indexes across aikit upgrades); saving a loaded v4 index writes v5.
+- `bm25.Index`: version 1 (new in v1.71.0); its postings arena maps from disk. A later version keeps reading
+  version 1 (`bm25/index_persist.go`).
+- `ann.FlatI8`: **rebuild per minor** — `Load*` rejects any other version, so re-serialize after an aikit minor
+  upgrade, or pin the minor if you `//go:embed` blobs (as [`examples/embedded-corpus`](examples/embedded-corpus)
+  does with a `go generate` step).
+
+The reserved header flags word in each format is the way to extend a version additively without a bump.
 
 ## License
 

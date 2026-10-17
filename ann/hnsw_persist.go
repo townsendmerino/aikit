@@ -17,19 +17,28 @@ import (
 //	dim, ndocs, m, m0, efConstruction, efSearch, entry, maxLayer  (int32 each)
 //	mL float64 | seed uint64 | heuristic uint8 (0/1) | int8 uint8 (0/1)
 //	pad: 2 zero bytes (so the vector block below starts 8-byte aligned)
-//	vectors:  int8 mode → ndocs×dim int8 codes + ndocs float32 scales;
+//	vectors:  int8 mode → ndocs×dim int8 codes, zero pad to a multiple of 4 (v5), ndocs float32 scales;
 //	          else      → ndocs × dim float32 (little-endian, row-major)
-//	graph:    per node — layer int32, then for l in 0..layer:
+//	graph (v5, CSR): listStart (ndocs+1) × uint32 | idOff (nLists+1) × uint32 | ids nIDs × int32
+//	          node d's layer lists are lists listStart[d] … listStart[d+1]-1, layer 0 first;
+//	          list i is ids[idOff[i]:idOff[i+1]]; nLists = listStart[ndocs], nIDs = idOff[nLists]
+//	graph (v4): per node — layer int32, then for l in 0..layer:
 //	          nbrCount int32, then nbrCount × neighbor id int32
 //
 // All integers little-endian. entry is int32 (it is -1 for an empty index); every
 // other count is non-negative. Load validates every length against the bytes that
 // remain, so a corrupt or hostile blob returns an error rather than panicking or
 // over-allocating.
-// Format-stability policy (pre-1.0): rebuild-per-minor — a blob is not a stable
-// cross-version interchange format; Load rejects any other version with ErrFormat
-// (loud, never a silent misread), so callers regenerate. See README "Serialized blob
-// formats".
+// Format-stability policy: Load reads v5 (written since v1.71.0) and v4 (v1.x before
+// it), because indexes on disk outlive the release that wrote them (ken keeps them);
+// it rejects any other version with ErrFormat (loud, never a silent misread). See
+// README "Serialized blob formats".
+//
+// v5 (memory campaign item 7) changed only the graph: v4's per-node runs of
+// layer/count/ids became three flat, 4-byte-aligned arrays, which LoadHNSWMmap aliases
+// from the mapping instead of copying (and Load copies as three allocations), and the
+// int8 scales are padded to 4-byte alignment so they alias too. A v4 blob loads into the
+// same in-memory form; saving it again writes v5.
 //
 // v4's format bump (was v3) bundled the two items the FORMAT-BUMP CHECKLIST had
 // named as one deliberate future bump, so this note documents what landed rather
@@ -46,7 +55,8 @@ import (
 //     this bump; only f32 mode needed it.
 const (
 	hnswMagic   uint32 = 0x484E5357 // "HNSW"
-	hnswVersion uint32 = 4          // v4 added the reserved flags word + alignment pad (see above)
+	hnswVersion uint32 = 5          // v5: the graph as CSR (see above); v4 added the reserved flags word + alignment pad
+	hnswV4      uint32 = 4          // still read
 	// rngSplit matches NewHNSW's PCG seeding so a loaded index re-creates an
 	// equivalently-seeded rng (for Add-after-load).
 	rngSplit uint64 = 0x9e3779b97f4a7c15
@@ -60,19 +70,24 @@ var hnswPad [2]byte
 // each neighbor id is 4 bytes and each node costs 4 for its layer plus 4 per
 // layer for that layer's count.
 func (h *HNSW) blobSize() int {
-	nNbr, nLayers := 0, 0
-	for _, nd := range h.nodes {
-		nLayers += len(nd.nbrs)
-		for _, l := range nd.nbrs {
-			nNbr += len(l)
+	n := h.count()
+	nNbr, nLists := 0, 0
+	for d := range n {
+		layer := h.nodeLayer(d)
+		nLists += layer + 1
+		for l := 0; l <= layer; l++ {
+			nNbr += len(h.nbrs(d, l))
 		}
 	}
-	vecBytes := h.count() * h.dim * 4
+	vecBytes := n * h.dim * 4
 	if h.int8 {
-		vecBytes = len(h.bq) + len(h.scales)*4
+		vecBytes = len(h.bq) + pad4(len(h.bq)) + len(h.scales)*4
 	}
-	return hnswHeaderBytes + vecBytes + len(h.nodes)*4 + nLayers*4 + nNbr*4
+	return hnswHeaderBytes + vecBytes + (n+1)*4 + (nLists+1)*4 + nNbr*4
 }
+
+// pad4 is the zero padding that takes n bytes to a multiple of 4.
+func pad4(n int) int { return (4 - n%4) % 4 }
 
 // hnswHeaderBytes is the fixed prefix: magic+version+flags+8 int32 config
 // scalars (11×4), mL and seed (2×8), heuristic and int8 mode (2×1), then a
@@ -163,6 +178,7 @@ func (h *HNSW) encode(bw *hblobWriter) {
 			// aliasing argument as flat_i8_persist.go:64.
 			bw.raw(unsafe.Slice((*byte)(unsafe.Pointer(&h.bq[0])), len(h.bq)))
 		}
+		bw.raw(hnswPad4[:pad4(len(h.bq))]) // v5: so the scales start 4-byte aligned
 		bw.f32s(h.scales)
 	} else {
 		// f32 is encoded, not aliased: unlike int8 a float32 view would bake in
@@ -171,14 +187,40 @@ func (h *HNSW) encode(bw *hblobWriter) {
 			bw.f32s(v)
 		}
 	}
-	for _, nd := range h.nodes {
-		bw.puti(nd.layer)
-		for l := 0; l <= nd.layer; l++ {
-			bw.puti(len(nd.nbrs[l]))
-			bw.i32s(nd.nbrs[l])
+	// v5 graph: listStart, idOff, ids — written from either representation, without building the arrays.
+	n := h.count()
+	var acc uint64
+	bw.u32(0)
+	for d := range n {
+		acc += uint64(h.nodeLayer(d) + 1)
+		bw.u32(bw.within(acc))
+	}
+	acc = 0
+	bw.u32(0)
+	for d := range n {
+		for l := 0; l <= h.nodeLayer(d); l++ {
+			acc += uint64(len(h.nbrs(d, l)))
+			bw.u32(bw.within(acc))
+		}
+	}
+	for d := range n {
+		for l := 0; l <= h.nodeLayer(d); l++ {
+			bw.i32s(h.nbrs(d, l))
 		}
 	}
 }
+
+// within returns v as a uint32, or records an error (and returns 0) when the graph is too large for v5's 32-bit
+// offsets — over 4,294,967,295 lists or neighbor ids, far beyond any index this package can hold in memory.
+func (b *hblobWriter) within(v uint64) uint32 {
+	if v > math.MaxUint32 && b.err == nil {
+		b.err = errFormatf("ann: HNSW graph exceeds the v5 format's 2^32-1 offsets")
+	}
+	return uint32(v)
+}
+
+// hnswPad4 is the v5 int8 code block's alignment pad — always zero.
+var hnswPad4 [3]byte
 
 // hblobWriter is the encoder target for both serialization surfaces.
 //
@@ -383,37 +425,9 @@ func (c *hcur) cfg(name string) int {
 	return int(v)
 }
 
-// i32Arena hands out non-overlapping sub-slices of one backing array. Each
-// sub-slice is capped at its own length (a full three-index slice) so appending
-// to one can never write into the next.
-//
-// take falls back to a fresh allocation when the arena is exhausted rather than
-// panicking. That keeps the arena a pure optimization: a mis-sized or skipped
-// pre-pass costs allocations, never correctness.
-type i32Arena struct{ buf []int32 }
-
-func (a *i32Arena) take(n int) []int32 {
-	if n > cap(a.buf)-len(a.buf) {
-		return make([]int32, n)
-	}
-	s := a.buf[len(a.buf) : len(a.buf)+n : len(a.buf)+n]
-	a.buf = a.buf[:len(a.buf)+n]
-	return s
-}
-
-// takeLayers is the same idea for the per-node [][]int32 header slices.
-func takeLayers(arena *[][]int32, n int) [][]int32 {
-	if n > cap(*arena)-len(*arena) {
-		return make([][]int32, n)
-	}
-	s := (*arena)[len(*arena) : len(*arena)+n : len(*arena)+n]
-	*arena = (*arena)[:len(*arena)+n]
-	return s
-}
-
 // scanGraph walks the graph section from pos without allocating and returns the
-// exact number of neighbor ids and per-layer slices it contains, so Load can size
-// its two arenas in one shot.
+// exact number of neighbor ids and per-layer lists it contains, so a v4 load can
+// size its CSR arrays in one shot.
 //
 // It cannot use a byte-count upper bound instead: ids are 4 bytes each in the blob
 // so remaining/4 bounds them tightly, but each [][]int32 header is 24 bytes in
@@ -469,8 +483,9 @@ func loadHNSW(data []byte, alias bool) (*HNSW, error) {
 	if c.U32() != hnswMagic {
 		return nil, errFormatf("ann: not an HNSW blob (bad magic)")
 	}
-	if v := c.U32(); v != hnswVersion {
-		return nil, errFormatf("ann: unsupported HNSW format version %d (want %d)", v, hnswVersion)
+	version := c.U32()
+	if version != hnswVersion && version != hnswV4 {
+		return nil, errFormatf("ann: unsupported HNSW format version %d (want %d or %d)", version, hnswVersion, hnswV4)
 	}
 	_ = c.U32() // reserved flags (v4) — read to advance the cursor, ignored: no flag bit is defined yet
 	dim := c.readLen()
@@ -517,9 +532,16 @@ func loadHNSW(data []byte, alias bool) (*HNSW, error) {
 		} else {
 			bq = c.int8s(ndocs * dim)
 		}
-		scales = make([]float32, ndocs)
-		for i := range scales {
-			scales[i] = c.F32()
+		if version >= hnswVersion {
+			_ = c.Bytes(pad4(ndocs * dim)) // v5: the scales start 4-byte aligned
+		}
+		if alias && version >= hnswVersion {
+			scales = aliasU32s[float32](c, ndocs)
+		} else {
+			scales = make([]float32, ndocs)
+			for i := range scales {
+				scales[i] = c.F32()
+			}
 		}
 	} else {
 		// Overflow-safe product guard, mirroring the int8 branch above:
@@ -564,28 +586,11 @@ func loadHNSW(data []byte, alias bool) (*HNSW, error) {
 	if c.Err != nil {
 		return nil, c.Err
 	}
-	// The graph was 2 allocations per node — one [][]int32 of layer headers and one
-	// []int32 per layer — so a 1M-doc index cost >2.1M allocations to load a
-	// structure that is one contiguous run of int32s in the blob. Two arenas,
-	// sized by a non-allocating pre-pass, make it 2. scanGraph returns ok=false on
-	// a truncated blob, which leaves both arenas empty; take() then falls back to
-	// make() and the read below produces exactly the error it always did.
-	nIDs, nLayers, _ := scanGraph(c.B, c.Pos, ndocs)
-	idArena := i32Arena{buf: make([]int32, 0, nIDs)}
-	layerArena := make([][]int32, 0, nLayers)
-	nodes := make([]hnswNode, ndocs)
-	for d := range nodes {
-		layer := c.readLen()
-		nbrs := takeLayers(&layerArena, layer+1)
-		for l := 0; l <= layer; l++ {
-			cnt := c.readLen()
-			ids := idArena.take(cnt)
-			for i := range ids {
-				ids[i] = int32(c.U32())
-			}
-			nbrs[l] = ids
-		}
-		nodes[d] = hnswNode{layer: layer, nbrs: nbrs}
+	var g *hnswCSR
+	if version == hnswV4 {
+		g = readGraphV4(c, ndocs)
+	} else {
+		g = readGraphV5(c, ndocs, alias)
 	}
 	if c.Err != nil {
 		return nil, c.Err
@@ -593,33 +598,8 @@ func loadHNSW(data []byte, alias bool) (*HNSW, error) {
 	if c.Pos != len(c.B) {
 		return nil, errFormatf("ann: HNSW blob has %d trailing bytes", len(c.B)-c.Pos)
 	}
-
-	// Validate graph integrity: Query indexes vecs[id] and nodes[id].nbrs[layer]
-	// directly, so a blob with out-of-range ids or layer-inconsistent edges would
-	// panic mid-query. Reject it here instead.
-	if ndocs == 0 {
-		if entry != -1 {
-			return nil, errFormatf("ann: empty HNSW must have entry -1, got %d", entry)
-		}
-	} else {
-		if entry < 0 || entry >= ndocs {
-			return nil, errFormatf("ann: HNSW entry %d out of [0,%d)", entry, ndocs)
-		}
-		if maxLayer > nodes[entry].layer {
-			return nil, errFormatf("ann: HNSW maxLayer %d exceeds entry-node layer %d", maxLayer, nodes[entry].layer)
-		}
-	}
-	for d := range nodes {
-		for l := 0; l <= nodes[d].layer; l++ {
-			for _, id := range nodes[d].nbrs[l] {
-				if id < 0 || int(id) >= ndocs {
-					return nil, errFormatf("ann: HNSW node %d layer %d neighbor id %d out of [0,%d)", d, l, id, ndocs)
-				}
-				if nodes[id].layer < l {
-					return nil, errFormatf("ann: HNSW node %d layer %d links node %d, which exists only to layer %d", d, l, id, nodes[id].layer)
-				}
-			}
-		}
+	if err := validateGraph(g, ndocs, entry, maxLayer); err != nil {
+		return nil, err
 	}
 
 	return &HNSW{
@@ -627,7 +607,7 @@ func loadHNSW(data []byte, alias bool) (*HNSW, error) {
 		int8:           int8mode,
 		bq:             bq,
 		scales:         scales,
-		nodes:          nodes,
+		csr:            g,
 		dim:            dim,
 		m:              m,
 		m0:             m0,
@@ -640,4 +620,128 @@ func loadHNSW(data []byte, alias bool) (*HNSW, error) {
 		heuristic:      heuristic,
 		rng:            rand.New(rand.NewPCG(seed, seed^rngSplit)),
 	}, nil
+}
+
+// readGraphV4 reads v4's per-node graph runs into the CSR form. scanGraph sizes the three arrays exactly in one
+// non-allocating pass; on a truncated blob it reports !ok and the arrays grow by append instead, and the read below
+// ends in the error the cursor records.
+func readGraphV4(c *hcur, ndocs int) *hnswCSR {
+	nIDs, nLists, _ := scanGraph(c.B, c.Pos, ndocs)
+	g := &hnswCSR{listStart: make([]uint32, 1, ndocs+1), idOff: make([]uint32, 1, nLists+1), ids: make([]int32, 0, nIDs)}
+	for range ndocs {
+		layer := c.readLen()
+		for l := 0; l <= layer && c.Err == nil; l++ {
+			cnt := c.readLen()
+			for range cnt {
+				g.ids = append(g.ids, int32(c.U32()))
+			}
+			g.idOff = append(g.idOff, uint32(len(g.ids)))
+		}
+		if c.Err != nil {
+			return g
+		}
+		g.listStart = append(g.listStart, uint32(len(g.idOff)-1))
+	}
+	return g
+}
+
+// readGraphV5 reads v5's three CSR arrays, aliasing them from c's bytes (alias) or decoding copies. Each array's
+// length comes from the one before it and is checked against the bytes that remain before anything is allocated;
+// validateGraph checks their contents.
+func readGraphV5(c *hcur, ndocs int, alias bool) *hnswCSR {
+	read := func(n int) []uint32 {
+		if c.Err == nil && n > c.Remaining()/4 {
+			c.Err = errFormatf("ann: HNSW graph array of %d entries exceeds remaining bytes", n)
+		}
+		if c.Err != nil {
+			return nil
+		}
+		if alias {
+			return aliasU32s[uint32](c, n)
+		}
+		out := make([]uint32, n)
+		for i := range out {
+			out[i] = c.U32()
+		}
+		return out
+	}
+	g := &hnswCSR{listStart: read(ndocs + 1)}
+	if c.Err != nil {
+		return g
+	}
+	g.idOff = read(int(g.listStart[ndocs]) + 1)
+	if c.Err != nil {
+		return g
+	}
+	ids := read(int(g.idOff[len(g.idOff)-1]))
+	if len(ids) > 0 {
+		g.ids = unsafe.Slice((*int32)(unsafe.Pointer(&ids[0])), len(ids))
+	}
+	return g
+}
+
+// aliasU32s returns the next n 4-byte little-endian values of c as a []T aliasing c's bytes, which must be 4-byte
+// aligned there (the v5 layout guarantees it relative to a page-aligned mapping). Like the f32 vector alias, it
+// assumes a little-endian host.
+func aliasU32s[T uint32 | float32](c *hcur, n int) []T {
+	raw := c.Bytes(n * 4)
+	if c.Err != nil || n == 0 {
+		return nil
+	}
+	if uintptr(unsafe.Pointer(&raw[0]))%4 != 0 {
+		c.Err = errFormatf("ann: HNSW blob section is not 4-byte aligned in the mapping")
+		return nil
+	}
+	return unsafe.Slice((*T)(unsafe.Pointer(&raw[0])), n)
+}
+
+// validateGraph checks everything a query relies on, since Query indexes the arrays directly: offsets start at 0
+// and never decrease, every node has at least its layer-0 list, the last offsets match the array lengths, every
+// neighbor id is in range and exists at the layer that links it, and the entry point is consistent.
+func validateGraph(g *hnswCSR, ndocs, entry, maxLayer int) error {
+	if len(g.listStart) != ndocs+1 || g.listStart[0] != 0 {
+		return errFormatf("ann: HNSW graph has a bad node table")
+	}
+	for d := range ndocs {
+		if g.listStart[d+1] <= g.listStart[d] {
+			return errFormatf("ann: HNSW node %d has no layer-0 list", d)
+		}
+	}
+	if len(g.idOff) != int(g.listStart[ndocs])+1 || g.idOff[0] != 0 {
+		return errFormatf("ann: HNSW graph has a bad list table")
+	}
+	for i := 1; i < len(g.idOff); i++ {
+		if g.idOff[i] < g.idOff[i-1] {
+			return errFormatf("ann: HNSW list %d ends before it starts", i-1)
+		}
+	}
+	if int(g.idOff[len(g.idOff)-1]) != len(g.ids) {
+		return errFormatf("ann: HNSW list table covers %d of %d ids", g.idOff[len(g.idOff)-1], len(g.ids))
+	}
+	layerOf := func(d int) int { return int(g.listStart[d+1]-g.listStart[d]) - 1 }
+	if ndocs == 0 {
+		if entry != -1 {
+			return errFormatf("ann: empty HNSW must have entry -1, got %d", entry)
+		}
+		return nil
+	}
+	if entry < 0 || entry >= ndocs {
+		return errFormatf("ann: HNSW entry %d out of [0,%d)", entry, ndocs)
+	}
+	if maxLayer > layerOf(entry) {
+		return errFormatf("ann: HNSW maxLayer %d exceeds entry-node layer %d", maxLayer, layerOf(entry))
+	}
+	for d := range ndocs {
+		for l := 0; l <= layerOf(d); l++ {
+			for _, id := range g.list(g.listStart[d] + uint32(l)) {
+				if id < 0 || int(id) >= ndocs {
+					return errFormatf("ann: HNSW node %d layer %d neighbor id %d out of [0,%d)", d, l, id, ndocs)
+				}
+				if layerOf(int(id)) < l {
+					return errFormatf("ann: HNSW node %d layer %d links node %d, which exists only to layer %d", d, l, id, layerOf(int(id)))
+				}
+			}
+		}
+	}
+	return nil
 }

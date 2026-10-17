@@ -26,6 +26,19 @@ loader's file through a weak pointer. With the cycle broken (`Tensor.owner` set 
 loaders, 3/3 rounds. Without the test's pre-forward check, the forward over the unmapped weights is a SIGSEGV. BF16 checkpoints are widened
 into the heap, so they were never affected. Found by goinfer's memory campaign (MEM3).
 
+### Changed — HNSW blob format v5: the graph is stored, loaded and mapped as CSR; v4 blobs still load
+
+The serialized graph was per-node runs of layer, count and ids, decoded into per-node slices (~58 B of slice headers per node, plus the
+ids, all on the heap even under `LoadHNSWMmap`). v5 stores it as three flat arrays — per-node list starts, per-list id offsets, one id
+array — and pads the int8 scales to 4-byte alignment. `LoadHNSWMmap` aliases all of it from the mapping; `Load` copies it as three
+allocations. A mapped load of a 50,000-vector int8 index now adds 0.001 MiB of heap, against 6.9 MiB for the same index from v4.
+
+**v4 blobs still load** (ken keeps indexes on disk), through either loader, into the same form; saving a loaded index writes v5. Search
+results are bit-identical, built or loaded from either version (hash over 8 builds × 1,000 queries; committed v4 fixtures). The graph
+itself is unchanged byte for byte (its v4 re-encoding matches the pre-change hash). An index built in memory keeps per-node lists; a
+loaded one turns them back on its first `Add`, which matches `Add` on the original. Queries on a loaded index measured ~5% faster
+(82–88 vs 90–93 µs, n = 20,000, dim 128), from the flat layout. A graph past 2³²−1 lists or ids is a write error (32-bit offsets).
+
 ### Added — `bm25.Builder` and a saved BM25 index (`Index.WriteTo`, `ReadIndex`, `LoadIndexMmap`)
 
 `bm25.NewBuilder` / `Builder.Add` / `Builder.N` / `Builder.Build` build an index one document at a time, so a build holds the index under

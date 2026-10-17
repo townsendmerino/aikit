@@ -35,6 +35,7 @@ package ann
 import (
 	"math"
 	"math/rand/v2"
+	"runtime"
 	"slices"
 	"sync"
 
@@ -138,6 +139,53 @@ type hnswNode struct {
 	nbrs  [][]int32 // nbrs[l] = neighbor ids at layer l, len == layer+1
 }
 
+// hnswCSR is the graph of a loaded index, as offsets plus one flat id array (the blob's v5 layout, memory campaign
+// item 7): node d's layer lists are lists listStart[d] … listStart[d+1]-1, layer 0 first, and list i is
+// ids[idOff[i]:idOff[i+1]]. About 8 bytes of offsets per node, where hnswNode costs ~58 bytes of slice headers; and
+// under LoadHNSWMmap all three arrays alias the mapping, so the graph costs no heap at all. It is read-only: the
+// first Add on a loaded index turns it back into hnswNode lists (thaw).
+type hnswCSR struct {
+	listStart []uint32
+	idOff     []uint32
+	ids       []int32
+}
+
+func (g *hnswCSR) list(i uint32) []int32 { return g.ids[g.idOff[i]:g.idOff[i+1]:g.idOff[i+1]] }
+
+// nbrs returns node id's neighbor list at layer, from whichever representation the graph is in.
+func (h *HNSW) nbrs(id, layer int) []int32 {
+	if g := h.csr; g != nil {
+		return g.list(g.listStart[id] + uint32(layer))
+	}
+	return h.nodes[id].nbrs[layer]
+}
+
+// nodeLayer is node id's top layer.
+func (h *HNSW) nodeLayer(id int) int {
+	if g := h.csr; g != nil {
+		return int(g.listStart[id+1]-g.listStart[id]) - 1
+	}
+	return h.nodes[id].layer
+}
+
+// thaw turns a loaded index's CSR graph into per-node lists, so Add can link and prune. Every list is copied (the
+// CSR may alias a read-only mapping, and prune rewrites lists in place) with the capacity Add gives new lists.
+func (h *HNSW) thaw() {
+	g := h.csr
+	n := len(g.listStart) - 1
+	nodes := make([]hnswNode, n)
+	for d := range nodes {
+		layer := h.nodeLayer(d)
+		nbrs := make([][]int32, layer+1)
+		for l := range nbrs {
+			src := h.nbrs(d, l)
+			nbrs[l] = append(make([]int32, 0, max(len(src), h.mmax(l))+1), src...)
+		}
+		nodes[d] = hnswNode{layer: layer, nbrs: nbrs}
+	}
+	h.nodes, h.csr = nodes, nil
+}
+
 // HNSW is an approximate cosine index. Build with NewHNSW + Add (or
 // BuildHNSW); query with Query. See the type doc for thread-safety.
 type HNSW struct {
@@ -147,7 +195,8 @@ type HNSW struct {
 	int8           bool
 	bq             []int8
 	scales         []float32
-	nodes          []hnswNode
+	nodes          []hnswNode // the graph while it is built (nil when csr holds it)
+	csr            *hnswCSR   // the graph of a loaded index (nil while nodes holds it)
 	dim            int
 	m, m0          int
 	efConstruction int
@@ -448,6 +497,9 @@ func (h *HNSW) Add(vec []float32) int {
 	if h.closed {
 		panic("ann: Add on a closed HNSW (mmap released by Close)")
 	}
+	if h.csr != nil {
+		h.thaw()
+	}
 	id := h.count()
 	if id == 0 {
 		h.dim = len(vec)
@@ -524,7 +576,7 @@ func (h *HNSW) greedyClosest(qv queryVec, ep, layer int) int {
 	bestSim := h.sim(qv, ep)
 	for {
 		improved := false
-		for _, n := range h.nodes[best].nbrs[layer] {
+		for _, n := range h.nbrs(best, layer) {
 			s := h.sim(qv, int(n))
 			if s > bestSim {
 				bestSim, best, improved = s, int(n), true
@@ -579,7 +631,7 @@ func (h *HNSW) searchLayer(qv queryVec, entryPoints []int, ef, layer int, sc *se
 		// results.items[0].sim threshold sees the identical sequence it saw when
 		// scoring was interleaved (item 15).
 		vis.ids = vis.ids[:0]
-		for _, nb := range h.nodes[c.id].nbrs[layer] {
+		for _, nb := range h.nbrs(c.id, layer) {
 			n := int(nb)
 			if vis.seen(n) {
 				continue
@@ -641,6 +693,7 @@ func (h *HNSW) queryEf(q []float32, k, ef int, keep func(int) bool) []Hit {
 	if h.closed {
 		panic("ann: Query on a closed HNSW (mmap released by Close)")
 	}
+	defer runtime.KeepAlive(h) // a mapped index's vectors and graph alias its mapping; see LoadHNSWMmap
 	if h.Len() == 0 || k <= 0 || len(q) != h.dim {
 		return nil
 	}

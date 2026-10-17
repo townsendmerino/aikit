@@ -11,11 +11,10 @@ import (
 // LoadFlatI8Mmap's int8 aliasing (ann/flat_i8_mmap.go). So a large embedded
 // index is query-ready instantly (no parse-and-copy of the ndocs×dim vectors
 // into the heap) and its bytes live in the shared OS page cache rather than
-// the Go heap. The graph (neighbor ids) is still copied — it's a small
-// fraction of a real index's footprint next to the vectors, and unlike the
-// vector block it isn't one flat run of same-width elements, so aliasing it
-// would need its own format work this bump didn't scope (see hnsw_persist.go's
-// v4 format note). On non-unix platforms the file is heap-read instead
+// the Go heap. From a v5 blob the graph (offsets and neighbor ids) and the
+// int8 scales alias the mapping too, so a mapped load costs almost no heap
+// (memory campaign item 7); a v4 blob's graph is still copied, into the same
+// compact form. On non-unix platforms the file is heap-read instead
 // (identical result, no page-cache benefit; see package mmap). For a plain
 // in-memory copy from a byte slice, use Load.
 //
@@ -61,6 +60,8 @@ func (h *HNSW) Close() error {
 	h.closed = true
 	h.vecs = nil
 	h.bq = nil
+	h.scales = nil
+	h.csr = nil
 	runtime.SetFinalizer(h, nil)
 	return mmap.Unmap(h.mmap)
 }

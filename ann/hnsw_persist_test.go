@@ -34,8 +34,8 @@ func TestHNSW_roundTrip(t *testing.T) {
 	if !reflect.DeepEqual(got.vecs, orig.vecs) {
 		t.Error("vectors differ after round-trip")
 	}
-	if !reflect.DeepEqual(got.nodes, orig.nodes) {
-		t.Error("graph nodes differ after round-trip")
+	if !reflect.DeepEqual(graphOf(got), graphOf(orig)) {
+		t.Error("graph differs after round-trip")
 	}
 
 	// The whole point: identical query results.
@@ -210,4 +210,16 @@ func FuzzLoadHNSW(f *testing.F) {
 			_ = h.Query(make([]float32, h.dim), 5)
 		}
 	})
+}
+
+// graphOf is h's graph as [node][layer][]neighbor, from whichever representation holds it.
+func graphOf(h *HNSW) [][][]int32 {
+	g := make([][][]int32, h.count())
+	for d := range g {
+		g[d] = make([][]int32, h.nodeLayer(d)+1)
+		for l := range g[d] {
+			g[d][l] = append([]int32{}, h.nbrs(d, l)...)
+		}
+	}
+	return g
 }

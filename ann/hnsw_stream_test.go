@@ -73,13 +73,14 @@ func TestHNSW_WriteToMatchesMarshal(t *testing.T) {
 // so the diff shows both.
 func TestHNSW_formatGolden(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		i8   bool
-		size int
-		sha  string
+		name  string
+		i8    bool
+		size  int
+		sha   string // v5, MarshalBinary
+		v4sha string // the same build in the v4 layout (encodeV4ForTest): pins that v5 changed the encoding only
 	}{
-		{"f32", false, 379240, "2f295d9ac4c985e17d5b7a167bff770fdca2c9c915f8a32754070b8a88666388"},
-		{"int8", true, 205240, "33bbc99f6dd210899a733ca3a4b44b61ec88b7ffbb054bd3f47acdd365673754"},
+		{"f32", false, 379248, "0f56602b7531450297933bf805f3d5f72f8861c4b583633926d504fc9c894687", "2f295d9ac4c985e17d5b7a167bff770fdca2c9c915f8a32754070b8a88666388"},
+		{"int8", true, 205248, "679e493364926e9c3d6135fb7dbd4cb8488207c117fd89d944625a572e83b10f", "33bbc99f6dd210899a733ca3a4b44b61ec88b7ffbb054bd3f47acdd365673754"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rng := rand.New(rand.NewPCG(4242, 99))
@@ -95,6 +96,9 @@ func TestHNSW_formatGolden(t *testing.T) {
 			if got := hex.EncodeToString(sha256Sum(b)); got != tc.sha {
 				t.Errorf("serialized bytes changed:\n got %s\nwant %s\n"+
 					"If this is intentional, bump hnswVersion in the same commit.", got, tc.sha)
+			}
+			if got := hex.EncodeToString(sha256Sum(encodeV4ForTest(h))); got != tc.v4sha {
+				t.Errorf("the graph changed (its v4 encoding, which v5 replaced but must not alter):\n got %s\nwant %s", got, tc.v4sha)
 			}
 		})
 	}
@@ -192,11 +196,9 @@ func TestLoad_graphArenasCutAllocations(t *testing.T) {
 	runtime.KeepAlive(loaded)
 }
 
-// TestLoad_arenaSubSlicesDoNotAlias: every sub-slice handed out by the arenas is
-// capped at its own length, so appending to one node's neighbor list cannot
-// overwrite the next node's. Without the three-index cap this test corrupts the
-// graph, and nothing else in the suite would notice — the arena is invisible to
-// every read path.
+// TestLoad_arenaSubSlicesDoNotAlias: every neighbor list a loaded index hands out (a CSR sub-slice of one id array)
+// is capped at its own length, so appending to one node's list cannot overwrite the next node's — and the same holds
+// after a thaw. Without the three-index cap this test corrupts the graph, and nothing else in the suite would notice.
 func TestLoad_arenaSubSlicesDoNotAlias(t *testing.T) {
 	h := BuildHNSW(randUnitSet(rand.New(rand.NewPCG(13, 14)), 500, 32), Config{M: 8, Seed: 5})
 	blob, err := h.MarshalBinary()
@@ -207,26 +209,22 @@ func TestLoad_arenaSubSlicesDoNotAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := make([][][]int32, len(loaded.nodes))
-	for d, nd := range loaded.nodes {
-		want[d] = make([][]int32, len(nd.nbrs))
-		for l, ids := range nd.nbrs {
-			want[d][l] = append([]int32(nil), ids...)
-		}
+	if loaded.csr == nil {
+		t.Fatal("a loaded index is not in CSR form; this test checks the CSR lists")
 	}
-	// Append to every neighbor list; with correct caps each append allocates a new
-	// array and nothing else moves.
-	for _, nd := range loaded.nodes {
-		for l := range nd.nbrs {
-			_ = append(nd.nbrs[l], -12345) //nolint:gocritic // the discarded append IS the test
+	for _, stage := range []string{"csr", "thawed"} {
+		if stage == "thawed" {
+			loaded.thaw()
 		}
-	}
-	for d, nd := range loaded.nodes {
-		for l, ids := range nd.nbrs {
-			if !reflect.DeepEqual(ids, want[d][l]) {
-				t.Fatalf("node %d layer %d changed after appending to a neighbor list: %v → %v "+
-					"(arena sub-slices are aliasing)", d, l, want[d][l], ids)
+		want := graphOf(loaded)
+		// Append to every neighbor list; with correct caps nothing else moves.
+		for d := range want {
+			for l := range want[d] {
+				_ = append(loaded.nbrs(d, l), -12345) //nolint:gocritic // the discarded append IS the test
 			}
+		}
+		if got := graphOf(loaded); !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s: the graph changed after appending to its neighbor lists (sub-slices are aliasing)", stage)
 		}
 	}
 	// The f32 vector arena has the same property.
