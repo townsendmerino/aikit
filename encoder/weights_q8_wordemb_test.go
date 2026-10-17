@@ -59,7 +59,6 @@ func TestModelQ8_wordEmbFromMapping(t *testing.T) {
 		if m != nil {
 			closeQ8ForTest(m)
 		}
-		m = nil
 		runtime.GC()
 		runtime.GC()
 		var a runtime.MemStats
