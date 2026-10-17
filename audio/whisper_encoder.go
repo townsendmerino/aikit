@@ -56,8 +56,8 @@ type WhisperEncoder struct {
 	lnW, lnB       []float32
 	defect         int
 	device         WhisperDevice
-	// st is the checkpoint the weights came from. An F32 tensor is a view into its mapping, so the encoder holds the file until Close (which is the only thing that unmaps it; see
-	// embed's finalizeMmaps).
+	// st is the checkpoint the weights came from. An F32 tensor is a view into its mapping, so the encoder holds the file until Close, the mapping's only release (see
+	// embed.SafetensorsFile.Close).
 	st     *embed.SafetensorsFile
 	closed bool
 }

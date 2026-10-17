@@ -28,7 +28,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"unsafe"
@@ -39,22 +38,21 @@ import (
 // SafetensorsFile is a parsed safetensors file. Tensor payloads are slices
 // into the underlying file bytes — no copy. Goroutine-safe for reads.
 //
-// Lifetime: callers must keep the SafetensorsFile alive for as long as
-// any tensor returned by Tensor() is in use. With the heap-loaded path
-// (OpenSafetensors / OpenSafetensorsFromFS) the underlying []byte stays
-// in Go's heap until SafetensorsFile is GC'd. With the mmap-loaded path
-// (OpenSafetensorsMmap, M8) the underlying region stays mapped until Close();
-// in practice the finalizer attached at Open does not release it (see
-// finalizeMmaps), so a file that is dropped without Close leaks its mapping
-// until the process exits.
+// Lifetime: with the heap-loaded path (OpenSafetensors / OpenSafetensorsFromFS)
+// tensor data is Go heap, kept alive by whatever references it. With the
+// mmap-loaded path (OpenSafetensorsMmap, M8) Close is the contract: the mapping
+// stays until Close is called, and nothing else releases it — not dropping the
+// file, not GC. So views into it never become invalid under a caller that still
+// reads them, and a file that is dropped without Close keeps its mapping until
+// the process exits. See Close.
 type SafetensorsFile struct {
 	data    []byte
 	tensors map[string]Tensor
 
 	// mmapped holds the mmap region(s) backing this file iff it was loaded
 	// via a *Mmap open (and Close hasn't run). One entry for a single file;
-	// one per shard for OpenSafetensorsShardedMmap. Close/the finalizer
-	// syscall.Munmap each; the heap opens leave it nil.
+	// one per shard for OpenSafetensorsShardedMmap. Close unmaps each; the
+	// heap opens leave it nil.
 	mmapped [][]byte
 
 	// closed is set by Close so Tensor() returns a clean error instead of
@@ -93,11 +91,6 @@ type Tensor struct {
 	DType string // "F32", "F64", "I64", ...
 	Shape []int
 	raw   []byte // little-endian bytes; slice into the owning file's []byte
-	// owner is the SafetensorsFile whose data/mmap backs raw. The byte-reading
-	// accessors runtime.KeepAlive(owner) across a read so an mmap-backed file's
-	// finalizer can't munmap the region mid-decode (§2.5 — the Tensor value alone
-	// doesn't otherwise keep the file reachable).
-	owner *SafetensorsFile
 }
 
 // safetensors header JSON shape:
@@ -183,10 +176,6 @@ func parseShardIndex(indexBytes []byte) (files []string, weightMap map[string]st
 func mergeShards(agg *SafetensorsFile, shards []*SafetensorsFile, weightMap map[string]string) error {
 	for _, shard := range shards {
 		for name, t := range shard.tensors {
-			// Repoint owner to agg: after the merge it's agg that holds every
-			// shard's mmap region (agg.mmapped) and carries the finalizer, so a
-			// tensor's KeepAlive must keep AGG reachable, not its parse-time shard.
-			t.owner = agg
 			agg.tensors[name] = t
 		}
 	}
@@ -218,22 +207,21 @@ func OpenSafetensorsShardedMmap(indexPath string) (*SafetensorsFile, error) {
 	for _, fn := range files {
 		data, err := mmap.MapReadOnly(filepath.Join(dir, fn))
 		if err != nil {
-			finalizeMmaps(agg)
+			unmapAll(agg)
 			return nil, err
 		}
 		agg.mmapped = append(agg.mmapped, data)
 		shard, err := parseSafetensors(data)
 		if err != nil {
-			finalizeMmaps(agg)
+			unmapAll(agg)
 			return nil, fmt.Errorf("safetensors: shard %s: %w", fn, err)
 		}
 		shards = append(shards, shard)
 	}
 	if err := mergeShards(agg, shards, weightMap); err != nil {
-		finalizeMmaps(agg)
+		unmapAll(agg)
 		return nil, err
 	}
-	runtime.SetFinalizer(agg, finalizeMmaps)
 	return agg, nil
 }
 
@@ -277,9 +265,7 @@ func OpenSafetensorsShardedFromFS(fsys fs.FS, indexPath string) (*SafetensorsFil
 //
 // This is the M8 path for large models — CodeRankEmbed's 547 MB
 // checkpoint would otherwise dominate ken-mcp's RSS. The mapping is
-// released by Close(). A finalizer is attached, but it does not run for a
-// file that holds any tensor (see finalizeMmaps): a file dropped without
-// Close keeps its mapping until the process exits.
+// released by Close() and by nothing else (see Close).
 //
 // IMPORTANT: tensor data returned by Tensor() aliases the mapped
 // region. Callers must keep the SafetensorsFile alive for as long as
@@ -301,33 +287,11 @@ func OpenSafetensorsMmap(path string) (*SafetensorsFile, error) {
 		return nil, err
 	}
 	sf.mmapped = [][]byte{data}
-	// Only a tensor-less file is ever finalized; see finalizeMmaps.
-	runtime.SetFinalizer(sf, finalizeMmaps)
 	return sf, nil
 }
 
-// finalizeMmaps is the SetFinalizer callback for mmap-backed files: munmap
-// every region. Close does the same eagerly.
-//
-// IT DOES NOT RUN for a file that holds any tensor. Every Tensor in f.tensors
-// points back at f (Tensor.owner), and the runtime does not collect an object
-// with a finalizer that is part of a cycle, so such a file is never collected
-// and its mapping lives until Close or process exit — a leak, never an early
-// unmap. Measured 2026-10-17 with a weak pointer: a one-tensor file was still
-// reachable after 10 GCs, a tensor-less one was collected
-// (docs/internal/task-memory-campaign.md, item 5).
-//
-// It is left that way on purpose, for now. Making the release real (e.g.
-// runtime.AddCleanup, which a cycle does not block) would unmap a file as soon
-// as nothing holds it — and the views handed out by Float32s, TensorF32 and the
-// other aliasing accessors do not hold it: they point into the mapping, not the
-// Go heap. A holder struct can then be collected while one of its own methods is
-// still reading those views (once the method has loaded its last field), unless
-// every such method keeps the holder alive with runtime.KeepAlive. That is a
-// discipline across every view-holding type in aikit and its consumers, decided
-// as a project change, not slipped in here. Until then: hold the file for as
-// long as its views are read, and Close it when done.
-func finalizeMmaps(s *SafetensorsFile) {
+// unmapAll unmaps every region of s — the open paths' cleanup when a load fails.
+func unmapAll(s *SafetensorsFile) {
 	for _, m := range s.mmapped {
 		_ = mmap.Unmap(m)
 	}
@@ -337,9 +301,22 @@ func finalizeMmaps(s *SafetensorsFile) {
 // Close releases the underlying mmap, if any. No-op on heap-loaded
 // SafetensorsFile (OpenSafetensors / OpenSafetensorsFromFS). Idempotent.
 //
-// After Close, any Tensor() returns alias unmapped memory — accessing
-// them is undefined behavior. Callers MUST stop using the model and any
-// downstream objects that hold tensor data before calling Close.
+// THE CONTRACT. For an mmap'd file Close is the only release: the mapping is
+// not unmapped when the file becomes unreachable, so a caller that drops a file
+// leaks its mapping until the process exits, and a caller that still holds a
+// view into it after dropping the file stays safe. That is deliberate (memory
+// campaign item 5, docs/internal/task-memory-campaign.md): views into a mapping
+// point outside the Go heap and do not keep their file alive, so an automatic
+// release — a finalizer or runtime.AddCleanup — could unmap the region while a
+// holder's method is still reading through them, unless every such method kept
+// its holder alive with runtime.KeepAlive. aikit chose the explicit contract over
+// that discipline. (A finalizer used to be attached here; every Tensor pointing
+// back at its file made it a finalizer cycle, so it never ran for a file with a
+// tensor, and it was removed in v1.71.0.)
+//
+// So: an owner of a mapped file (a model, an encoder) holds it for as long as
+// its views are read and Closes it when done; after Close, accessing a view is
+// undefined behavior, so stop using everything that holds tensor data first.
 func (f *SafetensorsFile) Close() error {
 	f.closed = true // make Tensor() error afterward, mmap-backed or not
 	if len(f.mmapped) == 0 {
@@ -347,7 +324,6 @@ func (f *SafetensorsFile) Close() error {
 	}
 	regions := f.mmapped
 	f.mmapped = nil
-	runtime.SetFinalizer(f, nil)
 	var firstErr error
 	for _, m := range regions {
 		if err := mmap.Unmap(m); err != nil && firstErr == nil {
@@ -382,7 +358,6 @@ func (f *SafetensorsFile) Close() error {
 // that is a caller bug, not an environment condition, and the two are worth
 // telling apart: madvise failures are swallowed as advisory.
 func (f *SafetensorsFile) ReleaseTensors(names ...string) error {
-	defer runtime.KeepAlive(f)
 	var firstErr error
 	for _, name := range names {
 		t, ok := f.tensors[name]
@@ -479,7 +454,6 @@ func parseSafetensors(data []byte) (*SafetensorsFile, error) {
 			DType: t.DType,
 			Shape: t.Shape,
 			raw:   payload[t.DataOffsets[0]:t.DataOffsets[1]],
-			owner: sf,
 		}
 	}
 
@@ -519,12 +493,8 @@ func (f *SafetensorsFile) Names() []string {
 //
 // Omit want to read without a shape check.
 func (f *SafetensorsFile) TensorF32(name string, want ...int) ([]float32, error) {
-	// H6: the BF16/F16 widening below reads t.raw, which aliases f's mmap
-	// region. Keep f reachable across the read/widen, so this stays correct if
-	// the finalizer is ever made to run (it does not today; see finalizeMmaps).
-	// (An F32 result is a zero-copy view whose later use by the caller is
-	// governed by the Tensor lifetime contract.)
-	defer runtime.KeepAlive(f)
+	// An F32 result is a zero-copy view whose later use by the caller is
+	// governed by the Tensor lifetime contract (see Close).
 	t, err := f.Tensor(name)
 	if err != nil {
 		return nil, err
@@ -605,14 +575,6 @@ func reinterpretLE[T any](name string, raw []byte) ([]T, error) {
 
 // typedLE is the shared body of the typed tensor accessors (Float32s, Float64s,
 // Int64s, Int32s): check the dtype, then reinterpret the raw little-endian payload.
-//
-// WHY THE KeepAlive IS NOT IN HERE. Each accessor opens with
-// `defer runtime.KeepAlive(t.owner)` (§2.5), guarding the read against a mid-decode
-// munmap. That line cannot move into this helper: a deferred KeepAlive fires when the
-// frame it was deferred in returns, so a KeepAlive deferred HERE would release the
-// mapping at typedLE's return — before the caller has touched the aliasing slice it was
-// just handed. The guard has to live in the frame that outlives the read, which is the
-// exported method. Only the dtype check and the reinterpretLE call are shared.
 func typedLE[T any](t Tensor, want string) ([]T, error) {
 	if t.DType != want {
 		return nil, fmt.Errorf("tensor %q: expected %s, got %s", t.Name, want, t.DType)
@@ -625,7 +587,6 @@ func typedLE[T any](t Tensor, want string) ([]T, error) {
 // case); on a misaligned payload it is a decoded copy (see reinterpretLE). Do
 // not mutate. Assumes a little-endian host (x86, arm64).
 func (t Tensor) Float32s() ([]float32, error) {
-	defer runtime.KeepAlive(t.owner) // §2.5: guard the read against a mid-decode munmap
 	return typedLE[float32](t, "F32")
 }
 
@@ -651,7 +612,6 @@ func (t Tensor) Float32s() ([]float32, error) {
 // tensor over 2-D blocks (`*.weight_scale_inv`, block 128x128), so a lone fp8 tensor does
 // not carry enough information to become floats. Same shape of argument as MXFP4 above.
 func (t Tensor) Uint8s() ([]byte, error) {
-	defer runtime.KeepAlive(t.owner) // §2.5: guard the read against a mid-decode munmap
 	switch t.DType {
 	case "U8", "I8", "BOOL", "F8_E4M3", "F8_E5M2":
 	default:
@@ -672,7 +632,6 @@ func (t Tensor) Uint8s() ([]byte, error) {
 // odd offset), it returns an error, and the caller widens through Float16sToF32 / BFloat16sToF32 instead. Assumes a
 // little-endian host (x86, arm64), like Float32s.
 func (t Tensor) Uint16s() ([]uint16, error) {
-	defer runtime.KeepAlive(t.owner) // §2.5
 	if t.DType != "F16" && t.DType != "BF16" {
 		return nil, fmt.Errorf("tensor %q: expected F16 or BF16, got %s", t.Name, t.DType)
 	}
@@ -691,14 +650,12 @@ func (t Tensor) Uint16s() ([]uint16, error) {
 // Float64s returns the tensor data as []float64. Requires DType "F64". Aliases
 // when aligned, else a copy (see reinterpretLE).
 func (t Tensor) Float64s() ([]float64, error) {
-	defer runtime.KeepAlive(t.owner) // §2.5
 	return typedLE[float64](t, "F64")
 }
 
 // Int64s returns the tensor data as []int64. Requires DType "I64". Aliases when
 // aligned, else a copy (see reinterpretLE).
 func (t Tensor) Int64s() ([]int64, error) {
-	defer runtime.KeepAlive(t.owner) // §2.5
 	return typedLE[int64](t, "I64")
 }
 
@@ -706,7 +663,6 @@ func (t Tensor) Int64s() ([]int64, error) {
 // GPTQ's packed qweight/qzeros/g_idx. Aliases when aligned, else a copy (see
 // reinterpretLE).
 func (t Tensor) Int32s() ([]int32, error) {
-	defer runtime.KeepAlive(t.owner) // §2.5
 	return typedLE[int32](t, "I32")
 }
 
@@ -720,7 +676,6 @@ func (t Tensor) Int32s() ([]int32, error) {
 // bytes and not a view into the file), so the result does not alias the
 // SafetensorsFile and is safe to keep past Close().
 func (t Tensor) BFloat16sToF32() ([]float32, error) {
-	defer runtime.KeepAlive(t.owner) // §2.5
 	if t.DType != "BF16" {
 		return nil, fmt.Errorf("tensor %q: expected BF16, got %s", t.Name, t.DType)
 	}
@@ -743,7 +698,6 @@ func (t Tensor) BFloat16sToF32() ([]float32, error) {
 // explicit handling of zeros/subnormals (exp==0) and Inf/NaN (exp==0x1f).
 // Requires DType "F16". Allocates (see BFloat16sToF32 on aliasing).
 func (t Tensor) Float16sToF32() ([]float32, error) {
-	defer runtime.KeepAlive(t.owner) // §2.5
 	if t.DType != "F16" {
 		return nil, fmt.Errorf("tensor %q: expected F16, got %s", t.Name, t.DType)
 	}
@@ -769,7 +723,6 @@ func (t Tensor) Float16sToF32() ([]float32, error) {
 // valid only while the owning file is alive, like Float32s); BF16/F16 widen ONLY the
 // requested range into a fresh []float32 of length count.
 func (t Tensor) SubF32(start, count int) ([]float32, error) {
-	defer runtime.KeepAlive(t.owner) // §2.5: guard the read against a mid-decode munmap
 	elems := t.Elements()
 	if elems < 0 {
 		return nil, fmt.Errorf("tensor %q: SubF32 shape %v overflows", t.Name, t.Shape)
@@ -826,7 +779,6 @@ const subF32TransposeTile = 16
 //
 // Experimental, like SubF32.
 func (t Tensor) SubF32Transposed(start, rows, cols int) ([]float32, error) {
-	defer runtime.KeepAlive(t.owner) // §2.5: guard the read against a mid-decode munmap
 	elems := t.Elements()
 	if elems < 0 {
 		return nil, fmt.Errorf("tensor %q: SubF32Transposed shape %v overflows", t.Name, t.Shape)

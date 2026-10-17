@@ -143,23 +143,17 @@ An `Add` made 69 allocations (71 int8), almost all from re-growing and re-making
 created with their final capacity and pruned in place, `BuildHNSW` sizes its storage from n, and search reuses its result slice. 2
 allocations per `Add` (3 int8). Search results and the serialized graph are byte-identical (hash over 8 builds and 1,000 queries).
 
-### Documented — a dropped mmap'd `SafetensorsFile` is never unmapped
+### Changed — an mmap'd `SafetensorsFile` is released by `Close` only; its finalizer is removed
 
-The comments said a finalizer unmaps an mmap'd safetensors file once it is unreachable. It does not, for any file that holds a tensor:
-each `Tensor` points back at its file, and the runtime does not collect a finalized object in a cycle. The mapping lives until `Close` or
-process exit. The comments now say so, and `TestSafetensorsMmap_droppedFileWithTensorsIsNotFinalized` pins it. Making the release real is
-deliberately not done: views into the mapping do not keep the file alive, so it would need `runtime.KeepAlive` discipline in every
-view-holding type here and in goinfer first (`docs/internal/task-memory-campaign.md`, item 5).
-
-## [1.70.2] — 2026-10-15
-
-`perfgate` VERDICT: PASS — no regression vs v1.70.1 above each shape's floor — 5/47 shapes resolve the 5.0% class
-
-sensitivity: 5/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), 60dc2d8 vs v1.70.1, 2026-10-15, under the timing lock.
-
-> **Read this verdict for what it is.** It is weaker than the last three releases' (12/47): only 5 of the 47 shapes can see 5% in this run, so on the other 42 a green is evidence against a larger regression only. `linalg` changed only by the bounds check in the entry below, which perfgate has no shape for. The encoder change has no perfgate shape either; its speed was measured directly, A/B on both machines, in the entry below.
-
-STATEMENT: no reachable vulnerabilities in 16/16 modules at 60dc2d8 (2026-10-15T14:37:41Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2).
+`embed.OpenSafetensorsMmap` and `OpenSafetensorsShardedMmap` attached a finalizer that was meant to unmap a file once it became
+unreachable. It never ran for a file that held a tensor: each `Tensor` pointed back at its file, and the runtime does not collect a
+finalized object in a cycle. The mapping lived until `Close` or exit (measured 2026-10-17). The finalizer, the `Tensor` back-pointer and
+the `runtime.KeepAlive`s that guarded it are now removed, and **`Close` is the documented contract**: the only release. A dropped file
+keeps its mapping until exit, as it effectively always did, and a view into a dropped file stays valid. An automatic release (a working
+finalizer or `runtime.AddCleanup`) is deliberately not offered. Views point outside the Go heap, so it could unmap a region while a
+holder's method still reads through it, unless every such method kept its holder alive with `runtime.KeepAlive`. That discipline was
+declined in favour of the explicit contract. `TestSafetensorsMmap_droppedFileKeepsItsMapping` pins it: a dropped file's view is read
+after the file has been collected and must still hold its bytes. With the old finalizer made to run, it fails 8 of 8.
 
 ### Fixed — a short destination slice could overrun the heap in `DequantizeRowInt8` and `WeightMat.Row`
 

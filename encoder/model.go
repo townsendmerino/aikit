@@ -105,8 +105,9 @@ func (m *Model) HiddenDim() int { return m.weights.Cfg.HiddenDim }
 
 // Close releases the mmap-backed weights (the ~547 MB checkpoint lives in the OS
 // page cache until then). Call it once, after the last Encode, when a
-// long-running server swaps models — otherwise the mapping is released only when
-// a GC finalizer runs. Idempotent; a heap-loaded model has nothing to release.
+// long-running server swaps models — otherwise the mapping stays until the process
+// exits (Close is the only release; see embed.SafetensorsFile.Close). Idempotent; a
+// heap-loaded model has nothing to release.
 func (m *Model) Close() error {
 	if m.weights == nil || m.weights.st == nil {
 		return nil

@@ -219,9 +219,10 @@ func audioLifetimeCases() []lifetimeCase {
 // must keep the file it opened reachable for as long as the encoder lives. The file is watched through a weak pointer, so a loader that drops it fails here, after a few GC cycles,
 // instead of reading unmapped memory later. Then Close must release it: the forward errors, and a second Close is a no-op.
 //
-// Today a dropped file is never collected at all: each of its Tensors points back at it (Tensor.owner), and the runtime does not free an object with a finalizer that is part of a
-// cycle, so the mapping leaks instead of being unmapped and this test cannot go red on its own. It guards the day that cycle goes. Measured 2026-10-17: with Tensor.owner set to nil,
-// a loader that drops its file fails here (all three loaders, 3/3 rounds), and without the pre-forward check the forward over the unmapped weights is a SIGSEGV.
+// Since v1.71.0 nothing unmaps a dropped file at all (embed.SafetensorsFile.Close is the only release), so a loader that dropped its file would leak its mapping rather than
+// crash, and this test cannot go red on its own: it pins the ownership the encoders' Close relies on, and guards against an automatic release ever coming back. Measured
+// 2026-10-17, with the finalizer the tree had then made to run: a loader that drops its file fails here (all three loaders, 3/3 rounds), and without the pre-forward
+// check the forward over the unmapped weights is a SIGSEGV.
 func TestAudioLoaders_holdTheirCheckpointUntilClose(t *testing.T) {
 	for _, c := range audioLifetimeCases() {
 		t.Run(c.name, func(t *testing.T) {
