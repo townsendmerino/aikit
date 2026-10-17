@@ -7,8 +7,10 @@ package annmetal
 import (
 	"fmt"
 	"math"
+	"os"
 	"runtime"
 	"sync"
+	"unsafe"
 
 	"github.com/townsendmerino/aikit/ann"
 	gpu "github.com/townsendmerino/aikit/gpu"
@@ -354,9 +356,13 @@ func init() {
 	if wq <= 0 {
 		wq = 32
 	}
-	ann.RegisterBackend(&metalBackend{dev: dev, q: dev.NewCommandQueue(), gemv: gemv, gemvW: w, gemmqW: wq, gemm: gemm,
-		gemmq: gemmq, topk: topk})
+	registered = &metalBackend{dev: dev, q: dev.NewCommandQueue(), gemv: gemv, gemvW: w, gemmqW: wq, gemm: gemm,
+		gemmq: gemmq, topk: topk}
+	ann.RegisterBackend(registered)
 }
+
+// registered is the backend init registered (nil without a Metal GPU); tests reach the device through it.
+var registered *metalBackend
 
 func (b *metalBackend) Name() string { return "metal" }
 
@@ -402,6 +408,39 @@ func (b *metalBackend) runLocked2D(p gpu.Pipeline, gx, gy, tgx, tgy int, bufs ..
 // NewI8Index uploads the int8 codes + scales resident on the device and allocates
 // the reusable per-query scratch (quantized query, query scale, output).
 func (b *metalBackend) NewI8Index(bq []int8, scales []float32, n, dim int) (idx ann.I8Index, err error) {
+	return b.newI8Index(nil, bq, scales, n, dim)
+}
+
+// NewI8IndexMapped is NewI8Index without the copy of the codes (ann.MappedBackend): on unified memory the GPU reads
+// them from the read-only file mapping they are a view into, through one no-copy buffer over the mapping's pages
+// bound at the codes' offset. So a mapped index is not stored twice (memory campaign item 10). It declines — and
+// EnableGPU copies instead — when the mapping's start is not page-aligned, the codes lie outside it, or their offset
+// is not 4-byte aligned for binding.
+func (b *metalBackend) NewI8IndexMapped(mapping []byte, bq []int8, scales []float32, n, dim int) (ann.I8Index, error) {
+	if len(mapping) == 0 || len(bq) == 0 {
+		return nil, fmt.Errorf("gpu: nothing to map")
+	}
+	page := uintptr(os.Getpagesize())
+	base := uintptr(unsafe.Pointer(&mapping[0]))
+	at := uintptr(unsafe.Pointer(&bq[0]))
+	switch {
+	case base%page != 0:
+		return nil, fmt.Errorf("gpu: mapping is not page-aligned")
+	case at < base || at+uintptr(len(bq)) > base+uintptr(len(mapping)):
+		return nil, fmt.Errorf("gpu: codes are not inside the mapping")
+	case (at-base)%4 != 0:
+		return nil, fmt.Errorf("gpu: codes offset %d is not 4-byte aligned", at-base)
+	}
+	return b.newI8Index(&mappedCodes{mapping: mapping, offset: int(at - base)}, bq, scales, n, dim)
+}
+
+// mappedCodes is where a mapped index's codes are: offset bytes into mapping.
+type mappedCodes struct {
+	mapping []byte
+	offset  int
+}
+
+func (b *metalBackend) newI8Index(m *mappedCodes, bq []int8, scales []float32, n, dim int) (idx ann.I8Index, err error) {
 	if n <= 0 || dim <= 0 {
 		return nil, fmt.Errorf("gpu: empty int8 index (n=%d dim=%d)", n, dim)
 	}
@@ -421,37 +460,152 @@ func (b *metalBackend) NewI8Index(bq []int8, scales []float32, n, dim int) (idx 
 	// leaks whatever already succeeded — on the one path where device memory is
 	// by definition short. ReleaseBuf ignores the zero Buffer, so the loop is
 	// safe over the ones that were never assigned.
-	var codes, scl, qi8, qscale, kbuf, out gpu.Buffer
+	var codes, scl, qi8, qscale, kbuf, nbuf, mbuf, kkbuf, out gpu.Buffer
 	defer func() {
 		if r := recover(); r != nil {
-			for _, buf := range []gpu.Buffer{codes, scl, qi8, qscale, kbuf, out} {
+			for _, buf := range []gpu.Buffer{codes, scl, qi8, qscale, kbuf, nbuf, mbuf, kkbuf, out} {
 				b.dev.ReleaseBuf(buf)
 			}
 			idx, err = nil, fmt.Errorf("gpu: device upload failed: %v", r)
 		}
 	}()
-	codes = gpu.NewBufferOf(b.dev, bq)
+	if m != nil {
+		// The whole mapping, rounded up to whole pages (the OS maps whole pages, so the tail is addressable; Metal
+		// drops a trailing partial page), wrapped without a copy and bound at the codes' offset.
+		page := os.Getpagesize()
+		size := (len(m.mapping) + page - 1) / page * page
+		codes = b.dev.NewBufferNoCopy(unsafe.Pointer(&m.mapping[0]), size).At(m.offset)
+	} else {
+		codes = gpu.NewBufferOf(b.dev, bq)
+	}
 	scl = gpu.NewBufferOf(b.dev, scales)
 	qi8 = gpu.NewBufferOf(b.dev, make([]int8, dim))
 	qscale = gpu.NewBufferOf(b.dev, []float32{0})
 	kbuf = gpu.NewBufferOf(b.dev, []uint32{uint32(dim)})
+	nbuf = gpu.NewBufferOf(b.dev, []uint32{uint32(n)})
+	mbuf = gpu.NewBufferOf(b.dev, []uint32{0})
+	kkbuf = gpu.NewBufferOf(b.dev, []uint32{0})
 	out = b.dev.NewBufferLen(n)
 	return &metalI8Index{
-		b: b, n: n, dim: dim,
-		codes: codes, scales: scl, qi8: qi8, qscale: qscale, kbuf: kbuf, out: out,
+		b: b, n: n, dim: dim, mapped: m != nil,
+		codes: codes, scales: scl, qi8: qi8, qscale: qscale, kbuf: kbuf, nbuf: nbuf, mbuf: mbuf, kkbuf: kkbuf, out: out,
 	}, nil
 }
 
 type metalI8Index struct {
 	b      *metalBackend
 	n, dim int
-	codes  gpu.Buffer // [n*dim] int8 (resident)
+	mapped bool       // codes is a no-copy view of the index's file mapping (NewI8IndexMapped)
+	codes  gpu.Buffer // [n*dim] int8 (resident, or the mapping's pages)
 	scales gpu.Buffer // [n] f32
 	qi8    gpu.Buffer // [dim] int8 (reused per query)
 	qscale gpu.Buffer // [1] f32 (reused)
-	kbuf   gpu.Buffer // [1] u32
+	kbuf   gpu.Buffer // [1] u32: dim
+	nbuf   gpu.Buffer // [1] u32: n
+	mbuf   gpu.Buffer // [1] u32: the batch's M, rewritten per batch
+	kkbuf  gpu.Buffer // [1] u32: the top-k's k, rewritten per batch
 	out    gpu.Buffer // [n] f32 (reused)
+	batch  batchScratch
 	mu     sync.Mutex
+}
+
+// batchScratch is the device scratch ScoreBatch and TopKBatch reuse across calls (memory campaign item 10): it was
+// allocated and released on every call, an M × N score matrix each time. It grows to the largest batch seen and is
+// released by Close. A batch whose score matrix would exceed batchScratchMaxBytes is served from per-call buffers
+// instead, so one huge batch does not pin its matrix for the index's lifetime.
+type batchScratch struct {
+	m      int        // queries the buffers below hold
+	qi8    gpu.Buffer // [m*dim] int8
+	qscale gpu.Buffer // [m] f32
+	scores gpu.Buffer // [m*n] f32 — ScoreBatch's output, TopKBatch's device-only matrix
+	k      int        // top-k width idxOut/scoreOut hold (for m queries)
+	idxOut gpu.Buffer // [m*k] u32
+	topOut gpu.Buffer // [m*k] f32
+}
+
+// batchScratchMaxBytes bounds the score matrix a batch keeps cached between calls.
+const batchScratchMaxBytes = 256 << 20
+
+func (s *batchScratch) release(dev interface{ ReleaseBuf(gpu.Buffer) }) {
+	for _, b := range []gpu.Buffer{s.qi8, s.qscale, s.scores, s.idxOut, s.topOut} {
+		dev.ReleaseBuf(b)
+	}
+	*s = batchScratch{}
+}
+
+// batchBuffers returns scratch for M queries (and, when k > 0, an M × k top-k output): the cached scratch, grown if
+// it is too small, or — past batchScratchMaxBytes — fresh buffers the caller releases with done. Panics from the
+// device allocator (OOM) propagate to the caller's recover. Call with x.mu held.
+func (x *metalI8Index) batchBuffers(M, k int) (s *batchScratch, done func()) {
+	dev := x.b.dev
+	// alloc sizes s for M queries. It records the size only once every buffer exists, and on a panic (OOM) releases
+	// what it made, so s never claims a capacity its buffers lack.
+	alloc := func(s *batchScratch) {
+		defer func() {
+			if r := recover(); r != nil {
+				s.release(dev)
+				panic(r)
+			}
+		}()
+		s.qi8 = gpu.NewBufferOf(dev, make([]int8, M*x.dim))
+		s.qscale = dev.NewBufferLen(M)
+		s.scores = dev.NewBufferLen(M * x.n)
+		s.m, s.k = M, 0
+	}
+	if 4*M*x.n > batchScratchMaxBytes {
+		tmp := &batchScratch{}
+		release := func() { tmp.release(dev) }
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					release()
+					panic(r)
+				}
+			}()
+			alloc(tmp)
+			if k > 0 {
+				tmp.k = k
+				tmp.idxOut = gpu.NewBufferOf(dev, make([]uint32, M*k))
+				tmp.topOut = dev.NewBufferLen(M * k)
+			}
+		}()
+		return tmp, release
+	}
+	s = &x.batch
+	if s.m < M {
+		s.release(dev)
+		alloc(s)
+	}
+	if k > 0 && (s.k < k || s.idxOut.Len() < s.m*k) {
+		dev.ReleaseBuf(s.idxOut)
+		dev.ReleaseBuf(s.topOut)
+		s.idxOut, s.topOut, s.k = gpu.Buffer{}, gpu.Buffer{}, 0
+		idxOut := gpu.NewBufferOf(dev, make([]uint32, s.m*k))
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					dev.ReleaseBuf(idxOut)
+					panic(r)
+				}
+			}()
+			s.topOut = dev.NewBufferLen(s.m * k)
+		}()
+		s.idxOut, s.k = idxOut, k
+	}
+	return s, func() {}
+}
+
+// quantizeBatch quantizes the queries into s's shared buffers (no host staging copy on unified memory).
+func (x *metalI8Index) quantizeBatch(queries [][]float32, s *batchScratch) error {
+	K := x.dim
+	qi8, qscale := s.qi8.Int8s(), s.qscale.Floats()
+	for m, q := range queries {
+		if len(q) != K {
+			return fmt.Errorf("gpu: batch query %d dim %d != index dim %d", m, len(q), K)
+		}
+		qscale[m] = quantizeRowInt8(q, qi8[m*K:(m+1)*K])
+	}
+	return nil
 }
 
 // Score dynamically quantizes q on the host (byte-identical to linalg's
@@ -479,47 +633,34 @@ func (x *metalI8Index) Score(q []float32, dst []float32) error {
 
 // ScoreBatch scores M = len(queries) queries against all N rows in a single
 // dispatch of the batched GEMM — the throughput win over calling Score in a loop.
-// dst is [M*N] row-major (dst[m*N+j]). Per-call scratch (host quantization + three
-// device buffers) is allocated and released each call: batch queries are the
-// infrequent path, so this stays simple rather than caching an M-sized arena.
+// dst is [M*N] row-major (dst[m*N+j]). The quantized queries and the M × N output
+// live in device scratch reused across calls (batchScratch).
 func (x *metalI8Index) ScoreBatch(queries [][]float32, dst []float32) (err error) {
 	M := len(queries)
 	if M == 0 {
 		return nil
 	}
-	N, K := x.n, x.dim
+	N := x.n
 	if len(dst) != M*N {
 		return fmt.Errorf("gpu: batch dst len %d != M*N %d", len(dst), M*N)
-	}
-	qi8 := make([]int8, M*K)
-	qscale := make([]float32, M)
-	for m, q := range queries {
-		if len(q) != K {
-			return fmt.Errorf("gpu: batch query %d dim %d != index dim %d", m, len(q), K)
-		}
-		qscale[m] = quantizeRowInt8(q, qi8[m*K:(m+1)*K])
 	}
 	x.mu.Lock()
 	defer x.mu.Unlock()
 	// Same OOM-to-error contract as NewI8Index (audit C-04): an M*N output can be
-	// large — 1 GB at N=1e6, M=256, the advertised shape. Declared before the
-	// defer so the release covers a partial allocation too.
-	var qi8Buf, qscaleBuf, nBuf, mBuf, outBuf gpu.Buffer
+	// large — 1 GB at N=1e6, M=256, the advertised shape.
 	defer func() {
-		for _, b := range []gpu.Buffer{qi8Buf, qscaleBuf, nBuf, mBuf, outBuf} {
-			x.b.dev.ReleaseBuf(b)
-		}
 		if r := recover(); r != nil {
 			err = fmt.Errorf("gpu: batch scratch allocation failed: %v", r)
 		}
 	}()
-	qi8Buf = gpu.NewBufferOf(x.b.dev, qi8)
-	qscaleBuf = gpu.NewBufferOf(x.b.dev, qscale)
-	nBuf = gpu.NewBufferOf(x.b.dev, []uint32{uint32(N)})
-	mBuf = gpu.NewBufferOf(x.b.dev, []uint32{uint32(M)})
-	outBuf = x.b.dev.NewBufferLen(M * N)
-	x.b.runGEMM(M, N, x.codes, qi8Buf, x.scales, x.kbuf, nBuf, qscaleBuf, outBuf, mBuf)
-	copy(dst, outBuf.Floats())
+	s, done := x.batchBuffers(M, 0)
+	defer done()
+	if err := x.quantizeBatch(queries, s); err != nil {
+		return err
+	}
+	x.mbuf.SetU32(uint32(M))
+	x.b.runGEMM(M, N, x.codes, s.qi8, x.scales, x.kbuf, x.nbuf, s.qscale, s.scores, x.mbuf)
+	copy(dst, s.scores.Floats()[:M*N])
 	return nil
 }
 
@@ -534,46 +675,31 @@ func (x *metalI8Index) TopKBatch(queries [][]float32, k int) (hits [][]ann.Hit, 
 	if M == 0 {
 		return [][]ann.Hit{}, nil
 	}
-	N, K := x.n, x.dim
+	N := x.n
 	if k <= 0 || k > topkMaxK || k >= N || N < topkMinN {
 		return nil, fmt.Errorf("gpu: topk declined (k=%d max %d, n=%d min %d) — fall back", k, topkMaxK, N, topkMinN)
 	}
-	qi8 := make([]int8, M*K)
-	qscale := make([]float32, M)
-	for m, q := range queries {
-		if len(q) != K {
-			return nil, fmt.Errorf("gpu: batch query %d dim %d != index dim %d", m, len(q), K)
-		}
-		qscale[m] = quantizeRowInt8(q, qi8[m*K:(m+1)*K])
-	}
 	x.mu.Lock()
 	defer x.mu.Unlock()
-	dev := x.b.dev
-	// Same OOM-to-error contract as NewI8Index (audit C-04); scoreBuf alone is
-	// M*N floats. Declared before the defer so a partial allocation is released.
-	var qi8Buf, qscaleBuf, nBuf, mBuf, kBuf, scoreBuf, idxOut, scoreOut gpu.Buffer
+	// Same OOM-to-error contract as NewI8Index (audit C-04); the score matrix alone is M*N floats.
 	defer func() {
-		for _, b := range []gpu.Buffer{qi8Buf, qscaleBuf, nBuf, mBuf, kBuf, scoreBuf, idxOut, scoreOut} {
-			dev.ReleaseBuf(b)
-		}
 		if r := recover(); r != nil {
 			hits, err = nil, fmt.Errorf("gpu: topk scratch allocation failed: %v", r)
 		}
 	}()
-	qi8Buf = gpu.NewBufferOf(dev, qi8)
-	qscaleBuf = gpu.NewBufferOf(dev, qscale)
-	nBuf = gpu.NewBufferOf(dev, []uint32{uint32(N)})
-	mBuf = gpu.NewBufferOf(dev, []uint32{uint32(M)})
-	kBuf = gpu.NewBufferOf(dev, []uint32{uint32(k)})
-	scoreBuf = dev.NewBufferLen(M * N)                 // device-only; never crosses to the host
-	idxOut = gpu.NewBufferOf(dev, make([]uint32, M*k)) // device int* (u32 storage, same bytes)
-	scoreOut = dev.NewBufferLen(M * k)                 // only M*k floats come back
-	x.b.runGEMM(M, N, x.codes, qi8Buf, x.scales, x.kbuf, nBuf, qscaleBuf, scoreBuf, mBuf)
-	// one threadgroup per query (M groups of topkTG threads), reducing scoreBuf → M*k.
-	x.b.runLocked(x.b.topk, M*topkTG, topkTG, scoreBuf, nBuf, kBuf, idxOut, scoreOut)
+	s, done := x.batchBuffers(M, k)
+	defer done()
+	if err := x.quantizeBatch(queries, s); err != nil {
+		return nil, err
+	}
+	x.mbuf.SetU32(uint32(M))
+	x.kkbuf.SetU32(uint32(k))
+	x.b.runGEMM(M, N, x.codes, s.qi8, x.scales, x.kbuf, x.nbuf, s.qscale, s.scores, x.mbuf)
+	// one threadgroup per query (M groups of topkTG threads), reducing the score matrix → M*k.
+	x.b.runLocked(x.b.topk, M*topkTG, topkTG, s.scores, x.nbuf, x.kkbuf, s.idxOut, s.topOut)
 
-	idxs := idxOut.U32s()
-	scs := scoreOut.Floats()
+	idxs := s.idxOut.U32s()
+	scs := s.topOut.Floats()
 	hits = make([][]ann.Hit, M)
 	for m := range M {
 		h := make([]ann.Hit, k)
@@ -585,12 +711,16 @@ func (x *metalI8Index) TopKBatch(queries [][]float32, k int) (hits [][]ann.Hit, 
 	return hits, nil
 }
 
-// Close releases this index's device buffers (the shared device stays alive for
-// other indexes; the process holds one Metal device).
+// Close releases this index's device buffers, its batch scratch included (the shared device stays alive for other
+// indexes; the process holds one Metal device). For a mapped index the codes buffer only wraps the mapping, which
+// stays the FlatI8's to unmap (after this).
 func (x *metalI8Index) Close() error {
-	for _, b := range []gpu.Buffer{x.codes, x.scales, x.qi8, x.qscale, x.kbuf, x.out} {
+	x.mu.Lock()
+	defer x.mu.Unlock()
+	for _, b := range []gpu.Buffer{x.codes, x.scales, x.qi8, x.qscale, x.kbuf, x.nbuf, x.mbuf, x.kkbuf, x.out} {
 		x.b.dev.ReleaseBuf(b)
 	}
+	x.batch.release(x.b.dev)
 	return nil
 }
 

@@ -165,7 +165,8 @@ row). The table is only gathered, so the rows are dequantized at gather time. SP
 | 6 MEM14 Builder + saved index | `06c5619` | PASS: Builder hash identical; allocates 4.38× the index (bar 5×); mapped load +0.66 MiB heap (bound 1.18); round trips identical; damage rejected (one gap found and closed: docLen now tied to the tf sums) |
 | 7 MEM15 HNSW CSR, blob v5 | `50f9780` | PASS: query hash identical built, v5 Load/LoadHNSWMmap, and v4 fixtures; graph byte-identical (v4 re-encoding hash); mapped load +0.001 MiB heap (bound 1 MiB; v4 6.9 MiB); Add-after-load matches; damage rejected |
 | 8 Model2Vec mapped by default | `6284cb0` | PASS: 1,753 texts bit-identical mapped/heap/MapFS; TTFR (M1 Pro, warm, 15 rounds) heap 40.2 → mapped 29.7 ms, 0.74× (nobara's July +17% is the other sign; re-measure there) |
-| 9 BERT/GTE f16/int8 word embeddings | (this commit) | PASS, clearly: min cosine f16 1.0000000 on all 4 fixtures (bar 0.9999), int8 0.99993–0.999997 (bar 0.999); tables 2×/4× smaller. Default stays f32 until Francis agrees |
+| 9 BERT/GTE f16/int8 word embeddings | `cb0c08b` | PASS, clearly: min cosine f16 1.0000000 on all 4 fixtures (bar 0.9999), int8 0.99993–0.999997 (bar 0.999); tables 2×/4× smaller. Default stays f32 until Francis agrees |
+| 10 annmetal no-copy + scratch reuse | (this commit) | PASS: (a) mapped ≡ copied bit for bit, both rank as the CPU (Δ 0); (b) mapped EnableGPU +0.44–0.47 MiB footprint (bar 1.76), copied +49.3 MiB — instrument changed, see below; (c) 60 batch calls add no device memory |
 
 ### Item 5 (D6): stopped before making the release real
 
@@ -191,3 +192,17 @@ now say what the code does (`finalizeMmaps` explains the cycle and why it stays)
 `TestSafetensorsMmap_droppedFileWithTensorsIsNotFinalized` pins it, so a change that breaks the cycle fails until
 the holders are revisited. GGUF's mmap file has no tensor back-pointer, so this cycle does not apply to it (not
 probed).
+
+### Item 10: two corrections to its registered gate
+
+- **(a) said "scores bit-equal, as the existing parity tests require".** The existing parity tests require identical
+  indices and scores within 1e-3: the GPU's float rescale is not bit-identical to the CPU's. Run as two checks:
+  the mapped device index against the copied one, bit for bit (it is: same kernel, same bytes), and against the CPU
+  at the existing bar (indices identical; the score Δ measured 0).
+- **(b) named `Device.CurrentAllocatedSize` as the instrument.** Metal counts a no-copy buffer there at its full
+  length although it allocates nothing (measured: 25.97 MiB mapped vs 25.20 copied), so it cannot tell aliasing
+  from copying. Replaced, after seeing that, by the process's physical footprint (`footprint -f bytes`) right after
+  `EnableGPU`, with the registered bar unchanged (n × 8 B + 1 MiB). The test also requires that the copied index's
+  footprint delta exceed 90% of the codes, so the instrument is shown able to see a copy. A first measurement
+  taken after a query as well read 1.62–2.03 MiB against the 1.76 bar: the query's own host allocations, which is
+  why the bar sits at the registered point (after `EnableGPU`) and the after-query figure is only reported.

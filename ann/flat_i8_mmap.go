@@ -207,6 +207,12 @@ func (f *FlatI8) Close() error {
 // without an explicit Close — the safety net for callers who forget.
 func (f *FlatI8) finalizeMmap() {
 	if !f.closed && f.mmap != nil {
+		// Device indexes first, as Close does: one may read the codes straight from this mapping (MappedBackend).
+		for _, g := range []I8Index{f.gpu, f.gpuShard} {
+			if g != nil {
+				_ = g.Close() //nolint:errcheck // finalizer: nowhere to report
+			}
+		}
 		_ = mmap.Unmap(f.mmap)
 	}
 }

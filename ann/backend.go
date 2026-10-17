@@ -31,6 +31,28 @@ type I8Index interface {
 	Close() error
 }
 
+// MappedBackend is an optional extension of Backend for a device that shares memory with the host (Apple's unified
+// memory): NewI8IndexMapped makes the index resident WITHOUT copying the int8 codes, when they are a view into
+// mapping — a read-only file mapping, page-aligned at its start, as LoadFlatI8Mmap makes. The device then reads the
+// codes from the page cache, and the index is not stored twice. mapping must stay mapped for the returned index's
+// life (FlatI8 closes its device indexes before unmapping). A backend that cannot alias these particular bytes
+// returns an error, and EnableGPU falls back to NewI8Index's copy.
+type MappedBackend interface {
+	NewI8IndexMapped(mapping []byte, bq []int8, scales []float32, n, dim int) (I8Index, error)
+}
+
+// newDeviceIndex is the device index for rows [0, n) of f: aliased from f's mapping when f is mapped and the backend
+// can (MappedBackend), copied otherwise.
+func (f *FlatI8) newDeviceIndex(n int) (I8Index, error) {
+	bq, scales := f.bq[:n*f.dim], f.scales[:n]
+	if mb, ok := backend.(MappedBackend); ok && f.mmap != nil {
+		if idx, err := mb.NewI8IndexMapped(f.mmap, bq, scales, n, f.dim); err == nil {
+			return idx, nil
+		}
+	}
+	return backend.NewI8Index(bq, scales, n, f.dim)
+}
+
 // I8BatchIndex is an optional extension of I8Index: a device index that scores
 // MANY queries against the whole corpus in a single dispatch — the batched int8
 // GEMM that is the GPU's sweet spot (M queries × N rows). A backend whose I8Index
@@ -188,7 +210,15 @@ func BackendName() string {
 // registered (default build), if the index is paged (LoadFlatI8MmapPaged — the
 // budget-paged path is CPU-only until Phase 2), or if the device upload fails; on
 // any error the index keeps scoring on the CPU. Idempotent-ish: a second call
-// replaces the prior device index (the old one is closed).
+// replaces the prior device index (the old one is closed). On a LoadFlatI8Mmap
+// index with a MappedBackend, the device reads the codes from the mapping
+// instead of a copy.
+//
+// Opt-in, and on Apple deliberately so: nothing enables a backend by itself. A
+// process must import a backend package (gpu/annmetal registers in its init) AND
+// call EnableGPU. On Apple silicon the Metal path has not beaten this package's
+// CPU scoring at any measured batch size (M1 Pro, N = 10k and 100k,
+// docs/BENCH-gpu-results.md), so measure on the target machine before enabling it.
 func (f *FlatI8) EnableGPU() error {
 	if backend == nil {
 		return errNoBackend
@@ -199,7 +229,7 @@ func (f *FlatI8) EnableGPU() error {
 	if f.closed {
 		panic("ann: EnableGPU on a closed FlatI8")
 	}
-	idx, err := backend.NewI8Index(f.bq, f.scales, f.n, f.dim)
+	idx, err := f.newDeviceIndex(f.n)
 	if err != nil {
 		return err
 	}
@@ -254,7 +284,7 @@ func (f *FlatI8) EnableGPUShardSplit(gpuShare float64) error {
 	// Clamp to [1, f.n-1] — at least one row each side of the split. The bounds
 	// cannot invert: the guard above already rejects f.n < 2, so f.n-1 >= 1.
 	rows := min(max(int(gpuShare*float64(f.n)), 1), f.n-1)
-	idx, err := backend.NewI8Index(f.bq[:rows*f.dim], f.scales[:rows], rows, f.dim)
+	idx, err := f.newDeviceIndex(rows)
 	if err != nil {
 		return err
 	}

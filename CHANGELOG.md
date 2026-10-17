@@ -26,6 +26,24 @@ loader's file through a weak pointer. With the cycle broken (`Tensor.owner` set 
 loaders, 3/3 rounds. Without the test's pre-forward check, the forward over the unmapped weights is a SIGSEGV. BF16 checkpoints are widened
 into the heap, so they were never affected. Found by goinfer's memory campaign (MEM3).
 
+### Added — `ann.MappedBackend`: a mapped `FlatI8` is not copied onto a unified-memory GPU (annmetal)
+
+New optional `ann.MappedBackend` interface (`NewI8IndexMapped`). On a `LoadFlatI8Mmap` index, `FlatI8.EnableGPU` and
+`EnableGPUShardSplit` offer the backend the mapping first, and copy as before if it declines. `gpu/annmetal` implements it: one
+no-copy Metal buffer over the mapping's pages, bound at the codes' offset, so the GPU reads the int8 codes from the page cache. Before,
+the index was stored twice on unified memory. Measured, n = 100,000 × 256: `EnableGPU` adds 0.44–0.47 MiB of process footprint
+mapped, against 49.3 MiB for the copied index (5 runs, M1 Pro). Results: the mapped device index equals the copied one bit for bit (Score,
+ScoreBatch), and both rank exactly as the CPU does (indices identical, score Δ 0 measured; the parity bar is 1e-3).
+
+annmetal's `ScoreBatch` and `TopKBatch` now reuse their device scratch across calls (they allocated an M × N score matrix and five
+small buffers per call): 60 calls at sizes the scratch holds add no device memory. A batch whose matrix would exceed 256 MiB still gets
+per-call buffers, so one huge batch does not pin a gigabyte. A mapped `FlatI8`'s finalizer now closes its device indexes before
+unmapping, as `Close` does.
+
+annmetal stays opt-in, and this is now written on `EnableGPU`: a process must import the backend package and call `EnableGPU`. Nothing
+in aikit, goinfer or ken does either on its own. On Apple silicon the Metal path has not beaten CPU scoring at any measured batch size
+(`docs/BENCH-gpu-results.md`). Ships in `gpu/annmetal` v0.2.0, which needs root v1.71.0 for `ann.MappedBackend`.
+
 ### Added — f16 and int8 word-embedding tables for BERT and GTE (`LoadBERTWithOptions`, `LoadGTEWithOptions`)
 
 `encoder.LoadBERTWithOptions` and `encoder.LoadGTEWithOptions` take an `encoder.LoadOptions` whose `WordEmb` field
