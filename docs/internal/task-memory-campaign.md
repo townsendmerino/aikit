@@ -1,0 +1,158 @@
+# Task: the aikit half of the memory campaign (2026-10)
+
+> **Status: in progress, branch `memory-campaign-aikit`.** Scope: the aikit items of goinfer's
+> `docs/tasks/task-memory-campaign-2026-10.md` (branch `memory-campaign-2026-10`, MEM3 and MEM14–MEM16),
+> plus D6 (the safetensors mmap finalizer) and annmetal, as Francis decided them on 2026-10-17. MEM3 shipped
+> first on this branch (`db44648`). Still on hold: MEM17 (chunk text by reference, waits on D4) and MEM4(a)
+> (BF16 towers via `WrapBF16`, waits on goinfer's MEM0 measurements).
+>
+> One commit per item. Each item's gate is registered in this file, in a commit before the item's code.
+> Quick checks only by day; perfgate, vulncheck and the full release gate go to nobara or the night queue.
+> Release: v1.71.0 (new API) plus a gpu-module tag for annmetal, through `RELEASING.md`, when Francis says go.
+
+## How "identical" is checked
+
+There are no on-disk BM25 or HNSW goldens; their suites build seeded synthetic corpora. So every "identical"
+gate below is checked against the tree before the change: a capture of the item's outputs is hashed on the
+unchanged code (the hash and the capture's inputs are committed in the item's test), and the changed code must
+reproduce the hash exactly, bit for bit. Model-backed captures (SPLADE, Q8, Model2Vec, BERT/GTE) use the local
+fixtures under `testdata/` that are gitignored, so those tests skip in CI; each such item also gets a
+model-free test that runs everywhere.
+
+## Group 1 — exact results or plain fixes
+
+### 1. SPLADE row tiling (`encoder/splade.go:SPLADE.expandIDs`)
+
+Max-reduce the vocabulary logits over row tiles of 16 instead of materializing L × vocab.
+
+- **Why it can be exact:** `linalg.MatmulBT` is documented M-invariant (`TestMatmulBT_MConsistent`): an
+  output element is bit-identical whatever the row count, so a tile computes the same logits as the whole
+  matrix; the bias add is elementwise; max is order-free for non-NaN values and both forms skip NaN.
+- **Gate (a), identical:** on `testdata/splade-model`, `expandIDs` output (terms and weight bits) hashed before
+  the change at L ∈ {1, 15, 16, 17, 64, 512} equals the hash after. Model-free: a synthetic head (random t,
+  decoder, bias, including negative-only columns and a NaN logit) gives identical pooled vectors tiled vs whole,
+  at the same L set.
+- **Gate (b), bytes:** `runtime.MemStats.TotalAlloc` around one 512-token `Expand`, before and after. Bar: after
+  ≤ before − 55 MiB (the L × V × 4 B logits are 59.6 MiB at V = 30,522; one 16-row tile is 1.9 MiB).
+
+### 2. `WeightsQ8.WordEmb` read from the mapping (`encoder/weights_q8.go`)
+
+Stop cloning the f32 word-embedding table onto the heap; alias it from the checkpoint mapping, which the Q8
+weights now keep open (new `ModelQ8.Close` / `WeightsQ8` holds the file).
+
+- **Gate (a), identical:** on `testdata/encoder-model` (CodeRankEmbed), `ModelQ8.Encode` output for a fixed text
+  set (queries and documents) hashed before equals after.
+- **Gate (b), heap:** `HeapAlloc` after `LoadQ8` and two GCs, before and after. Bar: drops by ≥ 80 MiB (the
+  table is 30,522 × 768 × 4 B = 89.4 MiB).
+- Linux note: `TestQ8LoadFootprint`'s peak/after RSS ratio (≤ 1.5) is Linux-only; it is re-run on nobara in the
+  release gate, not by day.
+
+### 3. BM25 postings arena (`bm25/index.go`)
+
+One flat `[]posting` with per-term offsets in place of one slice (and 24 B header, plus append slack) per term;
+`df` becomes the list length.
+
+- **Gate (a), identical:** over the seeded corpora of `TestScoring_bitIdenticalToReference` plus a 20k-document
+  seeded corpus, every `Search`/`TopK`/WAND result list (ids and score bits) hashed before equals after; the
+  existing reference-formula test stays green.
+- **Gate (b), bytes:** bytes held by a built index (`HeapAlloc` delta after GC, built over the 20k-document
+  corpus), before and after. Reported, no bar beyond "smaller".
+
+### 4. HNSW build pre-sizing (`ann/hnsw.go`)
+
+`BuildHNSW` pre-sizes `vecs`/`bq`/`scales`/`nodes` from n; `Add` stops allocating the throwaway int8 row and
+sizes each new neighbor list to its cap (mmax + 1) so later back-links do not regrow it.
+
+- **Gate, identical:** for f32 and int8 builds (n = 5,000, dim 64, two seeds, default and SimpleNeighbors),
+  `Query` and `QueryEf` results (ids and score bits) for 200 seeded queries, plus the `MarshalBinary` bytes,
+  hashed before equal after. Allocations per `Add` reported (`testing.AllocsPerRun`), no bar.
+
+## Group 2 — decided by Francis
+
+### 5. D6: the safetensors mmap finalizer (`embed/safetensors.go`)
+
+Today the finalizer never runs: each `Tensor` holds `owner` → its file, and the runtime does not collect a
+finalized object in a cycle, so a dropped mapping leaks (measured 2026-10-17, `db44648`).
+
+- **Audit first:** every caller of `OpenSafetensorsMmap` / `OpenSafetensorsShardedMmap` and their wrappers, in
+  aikit, goinfer (all packages) and ken: does anything drop the file while still reading its views? Any unsafe
+  caller is fixed before the cleanup change; if one cannot be fixed, stop and report.
+- **Then:** make the release real with `runtime.AddCleanup` (its argument is the regions, which do not reach the
+  file, so the cycle no longer blocks it), cancelled by `Close`; correct the comments.
+- **Gate:** (a) a test that a dropped mmap file is unmapped: a weak pointer to it goes nil and the cleanup's unmap
+  runs (counted by a test hook), within 10 GCs; a held file is not unmapped. (b) The audio lifetime test now goes
+  red on its own: re-run its three mutations with the cycle intact; all three must fail. (c) `go test ./...` in
+  aikit, `go test -race` on embed, encoder, audio, vision; goinfer's `decoder` package tests against this aikit
+  through a temporary `go.work` (not committed).
+
+### 6. MEM14: BM25 `Builder.Add` and a saved index format
+
+- `Builder` (N6): `NewBuilder()`, `Add(tokens []string)`, `Build() *Index`. Peak is the index under
+  construction plus one document, instead of the whole tokenized corpus. `Build(docs)` becomes a loop over it.
+- Format (N4), version 1: header, then aligned sections (docLen, postings arena, term dictionary). `WriteTo`,
+  `ReadIndex` (heap) and `LoadIndexMmap` (the postings arena aliases the mapping, `Close` releases it).
+  Version-skew policy: the loader rejects an unknown version with an error; a later version keeps reading v1.
+- **Gate (a):** `Builder` over the 20k-document corpus gives scores identical (bits) to `Build`, and to the item-3
+  hash. (b) Bytes allocated by a `Builder` build are O(index), not O(corpus): `TotalAlloc` across
+  the `Add` calls and `Build` (inputs excluded: each document's tokens are made just before its `Add`) ≤ 5 × the
+  built index's bytes. (`TotalAlloc` counts every grown-and-discarded slice, which for geometric growth is about
+  2 × the final size, so 5 × leaves room for that and for the final compaction, and nothing for a tokenized
+  corpus.) Peak `HeapInuse` during the build is reported beside `Build`'s over the held corpus. (c) A mapped load holds no heap copy of the postings:
+  `HeapAlloc` delta after `LoadIndexMmap` ≤ the dictionary + docLen bytes + 1 MiB, and the arena's address lies in
+  the mapping. (d) Round trip: `ReadIndex` and `LoadIndexMmap` give results identical to the built index; a
+  corrupt or truncated file is an error, never a panic (fuzz seed corpus).
+
+### 7. MEM15: the HNSW graph as CSR (`ann/hnsw*.go`)
+
+Blob version 5: the graph is three aligned sections, per-node list starts, per-list id offsets and one flat id
+array, aliased under `LoadHNSWMmap` and copied (as one arena each) under `Load`. Same format bump as BM25's.
+v4 blobs still load (ken has indexes on disk). An index built in memory keeps per-node lists; a loaded index is
+CSR and turns back into lists on its first `Add`.
+
+- **Gate (a):** search results identical (ids and score bits) to the item-4 hash, for a built index, its v5 round
+  trip (`Load` and `LoadHNSWMmap`), and a v4 blob written by the current code (committed under `ann/testdata`)
+  loaded by the new code. (b) Heap after a mapped load: for n = 50,000, dim 64, int8, `HeapAlloc` delta after
+  `LoadHNSWMmap` and GC ≤ 1 MiB (today: the graph, ~n × 160 B ≈ 7.6 MiB). (c) Add-after-load still works and
+  matches Add on the original. (d) Corrupt and truncated v5 blobs are errors, not panics.
+
+### 8. Model2Vec mapped by default (`embed/model.go`)
+
+`LoadFromFS` maps `model.safetensors` when the `fs.FS` hands back a real `*os.File` (as `os.DirFS` does), and
+heap-reads otherwise (`embed.FS`, `fstest.MapFS`); `Load` follows. New `LoadFromFSHeap` keeps the heap copy.
+
+- **Gate (a), identical:** `Encode`/`EncodeBatch` output on the embedded-corpus example's model is bit-identical
+  between the mapped and heap loads.
+- **Gate (b), measurement (no bar):** time to first result, in process, by day: `bench` W3 shape, heap vs mapped,
+  interleaved, 15 rounds each, warm page cache, M1 Pro; report median and range. The number goes in the
+  CHANGELOG (the README's figure, +17%, was nobara's).
+
+### 9. f16 or int8 word embeddings for BERT and GTE (`encoder/bert.go`, `encoder/gte.go`)
+
+New `LoadBERTWithOptions` / `LoadGTEWithOptions` with a word-embedding precision (f32 default, f16, int8 per
+row). The table is only gathered, so the rows are dequantized at gather time. SPLADE (tied decoder) stays f32.
+
+- **Gate (quality), registered before the run:** for each fixture (`minilm-model`, `crossencoder-model` and
+  `splade-model` trunks as BERT; `arctic2-m` as GTE) and every text in that fixture's golden plus a fixed
+  20-text set, cosine of the output embedding against the f32 load. **f16: min cosine ≥ 0.9999. int8: min
+  cosine ≥ 0.999.** Also reported: mean cosine and the table's bytes.
+- The default stays f32 unless the gate clearly passes and Francis agrees.
+
+## Group 3 — annmetal (gpu module, its own tag series)
+
+### 10. annmetal: no-copy codes, reused score buffers, opt-in on Apple
+
+- New optional `ann.MappedBackend` seam: `FlatI8.EnableGPU` on a `LoadFlatI8Mmap` index passes the mapping, and
+  annmetal wraps the code block in a no-copy buffer (page-aligned span of the mapping, `Buffer.At` to the codes)
+  instead of copying it; otherwise it copies as today.
+- `ScoreBatch` and `TopKBatch` reuse per-index device scratch, grown on demand, instead of allocating M × N per call.
+- Opt-in: nothing in aikit, goinfer or ken imports annmetal or calls `EnableGPU` on its own (checked 2026-10-17);
+  importing the package and calling `EnableGPU` is the opt-in, and that is documented on `EnableGPU`.
+- **Gate (a):** results identical to the CPU `FlatI8` (scores bit-equal, as the existing parity tests require),
+  aliased and copied, `Score`, `ScoreBatch`, `TopKBatch`. (b) `Device.CurrentAllocatedSize` delta after
+  `EnableGPU` on a mapped index (n = 100,000, dim 256): ≤ n × 8 B (scales + output) + 1 MiB; the copied path is
+  reported for comparison (≥ n × dim). (c) Repeated `ScoreBatch` calls at a fixed M allocate no new device buffers
+  after the first.
+
+## Results
+
+(filled in per item as it lands)
