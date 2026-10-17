@@ -26,6 +26,20 @@ loader's file through a weak pointer. With the cycle broken (`Tensor.owner` set 
 loaders, 3/3 rounds. Without the test's pre-forward check, the forward over the unmapped weights is a SIGSEGV. BF16 checkpoints are widened
 into the heap, so they were never affected. Found by goinfer's memory campaign (MEM3).
 
+### Changed — `embed.LoadFromFS` memory-maps a Model2Vec model on disk; new `LoadFromFSHeap` and `StaticModel.Close`
+
+When the `fs.FS` hands back a real file for `model.safetensors` — as `os.DirFS` does, the way ken and most callers pass a model directory —
+`LoadFromFS` (and the deprecated `Load`) now memory-map the weights instead of reading them onto the heap. An `embed.FS` or `fstest.MapFS`
+is read onto the heap as before. Outputs are bit-identical (1,753 texts, `Encode` and `EncodeBatch`, mapped vs heap vs MapFS). The
+embedding table then lives in the page cache, and peak heap falls 5.8× (the `LoadMmap` measurement). Time to first result, the
+embedded-corpus example's cold start, measured in process on an M1 Pro with a warm page cache, 15 interleaved rounds: heap 40.2 ms, mapped
+29.7 ms (0.74×; a second run 39.7 vs 29.5). nobara measured the opposite sign in July (+17%, linux/amd64); re-measure there before
+reading this as a speed win on Linux.
+
+New `embed.LoadFromFSHeap` keeps the heap read. New `(*StaticModel).Close` releases a mapped model's mapping; `Encode` after it panics.
+**A mapped model is not unmapped when it is dropped** (the safetensors finalizer never runs; see the D6 entry), so a process that loads
+and drops models repeatedly should `Close` each one. A heap-loaded model was collected; a mapped one keeps its mapping until exit.
+
 ### Changed — HNSW blob format v5: the graph is stored, loaded and mapped as CSR; v4 blobs still load
 
 The serialized graph was per-node runs of layer, count and ids, decoded into per-node slices (~58 B of slice headers per node, plus the

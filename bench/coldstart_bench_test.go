@@ -132,7 +132,7 @@ func BenchmarkW3(b *testing.B) {
 
 	b.Run("loadModel", func(b *testing.B) {
 		withPeak(b, func() {
-			m, err := embed.LoadFromFS(os.DirFS(modelDir), ".")
+			m, err := embed.LoadFromFSHeap(os.DirFS(modelDir), ".")
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -188,14 +188,16 @@ func BenchmarkW3(b *testing.B) {
 
 // coldStart is the example's startup path, start to first result.
 func coldStart(tb testing.TB, modelDir string, indexBlob, corpusJSON []byte, useMmap bool) {
-	load := func() (*embed.StaticModel, error) { return embed.LoadFromFS(os.DirFS(modelDir), ".") }
+	// LoadFromFS maps an os.DirFS model since v1.71.0, so the heap arm names its loader explicitly.
+	load := func() (*embed.StaticModel, error) { return embed.LoadFromFSHeap(os.DirFS(modelDir), ".") }
 	if useMmap {
-		load = func() (*embed.StaticModel, error) { return embed.LoadMmap(modelDir) }
+		load = func() (*embed.StaticModel, error) { return embed.LoadFromFS(os.DirFS(modelDir), ".") }
 	}
 	model, err := load()
 	if err != nil {
 		tb.Fatal(err)
 	}
+	defer model.Close() // a mapped model keeps its mapping until Close
 	index, err := ann.LoadFlatI8(indexBlob)
 	if err != nil {
 		tb.Fatal(err)

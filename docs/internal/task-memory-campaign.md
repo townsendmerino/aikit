@@ -163,7 +163,8 @@ row). The table is only gathered, so the rows are dequantized at gather time. SP
 | 4 HNSW build pre-sizing | `e9f1c41` | PASS: query and blob hashes identical; allocations per Add 69 → 2 |
 | 5 D6 | `a25abff` | STOPPED before the change — see below |
 | 6 MEM14 Builder + saved index | `06c5619` | PASS: Builder hash identical; allocates 4.38× the index (bar 5×); mapped load +0.66 MiB heap (bound 1.18); round trips identical; damage rejected (one gap found and closed: docLen now tied to the tf sums) |
-| 7 MEM15 HNSW CSR, blob v5 | (this commit) | PASS: query hash identical built, v5 Load/LoadHNSWMmap, and v4 fixtures; graph byte-identical (v4 re-encoding hash); mapped load +0.001 MiB heap (bound 1 MiB; v4 6.9 MiB); Add-after-load matches; damage rejected |
+| 7 MEM15 HNSW CSR, blob v5 | `50f9780` | PASS: query hash identical built, v5 Load/LoadHNSWMmap, and v4 fixtures; graph byte-identical (v4 re-encoding hash); mapped load +0.001 MiB heap (bound 1 MiB; v4 6.9 MiB); Add-after-load matches; damage rejected |
+| 8 Model2Vec mapped by default | (this commit) | PASS: 1,753 texts bit-identical mapped/heap/MapFS; TTFR (M1 Pro, warm, 15 rounds) heap 40.2 → mapped 29.7 ms, 0.74× (nobara's July +17% is the other sign; re-measure there) |
 
 ### Item 5 (D6): stopped before making the release real
 

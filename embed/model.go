@@ -25,7 +25,8 @@ type StaticModel struct {
 	normalize  bool
 
 	// Keep the file alive so the unsafe-slice tensor data stays valid.
-	st *SafetensorsFile
+	st     *SafetensorsFile
+	closed bool
 }
 
 type modelConfig struct {
@@ -52,6 +53,14 @@ type modelConfig struct {
 // Paths inside fsys follow the fs.FS slash convention (use the path
 // package, not path/filepath). LoadFromFS is the canonical entry point;
 // Load is a thin deprecated wrapper.
+//
+// Since v1.71.0, when fsys hands back a real file for model.safetensors (as
+// os.DirFS does), the weights are memory-mapped instead of read onto the heap:
+// the embedding table then lives in the OS page cache, and only the rows a
+// workload touches become resident. An embed.FS or fstest.MapFS is read onto the
+// heap as before. LoadFromFSHeap keeps the heap read for os.DirFS too. A mapped
+// model holds its mapping until Close (it is not unmapped when the model is
+// dropped), so a process that loads models repeatedly should Close each one.
 // parseModelConfig decodes and validates a model's config.json. Only the PARSE
 // half is shared: the two callers reach the bytes differently (fs.ReadFile over
 // an fs.FS vs os.ReadFile over a directory), and folding that in would mean
@@ -86,11 +95,57 @@ func LoadFromFS(fsys fs.FS, dir string) (*StaticModel, error) {
 		return nil, err
 	}
 
-	st, err := OpenSafetensorsFromFS(fsys, join("model.safetensors"))
+	st, err := openModelWeights(fsys, join("model.safetensors"), true)
 	if err != nil {
 		return nil, fmt.Errorf("open safetensors: %w", err)
 	}
 	return buildStaticModel(tok, st, cfg)
+}
+
+// LoadFromFSHeap is LoadFromFS that always reads model.safetensors onto the heap,
+// the default before v1.71.0. Use it for a short-lived process whose first query
+// latency matters more than its footprint: a mapped load defers the embedding
+// table's page faults to the first Encode (see LoadMmap for both numbers).
+func LoadFromFSHeap(fsys fs.FS, dir string) (*StaticModel, error) {
+	join := func(name string) string { return path.Join(dir, name) }
+	tok, err := LoadTokenizerFromFS(fsys, join("tokenizer.json"))
+	if err != nil {
+		return nil, fmt.Errorf("load tokenizer: %w", err)
+	}
+	cfgBytes, err := fs.ReadFile(fsys, join("config.json"))
+	if err != nil {
+		return nil, fmt.Errorf("read config.json: %w", err)
+	}
+	cfg, err := parseModelConfig(cfgBytes)
+	if err != nil {
+		return nil, err
+	}
+	st, err := openModelWeights(fsys, join("model.safetensors"), false)
+	if err != nil {
+		return nil, fmt.Errorf("open safetensors: %w", err)
+	}
+	return buildStaticModel(tok, st, cfg)
+}
+
+// openModelWeights opens name from fsys, memory-mapping it when mapped is set and
+// fsys hands back a real *os.File for it — as os.DirFS does, which is how a model
+// directory on disk reaches LoadFromFS. Any other fs.FS (embed.FS, fstest.MapFS)
+// cannot be mapped and is read onto the heap.
+func openModelWeights(fsys fs.FS, name string, mapped bool) (*SafetensorsFile, error) {
+	if mapped {
+		if f, err := fsys.Open(name); err == nil {
+			osf, isOS := f.(*os.File)
+			p := ""
+			if isOS {
+				p = osf.Name()
+			}
+			_ = f.Close() //nolint:errcheck // only probed for its path; the mapping opens the file itself
+			if isOS {
+				return OpenSafetensorsMmap(p)
+			}
+		}
+	}
+	return OpenSafetensorsFromFS(fsys, name)
 }
 
 // LoadMmap is Load for a real directory, memory-mapping model.safetensors
@@ -109,12 +164,14 @@ func LoadFromFS(fsys fs.FS, dir string) (*StaticModel, error) {
 //	load stage    59.5 ms → 48.8 ms   peak 142.5 → 19.5 MiB   alloc 73.9 → 9.6 MB
 //	cold start    84.8 ms → 99.2 ms   peak  75.8 → 13.0 MiB   alloc 82.4 → 18.1 MB
 //
-// Peak heap falls 5.8× end to end and allocation 4.6×, while time-to-first-result
-// rises 17%. The load itself is faster — there is no 64 MB read — but mmap defers
-// the page faults to whoever first touches the embedding table, which is the
-// first Encode, and faulting in 64 MB costs more than reading it sequentially
-// from a warm page cache. This is a FOOTPRINT option, not a speed one: take it
-// under a memory cap, leave it for a short-lived CLI.
+// Peak heap falls 5.8× end to end and allocation 4.6×. Time to first result rose
+// 17% there (nobara, linux/amd64, 2026-07): the load itself is faster — there is no
+// 64 MB read — but mmap defers the page faults to whoever first touches the
+// embedding table, the first Encode. On an M1 Pro (darwin/arm64, 2026-10-17, warm
+// page cache, 15 interleaved rounds in process,
+// bench.TestW3_timeToFirstResult_heapVsMapped) it went the other way: 40.2 → 29.7 ms,
+// 0.74×. So the latency cost is platform-dependent and the footprint win is not;
+// since v1.71.0 the mapped load is LoadFromFS's default for a model on disk.
 //
 // The tensors already alias the file's bytes rather than copying them (see
 // reinterpretLE), so the only thing standing between a caller and the page cache
@@ -217,6 +274,29 @@ func Load(modelDir string) (*StaticModel, error) {
 	return LoadFromFS(os.DirFS(modelDir), ".")
 }
 
+// Close releases the model's weight mapping, if it has one (a mapped load; see
+// LoadFromFS). The model must not be used afterwards: Encode and EncodeBatch
+// panic. A heap-loaded model has nothing to release. Idempotent.
+func (m *StaticModel) Close() error {
+	if m.closed {
+		return nil
+	}
+	m.closed = true
+	st := m.st
+	m.st, m.embeddings, m.mapping, m.weights = nil, nil, nil, nil
+	if st == nil {
+		return nil
+	}
+	return st.Close()
+}
+
+// checkOpen panics on a closed model rather than reading released memory.
+func (m *StaticModel) checkOpen() {
+	if m.closed {
+		panic("embed: use of a StaticModel after Close")
+	}
+}
+
 // VocabSize reports the embedding-table vocabulary size.
 func (m *StaticModel) VocabSize() int { return m.vocab }
 
@@ -248,6 +328,7 @@ func (m *StaticModel) Tokenizer() *Tokenizer { return m.tokenizer }
 // Returns a zero vector for empty inputs and for degenerate cases that
 // would otherwise produce NaN (all-UNK on a long word, all-zero weight sum).
 func (m *StaticModel) Encode(text string) []float32 {
+	m.checkOpen()
 	ids := m.tokenizer.Encode(text)
 	return m.encodeIDs(ids)
 }
@@ -291,6 +372,7 @@ func (m *StaticModel) Encode(text string) []float32 {
 // one ann.NewFlatI8 performs, which is better removed there than worked around
 // here.
 func (m *StaticModel) EncodeBatch(texts []string, concurrency int) [][]float32 {
+	m.checkOpen()
 	out := make([][]float32, len(texts))
 	if len(texts) == 0 {
 		return out

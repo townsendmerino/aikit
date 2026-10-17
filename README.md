@@ -365,10 +365,12 @@ no such consumer has surfaced yet.
   (`io.WriterTo`), avoiding `MarshalBinary`'s full second copy of the index. They
   emit byte-identical output to `MarshalBinary` and inherit its tier: the format is
   versioned but stays Experimental until the graph internals settle.
-- `embed.LoadMmap` — memory-mapped Model2Vec load. Peak heap falls 5.8× and
-  time-to-first-result rises 17%, so it is a deliberate footprint/latency trade
-  rather than a better `Load`. Experimental while that default is still being
-  argued; the returned `*StaticModel` is the Hard-tier type.
+- `embed.LoadMmap` — memory-mapped Model2Vec load. Peak heap falls 5.8×; time to
+  first result rose 17% on nobara (linux/amd64, July) and fell 26% on an M1 Pro
+  (October, warm cache). Since v1.71.0 it is also what `embed.LoadFromFS` does for
+  a model on disk (an `os.DirFS`); `embed.LoadFromFSHeap` keeps the heap read.
+  Experimental, as are `LoadFromFSHeap` and `StaticModel.Close`; the returned
+  `*StaticModel` is the Hard-tier type.
 - `embed.SafetensorsFile.ReleaseTensors` — advisory release of a consumed tensor's
   resident pages. **Explicitly Experimental despite living on a Hard-tier type**,
   because its observable effect is platform-conditional: it is a no-op on
