@@ -137,6 +137,27 @@ row). The table is only gathered, so the rows are dequantized at gather time. SP
   cosine ≥ 0.999.** Also reported: mean cosine and the table's bytes.
 - The default stays f32 unless the gate clearly passes and Francis agrees.
 
+### 9b. The word-embedding default: native precision, mapped (decided 2026-10-17, after item 9)
+
+Francis first chose f16 as the default; measured, that adds half the table to the heap for an F32 checkpoint, whose
+f32 table was a mapped view (arctic2-m: +366 MiB, load 0.33 → 0.84 s), because every local BERT/GTE fixture is
+F32. Decided instead: **the default keeps the table in the checkpoint's own precision, read from the mapping.** An
+F32 table stays a mapped view (as before v1.71.0); an F16 or BF16 table becomes a mapped 16-bit view, widened one row
+at a time in the gather — where today it is widened whole onto the heap (twice the stored bytes). When the 16-bit
+data is not 2-byte aligned in the mapping, the load falls back to today's widened copy. `WordEmbF16` and
+`WordEmbInt8` stay opt-ins (heap tables). No f16 sidecar.
+
+- **Gate (a), identical:** on F16 and BF16 checkpoints — a synthetic tiny BERT and GTE written by the test, and
+  minilm-model converted to each — `Embed`/`Encode` output from the mapped 16-bit view is bit-identical to the
+  widened path. The row decode is checked exhaustively: all 65,536 bit patterns of each 16-bit format decode to
+  the same f32 bits as embed's widening accessors (`Float16sToF32`, `BFloat16sToF32`).
+- **Gate (b), no heap:** an F16/BF16 load adds no heap for the table beyond row scratch: HeapAlloc after a native
+  load ≤ HeapAlloc after the widened load − the table's f32 bytes + 1 MiB (the rest of the model is widened in
+  both).
+- **Gate (c), misaligned fixture:** a checkpoint whose data starts at an odd offset (header padded to make it so)
+  loads through the widened-copy fallback, with output identical to an aligned copy of the same weights.
+- F32 checkpoints: default output bit-identical to v1.70.2 (it is the same path); the encoder suite stays green.
+
 ## Group 3 — annmetal (gpu module, its own tag series)
 
 ### 10. annmetal: no-copy codes, reused score buffers, opt-in on Apple
