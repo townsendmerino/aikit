@@ -314,6 +314,11 @@ no such consumer has surfaced yet.
   corpus* (`Build`'s input), for callers who rebuild on load. Caches roughly
   half of BM25's measured cold-start cost (tokenization), while `Build` still
   runs. New surface, may be reworked or dropped.
+- `encoder.LoadBERTWithOptions` / `encoder.LoadGTEWithOptions` / `encoder.LoadOptions`
+  / `encoder.WordEmbPrecision` — store the word-embedding table as f16 or per-row
+  int8 instead of f32 (it is only gathered). Measured cosine against f32 on four
+  fixtures: f16 ≥ 0.9999999, int8 ≥ 0.99992; the table shrinks 2× / 4×. The
+  default stays f32. New in v1.71.0.
 - `bm25.Builder` (`NewBuilder`, `Add`, `N`, `Build`) — builds an `Index` one
   document at a time, so a build holds the index plus one document instead of
   the whole tokenized corpus; identical to `bm25.Build` (which is now a loop over

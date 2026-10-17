@@ -26,6 +26,24 @@ loader's file through a weak pointer. With the cycle broken (`Tensor.owner` set 
 loaders, 3/3 rounds. Without the test's pre-forward check, the forward over the unmapped weights is a SIGSEGV. BF16 checkpoints are widened
 into the heap, so they were never affected. Found by goinfer's memory campaign (MEM3).
 
+### Added — f16 and int8 word-embedding tables for BERT and GTE (`LoadBERTWithOptions`, `LoadGTEWithOptions`)
+
+`encoder.LoadBERTWithOptions` and `encoder.LoadGTEWithOptions` take an `encoder.LoadOptions` whose `WordEmb` field
+(`encoder.WordEmbPrecision`: `WordEmbF32`, the default; `WordEmbF16`; `WordEmbInt8`, per-row symmetric with an f32 scale) sets how the
+word-embedding table is stored. The table is only gathered by row, so each token's row is widened at gather time. It is 45–69% of these
+models' weights. Quality gate, bars registered before the run, cosine of each output embedding against the f32 load over each fixture's
+golden texts plus 20 fixed ones:
+
+| fixture | f16 min (bar 0.9999) | int8 min (bar 0.999) | table f32 → f16 → int8 |
+|---|---|---|---|
+| all-MiniLM-L6-v2 (BERT) | 1.0000000 | 0.9999251 | 44.7 → 22.4 → 11.3 MiB |
+| cross-encoder trunk (BERT) | 1.0000000 | 0.9999970 | 44.7 → 22.4 → 11.3 MiB |
+| SPLADE trunk (BERT) | 1.0000000 | 0.9999894 | 89.4 → 44.7 → 22.5 MiB |
+| arctic-embed-m-v2.0 (GTE) | 1.0000000 | 0.9999587 | 732.6 → 366.3 → 184.1 MiB |
+
+Both pass clearly. **The default stays f32** pending a decision on changing it. `LoadOptions{}` is `LoadBERT`/`LoadGTE` bit for bit, and
+SPLADE (tied decoder) keeps loading f32. An f32 table from an F32 checkpoint is mapped, file-backed pages; the narrow tables are heap.
+
 ### Changed — `embed.LoadFromFS` memory-maps a Model2Vec model on disk; new `LoadFromFSHeap` and `StaticModel.Close`
 
 When the `fs.FS` hands back a real file for `model.safetensors` — as `os.DirFS` does, the way ken and most callers pass a model directory —

@@ -52,9 +52,10 @@ type BERT struct {
 	be Backend
 
 	cfg     bertConfig
-	wordEmb []float32 // [vocab, hidden]
-	posEmb  []float32 // [maxPos, hidden] — learned absolute positions
-	typeEmb []float32 // [typeVocab, hidden]
+	wordEmb []float32  // [vocab, hidden]; nil when wordQ holds the table
+	wordQ   *wordTable // the table at a narrower precision (LoadBERTWithOptions), else nil
+	posEmb  []float32  // [maxPos, hidden] — learned absolute positions
+	typeEmb []float32  // [typeVocab, hidden]
 	embLNW  []float32
 	embLNB  []float32
 	layers  []bertLayer
@@ -298,13 +299,20 @@ func (b *BERT) forward(ids, segs []int32, clsOnly bool) []float32 {
 	// Embeddings: word + learned position (offset for RoBERTa/XLM-R) + optional
 	// token-type[seg], then LayerNorm.
 	h := make([]float32, L*D)
-	vocab, typeVocab := len(b.wordEmb)/D, len(b.typeEmb)/D
+	vocab, typeVocab := c.VocabSize, len(b.typeEmb)/D
 	for i, id := range ids {
-		w := b.wordEmb[clampTokenID(id, vocab)*D:][:D]
 		pos := b.posEmb[(i+b.posOff)*D : (i+b.posOff)*D+D]
 		row := h[i*D : i*D+D]
-		for j := range D {
-			row[j] = w[j] + pos[j]
+		if b.wordQ != nil {
+			b.wordQ.rowInto(clampTokenID(id, vocab), row)
+			for j := range D {
+				row[j] += pos[j]
+			}
+		} else {
+			w := b.wordEmb[clampTokenID(id, vocab)*D:][:D]
+			for j := range D {
+				row[j] = w[j] + pos[j]
+			}
 		}
 		// token-type is optional (absent when type_vocab_size == 0).
 		if typeVocab > 0 {

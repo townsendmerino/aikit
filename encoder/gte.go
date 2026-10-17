@@ -59,8 +59,9 @@ type GTE struct {
 	be Backend
 
 	cfg     gteConfig
-	wordEmb []float32 // [vocab, hidden]
-	typeEmb []float32 // [typeVocab, hidden] — row 0 added to every token
+	wordEmb []float32  // [vocab, hidden]; nil when wordQ holds the table
+	wordQ   *wordTable // the table at a narrower precision (LoadGTEWithOptions), else nil
+	typeEmb []float32  // [typeVocab, hidden] — row 0 added to every token
 	embLNW  []float32
 	embLNB  []float32
 	layers  []gteLayer
@@ -226,11 +227,14 @@ func (g *GTE) forward(ids []int32, clsOnly bool) []float32 {
 
 	// Embeddings: word + token_type[0] (positions come from RoPE), then LayerNorm.
 	h := make([]float32, L*D)
-	vocab := len(g.wordEmb) / D
+	vocab := c.VocabSize
 	for i, id := range ids {
-		w := g.wordEmb[clampTokenID(id, vocab)*D:][:D]
 		row := h[i*D : i*D+D]
-		copy(row, w)
+		if g.wordQ != nil {
+			g.wordQ.rowInto(clampTokenID(id, vocab), row)
+		} else {
+			copy(row, g.wordEmb[clampTokenID(id, vocab)*D:][:D])
+		}
 		if g.typeEmb != nil { // type_vocab_size == 1 → row 0 added to every token
 			for j := range D {
 				row[j] += g.typeEmb[j]
