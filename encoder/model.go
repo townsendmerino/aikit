@@ -344,6 +344,7 @@ func LoadQ8(dir string) (*ModelQ8, error) {
 	}
 	tok, err := embed.LoadTokenizerFromFS(os.DirFS(dir), "tokenizer.json")
 	if err != nil {
+		_ = w.Close() //nolint:errcheck // a failed load: the tokenizer error is the one to report
 		return nil, fmt.Errorf("encoder: load tokenizer: %w", err)
 	}
 	return &ModelQ8{weights: w, tok: tok, maxSeqLength: DefaultMaxSeqLength}, nil
@@ -385,9 +386,10 @@ func (m *ModelQ8) EncodeBatch(texts []string, isQueries []bool, concurrency int)
 	return encodeBatch(m.tok, m.maxSeqLength, m.weights.forwardBatch, texts, isQueries, concurrency)
 }
 
-// Close releases resources. ModelQ8 holds no mmap (LoadWeightsQ8 closes the
-// safetensors handle at load), so this is a no-op that exists for parity with
-// Model.Close — both satisfy io.Closer, so a caller holding an encoder.Encoder can
+// Close releases the checkpoint mapping the model's word embeddings are read
+// from (see WeightsQ8); the model must not be used afterwards. Idempotent. Like
+// Model.Close it satisfies io.Closer, so a caller holding an encoder.Encoder can
 // release it via `if c, ok := enc.(io.Closer); ok { c.Close() }` without Close
-// being on the (Hard-tier, frozen) Encoder interface (audit #19).
-func (m *ModelQ8) Close() error { return nil }
+// being on the (Hard-tier, frozen) Encoder interface (audit #19). Until v1.71.0
+// it was a no-op: the model then held no mapping.
+func (m *ModelQ8) Close() error { return m.weights.Close() }

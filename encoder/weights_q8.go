@@ -3,6 +3,7 @@ package encoder
 import (
 	"fmt"
 
+	"github.com/townsendmerino/aikit/embed"
 	"github.com/townsendmerino/aikit/linalg"
 )
 
@@ -39,8 +40,14 @@ type LayerWeightsQ8 struct {
 // matmul, so quantizing them has no perf benefit; emb_ln is the same
 // "tiny + parity-sensitive" exception as the per-layer LNs.
 //
-// Memory footprint: ~140 MB total vs Weights' ~547 MB (4× reduction
-// for the linear-projection bulk; embeddings still cost ~92 MB).
+// WordEmb is read from the checkpoint's mapping, not copied: it is only
+// ever gathered by row, so a forward faults in the rows it uses and the
+// table costs no heap. The weights therefore hold the checkpoint file open
+// until Close.
+//
+// Memory footprint: ~110 MB of heap vs Weights' ~547 MB (4× reduction
+// for the linear-projection bulk), plus the mapped pages of the
+// word-embedding rows a workload touches.
 type WeightsQ8 struct {
 	// be is the compute backend for f32 matmuls; nil = the pure-Go path (default).
 	be Backend
@@ -52,6 +59,10 @@ type WeightsQ8 struct {
 	EmbLN_B      []float32
 
 	Layers []LayerWeightsQ8
+
+	// st is the checkpoint WordEmb is a view into (nil when the checkpoint was heap-read or widened). Held
+	// until Close; see the type doc.
+	st *embed.SafetensorsFile
 
 	// ropeCache holds the rotary table across forwards instead of rebuilding it
 	// per call (prefix-property cache; see Weights.ropeCache). Zero value ready.
@@ -65,10 +76,9 @@ func (w *WeightsQ8) HeadDim() int { return w.Cfg.HeadDim() }
 // quantizes the 5 big per-layer linear matrices to int8 at load time.
 // Calibration is per-row symmetric (max(|row|) / 127).
 //
-// After this returns, the original f32 weight bytes are released via
-// Close() on the safetensors handle — we hold int8 copies on the Go
-// heap instead. The model footprint drops from ~547 MB (heap) +
-// 547 MB (mmap shadow) to ~140 MB int8 + the small f32 tail.
+// After this returns, the quantized projections are int8 copies on the Go
+// heap and their f32 pages are released; the mapping itself stays open,
+// because WordEmb is read from it (see WeightsQ8). Close releases it.
 //
 // Steady state was never the problem; the PEAK was. Quantizing reads every f32
 // weight, so waiting until the end to Close left the entire checkpoint resident
@@ -87,6 +97,7 @@ func LoadWeightsQ8(dir string) (*WeightsQ8, error) {
 	// dense-GELU checkpoint has no fc11/fc12 to quantize. Refuse rather than
 	// quantize nil tensors into a plausible-looking wrong model.
 	if w.hasMoE() || !w.Cfg.gatedMLP() {
+		w.closeFile()
 		return nil, fmt.Errorf("encoder: q8 unsupported for this checkpoint (mixture-of-experts / non-gated MLP); use the f32 path")
 	}
 	// The Q8 attention path (selfAttentionQ8/…Batched) has no bias term and
@@ -94,21 +105,23 @@ func LoadWeightsQ8(dir string) (*WeightsQ8, error) {
 	// silently drop its attention biases on every Q8 path. Refuse rather than
 	// mis-score (audit #3); the f32 path applies them correctly.
 	if w.Cfg.QKVProjBias {
+		w.closeFile()
 		return nil, fmt.Errorf("encoder: q8 unsupported for a checkpoint with qkv_proj_bias (the Q8 attention path has no bias term); use the f32 path")
 	}
-	// Build the q8 bundle by quantizing each big projection.
+	// Build the q8 bundle by quantizing each big projection. WordEmb stays a
+	// view into the mapping (89 MiB on CodeRankEmbed that used to be cloned
+	// onto the heap); the small embedding tensors are copied.
 	q := &WeightsQ8{
 		Cfg:          w.Cfg,
-		WordEmb:      cloneFloat32(w.WordEmb),
+		WordEmb:      w.WordEmb,
 		TokenTypeEmb: cloneFloat32(w.TokenTypeEmb),
 		EmbLN_W:      cloneFloat32(w.EmbLN_W),
 		EmbLN_B:      cloneFloat32(w.EmbLN_B),
 		Layers:       make([]LayerWeightsQ8, len(w.Layers)),
+		st:           w.st,
 	}
-	// The embedding tensors are now copied onto the heap; their mapped pages are
-	// dead weight from here (WordEmb alone is ~92 MB of the checkpoint).
+	// The copied embedding tensors' mapped pages are dead weight from here.
 	_ = w.releasePages( //nolint:errcheck // best-effort page drop; the heap copy is authoritative
-		"embeddings.word_embeddings.weight",
 		"embeddings.token_type_embeddings.weight",
 		"emb_ln.weight", "emb_ln.bias",
 	)
@@ -135,12 +148,21 @@ func LoadWeightsQ8(dir string) (*WeightsQ8, error) {
 		// only one layer's f32 side is resident at a time.
 		_ = w.releasePages(layerQ8TensorNames(i)...) //nolint:errcheck // best-effort page drop; the heap copy is authoritative
 	}
-	// Release the underlying mmap (the f32 weights are no longer needed —
-	// we have int8 copies on the heap now).
-	if w.st != nil {
-		_ = w.st.Close()
-	}
 	return q, nil
+}
+
+// Close releases the checkpoint mapping WordEmb is read from. The weights
+// must not be used afterwards. Calling Close again does nothing.
+func (w *WeightsQ8) Close() error {
+	if w == nil {
+		return nil
+	}
+	st := w.st
+	w.st, w.WordEmb = nil, nil
+	if st == nil {
+		return nil
+	}
+	return st.Close()
 }
 
 // layerQ8TensorNames lists the five tensors LoadWeightsQ8 quantizes for layer i.
@@ -168,6 +190,13 @@ func (w *Weights) releasePages(names ...string) error {
 		return nil
 	}
 	return w.st.ReleaseTensors(names...)
+}
+
+// closeFile releases w's checkpoint mapping on a load that is refusing it.
+func (w *Weights) closeFile() {
+	if w.st != nil {
+		_ = w.st.Close() //nolint:errcheck // a refused load: the refusal is the error to report
+	}
 }
 
 func cloneFloat32(src []float32) []float32 {
