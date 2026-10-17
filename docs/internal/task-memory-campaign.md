@@ -155,4 +155,35 @@ row). The table is only gathered, so the rows are dequantized at gather time. SP
 
 ## Results
 
-(filled in per item as it lands)
+| item | commit | gate |
+|---|---|---|
+| 1 SPLADE tiling | `6e9609d` | PASS: hash identical; 512-token expand 89.4 → 7.0 MiB allocated |
+| 2 Q8 WordEmb from the mapping | `7bfd399` | PASS: hash identical; heap after load 200.0 → 110.5 MiB |
+| 3 BM25 postings arena | `74a9365` | PASS: hash identical; index 18.66 → 14.89 MiB; Build +5.6% (flagged for perfgate) |
+| 4 HNSW build pre-sizing | `e9f1c41` | PASS: query and blob hashes identical; allocations per Add 69 → 2 |
+| 5 D6 | (this commit) | STOPPED before the change — see below |
+
+### Item 5 (D6): stopped before making the release real
+
+The audit (every caller of the two mmap opens and their wrappers, in aikit, goinfer and ken; 2026-10-17)
+found one caller that would crash and one hazard that is not a caller:
+
+1. **goinfer `internal/whisper/decoder.go` `Load`** keeps F32 views (`st.TensorF32`, no copy) and drops the
+   file; its fixture `testdata/whisper-tiny-rand` is 89/89 F32, and serve reaches it through
+   `LoadTranscriber`. Fix (not made here, goinfer's to land): hold `st` on `Decoder` with a `Close`, close it on
+   the error return, and give `Transcriber` a `Close` over both halves. Today it only leaks a second mapping.
+2. **Early collection of a holder.** The views point into the mapping, not the Go heap, so only the holder
+   struct's field keeps the file alive, and the runtime may collect the holder as soon as a method has loaded its
+   last field, while that method is still reading the views. With a real cleanup that is an unmap under a running
+   forward. Closing it needs `runtime.KeepAlive` in every public forward of every view-holding type, in aikit
+   (`StaticModel`, encoder `Model`/`ModelQ8`/`BERT`/`GTE`/`CrossEncoder`/`SPLADE`, the audio encoders) and in goinfer
+   (`decoder.Model` and its drafters, LoRA, the Metal/CUDA uploaders that keep host views), and keeping it there for
+   every future one.
+
+Every other site is safe: it holds the file for the views' lifetime, or copies out before `Close` (table in the
+audit report). Item 2 is a project-wide discipline in another repo rather than a caller to fix, so per the
+instruction ("if it isn't possible, stop and report") the cleanup was not made real. Done instead: the comments
+now say what the code does (`finalizeMmaps` explains the cycle and why it stays), and
+`TestSafetensorsMmap_droppedFileWithTensorsIsNotFinalized` pins it, so a change that breaks the cycle fails until
+the holders are revisited. GGUF's mmap file has no tensor back-pointer, so this cycle does not apply to it (not
+probed).

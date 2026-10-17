@@ -120,10 +120,11 @@ func LoadFromFS(fsys fs.FS, dir string) (*StaticModel, error) {
 // reinterpretLE), so the only thing standing between a caller and the page cache
 // was where those bytes came from.
 //
-// LIFETIME. The returned model holds the mapping alive, and OpenSafetensorsMmap
-// installs a finalizer that unmaps it once the model is unreachable — the same
-// discipline the heap-backed path already relies on to keep its aliased tensor
-// data valid. Do not retain a vector slice past the model itself.
+// LIFETIME. The returned model holds the mapping. It is not unmapped when the
+// model becomes unreachable (the safetensors finalizer never runs for a file
+// with tensors; see embed's finalizeMmaps), so a long-lived process that loads
+// and drops models repeatedly keeps every mapping until exit. Do not retain a
+// vector slice past the model itself.
 //
 // On non-unix targets mmap.MapReadOnly falls back to a heap read, so this is
 // identical to Load there rather than unavailable.

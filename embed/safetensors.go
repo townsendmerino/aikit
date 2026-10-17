@@ -43,8 +43,10 @@ import (
 // any tensor returned by Tensor() is in use. With the heap-loaded path
 // (OpenSafetensors / OpenSafetensorsFromFS) the underlying []byte stays
 // in Go's heap until SafetensorsFile is GC'd. With the mmap-loaded path
-// (OpenSafetensorsMmap, M8) the underlying region is munmap'd via a
-// runtime.SetFinalizer attached at Open time — Close() forces it earlier.
+// (OpenSafetensorsMmap, M8) the underlying region stays mapped until Close();
+// in practice the finalizer attached at Open does not release it (see
+// finalizeMmaps), so a file that is dropped without Close leaks its mapping
+// until the process exits.
 type SafetensorsFile struct {
 	data    []byte
 	tensors map[string]Tensor
@@ -275,8 +277,9 @@ func OpenSafetensorsShardedFromFS(fsys fs.FS, indexPath string) (*SafetensorsFil
 //
 // This is the M8 path for large models — CodeRankEmbed's 547 MB
 // checkpoint would otherwise dominate ken-mcp's RSS. The mapping is
-// released via syscall.Munmap when the SafetensorsFile is GC'd
-// (runtime.SetFinalizer) or when Close() is called explicitly.
+// released by Close(). A finalizer is attached, but it does not run for a
+// file that holds any tensor (see finalizeMmaps): a file dropped without
+// Close keeps its mapping until the process exits.
 //
 // IMPORTANT: tensor data returned by Tensor() aliases the mapped
 // region. Callers must keep the SafetensorsFile alive for as long as
@@ -298,13 +301,32 @@ func OpenSafetensorsMmap(path string) (*SafetensorsFile, error) {
 		return nil, err
 	}
 	sf.mmapped = [][]byte{data}
-	// Finalizer guards the common case where callers forget Close().
+	// Only a tensor-less file is ever finalized; see finalizeMmaps.
 	runtime.SetFinalizer(sf, finalizeMmaps)
 	return sf, nil
 }
 
 // finalizeMmaps is the SetFinalizer callback for mmap-backed files: munmap
 // every region. Close does the same eagerly.
+//
+// IT DOES NOT RUN for a file that holds any tensor. Every Tensor in f.tensors
+// points back at f (Tensor.owner), and the runtime does not collect an object
+// with a finalizer that is part of a cycle, so such a file is never collected
+// and its mapping lives until Close or process exit — a leak, never an early
+// unmap. Measured 2026-10-17 with a weak pointer: a one-tensor file was still
+// reachable after 10 GCs, a tensor-less one was collected
+// (docs/internal/task-memory-campaign.md, item 5).
+//
+// It is left that way on purpose, for now. Making the release real (e.g.
+// runtime.AddCleanup, which a cycle does not block) would unmap a file as soon
+// as nothing holds it — and the views handed out by Float32s, TensorF32 and the
+// other aliasing accessors do not hold it: they point into the mapping, not the
+// Go heap. A holder struct can then be collected while one of its own methods is
+// still reading those views (once the method has loaded its last field), unless
+// every such method keeps the holder alive with runtime.KeepAlive. That is a
+// discipline across every view-holding type in aikit and its consumers, decided
+// as a project change, not slipped in here. Until then: hold the file for as
+// long as its views are read, and Close it when done.
 func finalizeMmaps(s *SafetensorsFile) {
 	for _, m := range s.mmapped {
 		_ = mmap.Unmap(m)
@@ -498,9 +520,10 @@ func (f *SafetensorsFile) Names() []string {
 // Omit want to read without a shape check.
 func (f *SafetensorsFile) TensorF32(name string, want ...int) ([]float32, error) {
 	// H6: the BF16/F16 widening below reads t.raw, which aliases f's mmap
-	// region; f's finalizer munmaps it. The Tensor value doesn't reference f, so
-	// keep f reachable across the read/widen. (An F32 result is a zero-copy view
-	// whose later use by the caller is governed by the Tensor lifetime contract.)
+	// region. Keep f reachable across the read/widen, so this stays correct if
+	// the finalizer is ever made to run (it does not today; see finalizeMmaps).
+	// (An F32 result is a zero-copy view whose later use by the caller is
+	// governed by the Tensor lifetime contract.)
 	defer runtime.KeepAlive(f)
 	t, err := f.Tensor(name)
 	if err != nil {
