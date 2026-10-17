@@ -1,6 +1,6 @@
 # Task: the aikit half of the memory campaign (2026-10)
 
-> **Status: in progress, branch `memory-campaign-aikit`.** Scope: the aikit items of goinfer's
+> **Status 2026-10-17: all ten items committed on `memory-campaign-aikit` (item 5 stopped and reported, by its own rule); not yet released.** Scope: the aikit items of goinfer's
 > `docs/tasks/task-memory-campaign-2026-10.md` (branch `memory-campaign-2026-10`, MEM3 and MEM14–MEM16),
 > plus D6 (the safetensors mmap finalizer) and annmetal, as Francis decided them on 2026-10-17. MEM3 shipped
 > first on this branch (`db44648`). Still on hold: MEM17 (chunk text by reference, waits on D4) and MEM4(a)
@@ -166,7 +166,7 @@ row). The table is only gathered, so the rows are dequantized at gather time. SP
 | 7 MEM15 HNSW CSR, blob v5 | `50f9780` | PASS: query hash identical built, v5 Load/LoadHNSWMmap, and v4 fixtures; graph byte-identical (v4 re-encoding hash); mapped load +0.001 MiB heap (bound 1 MiB; v4 6.9 MiB); Add-after-load matches; damage rejected |
 | 8 Model2Vec mapped by default | `6284cb0` | PASS: 1,753 texts bit-identical mapped/heap/MapFS; TTFR (M1 Pro, warm, 15 rounds) heap 40.2 → mapped 29.7 ms, 0.74× (nobara's July +17% is the other sign; re-measure there) |
 | 9 BERT/GTE f16/int8 word embeddings | `cb0c08b` | PASS, clearly: min cosine f16 1.0000000 on all 4 fixtures (bar 0.9999), int8 0.99993–0.999997 (bar 0.999); tables 2×/4× smaller. Default stays f32 until Francis agrees |
-| 10 annmetal no-copy + scratch reuse | (this commit) | PASS: (a) mapped ≡ copied bit for bit, both rank as the CPU (Δ 0); (b) mapped EnableGPU +0.44–0.47 MiB footprint (bar 1.76), copied +49.3 MiB — instrument changed, see below; (c) 60 batch calls add no device memory |
+| 10 annmetal no-copy + scratch reuse | `0f20f32` | PASS: (a) mapped ≡ copied bit for bit, both rank as the CPU (Δ 0); (b) mapped EnableGPU +0.44–0.47 MiB footprint (bar 1.76), copied +49.3 MiB — instrument changed, see below; (c) 60 batch calls add no device memory |
 
 ### Item 5 (D6): stopped before making the release real
 

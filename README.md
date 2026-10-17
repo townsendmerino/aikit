@@ -314,6 +314,9 @@ no such consumer has surfaced yet.
   corpus* (`Build`'s input), for callers who rebuild on load. Caches roughly
   half of BM25's measured cold-start cost (tokenization), while `Build` still
   runs. New surface, may be reworked or dropped.
+- `ann.MappedBackend` — optional extension of the `FlatI8.EnableGPU` backend seam:
+  a unified-memory backend (`gpu/annmetal`) reads a `LoadFlatI8Mmap` index's codes
+  from the mapping instead of copying them. New in v1.71.0.
 - `encoder.LoadBERTWithOptions` / `encoder.LoadGTEWithOptions` / `encoder.LoadOptions`
   / `encoder.WordEmbPrecision` — store the word-embedding table as f16 or per-row
   int8 instead of f32 (it is only gathered). Measured cosine against f32 on four
