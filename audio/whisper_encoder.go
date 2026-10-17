@@ -2,6 +2,7 @@ package audio
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -55,6 +56,26 @@ type WhisperEncoder struct {
 	lnW, lnB       []float32
 	defect         int
 	device         WhisperDevice
+	// st is the checkpoint the weights came from. An F32 tensor is a view into its mapping, which its finalizer unmaps once st is unreachable, so the encoder holds it until Close.
+	st     *embed.SafetensorsFile
+	closed bool
+}
+
+// errEncoderClosed is what an encoder's forward returns after Close.
+var errEncoderClosed = errors.New("audio: encoder is closed")
+
+// Close releases the checkpoint mapping the weights may alias. Forward returns an error afterwards, and slices taken from Weights must no longer be read; a device set with
+// SetDevice stays the caller's to close. Calling Close again does nothing.
+func (e *WhisperEncoder) Close() error {
+	if e.closed {
+		return nil
+	}
+	st := e.st
+	*e = WhisperEncoder{Cfg: e.Cfg, closed: true} // drop every view into the mapping before unmapping it
+	if st == nil {
+		return nil
+	}
+	return st.Close()
 }
 
 // Planted defects for G-S14d's red runs. Zero is the shipped computation.
@@ -106,11 +127,21 @@ func parseWhisperEncoderConfig(raw []byte) (WhisperEncoderConfig, error) {
 
 // openSafetensorsDir opens a checkpoint directory's weights: a shard index when there is one, else model.safetensors.
 func openSafetensorsDir(dir string) (*embed.SafetensorsFile, error) {
+	var st *embed.SafetensorsFile
+	var err error
 	if idx := filepath.Join(dir, "model.safetensors.index.json"); fileExists(idx) {
-		return embed.OpenSafetensorsShardedMmap(idx)
+		st, err = embed.OpenSafetensorsShardedMmap(idx)
+	} else {
+		st, err = embed.OpenSafetensorsMmap(filepath.Join(dir, "model.safetensors"))
 	}
-	return embed.OpenSafetensorsMmap(filepath.Join(dir, "model.safetensors"))
+	if err == nil && testHookOpenedCheckpoint != nil {
+		testHookOpenedCheckpoint(st)
+	}
+	return st, err
 }
+
+// testHookOpenedCheckpoint, set only by tests, sees each file openSafetensorsDir opens (the lifetime test holds a weak pointer to it).
+var testHookOpenedCheckpoint func(*embed.SafetensorsFile)
 
 // LoadWhisperEncoder reads the encoder from a Whisper checkpoint directory (config.json at the top, or under audio_config, in Whisper's key names or Voxtral's; model.safetensors or a
 // shard index with the tensors under "model.encoder.", "encoder.", "audio_tower." (Voxtral) or no prefix).
@@ -173,8 +204,10 @@ func LoadWhisperEncoder(dir string) (*WhisperEncoder, error) {
 	}
 	e.lnW, e.lnB = get("layer_norm.weight", D), get("layer_norm.bias", D)
 	if err != nil {
+		st.Close()
 		return nil, fmt.Errorf("audio: loading %s: %w", dir, err)
 	}
+	e.st = st
 	return e, nil
 }
 
@@ -223,6 +256,9 @@ func parallelRows(n int, fn func(lo, hi int)) {
 
 // Forward runs the encoder over feats [mels][3000] (WhisperFeatures' layout) and returns the [1500][DModel] last hidden state.
 func (e *WhisperEncoder) Forward(feats []float32) ([]float32, error) {
+	if e.closed {
+		return nil, errEncoderClosed
+	}
 	c := e.Cfg
 	const T = WhisperFrames
 	if len(feats) != c.MelBins*T {

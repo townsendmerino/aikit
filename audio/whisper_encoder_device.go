@@ -16,7 +16,7 @@ type WhisperLayerWeights struct {
 }
 
 // WhisperWeights is a read-only view of the loaded encoder for a device to upload: Conv1W is [DModel][MelBins][3], Conv2W [DModel][DModel][3], Pos [1500][DModel]. The slices
-// alias the encoder's own and must not be written.
+// alias the encoder's own and must not be written; from an F32 checkpoint they are views into its mapping, readable until the encoder's Close.
 type WhisperWeights struct {
 	Cfg                WhisperEncoderConfig
 	Conv1W, Conv1B     []float32

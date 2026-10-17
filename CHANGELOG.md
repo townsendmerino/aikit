@@ -9,6 +9,23 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added — the audio encoders hold their checkpoint and can `Close` it
+
+`LoadWhisperEncoder`, `LoadVoxtralAudio` and `LoadQwenASREncoder` open the checkpoint with mmap, and an F32 checkpoint's weights (Whisper
+tiny/base/small) are views into that mapping. The loaders kept no reference to the file. The file's finalizer would unmap it once the file
+was unreachable, leaving the encoder reading unmapped memory. Each encoder now holds the file it loaded from, and the new
+`(*WhisperEncoder).Close`, `(*VoxtralAudio).Close` and `(*QwenASREncoder).Close` release it. After `Close`, a forward returns an error
+instead of touching the mapping, and a second `Close` does nothing. `LoadVoxtralAudio` now reads its projector through the encoder's file
+instead of mapping the checkpoint a second time.
+
+**No crash was reachable in a release.** Every `Tensor` in a `SafetensorsFile` points back at its file, and the Go runtime never frees an
+object with a finalizer that is part of a cycle. A dropped mmap'd file is therefore never collected: its mapping stays until the process
+exits, rather than being unmapped. What a caller gets from this change is a way to release the mapping. `Close` is the only release; the
+finalizer never runs for a file that holds a tensor (measured 2026-10-17). `TestAudioLoaders_holdTheirCheckpointUntilClose` watches each
+loader's file through a weak pointer. With the cycle broken (`Tensor.owner` set to nil), a loader that drops its file fails it, all three
+loaders, 3/3 rounds. Without the test's pre-forward check, the forward over the unmapped weights is a SIGSEGV. BF16 checkpoints are widened
+into the heap, so they were never affected. Found by goinfer's memory campaign (MEM3).
+
 ## [1.70.2] — 2026-10-15
 
 `perfgate` VERDICT: PASS — no regression vs v1.70.1 above each shape's floor — 5/47 shapes resolve the 5.0% class

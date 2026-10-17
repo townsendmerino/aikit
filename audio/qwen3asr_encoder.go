@@ -64,6 +64,8 @@ type QwenASREncoder struct {
 	proj1W, proj1B, proj2W, proj2B []float32
 	hf                             int // frequency rows after the three convs
 	defect                         int
+	st                             *embed.SafetensorsFile // held until Close: F32 weights are views into its mapping (see WhisperEncoder.st)
+	closed                         bool
 }
 
 // Planted defects for G-S14b2/3's red runs. Zero is the shipped computation.
@@ -113,12 +115,7 @@ func LoadQwenASREncoder(dir string) (*QwenASREncoder, error) {
 	if err := e.Cfg.validate(); err != nil {
 		return nil, err
 	}
-	var st *embed.SafetensorsFile
-	if idx := filepath.Join(dir, "model.safetensors.index.json"); fileExists(idx) {
-		st, err = embed.OpenSafetensorsShardedMmap(idx)
-	} else {
-		st, err = embed.OpenSafetensorsMmap(filepath.Join(dir, "model.safetensors"))
-	}
+	st, err := openSafetensorsDir(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -161,9 +158,24 @@ func LoadQwenASREncoder(dir string) (*QwenASREncoder, error) {
 	e.proj1W, e.proj1B = get("proj1.weight", D, D), get("proj1.bias", D)
 	e.proj2W, e.proj2B = get("proj2.weight", c.OutputDim, D), get("proj2.bias", c.OutputDim)
 	if err != nil {
+		st.Close()
 		return nil, fmt.Errorf("audio: loading %s: %w", dir, err)
 	}
+	e.st = st
 	return e, nil
+}
+
+// Close releases the checkpoint mapping the weights may alias; Forward and Tower return an error afterwards. Calling Close again does nothing.
+func (e *QwenASREncoder) Close() error {
+	if e.closed {
+		return nil
+	}
+	st := e.st
+	*e = QwenASREncoder{Cfg: e.Cfg, closed: true} // drop every view into the mapping before unmapping it
+	if st == nil {
+		return nil
+	}
+	return st.Close()
 }
 
 // QwenASRTokenCount is the number of audio tokens for `valid` real mel frames (the processor's _get_audio_token_length): full 100-frame chunks give 13 each, the last partial chunk
@@ -193,6 +205,9 @@ func (e *QwenASREncoder) Forward(feats []float32, T, valid int) ([]float32, int,
 
 // Tower is the encoder without the projector (the reference's audio_tower output): [n][DModel].
 func (e *QwenASREncoder) Tower(feats []float32, T, valid int) ([]float32, int, error) {
+	if e.closed {
+		return nil, 0, errEncoderClosed
+	}
 	c := e.Cfg
 	chunk := 2 * c.NWindow
 	switch {

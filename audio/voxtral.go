@@ -47,6 +47,12 @@ func LoadVoxtralAudio(dir string) (*VoxtralAudio, error) {
 	if err != nil {
 		return nil, err
 	}
+	loaded := false
+	defer func() {
+		if !loaded {
+			_ = enc.Close() //nolint:errcheck // a failed load: the load error is the one to report
+		}
+	}()
 	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
 	if err != nil {
 		return nil, err
@@ -70,18 +76,22 @@ func LoadVoxtralAudio(dir string) (*VoxtralAudio, error) {
 	case inter <= 0 || H <= 0 || inter%d != 0 || enc.Cfg.MaxPositions%(inter/d) != 0:
 		return nil, fmt.Errorf("audio: Voxtral audio intermediate_size %d (d_model %d, %d frames) / text hidden %d do not stack into whole rows", inter, d, enc.Cfg.MaxPositions, H)
 	}
-	st, err := openSafetensorsDir(dir)
-	if err != nil {
-		return nil, err
-	}
+	// The projector is in the encoder's checkpoint: read it through the file the encoder holds, which keeps an F32 projector's views mapped too.
 	v := &VoxtralAudio{Enc: enc, TextHidden: H, Stack: inter / d}
-	if v.w1, err = st.TensorF32("multi_modal_projector.linear_1.weight", H, inter); err != nil {
+	if v.w1, err = enc.st.TensorF32("multi_modal_projector.linear_1.weight", H, inter); err == nil {
+		v.w2, err = enc.st.TensorF32("multi_modal_projector.linear_2.weight", H, H)
+	}
+	if err != nil {
 		return nil, fmt.Errorf("audio: loading %s: %w", dir, err)
 	}
-	if v.w2, err = st.TensorF32("multi_modal_projector.linear_2.weight", H, H); err != nil {
-		return nil, fmt.Errorf("audio: loading %s: %w", dir, err)
-	}
+	loaded = true
 	return v, nil
+}
+
+// Close releases the checkpoint mapping the tower and projector weights may alias (it closes Enc); Embed returns an error afterwards. Calling Close again does nothing.
+func (v *VoxtralAudio) Close() error {
+	v.w1, v.w2 = nil, nil
+	return v.Enc.Close()
 }
 
 // Rows is the number of audio tokens one 30 s window yields.
