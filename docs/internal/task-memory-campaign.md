@@ -237,3 +237,18 @@ one), and a `Close` there is still worth adding.
   footprint delta exceed 90% of the codes, so the instrument is shown able to see a copy. A first measurement
   taken after a query as well read 1.62–2.03 MiB against the 1.76 bar: the query's own host allocations, which is
   why the bar sits at the registered point (after `EnableGPU`) and the after-query figure is only reported.
+
+### Item 7: a correction to its registered gate (c), found on amd64
+
+Gate (c) read "Add-after-load still works and matches Add on the original". That is not the contract: a loaded
+index re-seeds its level RNG from the stored seed, while the original's RNG has advanced through every insert, so the
+two graphs diverge by design. The first test of it passed on arm64 only because the top 10 happened to coincide, and
+failed on linux/amd64 (nobara, full suite, 2026-10-17). The gate is now what item 7 can change: Add after a load —
+heap or mapped, both thawing the CSR graph — builds exactly what Add after a Load built before v5. The before-hashes
+were captured by running the same hash function on the pre-v5 tree (06c5619) on each machine (arm64 679d2cf4, amd64
+16be3210).
+
+Also found there: every hash-pinned identity gate (items 1, 2, 3/6, 4/7) had an arm64-only capture, and SIMD kernels
+and fused multiply-adds differ by architecture. Each test file, run on nobara at its own pre-change commit, gives the
+amd64 hash the changed tree gives, so the identities hold on amd64 too; the captures are now keyed by GOARCH
+(`7496b1c`).

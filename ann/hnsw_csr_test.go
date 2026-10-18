@@ -154,39 +154,61 @@ func TestHNSWMmap_v5HeapAfterLoad(t *testing.T) {
 	_ = mOld.Close()
 }
 
-// Gate (c): Add after a load (heap or mapped) gives the same index as Add on the original; on a mapped index it must
-// thaw into the heap rather than write the read-only mapping (which would fault).
-func TestHNSW_addAfterV5LoadMatchesOriginal(t *testing.T) {
+// addAfterLoadHash fingerprints Add after a load: an index of 1,000 vectors is saved and loaded with load, 200 more are
+// added, and 60 queries (k = 10, and QueryEf at ef = 200) are hashed, for f32 and int8. It uses only API that predates
+// v5, so the same function ran on the pre-change tree for the capture.
+func addAfterLoadHash(tb testing.TB, load func([]byte) *HNSW) string {
 	vecs := campaignUnitVecs(31, 1200, 32)
+	hh := sha256.New()
 	for _, cfg := range []Config{{Seed: 6}, {Seed: 6, Int8: true}} {
-		orig := BuildHNSW(vecs[:1000], cfg)
-		blob, err := orig.MarshalBinary()
+		blob, err := BuildHNSW(vecs[:1000], cfg).MarshalBinary()
 		if err != nil {
-			t.Fatal(err)
+			tb.Fatal(err)
 		}
-		heap, err := Load(blob)
-		if err != nil {
-			t.Fatal(err)
-		}
-		mapped, err := LoadHNSWMmap(writeBlob(t, blob))
-		if err != nil {
-			t.Fatal(err)
-		}
+		h := load(blob)
 		for _, v := range vecs[1000:] {
-			orig.Add(v)
-			heap.Add(v)
-			mapped.Add(v)
+			h.Add(v)
 		}
-		for i, q := range campaignUnitVecs(32, 60, 32) {
-			w := orig.Query(q, 10)
-			if g := heap.Query(q, 10); !hitsEqual(g, w) {
-				t.Fatalf("int8=%v Load+Add query %d: %v, want %v", cfg.Int8, i, g, w)
-			}
-			if g := mapped.Query(q, 10); !hitsEqual(g, w) {
-				t.Fatalf("int8=%v LoadHNSWMmap+Add query %d: %v, want %v", cfg.Int8, i, g, w)
-			}
+		for _, q := range campaignUnitVecs(32, 60, 32) {
+			hashHits(hh, h.Query(q, 10))
+			hashHits(hh, h.QueryEf(q, 10, 200))
 		}
-		_ = mapped.Close()
+	}
+	return hex.EncodeToString(hh.Sum(nil))
+}
+
+// addAfterLoadHashesBefore are addAfterLoadHash with Load, on the tree before v5 (06c5619: v4 blob, per-node lists),
+// keyed by GOARCH (arm64 on the M1 Pro, amd64 on nobara; see campaignHNSWQueryHashBefore).
+var addAfterLoadHashesBefore = map[string]string{"arm64": "679d2cf4668cac1cdb72c7354e4e6de23ade32ffc1631d01b9fe7a0837f321ee", "amd64": "16be32100bf8c95814c4caa025188a62115cbfd2cc9a9c17ef1cc5dc2ccfc320"}
+
+// Gate (c): Add after a load (heap or mapped) — which thaws the CSR graph back into lists — builds exactly what Add
+// after a load built before v5. (Registered as "matches Add on the original", which is not the contract: a loaded
+// index re-seeds its level RNG from the stored seed, where the original's has advanced, so the two diverge by design;
+// the first version of this test passed on arm64 only by coincidence of the top 10.) On a mapped index the thaw must
+// copy, never write the read-only mapping (which would fault).
+func TestHNSW_addAfterLoadMatchesBefore(t *testing.T) {
+	want, ok := addAfterLoadHashesBefore[runtime.GOARCH]
+	if !ok {
+		t.Skipf("no before-hash recorded for GOARCH=%s", runtime.GOARCH)
+	}
+	heap := addAfterLoadHash(t, func(b []byte) *HNSW {
+		h, err := Load(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return h
+	})
+	mapped := addAfterLoadHash(t, func(b []byte) *HNSW {
+		h, err := LoadHNSWMmap(writeBlob(t, b))
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = h.Close() })
+		return h
+	})
+	t.Logf("Add after Load %s, after LoadHNSWMmap %s, before v5 %s", heap, mapped, want)
+	if heap != want || mapped != want {
+		t.Fatalf("Add after a load differs from before v5 (Load %s, LoadHNSWMmap %s, want %s)", heap, mapped, want)
 	}
 }
 
