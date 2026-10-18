@@ -252,3 +252,21 @@ Also found there: every hash-pinned identity gate (items 1, 2, 3/6, 4/7) had an 
 and fused multiply-adds differ by architecture. Each test file, run on nobara at its own pre-change commit, gives the
 amd64 hash the changed tree gives, so the identities hold on amd64 too; the captures are now keyed by GOARCH
 (`7496b1c`).
+
+### Job 5: the BM25 `Build` A/B (registered 2026-10-17, before the harness was written)
+
+perfgate measures only linalg kernels, so it cannot judge item 3's measured +5.6% `Build` (in-process bench, M1 Pro).
+Queued on nobara's night queue after perfgate: **v1.70.2 vs `8ba2b3c`**, both built from git worktrees.
+
+- **Corpora.** Each is written once as a `bm25.MarshalTokens` blob and read by both binaries, so both build from
+  identical input. (1) aikit's tree: every `.go` and `.md` file at `8ba2b3c`, split into 40-line chunks and passed
+  through `bm25.Tokenize`. (2) Synthetic, ~100k chunks: 100,000 seeded documents of 64–448 tokens (mean 256), Zipf
+  (s = 1.1) over a 50,000-term vocabulary.
+- **Measurement.** Two binaries from one source, each linked against its own worktree's `bm25`. 15 paired rounds,
+  ABBA order (old first in odd rounds, new first in even), one process per arm per round. A process does 1 warm-up
+  `Build` and 5 timed ones; its median is that round's sample. Per round the ratio is new ÷ old.
+- **Rule.** Per corpus, the statistic is the median over the 15 paired ratios. **Accept at ≤ 1.10× on both
+  corpora.** Above 1.10× on either: investigate. **No automatic revert** — the result is reported and Francis
+  decides.
+- **Also reported, no bar:** `Builder.Add` (each document `Add`ed, then `Builder.Build`) in the new binary, as a
+  median ratio against the new `Build` and against v1.70.2's `Build`; each arm's median wall time and range.
