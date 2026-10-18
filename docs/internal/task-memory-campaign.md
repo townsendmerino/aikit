@@ -1,6 +1,6 @@
 # Task: the aikit half of the memory campaign (2026-10)
 
-> **Status 2026-10-17: all ten items committed on `memory-campaign-aikit` (item 5 stopped and reported, by its own rule); not yet released.** Scope: the aikit items of goinfer's
+> **Status 2026-10-18: done; released in v1.71.0 and `gpu/annmetal` v0.2.0.** Release gates on nobara's night queue, 2026-10-17, at `8ba2b3c`: see "Release gates" at the end. Scope: the aikit items of goinfer's
 > `docs/tasks/task-memory-campaign-2026-10.md` (branch `memory-campaign-2026-10`, MEM3 and MEM14–MEM16),
 > plus D6 (the safetensors mmap finalizer) and annmetal, as Francis decided them on 2026-10-17. MEM3 shipped
 > first on this branch (`db44648`). Still on hold: MEM17 (chunk text by reference, waits on D4) and MEM4(a)
@@ -270,3 +270,13 @@ Queued on nobara's night queue after perfgate: **v1.70.2 vs `8ba2b3c`**, both bu
   decides.
 - **Also reported, no bar:** `Builder.Add` (each document `Add`ed, then `Builder.Build`) in the new binary, as a
   median ratio against the new `Build` and against v1.70.2's `Build`; each arm's median wall time and range.
+
+## Release gates (nobara night queue, 2026-10-17, at `8ba2b3c`)
+
+| gate | result |
+|---|---|
+| perfgate vs v1.70.2 | PASS, no regression above any shape's floor; 11/47 shapes resolve the 5% class |
+| vulncheck | no reachable vulnerabilities in 16/16 modules (canary detected) |
+| `TestQ8LoadFootprint` (Linux RSS ratio, item 2) | PASS: peak 153.0 MiB / after load 118.6 MiB = 1.29× (bar 1.5×) |
+| item 8 time to first result, Linux | mapped/heap 0.71× and 0.68× (two runs; heap ~52 ms, mapped ~37 ms) |
+| job 5, BM25 `Build` A/B | ACCEPT: synthetic 1.026×, tree 1.030× (bar 1.10×); `Builder.Add` 1.000× / 1.020× of new `Build`. Record: [`memory-campaign-bm25-build-ab/`](memory-campaign-bm25-build-ab/README.md) |

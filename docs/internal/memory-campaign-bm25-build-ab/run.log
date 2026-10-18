@@ -1,0 +1,44 @@
+=== night job aikit-mc-bm25ab-8ba2b3c
+=== cmd      ./run-bm25ab.sh
+=== cwd      /home/francis/tmp/aikit-mc-night/bm25ab
+=== rev      queued at ?, now ?
+=== host     nobara-pc
+=== est      20.0 min, timeout 60.0 min
+=== by       vscode-claude
+=== doc      aikit docs/internal/task-memory-campaign.md, Job 5 (BM25 Build A/B; rule registered in 0e1b717)
+=== START    2026-10-17 18:30:29 PDT  loadavg 0.83
+== 2026-10-17 18:30:29 PDT nobara-pc go version go1.27.2 linux/amd64: v1.70.2 vs 8ba2b3c, 15 rounds × 5 reps, synthetic 100000 docs
+old 8eb0987 release: v1.70.2 CHANGELOG, perfgate VERDICT (PASS vs v1.70.1, 5/47 shapes resolve 5%) and vulncheck STATEMENT (16/16 clean at 60dc2d8, nobara)
+new 8ba2b3c ann: item 7's add-after-load gate compares with Add after a pre-v5 Load, not with the original
+wrote /home/francis/tmp/aikit-mc-night/bm25ab-work/tree.tokens: 4361 documents, 1186036 tokens, 9880780 bytes
+wrote /home/francis/tmp/aikit-mc-night/bm25ab-work/synth.tokens: 100000 documents, 25614605 tokens, 256546066 bytes
+round 1/15 done, 35s elapsed, ~490s left
+round 2/15 done, 70s elapsed, ~455s left
+round 3/15 done, 106s elapsed, ~424s left
+round 4/15 done, 141s elapsed, ~387s left
+round 5/15 done, 176s elapsed, ~352s left
+round 6/15 done, 212s elapsed, ~318s left
+round 7/15 done, 247s elapsed, ~282s left
+round 8/15 done, 282s elapsed, ~246s left
+round 9/15 done, 317s elapsed, ~211s left
+round 10/15 done, 352s elapsed, ~176s left
+round 11/15 done, 387s elapsed, ~140s left
+round 12/15 done, 422s elapsed, ~105s left
+round 13/15 done, 457s elapsed, ~70s left
+round 14/15 done, 493s elapsed, ~35s left
+round 15/15 done, 528s elapsed, ~0s left
+[synth] 15 paired rounds
+  v1.70.2 Build                median   1698.08 ms  range   1665.63–  1744.29 ms
+  8ba2b3c Build                median   1731.06 ms  range   1714.64–  1813.11 ms
+  8ba2b3c Builder.Add+Build    median   1726.82 ms  range   1707.60–  1788.34 ms
+  Build new/old: median 1.026×  (rounds 0.995–1.088)  bar ≤ 1.10× → ACCEPT
+  Builder.Add vs new Build: median 1.000×; vs v1.70.2 Build: median 1.020×  (reported, no bar)
+[tree] 15 paired rounds
+  v1.70.2 Build                median     83.84 ms  range     61.66–    88.07 ms
+  8ba2b3c Build                median     82.59 ms  range     61.86–   102.37 ms
+  8ba2b3c Builder.Add+Build    median     86.74 ms  range     62.55–    99.14 ms
+  Build new/old: median 1.030×  (rounds 0.716–1.339)  bar ≤ 1.10× → ACCEPT
+  Builder.Add vs new Build: median 1.020×; vs v1.70.2 Build: median 1.022×  (reported, no bar)
+VERDICT: ACCEPT — Build within 1.10× of v1.70.2 on both corpora
+
+=== END      2026-10-17 18:39:20 PDT  rc=0
