@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"io"
+	"hash"
 	"math"
 	"math/rand/v2"
 	"runtime"
@@ -52,7 +52,7 @@ func campaignHNSWConfigs() []Config {
 
 const campaignHNSWN, campaignHNSWDim = 5000, 64
 
-func hashHits(h io.Writer, hits []Hit) {
+func hashHits(h hash.Hash, hits []Hit) {
 	var b [8]byte
 	binary.LittleEndian.PutUint64(b[:], uint64(len(hits)))
 	h.Write(b[:])
@@ -66,7 +66,7 @@ func hashHits(h io.Writer, hits []Hit) {
 
 // campaignQueryHash fingerprints what a query can observe of h: Query at k = 1, 10, 50 and QueryEf at ef = 16 and
 // 200, for 200 seeded queries.
-func campaignQueryHash(hh io.Writer, h *HNSW) {
+func campaignQueryHash(hh hash.Hash, h *HNSW) {
 	for _, q := range campaignUnitVecs(9001, 200, campaignHNSWDim) {
 		for _, k := range []int{1, 10, 50} {
 			hashHits(hh, h.Query(q, k))
@@ -88,7 +88,7 @@ var campaignBuilds = sync.OnceValue(func() (out struct {
 	hq, hb := sha256.New(), sha256.New()
 	for _, cfg := range campaignHNSWConfigs() {
 		h := BuildHNSW(vecs, cfg)
-		campaignQueryHash(io.MultiWriter(hq, hb), h)
+		campaignQueryHash(teeHash{hq, hb}, h)
 		hb.Write(encodeV4ForTest(h))
 		blob, err := h.MarshalBinary()
 		if err != nil {
@@ -196,4 +196,15 @@ func campaignHNSWBlobHashBefore(tb testing.TB) string {
 		tb.Skipf("no before-hash recorded for GOARCH=%s", runtime.GOARCH)
 	}
 	return h
+}
+
+// teeHash writes to two hashes at once (Sum and the rest are the first's): one pass feeds the query and blob hashes.
+type teeHash struct {
+	hash.Hash
+	also hash.Hash
+}
+
+func (t teeHash) Write(p []byte) (int, error) {
+	t.also.Write(p)
+	return t.Hash.Write(p)
 }
