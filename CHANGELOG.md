@@ -9,151 +9,91 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
-### Added — the audio encoders hold their checkpoint and can `Close` it
+## [1.71.0] — 2026-10-18
 
-`LoadWhisperEncoder`, `LoadVoxtralAudio` and `LoadQwenASREncoder` open the checkpoint with mmap, and an F32 checkpoint's weights (Whisper
-tiny/base/small) are views into that mapping. The loaders kept no reference to the file. The file's finalizer would unmap it once the file
-was unreachable, leaving the encoder reading unmapped memory. Each encoder now holds the file it loaded from, and the new
-`(*WhisperEncoder).Close`, `(*VoxtralAudio).Close` and `(*QwenASREncoder).Close` release it. After `Close`, a forward returns an error
-instead of touching the mapping, and a second `Close` does nothing. `LoadVoxtralAudio` now reads its projector through the encoder's file
-instead of mapping the checkpoint a second time.
+`perfgate` VERDICT: PASS — no regression vs v1.70.2 above each shape's floor — 11/47 shapes resolve the 5.0% class
 
-**No crash was reachable in a release.** Every `Tensor` in a `SafetensorsFile` points back at its file, and the Go runtime never frees an
-object with a finalizer that is part of a cycle. A dropped mmap'd file is therefore never collected: its mapping stays until the process
-exits, rather than being unmapped. What a caller gets from this change is a way to release the mapping. `Close` is the only release; the
-finalizer never runs for a file that holds a tensor (measured 2026-10-17). `TestAudioLoaders_holdTheirCheckpointUntilClose` watches each
-loader's file through a weak pointer. With the cycle broken (`Tensor.owner` set to nil), a loader that drops its file fails it, all three
-loaders, 3/3 rounds. Without the test's pre-forward check, the forward over the unmapped weights is a SIGSEGV. BF16 checkpoints are widened
-into the heap, so they were never affected. Found by goinfer's memory campaign (MEM3).
+sensitivity: 11/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), 8ba2b3c vs v1.70.2, 2026-10-17, under the timing lock. perfgate measures only `linalg` kernels, which this release does not change; BM25 `Build` was measured separately (below). Commits after 8ba2b3c change documentation only.
 
-### Added — `ann.MappedBackend`: a mapped `FlatI8` is not copied onto a unified-memory GPU (annmetal)
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 8ba2b3c (2026-10-18T01:19:58Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2).
 
-New optional `ann.MappedBackend` interface (`NewI8IndexMapped`). On a `LoadFlatI8Mmap` index, `FlatI8.EnableGPU` and
-`EnableGPUShardSplit` offer the backend the mapping first, and copy as before if it declines. `gpu/annmetal` implements it: one
-no-copy Metal buffer over the mapping's pages, bound at the codes' offset, so the GPU reads the int8 codes from the page cache. Before,
-the index was stored twice on unified memory. Measured, n = 100,000 × 256: `EnableGPU` adds 0.44–0.47 MiB of process footprint
-mapped, against 49.3 MiB for the copied index (5 runs, M1 Pro). Results: the mapped device index equals the copied one bit for bit (Score,
-ScoreBatch), and both rank exactly as the CPU does (indices identical, score Δ 0 measured; the parity bar is 1e-3).
+A memory release: tables and indexes that were copied onto the heap are now read from their files' mappings, and
+two indexes gain a mappable on-disk form. Outputs are bit-identical except where an entry says otherwise. Measurements
+and gates: `docs/internal/task-memory-campaign.md`.
 
-annmetal's `ScoreBatch` and `TopKBatch` now reuse their device scratch across calls (they allocated an M × N score matrix and five
-small buffers per call): 60 calls at sizes the scratch holds add no device memory. A batch whose matrix would exceed 256 MiB still gets
-per-call buffers, so one huge batch does not pin a gigabyte. A mapped `FlatI8`'s finalizer now closes its device indexes before
-unmapping, as `Close` does.
+### Added
 
-annmetal stays opt-in, and this is now written on `EnableGPU`: a process must import the backend package and call `EnableGPU`. Nothing
-in aikit, goinfer or ken does either on its own. On Apple silicon the Metal path has not beaten CPU scoring at any measured batch size
-(`docs/BENCH-gpu-results.md`). Ships in `gpu/annmetal` v0.2.0, which needs root v1.71.0 for `ann.MappedBackend`.
+- **`bm25.Builder`** (`NewBuilder`, `Add`, `N`, `Build`): builds an index one document at a time, so a build holds the
+  index plus one document instead of the whole tokenized corpus. Same result as `bm25.Build`, which now uses it. A
+  build allocates 4.4× the finished index, and `Builder.Add` + `Build` takes the same time as `Build` (1.000× on a
+  100,000-chunk corpus, nobara).
+- **A saved BM25 index:** `(*Index).WriteTo`, `bm25.ReadIndex`, `bm25.LoadIndexMmap` and `(*Index).Close`.
+  `LoadIndexMmap` reads the postings from the mapping without copying (a 20,000-document index adds 0.66 MiB of heap
+  for 14.2 MiB of postings). Loads validate the file and return `bm25.ErrFormat` for a bad one. Format version 1; a
+  later version keeps reading it. `bm25.ErrFormat`'s message now reads "malformed or unsupported serialized data".
+- **`encoder.LoadBERTWithOptions`, `encoder.LoadGTEWithOptions`, `encoder.LoadOptions`, `encoder.WordEmbPrecision`**
+  (`WordEmbNative`, `WordEmbF16`, `WordEmbInt8`): how the word-embedding table is held. See the Changed entry for the
+  default. The opt-in heap tables, cosine of each output embedding against f32 (minimum over each fixture's texts):
 
-### Added — BERT/GTE word embeddings read from the mapping in the checkpoint's precision; f16 and int8 tables as options
+  | fixture | f16 | int8 | table f32 → f16 → int8 |
+  |---|---|---|---|
+  | all-MiniLM-L6-v2 | 1.0000000 | 0.9999251 | 44.7 → 22.4 → 11.3 MiB |
+  | cross-encoder trunk | 1.0000000 | 0.9999970 | 44.7 → 22.4 → 11.3 MiB |
+  | SPLADE trunk | 1.0000000 | 0.9999894 | 89.4 → 44.7 → 22.5 MiB |
+  | arctic-embed-m-v2.0 (GTE) | 1.0000000 | 0.9999587 | 732.6 → 366.3 → 184.1 MiB |
 
-`encoder.LoadBERTWithOptions` and `encoder.LoadGTEWithOptions` take an `encoder.LoadOptions` whose `WordEmb` field
-(`encoder.WordEmbPrecision`) sets how the word-embedding table is held. The table is only gathered by row, so each token's row is widened
-at gather time.
+  For an F32 checkpoint the default table is already a mapped view, so an opt-in heap table adds heap rather than
+  saving it.
+- **`embed.Tensor.Uint16s`:** an F16/BF16 tensor's raw 16-bit patterns as a view into the file (an error when the data
+  is not 2-byte aligned).
+- **`embed.LoadFromFSHeap`** and **`(*embed.StaticModel).Close`** (see the Model2Vec entry).
+- **`(*encoder.WeightsQ8).Close`** (see the Q8 entry).
+- **`(*audio.WhisperEncoder).Close`, `(*audio.VoxtralAudio).Close`, `(*audio.QwenASREncoder).Close`:** the encoders hold
+  the checkpoint their F32 weights are views into, and `Close` releases it; a forward after `Close` returns an error.
+  `LoadVoxtralAudio` now maps the checkpoint once instead of twice.
+- **`ann.MappedBackend`:** an optional extension of the GPU backend seam. On a `LoadFlatI8Mmap` index, `EnableGPU` lets
+  a unified-memory backend read the int8 codes from the mapping instead of copying them. `gpu/annmetal` v0.2.0
+  implements it: `EnableGPU` on a 100,000 × 256 mapped index adds 0.45 MiB of process footprint, against 49.3 MiB
+  copied. annmetal also reuses its batch scratch across `ScoreBatch`/`TopKBatch` calls. It remains opt-in (import the
+  package and call `EnableGPU`).
 
-- **`WordEmbNative` — the default, and what `LoadBERT`/`LoadGTE` now do.** The table stays in the checkpoint's own precision, read from
-  the mapping. An F32 table is a view, as before. **An F16 or BF16 table is now a 16-bit view widened one row per token**, where it used to
-  be widened whole onto the heap (twice the stored bytes). Outputs are bit-identical to the widened table: the row decode matches embed's
-  widening for all 65,536 patterns of each format, and minilm converted to F16 and to BF16 encodes identically both ways. The table adds no
-  heap: minilm as F16/BF16 holds 43.3 MiB after load against 88.0 MiB widened, for a 44.7 MiB table. When the 16-bit data is not 2-byte
-  aligned in the file (an odd data offset), the load falls back to the widened copy, with the same outputs. New `embed.Tensor.Uint16s`
-  returns an F16/BF16 tensor's raw patterns as a view (an error when misaligned). F32 checkpoints — every BERT/GTE fixture here — load
-  bit-identically to v1.70.2.
-- **`WordEmbF16` and `WordEmbInt8` — opt-in heap tables**, f16, or per-row symmetric int8 with an f32 scale. Quality gate, bars
-  registered before the run: cosine of each output embedding against the f32 load, over each fixture's golden texts plus 20 fixed ones.
+### Changed
 
-| fixture | f16 min (bar 0.9999) | int8 min (bar 0.999) | table f32 → f16 → int8 |
-|---|---|---|---|
-| all-MiniLM-L6-v2 (BERT) | 1.0000000 | 0.9999251 | 44.7 → 22.4 → 11.3 MiB |
-| cross-encoder trunk (BERT) | 1.0000000 | 0.9999970 | 44.7 → 22.4 → 11.3 MiB |
-| SPLADE trunk (BERT) | 1.0000000 | 0.9999894 | 89.4 → 44.7 → 22.5 MiB |
-| arctic-embed-m-v2.0 (GTE) | 1.0000000 | 0.9999587 | 732.6 → 366.3 → 184.1 MiB |
+- **`embed.LoadFromFS` memory-maps a Model2Vec model on disk** (an `os.DirFS`; `embed.FS` and `fstest.MapFS` are still
+  read onto the heap). Outputs are bit-identical. Peak heap falls 5.8×. Time to first result on the embedded-corpus
+  example went down: 0.74× on an M1 Pro, 0.71× and 0.68× on nobara (linux/amd64). `LoadFromFSHeap` keeps the heap read.
+  A mapped model holds its mapping until `Close`, so a process that loads and drops models repeatedly should `Close`
+  each one.
+- **BERT/GTE word embeddings stay in the checkpoint's precision, read from the mapping** (`WordEmbNative`, the
+  default). An F32 table is a mapped view, as before. An F16 or BF16 table is now a mapped 16-bit view, widened one
+  row per token, where it used to be widened whole onto the heap; outputs are bit-identical (minilm as F16/BF16: 43.3
+  MiB of heap after load, against 88.0 MiB). Misaligned 16-bit data falls back to the widened copy. SPLADE keeps an
+  f32 table.
+- **HNSW blob format v5:** the graph is stored as CSR (per-node offsets, per-list offsets, one id array), and
+  `LoadHNSWMmap` reads it, and the int8 scales, from the mapping. A mapped load of a 50,000-vector int8 index adds
+  0.001 MiB of heap, against 6.9 MiB from v4. **v4 blobs still load**, through either loader; saving writes v5. Search
+  results are unchanged, and queries on a loaded index measured ~5% faster.
+- **`encoder.ModelQ8` reads its word embeddings from the checkpoint mapping** instead of a heap copy: heap after
+  `LoadQ8` 200.0 → 110.5 MiB, and peak RSS during the load on nobara 153.0 MiB. `(*ModelQ8).Close`, a no-op before,
+  now releases the mapping, so the model must not be used after it.
+- **SPLADE** computes the vocabulary logits 32 rows at a time instead of all at once: a 512-token `Expand` allocates
+  7.0 MiB instead of 89.4 MiB.
+- **BM25 keeps its postings in one arena:** a built index is 20% smaller. `Build` time, v1.70.2 → v1.71.0 on nobara,
+  15 paired rounds: 1,698 → 1,731 ms on a 100,000-chunk corpus (1.026×), 83.8 → 82.6 ms on aikit's own tree (1.030×,
+  median of the paired ratios). Record: `docs/internal/memory-campaign-bm25-build-ab/`.
+- **HNSW builds** make 2 allocations per `Add` instead of 69 (3 instead of 71 in int8 mode).
+- **An mmap'd `embed.SafetensorsFile` is released by `Close` and nothing else.** Its finalizer is removed; it never ran
+  for a file holding a tensor. A dropped file keeps its mapping until exit, and a view into it stays valid.
 
-  For an F32 checkpoint, an opt-in heap table *adds* heap: the f32 table was a mapped view, costing only the touched rows as clean
-  page-cache pages. On arctic-embed-m-v2.0, f16 adds 366 MiB and ~0.5 s of load. Use them for a heap-read load or a deliberately
-  resident table; SPLADE (tied decoder) always loads f32.
+## [1.70.2] — 2026-10-15
 
-### Changed — `embed.LoadFromFS` memory-maps a Model2Vec model on disk; new `LoadFromFSHeap` and `StaticModel.Close`
+`perfgate` VERDICT: PASS — no regression vs v1.70.1 above each shape's floor — 5/47 shapes resolve the 5.0% class
 
-When the `fs.FS` hands back a real file for `model.safetensors` — as `os.DirFS` does, the way ken and most callers pass a model directory —
-`LoadFromFS` (and the deprecated `Load`) now memory-map the weights instead of reading them onto the heap. An `embed.FS` or `fstest.MapFS`
-is read onto the heap as before. Outputs are bit-identical (1,753 texts, `Encode` and `EncodeBatch`, mapped vs heap vs MapFS). The
-embedding table then lives in the page cache, and peak heap falls 5.8× (the `LoadMmap` measurement). Time to first result, the
-embedded-corpus example's cold start, measured in process on an M1 Pro with a warm page cache, 15 interleaved rounds: heap 40.2 ms, mapped
-29.7 ms (0.74×; a second run 39.7 vs 29.5). nobara measured the opposite sign in July (+17%, linux/amd64); re-measure there before
-reading this as a speed win on Linux.
+sensitivity: 5/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), 60dc2d8 vs v1.70.1, 2026-10-15, under the timing lock.
 
-New `embed.LoadFromFSHeap` keeps the heap read. New `(*StaticModel).Close` releases a mapped model's mapping; `Encode` after it panics.
-**A mapped model is not unmapped when it is dropped** (the safetensors finalizer never runs; see the D6 entry), so a process that loads
-and drops models repeatedly should `Close` each one. A heap-loaded model was collected; a mapped one keeps its mapping until exit.
+> **Read this verdict for what it is.** It is weaker than the last three releases' (12/47): only 5 of the 47 shapes can see 5% in this run, so on the other 42 a green is evidence against a larger regression only. `linalg` changed only by the bounds check in the entry below, which perfgate has no shape for. The encoder change has no perfgate shape either; its speed was measured directly, A/B on both machines, in the entry below.
 
-### Changed — HNSW blob format v5: the graph is stored, loaded and mapped as CSR; v4 blobs still load
-
-The serialized graph was per-node runs of layer, count and ids, decoded into per-node slices (~58 B of slice headers per node, plus the
-ids, all on the heap even under `LoadHNSWMmap`). v5 stores it as three flat arrays — per-node list starts, per-list id offsets, one id
-array — and pads the int8 scales to 4-byte alignment. `LoadHNSWMmap` aliases all of it from the mapping; `Load` copies it as three
-allocations. A mapped load of a 50,000-vector int8 index now adds 0.001 MiB of heap, against 6.9 MiB for the same index from v4.
-
-**v4 blobs still load** (ken keeps indexes on disk), through either loader, into the same form; saving a loaded index writes v5. Search
-results are bit-identical, built or loaded from either version (hash over 8 builds × 1,000 queries; committed v4 fixtures). The graph
-itself is unchanged byte for byte (its v4 re-encoding matches the pre-change hash). An index built in memory keeps per-node lists; a
-loaded one turns them back on its first `Add`, which matches `Add` on the original. Queries on a loaded index measured ~5% faster
-(82–88 vs 90–93 µs, n = 20,000, dim 128), from the flat layout. A graph past 2³²−1 lists or ids is a write error (32-bit offsets).
-
-### Added — `bm25.Builder` and a saved BM25 index (`Index.WriteTo`, `ReadIndex`, `LoadIndexMmap`)
-
-`bm25.NewBuilder` / `Builder.Add` / `Builder.N` / `Builder.Build` build an index one document at a time, so a build holds the index under
-construction plus one document instead of the whole tokenized corpus (`Build`'s input, about 5× the finished index). The result is
-identical to `Build`, which is now a loop over it. Measured on a 20,000-document corpus: a `Builder` build allocates 4.4× the finished
-index, against a registered bar of 5×.
-
-The index now has a saved format (roadmap N4, deferred until `Builder` could be decided with it). `(*Index).WriteTo` writes it,
-`bm25.ReadIndex` reads it into the heap, and `bm25.LoadIndexMmap` maps the file and reads the postings arena — the bulk of the index — from
-the mapping with no copy. A mapped load of that corpus adds 0.66 MiB of heap for 14.16 MiB of postings. `(*Index).Close` releases the
-mapping; a query after it panics. Every load validates the file and returns an error wrapping `bm25.ErrFormat` for a bad one. The checks
-cover counts, ranges, list order, per-term statistics, and each document's length against its postings' term frequencies; every
-truncation and every structural byte flip is rejected (fuzzed). Format version 1. Policy: a later version keeps reading version 1. Results
-from either load are bit-identical to the built index's, and re-saving gives the same bytes.
-
-`bm25.ErrFormat`'s message is now "malformed or unsupported serialized data" (it was "… token cache"), since it covers both formats;
-`errors.Is` is unaffected.
-
-### Changed — `encoder.ModelQ8` reads its word embeddings from the checkpoint mapping, and `Close` now releases it
-
-`LoadWeightsQ8` cloned the f32 word-embedding table onto the heap (89.4 MiB on CodeRankEmbed). It is only ever gathered by row, so
-`WeightsQ8.WordEmb` is now a view into the checkpoint mapping, which the weights keep open. Heap after `LoadQ8` falls from 200.0 to
-110.5 MiB; every output is bit-identical (hash over 12 encodes on `testdata/encoder-model`). New `(*WeightsQ8).Close` releases the
-mapping. `(*ModelQ8).Close`, a no-op until now, calls it — **so a `ModelQ8` must not be used after `Close`**, which its doc always implied
-but which was harmless before. The refused-checkpoint paths and `LoadQ8`'s tokenizer error now close the file instead of dropping it.
-
-### Changed — SPLADE expansion holds 32 rows of vocabulary logits, not all of them
-
-`SPLADE.Expand` materialized the whole L × vocab logit matrix (59.6 MiB at L = 512) only to max-reduce it. It now computes 32 rows at a time
-and folds the max in. Bit-identical (the matmul is M-invariant, the max order-free; hash over L = 1…512 on `testdata/splade-model`).
-Allocation per 512-token `Expand`: 89.4 → 7.0 MiB. Speed unchanged within noise (L = 256: 359 vs 368 ms, M1 Pro).
-
-### Changed — BM25 keeps its postings in one arena
-
-Each term held its own `[]posting` (a 24 B header and ~32% append slack each); `Index` now keeps one flat arena with per-term offsets.
-Results bit-identical (hash over Scores, TopK and TopKBatch on a seeded 20,000-document corpus); a built index is 20% smaller (18.66 →
-14.89 MiB on that corpus). `Build` is ~5% slower from the final compaction copy (27.3 → 28.9 ms, `BenchmarkBuild`); queries unchanged.
-
-### Changed — HNSW builds allocate per insert only what they keep
-
-An `Add` made 69 allocations (71 int8), almost all from re-growing and re-making neighbor lists while back-linking. Lists are now
-created with their final capacity and pruned in place, `BuildHNSW` sizes its storage from n, and search reuses its result slice. 2
-allocations per `Add` (3 int8). Search results and the serialized graph are byte-identical (hash over 8 builds and 1,000 queries).
-
-### Changed — an mmap'd `SafetensorsFile` is released by `Close` only; its finalizer is removed
-
-`embed.OpenSafetensorsMmap` and `OpenSafetensorsShardedMmap` attached a finalizer that was meant to unmap a file once it became
-unreachable. It never ran for a file that held a tensor: each `Tensor` pointed back at its file, and the runtime does not collect a
-finalized object in a cycle. The mapping lived until `Close` or exit (measured 2026-10-17). The finalizer, the `Tensor` back-pointer and
-the `runtime.KeepAlive`s that guarded it are now removed, and **`Close` is the documented contract**: the only release. A dropped file
-keeps its mapping until exit, as it effectively always did, and a view into a dropped file stays valid. An automatic release (a working
-finalizer or `runtime.AddCleanup`) is deliberately not offered. Views point outside the Go heap, so it could unmap a region while a
-holder's method still reads through it, unless every such method kept its holder alive with `runtime.KeepAlive`. That discipline was
-declined in favour of the explicit contract. `TestSafetensorsMmap_droppedFileKeepsItsMapping` pins it: a dropped file's view is read
-after the file has been collected and must still hold its bytes. With the old finalizer made to run, it fails 8 of 8.
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 60dc2d8 (2026-10-15T14:37:41Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2).
 
 ### Fixed — a short destination slice could overrun the heap in `DequantizeRowInt8` and `WeightMat.Row`
 
@@ -5831,7 +5771,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.70.2...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.71.0...HEAD
+[1.71.0]: https://github.com/townsendmerino/aikit/compare/v1.70.2...v1.71.0
 [1.70.2]: https://github.com/townsendmerino/aikit/compare/v1.70.1...v1.70.2
 [1.70.1]: https://github.com/townsendmerino/aikit/compare/v1.70.0...v1.70.1
 [1.70.0]: https://github.com/townsendmerino/aikit/compare/v1.69.0...v1.70.0
