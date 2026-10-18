@@ -13,7 +13,7 @@ excluded from that promise and may change in any release until it graduates.
 
 `perfgate` VERDICT: PASS — no regression vs v1.70.2 above each shape's floor — 11/47 shapes resolve the 5.0% class
 
-sensitivity: 11/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), 8ba2b3c vs v1.70.2, 2026-10-17, under the timing lock. perfgate measures only `linalg` kernels, which this release does not change; BM25 `Build` was measured separately (below). Commits after 8ba2b3c change documentation only.
+sensitivity: 11/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), 8ba2b3c vs v1.70.2, 2026-10-17, under the timing lock. perfgate measures only `linalg` kernels, which this release does not change; BM25 `Build` was measured separately (below). Commits after 8ba2b3c change documentation and tests only.
 
 STATEMENT: no reachable vulnerabilities in 16/16 modules at 8ba2b3c (2026-10-18T01:19:58Z). nobara (linux/amd64), Go 1.27.2 (GOTOOLCHAIN=go1.27.2).
 
