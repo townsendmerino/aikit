@@ -4,10 +4,11 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"hash"
+	"io"
 	"math"
 	"math/rand/v2"
 	"runtime"
+	"sync"
 	"testing"
 )
 
@@ -51,7 +52,7 @@ func campaignHNSWConfigs() []Config {
 
 const campaignHNSWN, campaignHNSWDim = 5000, 64
 
-func hashHits(h hash.Hash, hits []Hit) {
+func hashHits(h io.Writer, hits []Hit) {
 	var b [8]byte
 	binary.LittleEndian.PutUint64(b[:], uint64(len(hits)))
 	h.Write(b[:])
@@ -65,7 +66,7 @@ func hashHits(h hash.Hash, hits []Hit) {
 
 // campaignQueryHash fingerprints what a query can observe of h: Query at k = 1, 10, 50 and QueryEf at ef = 16 and
 // 200, for 200 seeded queries.
-func campaignQueryHash(hh hash.Hash, h *HNSW) {
+func campaignQueryHash(hh io.Writer, h *HNSW) {
 	for _, q := range campaignUnitVecs(9001, 200, campaignHNSWDim) {
 		for _, k := range []int{1, 10, 50} {
 			hashHits(hh, h.Query(q, k))
@@ -75,20 +76,29 @@ func campaignQueryHash(hh hash.Hash, h *HNSW) {
 	}
 }
 
-// campaignHNSWHash builds each campaign config over the same seeded corpus and hashes its query results and its
-// MarshalBinary bytes (the graph itself, so a build change that happened to leave the results alone still shows).
-func campaignHNSWHash(t *testing.T, withBlob bool) string {
+// campaignBuilds builds each campaign config over the same seeded corpus once per test process — the builds are the
+// expensive part (minutes under -race), and three gates read them — and records: the query hash (every config's query
+// results), the blob hash (each config's query results followed by its v4 encoding, so a build change that happened
+// to leave the results alone still shows), and each config's saved blob.
+var campaignBuilds = sync.OnceValue(func() (out struct {
+	queryHash, blobHash string
+	blobs               [][]byte
+}) {
 	vecs := campaignUnitVecs(7, campaignHNSWN, campaignHNSWDim)
-	hh := sha256.New()
+	hq, hb := sha256.New(), sha256.New()
 	for _, cfg := range campaignHNSWConfigs() {
 		h := BuildHNSW(vecs, cfg)
-		campaignQueryHash(hh, h)
-		if withBlob {
-			hh.Write(encodeV4ForTest(h))
+		campaignQueryHash(io.MultiWriter(hq, hb), h)
+		hb.Write(encodeV4ForTest(h))
+		blob, err := h.MarshalBinary()
+		if err != nil {
+			panic(err)
 		}
+		out.blobs = append(out.blobs, blob)
 	}
-	return hex.EncodeToString(hh.Sum(nil))
-}
+	out.queryHash, out.blobHash = hex.EncodeToString(hq.Sum(nil)), hex.EncodeToString(hb.Sum(nil))
+	return out
+})
 
 // The blob part of the hash is encodeV4ForTest's bytes since v5 (item 7): a test-only v4 writer, so the v4-era capture
 // below still proves the built graph unchanged byte for byte.
@@ -97,7 +107,7 @@ func TestBuildHNSW_campaignHashMatchesBefore(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds 8 indexes of 5,000 vectors")
 	}
-	q, b := campaignHNSWHash(t, false), campaignHNSWHash(t, true)
+	q, b := campaignBuilds().queryHash, campaignBuilds().blobHash
 	t.Logf("query hash %s, blob hash %s", q, b)
 	if q != campaignHNSWQueryHashBefore(t) {
 		t.Errorf("query hash %s, before %s: a search result changed", q, campaignHNSWQueryHashBefore(t))
@@ -109,6 +119,9 @@ func TestBuildHNSW_campaignHashMatchesBefore(t *testing.T) {
 
 // Item 4, reported: allocations per Add on a 5,000-vector build, f32 and int8.
 func TestHNSW_allocsPerAdd(t *testing.T) {
+	if raceEnabled {
+		t.Skip("a report, not a gate; under -race the build takes minutes and the allocation count is the detector's")
+	}
 	vecs := campaignUnitVecs(7, campaignHNSWN, campaignHNSWDim)
 	for _, int8 := range []bool{false, true} {
 		h := NewHNSW(Config{Int8: int8, Seed: 1})

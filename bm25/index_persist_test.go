@@ -110,6 +110,9 @@ func TestBuilder_allocatesOIndex(t *testing.T) {
 // Gate (c): a mapped load keeps no heap copy of the postings: the arena lies inside the mapping, and the heap the
 // load adds is at most the dictionary and docLen bytes plus 1 MiB.
 func TestLoadIndexMmap_postingsStayInTheMapping(t *testing.T) {
+	if !mmapIsReal {
+		t.Skip("mmap.MapReadOnly heap-reads on this platform, so a mapped load has no heap to save")
+	}
 	blob := campaignBlob(t)
 	p := writeTemp(t, blob)
 	ndocs := int(leU64(blob[32:]))

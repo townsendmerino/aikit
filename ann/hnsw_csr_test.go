@@ -29,13 +29,8 @@ func TestHNSW_v5LoadsMatchBefore(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds 8 indexes of 5,000 vectors")
 	}
-	vecs := campaignUnitVecs(7, campaignHNSWN, campaignHNSWDim)
 	heap, mapped := sha256.New(), sha256.New()
-	for _, cfg := range campaignHNSWConfigs() {
-		blob, err := BuildHNSW(vecs, cfg).MarshalBinary()
-		if err != nil {
-			t.Fatal(err)
-		}
+	for _, blob := range campaignBuilds().blobs {
 		l, err := Load(blob)
 		if err != nil {
 			t.Fatal(err)
@@ -115,8 +110,11 @@ func hitsEqual(a, b []Hit) bool {
 // Gate (b): a mapped v5 load keeps the graph and vectors in the mapping: for n = 50,000, dim 64, int8, the heap it
 // adds is ≤ 1 MiB. The same index saved as v4 (graph copied into the heap) is reported beside it.
 func TestHNSWMmap_v5HeapAfterLoad(t *testing.T) {
-	if testing.Short() {
-		t.Skip("builds a 50,000-vector index")
+	if testing.Short() || raceEnabled {
+		t.Skip("builds a 50,000-vector index: minutes under -race, and a heap measurement is not what -race is for")
+	}
+	if !mmapIsReal {
+		t.Skip("mmap.MapReadOnly heap-reads on this platform, so a mapped load has no heap to save")
 	}
 	h := BuildHNSW(campaignUnitVecs(21, 50000, 64), Config{Int8: true, EfConstruction: 40, Seed: 2})
 	v5, err := h.MarshalBinary()
