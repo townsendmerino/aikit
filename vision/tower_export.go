@@ -56,6 +56,9 @@ type Qwen3Weights struct {
 
 // Weights exports the tower's weights (the slices alias the encoder's; do not write them).
 func (e *Qwen3VisionEncoder) Weights() (Qwen3Weights, error) {
+	if err := e.ensureBlocks(); err != nil {
+		return Qwen3Weights{}, err
+	}
 	var err error
 	w := Qwen3Weights{Cfg: e.Cfg, PatchW: e.patchW, PatchB: e.patchB, Blocks: make([]Qwen3Block, len(e.blocks)), LNEps: qwen3LNEps}
 	for i := range e.blocks {
@@ -145,6 +148,9 @@ type GlmOcrWeights struct {
 
 // Weights exports the tower's weights (the slices alias the encoder's; do not write them).
 func (e *GlmOcrVisionEncoder) Weights() (GlmOcrWeights, error) {
+	if err := e.ensureBlocks(); err != nil {
+		return GlmOcrWeights{}, err
+	}
 	var err error
 	w := GlmOcrWeights{Cfg: e.Cfg, PatchW: e.patchW, PatchB: e.patchB, Blocks: make([]GlmOcrBlock, len(e.blocks)), RMSEps: e.Cfg.RMSNormEps}
 	for i := range e.blocks {

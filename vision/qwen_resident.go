@@ -128,6 +128,9 @@ func qwenGPUMat(m linalg.WeightMat) QwenGPUMat {
 // require int8: the Qwen parity configuration loads fp32, and a backend that only
 // supports one form should check QwenGPUMat.Quantized and decline clearly.
 func (e *QwenVisionEncoder) GPUWeights() QwenGPUWeights {
+	if err := e.ensureBlocks(); err != nil {
+		panic(err) // GPUWeights has no error return; a released tower whose checkpoint is gone cannot export
+	}
 	c := e.Cfg
 	w := QwenGPUWeights{
 		Hidden: c.HiddenSize, Inter: c.IntermediateSize,

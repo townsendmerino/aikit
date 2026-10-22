@@ -33,6 +33,7 @@ func LoadQwen3VisionEncoderMMProj(path string, quant bool) (*Qwen3VisionEncoder,
 	if err != nil {
 		return nil, fmt.Errorf("vision: %s: %w", path, err)
 	}
+	enc.rel = newBlockRelease(func() (*Qwen3VisionEncoder, error) { return LoadQwen3VisionEncoderMMProj(path, quant) })
 	return enc, nil
 }
 

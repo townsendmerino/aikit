@@ -135,6 +135,7 @@ type Gemma4Encoder struct {
 	embedderProjW  linalg.WeightMat // [TextHiddenSize, hidden], plain Linear (no bias, no clip)
 	stdBias        []float32        // [hidden]; nil unless Cfg.Standardize
 	stdScale       []float32        // [hidden]; nil unless Cfg.Standardize
+	rel            *blockRelease[Gemma4Encoder]
 }
 
 // LoadGemma4Encoder reads a Gemma 4 checkpoint (config.json + safetensors) and
@@ -263,6 +264,7 @@ func LoadGemma4Encoder(dir string, quant bool) (*Gemma4Encoder, error) {
 	if err != nil {
 		return nil, fmt.Errorf("vision: load weights: %w", err)
 	}
+	e.rel = newBlockRelease(func() (*Gemma4Encoder, error) { return LoadGemma4Encoder(dir, quant) })
 	return e, nil
 }
 
@@ -273,6 +275,9 @@ func LoadGemma4Encoder(dir string, quant bool) (*Gemma4Encoder, error) {
 // [numPooled, TextHiddenSize] in row-major pooled-grid order — what a caller
 // splices into the text decoder's image-token positions.
 func (e *Gemma4Encoder) Forward(patches []float32, positionIDs [][2]int) ([]float32, error) {
+	if err := e.ensureBlocks(); err != nil {
+		return nil, err
+	}
 	c := e.Cfg
 	hidden, inter, nH, hd := c.HiddenSize, c.IntermediateSize, c.NumAttentionHeads, c.HeadDim
 	np := len(positionIDs)
