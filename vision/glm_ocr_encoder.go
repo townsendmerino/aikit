@@ -168,6 +168,7 @@ type GlmOcrVisionEncoder struct {
 	mUpW       linalg.WeightMat // [inner, out]
 	mDownW     linalg.WeightMat // [out, inner]
 	rotInvFreq []float32        // head_dim/4 rotary frequencies
+	rel        *blockRelease[GlmOcrVisionEncoder]
 }
 
 // LoadGlmOcrVisionEncoder reads a GLM-OCR checkpoint (config.json vision_config + safetensors, tensors
@@ -259,6 +260,7 @@ func LoadGlmOcrVisionEncoder(dir string, quant bool) (*GlmOcrVisionEncoder, erro
 	for i := range e.rotInvFreq {
 		e.rotInvFreq[i] = float32(1.0 / math.Pow(glmOcrRotaryTheta, float64(2*i)/float64(rdim)))
 	}
+	e.rel = newBlockRelease(func() (*GlmOcrVisionEncoder, error) { return LoadGlmOcrVisionEncoder(dir, quant) })
 	return e, nil
 }
 
@@ -350,6 +352,9 @@ func (e *GlmOcrVisionEncoder) ForwardViT(pixelValues []float32, gridTHW [][3]int
 // forwardBlocks runs embed + the transformer blocks: the last block's output [n_patches, hidden], before
 // post_layernorm (what a device tower hands to FinishHidden).
 func (e *GlmOcrVisionEncoder) forwardBlocks(pixelValues []float32, gridTHW [][3]int) ([]float32, error) {
+	if err := e.ensureBlocks(); err != nil {
+		return nil, err
+	}
 	h, err := e.Embed(pixelValues, gridTHW)
 	if err != nil {
 		return nil, err

@@ -9,6 +9,16 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added
+
+- **`ReleaseBlocks` and `BlocksReleased` on the Qwen3.5/Qwen3-VL (`LoadQwen3VisionEncoder`, `LoadQwen3VisionEncoderMMProj`),
+  GLM-OCR, Qwen2.5-VL and Gemma 4 vision towers.** A caller that has copied a tower's encoder blocks to a device drops the
+  host copy; the next host forward or weight export (`Weights`, `GPUWeights`) reloads them by running the same loader again,
+  so the values are the same, and SigLIP's head-only load already had this shape. A tower built from a caller's
+  `TensorSource` (`LoadQwen3VisionEncoderFrom`) cannot reopen it, so its `ReleaseBlocks` refuses and the blocks stay.
+  `ReleaseBlocks` must not run concurrently with a forward or an export. Bit-identical: the forward after a release equals
+  the one before, on each tower's tiny fixture (goinfer's MEM4(b), gate TWR-G1).
+
 ## [1.71.0] — 2026-10-18
 
 `perfgate` VERDICT: PASS — no regression vs v1.70.2 above each shape's floor — 11/47 shapes resolve the 5.0% class

@@ -49,6 +49,9 @@ type Gemma4Weights struct {
 
 // Weights exports the tower's weights (the slices alias the encoder's; do not write them).
 func (e *Gemma4Encoder) Weights() (Gemma4Weights, error) {
+	if err := e.ensureBlocks(); err != nil {
+		return Gemma4Weights{}, err
+	}
 	var err error
 	proj := func(name string, p clippedProj) Gemma4Proj {
 		f, ok := p.w.F32()

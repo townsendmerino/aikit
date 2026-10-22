@@ -153,8 +153,9 @@ type Qwen3VisionEncoder struct {
 	merger1b   []float32
 	merger2w   linalg.WeightMat // fc2 [out_hidden, hidden*merge²]
 	merger2b   []float32
-	rotInvFreq []float32       // head_dim/4 rotary frequencies
-	deepstack  []qwen3DSMerger // one per Cfg.DeepstackVisualIndexes entry (Qwen3-VL); empty for Qwen3.5+
+	rotInvFreq []float32                         // head_dim/4 rotary frequencies
+	deepstack  []qwen3DSMerger                   // one per Cfg.DeepstackVisualIndexes entry (Qwen3-VL); empty for Qwen3.5+
+	rel        *blockRelease[Qwen3VisionEncoder] // nil for a tower from a caller's TensorSource
 }
 
 // qwen3DSMerger is one DeepStack merger: LayerNorm over the merged hidden·merge² row (post-shuffle), fc1, GELU (erf),
@@ -197,7 +198,12 @@ func LoadQwen3VisionEncoder(dir string, quant bool) (*Qwen3VisionEncoder, error)
 		return nil, fmt.Errorf("vision: open safetensors: %w", err)
 	}
 	defer st.Close()
-	return LoadQwen3VisionEncoderFrom(cfg, prefixedSource{st, qwen3TensorPrefix(st)}, quant)
+	e, err := LoadQwen3VisionEncoderFrom(cfg, prefixedSource{st, qwen3TensorPrefix(st)}, quant)
+	if err != nil {
+		return nil, err
+	}
+	e.rel = newBlockRelease(func() (*Qwen3VisionEncoder, error) { return LoadQwen3VisionEncoder(dir, quant) })
+	return e, nil
 }
 
 // TensorSource supplies a vision tower's tensors as float32 by their Hugging Face name (without a checkpoint's
@@ -497,6 +503,9 @@ func (e *Qwen3VisionEncoder) deepMerge(k int, h []float32) []float32 {
 // forwardBlocks is ForwardViT's body; tap, when set, sees each block's output (li, h) right after the block, before the
 // next one overwrites h.
 func (e *Qwen3VisionEncoder) forwardBlocks(pixelValues []float32, gridTHW [][3]int, tap func(li int, h []float32)) ([]float32, error) {
+	if err := e.ensureBlocks(); err != nil {
+		return nil, err
+	}
 	h, err := e.Embed(pixelValues, gridTHW)
 	if err != nil {
 		return nil, err

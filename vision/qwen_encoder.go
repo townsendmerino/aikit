@@ -119,6 +119,7 @@ type QwenVisionEncoder struct {
 	rotInvFreq []float32 // head_dim/4 rotary frequencies
 
 	resident QwenResidentEncoder // device-resident ViT (EnableResident); nil = CPU path
+	rel      *blockRelease[QwenVisionEncoder]
 }
 
 const qwenRotaryTheta = 10000.0 // Qwen2_5_VisionRotaryEmbedding default theta
@@ -219,6 +220,7 @@ func LoadQwenVisionEncoder(dir string, quant bool) (*QwenVisionEncoder, error) {
 	for i := range e.rotInvFreq {
 		e.rotInvFreq[i] = float32(1.0 / math.Pow(qwenRotaryTheta, float64(2*i)/float64(rdim)))
 	}
+	e.rel = newBlockRelease(func() (*QwenVisionEncoder, error) { return LoadQwenVisionEncoder(dir, quant) })
 	return e, nil
 }
 
@@ -258,6 +260,9 @@ func (e *QwenVisionEncoder) Forward(pixelValues []float32, gridTHW [][3]int) ([]
 // skim can't conflate the CPU implementation with the public dispatcher that
 // picks between it and the device-resident path.
 func (e *QwenVisionEncoder) computeViTHidden(pixelValues []float32, gridTHW [][3]int) ([]float32, error) {
+	if err := e.ensureBlocks(); err != nil {
+		return nil, err
+	}
 	c := e.Cfg
 	merge := c.SpatialMergeSize
 	mergeUnit := merge * merge
