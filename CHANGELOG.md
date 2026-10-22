@@ -9,6 +9,16 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.72.0] — 2026-10-22
+
+`perfgate` VERDICT: PASS — no regression vs v1.71.0 above each shape's floor — 36/49 shapes resolve the 5.0% class
+
+sensitivity: 36/49 shapes have a floor ≤ 5.0% (the class this gate targets). MacBook Pro (M1 Pro, darwin/arm64), c0bee06 vs v1.71.0, 2026-10-22, under the timing lock. perfgate measures only `linalg` kernels, which this release does not change.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at c0bee06 (2026-10-22T14:51:30Z). nobara (linux/amd64), Go 1.27.3 (GOTOOLCHAIN=go1.27.3).
+
+A tower can drop its encoder blocks from the host once a device holds them. Outputs are bit-identical.
+
 ### Added
 
 - **`ReleaseBlocks` and `BlocksReleased` on the Qwen3.5/Qwen3-VL (`LoadQwen3VisionEncoder`, `LoadQwen3VisionEncoderMMProj`),
@@ -18,6 +28,12 @@ excluded from that promise and may change in any release until it graduates.
   `TensorSource` (`LoadQwen3VisionEncoderFrom`) cannot reopen it, so its `ReleaseBlocks` refuses and the blocks stay.
   `ReleaseBlocks` must not run concurrently with a forward or an export. Bit-identical: the forward after a release equals
   the one before, on each tower's tiny fixture (goinfer's MEM4(b), gate TWR-G1).
+
+### Changed
+
+- `go.mod`: `toolchain go1.27.3`. The Go 1.27.2 standard library carries GO-2026-6809 (crypto/x509), fixed in 1.27.3,
+  which govulncheck finds reachable from the benchmarks. CI's setup-go reads the toolchain line; a consumer's build ignores
+  it.
 
 ## [1.71.0] — 2026-10-18
 
@@ -5781,7 +5797,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.71.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.72.0...HEAD
+[1.72.0]: https://github.com/townsendmerino/aikit/compare/v1.71.0...v1.72.0
 [1.71.0]: https://github.com/townsendmerino/aikit/compare/v1.70.2...v1.71.0
 [1.70.2]: https://github.com/townsendmerino/aikit/compare/v1.70.1...v1.70.2
 [1.70.1]: https://github.com/townsendmerino/aikit/compare/v1.70.0...v1.70.1
