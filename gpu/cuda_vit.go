@@ -117,7 +117,8 @@ const (
 	// int8 twin of gemm_f32_reg (audit M-12) — gemm_w8a8_tiled computes ONE output
 	// per thread from byte-granular shared memory, which is 32 ld.shared.u8 per 4
 	// dp4a and LSU-bound, the shape the roofline campaign measured at 7% of roof
-	// and retired from the ANN path. ALIGNED ONLY — M%64==0, N%64==0, K%16==0.
+	// and retired from the ANN path. Needs only K%4==0 (IntRegKAlign): M, N and the
+	// K tail are zero-staged, so any other shape is in bounds.
 	// BIT-IDENTICAL to gemm_w8a8_tiled: an exact int32 accumulator scaled by
 	// aScale[m]*bScale[n] in the same order. Use GEMMW8A8Plan rather than picking
 	// it directly; same signature and binding order as gemm_w8a8_tiled.
@@ -401,29 +402,32 @@ func (v ViT) GEMMF32Plan(M, N, K int) (Pipeline, LaunchConfig) {
 	return v.GEMMF32Tiled, TileGrid(M, N)
 }
 
-// IntRegK is gemm_w8a8_reg's K-step in ELEMENTS (IBK words of four int8); with
-// IntRegBlock it forms the kernel's alignment requirement.
+// IntRegBlock is gemm_w8a8_reg's output-tile width and IntRegK its K-step in
+// ELEMENTS (IBK words of four int8). Neither is an alignment requirement: edge
+// tiles and the K tail stage zeros. The only requirement is IntRegKAlign —
+// K%4==0, so each row is whole words and the kernel's int* view stays aligned.
 //
-// 16 rather than gemm_f32_reg's 64-element step is deliberate: SigLIP-so400m's
-// intermediate width is 4304, a multiple of 16 but NOT of 64, so a K%64 kernel
-// would have missed the MLP projections that are most of a ViT's work.
+// K%4 rather than K%16 is what lets Qwen2.5-VL's down projection (K = inter =
+// 3420, a multiple of 4 but not of 16) take the register kernel and the fused
+// bias/residual epilogues instead of falling back to gemm_w8a8_tiled.
 const (
-	IntRegBlock = 64
-	IntRegK     = 16
+	IntRegBlock  = 64
+	IntRegK      = 16
+	IntRegKAlign = 4
 )
 
 // GEMMW8A8Plan picks the int8 GEMM kernel and its launch geometry for M×N×K —
 // the int8 analogue of GEMMF32Plan (audit M-12).
 //
-// It needs only K%16==0: M and N edge tiles stage zeros and skip their stores,
-// so the inner loop stays unguarded while any M and N are accepted. That
-// matters because SigLIP-so400m's intermediate width is 4304 — a multiple of 16
-// but not 64 — and an M%64/N%64 requirement would have excluded the MLP
-// projections, which are most of a ViT's work. A K%16!=0 shape falls back to
-// gemm_w8a8_tiled. Both bind identically (A, aScale, B, bScale, C, M, N, K) and
+// It needs only K%4==0: M and N edge tiles and the K tail stage zeros and skip
+// their stores, so the inner loop stays unguarded while any M, N and K%4==0 are
+// accepted. That matters because SigLIP-so400m's intermediate width is 4304 — a
+// multiple of 16 but not 64 — and Qwen2.5-VL's is 3420 — a multiple of 4 but
+// not 16; a stricter requirement would have excluded MLP projections, which are
+// most of a ViT's work. A K%4!=0 shape falls back to gemm_w8a8_tiled. Both bind identically (A, aScale, B, bScale, C, M, N, K) and
 // produce identical bits, so a caller only swaps the pipeline and config.
 func (v ViT) GEMMW8A8Plan(M, N, K int) (Pipeline, LaunchConfig) {
-	if K%IntRegK == 0 && M > 0 && N > 0 && K > 0 {
+	if K%IntRegKAlign == 0 && M > 0 && N > 0 && K > 0 {
 		return v.GEMMW8A8Reg, LaunchConfig{
 			GridX: uint32((N + IntRegBlock - 1) / IntRegBlock), GridY: uint32((M + IntRegBlock - 1) / IntRegBlock), GridZ: 1,
 			BlockX: IntRegBlock / RTN, BlockY: IntRegBlock / RTM, BlockZ: 1,
@@ -439,10 +443,10 @@ const (
 )
 
 // GEMMW8A8BiasPlan picks the fused int8 GEMM+bias kernel and launch geometry for M×N×K.
-// Returns an empty pipeline if K is not a multiple of IntRegK (16).
+// Returns an empty pipeline if K is not a multiple of IntRegKAlign (4).
 // Bind signature: (A int8*, aScale f32*, B int8*, bScale f32*, bias f32*, C f32*, M, N, K i32).
 func (v ViT) GEMMW8A8BiasPlan(M, N, K int) (Pipeline, LaunchConfig) {
-	if K%IntRegK == 0 && M > 0 && N > 0 && K > 0 {
+	if K%IntRegKAlign == 0 && M > 0 && N > 0 && K > 0 {
 		return v.GEMMW8A8Bias, LaunchConfig{
 			GridX: uint32((N + IntRegBlock - 1) / IntRegBlock), GridY: uint32((M + IntRegBlock - 1) / IntRegBlock), GridZ: 1,
 			BlockX: IntRegBlock / RTN, BlockY: IntRegBlock / RTM, BlockZ: 1,
@@ -452,10 +456,10 @@ func (v ViT) GEMMW8A8BiasPlan(M, N, K int) (Pipeline, LaunchConfig) {
 }
 
 // GEMMW8A8BiasAddPlan picks the fused int8 GEMM+bias+residual add kernel and launch geometry for M×N×K.
-// Returns an empty pipeline if K is not a multiple of IntRegK (16).
+// Returns an empty pipeline if K is not a multiple of IntRegKAlign (4).
 // Bind signature: (A int8*, aScale f32*, B int8*, bScale f32*, bias f32*, residual f32*, M, N, K i32).
 func (v ViT) GEMMW8A8BiasAddPlan(M, N, K int) (Pipeline, LaunchConfig) {
-	if K%IntRegK == 0 && M > 0 && N > 0 && K > 0 {
+	if K%IntRegKAlign == 0 && M > 0 && N > 0 && K > 0 {
 		return v.GEMMW8A8BiasAdd, LaunchConfig{
 			GridX: uint32((N + IntRegBlock - 1) / IntRegBlock), GridY: uint32((M + IntRegBlock - 1) / IntRegBlock), GridZ: 1,
 			BlockX: IntRegBlock / RTN, BlockY: IntRegBlock / RTM, BlockZ: 1,

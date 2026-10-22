@@ -21,7 +21,9 @@ func TestCUDA_gemmW8A8Bias(t *testing.T) {
 		{128, 256, 1152, true},
 		{64, 4304, 1152, true},
 		{63, 65, 16, true},
+		{64, 1280, 3420, true}, // K tail (Qwen2.5-VL down proj)
 		{64, 64, 15, false},
+		{64, 64, 18, false},
 		{0, 64, 16, false},
 	} {
 		pb, _ := v.GEMMW8A8BiasPlan(c.M, c.N, c.K)
@@ -42,6 +44,7 @@ func TestCUDA_gemmW8A8Bias(t *testing.T) {
 		{128, 192, 512},
 		{63, 65, 512},
 		{100, 4304, 1152}, // SigLIP MLP shape
+		{100, 1280, 3420}, // Qwen2.5-VL down proj: K%16!=0
 	} {
 		A := make([]int8, sh.M*sh.K)
 		B := make([]int8, sh.N*sh.K)
