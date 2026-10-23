@@ -9,6 +9,18 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added
+
+- **`gpu` (CUDA): `Queue.LaunchDirect` and `Device.BindCurrentThread`.** A launch issued from the caller's own locked,
+  bound thread: one `cuLaunchKernel`, with the arguments packed into pooled storage, instead of a hand-off to gocudrv's
+  executor thread and back. Same kernels and arguments as `Launch`, so outputs are unchanged.
+  - A `Pipeline` carries its `CUfunction`, read from gocudrv by reflection at creation, so function attributes set through
+    gocudrv still apply. If the field cannot be read, `LaunchDirect` takes `Launch`'s path, and `TestCUDA_launchDirect`
+    fails on that.
+  - The caller owns lifetime: no gocudrv lock is taken, so the module, stream and buffers stay open until the launch completes.
+  - RTX 2070 SUPER, driver 595.91.07, in goinfer's resident decode: host cost a launch 10.4 → 2.3 µs; Qwen2.5-Coder-0.5B
+    decode 345 → 521 tok/s and gemma3-1b 197 → 291 tok/s, byte-equal logits.
+
 ## [1.73.0] — 2026-10-23
 
 `perfgate` VERDICT: PASS — no regression vs v1.72.0 above each shape's floor — 10/47 shapes resolve the 5.0% class
