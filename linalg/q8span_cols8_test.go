@@ -19,6 +19,9 @@ func TestQ8Span8Cols_bitIdenticalToColumnForm(t *testing.T) {
 		{1, 16, 16}, {1, 100, 40}, {1, 101, 41}, {1, 103, 63}, {1, 1536, 8},
 		{1, 1536, 100}, {3, 768, 24}, {8, 768, 512}, {5, 1537, 17}, {1, 2048, 4096},
 		{2, 8960, 12},
+		// Prefill passes, where !arm64 blocks columns: a block tail (N%16), a K%16
+		// widen tail, and the 14336 down projection's narrower block.
+		{64, 1537, 37}, {512, 4095, 33}, {2048, 4096, 40}, {2048, 14336, 13},
 	}
 	for _, sh := range shapes {
 		M, K, N := sh.M, sh.K, sh.N
@@ -42,7 +45,7 @@ func TestQ8Span8Cols_bitIdenticalToColumnForm(t *testing.T) {
 
 		// The span over the whole range, and over sub-ranges with odd starts.
 		got := make([]float32, M*N)
-		deq := make([]float32, q8SpanScratchRows*K)
+		deq := make([]float32, q8SpanScratchLen(K))
 		q8Span(a, bQ, bScales, got, M, K, N, 0, N, deq)
 		compareBits(t, fmt.Sprintf("M=%d K=%d N=%d full", M, K, N), got, want)
 		if N > 3 {

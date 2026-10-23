@@ -38,8 +38,8 @@ package linalg
 // TestQ8Span_bitIdenticalToScalarWiden holds MatmulBTQ8 against the scalar
 // definition and stays green unchanged.
 
-// q8SpanScratchRows: the span widens eight weight rows at a time.
-const q8SpanScratchRows = 8
+// q8SpanScratchLen: the span widens eight weight rows at a time.
+func q8SpanScratchLen(K int) int { return 8 * K }
 
 func q8Span(a []float32, bQ []int8, bScales, dst []float32, M, K, N, j0, j1 int, deq []float32) {
 	n4 := K / 4
