@@ -39,7 +39,7 @@ package linalg
 // definition and stays green unchanged.
 
 // q8SpanScratchLen: the span widens eight weight rows at a time.
-func q8SpanScratchLen(K int) int { return 8 * K }
+func q8SpanScratchLen(_, K int) int { return 8 * K }
 
 func q8Span(a []float32, bQ []int8, bScales, dst []float32, M, K, N, j0, j1 int, deq []float32) {
 	n4 := K / 4

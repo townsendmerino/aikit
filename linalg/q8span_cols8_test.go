@@ -45,7 +45,7 @@ func TestQ8Span8Cols_bitIdenticalToColumnForm(t *testing.T) {
 
 		// The span over the whole range, and over sub-ranges with odd starts.
 		got := make([]float32, M*N)
-		deq := make([]float32, q8SpanScratchLen(K))
+		deq := make([]float32, q8SpanScratchLen(M, K))
 		q8Span(a, bQ, bScales, got, M, K, N, 0, N, deq)
 		compareBits(t, fmt.Sprintf("M=%d K=%d N=%d full", M, K, N), got, want)
 		if N > 3 {

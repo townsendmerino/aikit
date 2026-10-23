@@ -23,8 +23,17 @@ func q8SpanCols(K int) int {
 	return max(1, min(q8SpanMaxCols, q8SpanBlockFloats/max(K, 1)))
 }
 
-// q8SpanScratchLen is the length of the widened-row scratch q8Span needs for K.
-func q8SpanScratchLen(K int) int { return q8SpanCols(K) * K }
+// q8SpanScratchLen is the length of the widened-row scratch q8Span needs for an
+// M×K activation block: one row in the column form, a block of rows past the line.
+func q8SpanScratchLen(M, K int) int { return q8SpanWidth(M, K) * K }
+
+// q8SpanWidth is the column-block width q8Span uses for an M×K activation block.
+func q8SpanWidth(M, K int) int {
+	if M*K <= q8SpanResidentFloats {
+		return 1
+	}
+	return q8SpanCols(K)
+}
 
 // q8Span computes dst[i,j] for every row i and column j in [j0,j1) as
 // dotF32(a_i, widen(bQ_j))·bScales[j]. Past q8SpanResidentFloats it widens a
@@ -35,13 +44,9 @@ func q8SpanScratchLen(K int) int { return q8SpanCols(K) * K }
 // scale multiply; only the order in which independent outputs are computed
 // changes, so the result is bit-identical to q8SpanColumn
 // (TestQ8Span8Cols_bitIdenticalToColumnForm). arm64 has its own eight-column
-// form in q8span_arm64.go. deq holds at least q8SpanScratchLen(K) floats.
+// form in q8span_arm64.go. deq holds at least q8SpanScratchLen(M, K) floats.
 func q8Span(a []float32, bQ []int8, bScales, dst []float32, M, K, N, j0, j1 int, deq []float32) {
-	jb := q8SpanCols(K)
-	if M*K <= q8SpanResidentFloats {
-		jb = 1
-	}
-	q8SpanBlocked(a, bQ, bScales, dst, M, K, N, j0, j1, jb, deq)
+	q8SpanBlocked(a, bQ, bScales, dst, M, K, N, j0, j1, q8SpanWidth(M, K), deq)
 }
 
 // q8SpanBlocked is q8Span with the column-block width jb given; deq holds at

@@ -38,8 +38,15 @@ func TestQ8SpanCols_boundsTheBlock(t *testing.T) {
 		if got := q8SpanCols(c.K); got != c.want {
 			t.Errorf("q8SpanCols(%d) = %d, want %d", c.K, got, c.want)
 		}
-		if c.K > 0 && q8SpanScratchLen(c.K) > max(q8SpanBlockFloats, c.K) {
-			t.Errorf("q8SpanScratchLen(%d) = %d, over the %d-float bound", c.K, q8SpanScratchLen(c.K), q8SpanBlockFloats)
+		if n := q8SpanScratchLen(1<<21, c.K); c.K > 0 && n > max(q8SpanBlockFloats, c.K) {
+			t.Errorf("q8SpanScratchLen(2Mi, %d) = %d, over the %d-float bound", c.K, n, q8SpanBlockFloats)
+		}
+	}
+	// The column form needs one widened row, so the pooled scratch stays K floats
+	// wherever q8Span does not block.
+	for _, c := range []struct{ M, K, want int }{{1, 4096, 4096}, {64, 14336, 14336}, {512, 4096, 4096}, {513, 4096, 16 * 4096}, {256, 14336, 16 * 14336}} {
+		if got := q8SpanScratchLen(c.M, c.K); got != c.want {
+			t.Errorf("q8SpanScratchLen(%d, %d) = %d, want %d", c.M, c.K, got, c.want)
 		}
 	}
 }
@@ -103,7 +110,7 @@ func BenchmarkQ8SpanBlock(b *testing.B) {
 					var ws Workspace
 					for b.Loop() {
 						ws.parallel(N, func(j0, j1 int) {
-							deq := q8SpanScratchGet(q8SpanScratchLen(K))
+							deq := q8SpanScratchGet(q8SpanCols(K) * K)
 							form.span(j0, j1, *deq)
 							q8SpanScratchPut(deq)
 						})
