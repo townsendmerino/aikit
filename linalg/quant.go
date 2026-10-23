@@ -179,7 +179,7 @@ func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, 
 func MatmulBTQ8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	checkMatmulQ8("MatmulBTQ8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	if M*N*K < ws.thr() || N < 2 {
-		q8Span(a, bQ, bScales, dst, M, K, N, 0, N, ws.deqBuf(q8SpanScratchRows*K))
+		q8Span(a, bQ, bScales, dst, M, K, N, 0, N, ws.deqBuf(q8SpanScratchLen(M, K)))
 		return
 	}
 	ws.parallel(N, func(j0, j1 int) {
@@ -187,7 +187,7 @@ func MatmulBTQ8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, ds
 		// the parallel path used to allocate K floats per worker per matmul (~16
 		// MB/token on the 1.5B in int8 mode), and the arm64 span now wants eight
 		// rows of it (task-simd-audit.md S-07).
-		deq := q8SpanScratchGet(q8SpanScratchRows * K)
+		deq := q8SpanScratchGet(q8SpanScratchLen(M, K))
 		q8Span(a, bQ, bScales, dst, M, K, N, j0, j1, *deq)
 		q8SpanScratchPut(deq)
 	})
