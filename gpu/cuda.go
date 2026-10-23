@@ -254,8 +254,13 @@ func (d *Device) CompileLibrary(ptx []byte) (Library, error) {
 }
 
 // Pipeline is a kernel entry point — the CUDA counterpart of an
-// MTLComputePipelineState. Value type, like Metal's.
-type Pipeline struct{ f *gc.Function }
+// MTLComputePipelineState. Value type, like Metal's. raw is f's driver handle,
+// for LaunchDirect; it is 0 when it could not be read, and LaunchDirect then
+// takes Launch's path.
+type Pipeline struct {
+	f   *gc.Function
+	raw cudasys.CUfunction
+}
 
 // NewComputePipeline looks a kernel up in a loaded module. The kernel must be
 // declared `extern "C"` so its name is unmangled.
@@ -267,7 +272,7 @@ func (d *Device) NewComputePipeline(lib Library, fn string) (Pipeline, error) {
 	if err != nil {
 		return Pipeline{}, fmt.Errorf("cuda: no kernel %q in module: %w", fn, err)
 	}
-	return Pipeline{f: f}, nil
+	return Pipeline{f: f, raw: rawFunction(f)}, nil
 }
 
 // ---- buffers ----
@@ -694,17 +699,37 @@ func ReadToHost[T Scalar](b Buffer, dst *HostBuffer[T]) error {
 
 // KernelArg is one positional kernel parameter — a device buffer (Arg) or a scalar
 // passed by value (ArgValue). A kernel's parameter list is these in order.
-type KernelArg struct{ a gc.KernelArg }
+//
+// raw holds the parameter's bytes as LaunchDirect passes them (a device pointer, or
+// the scalar's bits in its low bytes); n is its size, 0 for a nil buffer.
+type KernelArg struct {
+	a   gc.KernelArg
+	raw uint64
+	n   uint8
+}
 
 // Arg passes a device buffer as a kernel pointer parameter. A buffer carrying a
 // bind offset (Buffer.At) passes base+offset.
-func Arg(b Buffer) KernelArg { return KernelArg{a: b.arg()} }
+func Arg(b Buffer) KernelArg {
+	k := KernelArg{a: b.arg()}
+	switch {
+	case b.raw != 0:
+		k.raw, k.n = uint64(b.raw)+uint64(b.off), 8
+	case b.b != nil:
+		k.raw, k.n = uint64(b.b.DevicePtr())+uint64(b.off), 8
+	}
+	return k
+}
 
 // ArgValue passes a scalar BY VALUE — the calling convention the tuned kernels
 // use for their dimensions, epsilons and flags (`int32 n`, `float32 eps`), as
 // opposed to the 1-element-buffer convention the ANN kernels inherited from MSL's
 // `constant uint&` binds. Both work; a kernel's signature decides which it needs.
-func ArgValue[T Scalar](v T) KernelArg { return KernelArg{a: gc.ArgValue(v)} }
+func ArgValue[T Scalar](v T) KernelArg {
+	k := KernelArg{a: gc.ArgValue(v), n: uint8(unsafe.Sizeof(v))}
+	*(*T)(unsafe.Pointer(&k.raw)) = v
+	return k
+}
 
 // ArgNull passes a NULL device pointer (CUdeviceptr 0) as a kernel pointer
 // parameter — the "optional buffer, absent this call" arg a tuned kernel reads as
@@ -713,7 +738,7 @@ func ArgValue[T Scalar](v T) KernelArg { return KernelArg{a: gc.ArgValue(v)} }
 // that guards on a null pointer needs the pointer itself to be 0. goinfer's decode
 // path binds an absent bias this way (it was gc.ArgDevicePtr(0) before the
 // re-point); there is no host allocation, so it costs nothing.
-func ArgNull() KernelArg { return KernelArg{a: gc.ArgDevicePtr(0)} }
+func ArgNull() KernelArg { return KernelArg{a: gc.ArgDevicePtr(0), n: 8} }
 
 // LaunchConfig is explicit launch geometry: grid and block dimensions plus dynamic
 // shared memory. Mirrors the driver's own shape, so a kernel author sizes blocks
