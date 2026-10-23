@@ -9,6 +9,33 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.73.0] — 2026-10-23
+
+`perfgate` VERDICT: PASS — no regression vs v1.72.0 above each shape's floor — 10/47 shapes resolve the 5.0% class
+
+sensitivity: 10/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), 7e3bd85 vs v1.72.0, 2026-10-23, under the timing lock, start load 0.58. perfgate's instrument has no `MatmulBTQ8` benchmark, so it does not measure this release's change; `BenchmarkQ8SpanBlock` does (aikit #10).
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 7e3bd85 (2026-10-23T18:19:08Z). nobara (linux/amd64), Go 1.27.3 (GOTOOLCHAIN=go1.27.3).
+
+The weight-only int8 matmul is several times faster at long prefill on amd64. Outputs are bit-identical.
+
+### Changed
+
+- **`MatmulBTQ8` / `MatmulBTQ8Into` off arm64: column-blocked once the activation block outgrows cache.** The span ran one
+  output column at a time, so each column re-read the whole activation block `a[M,K]`. For a 2048-row prefill pass that
+  is 32–117 MB per column, and the matmul was DRAM-bound (97% of goinfer's Command-R7B CPU-reference prefill). Past
+  M·K = 2 Mi floats (an 8 MB block), it now widens sixteen weight rows at a time and walks each activation row against
+  the block. At or below that, it keeps the column form, which measured faster while the block stays in cache.
+  - Each output is the same `dotF32(a_i, widen(b_j))·s_j` on the same values, so the result is bit-identical. The tests
+    hold it raw-bit against the column form over prefill shapes, block and widen tails, on AVX2, `aikit_noavx2` and the
+    generic kernels.
+  - Ryzen 7 3700X, 16 workers, column → blocked: 3.2× gate/up (4096→14336), 5.6× down (14336→4096) and 3.3× q/o
+    (4096→4096) at M=2048; 3.1× down at M=512.
+  - At or below the line (decode, M=1, and every decoder shape up to M=128) the column code runs unchanged, with its
+    one-row scratch; past it the pooled per-worker scratch is sixteen widened rows (1 MB at most; 256 KB at K=4096).
+  - End to end in goinfer, Command-R7B's int8 CPU prefill at K=1024 went from 184 s to 92 s, bitwise equal logits.
+  - arm64's eight-column span is unchanged.
+
 ## [1.72.0] — 2026-10-22
 
 `perfgate` VERDICT: PASS — no regression vs v1.71.0 above each shape's floor — 36/49 shapes resolve the 5.0% class
@@ -5798,6 +5825,7 @@ broad slice of the open-weights ecosystem.
   [README.md](README.md) for stability tiers.
 
 [Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.72.0...HEAD
+[1.73.0]: https://github.com/townsendmerino/aikit/compare/v1.72.0...v1.73.0
 [1.72.0]: https://github.com/townsendmerino/aikit/compare/v1.71.0...v1.72.0
 [1.71.0]: https://github.com/townsendmerino/aikit/compare/v1.70.2...v1.71.0
 [1.70.2]: https://github.com/townsendmerino/aikit/compare/v1.70.1...v1.70.2
