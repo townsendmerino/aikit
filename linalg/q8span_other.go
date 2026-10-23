@@ -11,12 +11,12 @@ const (
 	q8SpanBlockFloats = 256 << 10
 )
 
-// q8SpanResidentFloats is the activation-block size (M·K floats, 4 MB) at or below
+// q8SpanResidentFloats is the activation-block size (M·K floats, 8 MB) at or below
 // which q8Span keeps the column form: there the block stays in cache, and the
 // column form's one widened row in L1 measured faster than a block of sixteen.
 // Above it the column form re-reads the block from DRAM per column. Both choices
 // are bit-identical; the measurements are in aikit PR #10.
-const q8SpanResidentFloats = 1 << 20
+const q8SpanResidentFloats = 2 << 20
 
 // q8SpanCols is how many weight rows q8Span widens at once for inner dimension K.
 func q8SpanCols(K int) int {
