@@ -77,28 +77,34 @@ func q8SpanOperands(rng *rand.Rand, M, K, N int) (a []float32, bQ []int8, bScale
 }
 
 // BenchmarkQ8SpanBlock times the parallel weight-only int8 matmul at the decoder's
-// projection shapes, column form (jb=1, the form before blocking) against the
-// blocked form q8Span picks, in one binary so the two can be interleaved.
+// projection shapes: the column form (jb=1, the form before blocking), the blocked
+// form at q8SpanCols(K), and q8Span's own choice between them, in one binary so the
+// forms can be interleaved.
 func BenchmarkQ8SpanBlock(b *testing.B) {
 	rng := rand.New(rand.NewSource(1))
 	for _, sh := range []struct{ K, N int }{{4096, 14336}, {14336, 4096}, {4096, 4096}} {
 		K, N := sh.K, sh.N
 		_, bQ, bScales := q8SpanOperands(rng, 1, K, N)
-		for _, M := range []int{1, 64, 512, 2048} {
+		for _, M := range []int{1, 64, 128, 256, 512, 2048} {
 			a, _, _ := q8SpanOperands(rng, M, K, 1)
 			dst := make([]float32, M*N)
 			for _, form := range []struct {
 				name string
-				jb   int
-			}{{"column", 1}, {"blocked", q8SpanCols(K)}} {
-				jb := form.jb
+				span func(j0, j1 int, deq []float32)
+			}{
+				{"column", func(j0, j1 int, deq []float32) { q8SpanBlocked(a, bQ, bScales, dst, M, K, N, j0, j1, 1, deq) }},
+				{"blocked", func(j0, j1 int, deq []float32) {
+					q8SpanBlocked(a, bQ, bScales, dst, M, K, N, j0, j1, q8SpanCols(K), deq)
+				}},
+				{"span", func(j0, j1 int, deq []float32) { q8Span(a, bQ, bScales, dst, M, K, N, j0, j1, deq) }},
+			} {
 				b.Run(fmt.Sprintf("%s/M%d_K%d_N%d", form.name, M, K, N), func(b *testing.B) {
 					b.SetBytes(int64(M) * int64(N) * int64(K) * 2) // FLOPs, so MB/s reads as MFLOP/s
 					var ws Workspace
 					for b.Loop() {
 						ws.parallel(N, func(j0, j1 int) {
-							deq := q8SpanScratchGet(jb * K)
-							q8SpanBlocked(a, bQ, bScales, dst, M, K, N, j0, j1, jb, *deq)
+							deq := q8SpanScratchGet(q8SpanScratchLen(K))
+							form.span(j0, j1, *deq)
 							q8SpanScratchPut(deq)
 						})
 					}
