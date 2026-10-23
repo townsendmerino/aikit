@@ -2,12 +2,13 @@
 
 package linalg
 
-// q8SpanMaxCols and q8SpanBlockFloats size q8Span's column block on this arch: up
-// to sixteen widened weight rows, and no more than q8SpanBlockFloats floats in all,
-// so the block stays in a 512 KB L2 beside the activation row walked against it.
+// q8SpanMaxCols and q8SpanBlockFloats size q8Span's column block on this arch:
+// sixteen widened weight rows, fewer only where that would pass q8SpanBlockFloats
+// (1 MB per worker), which no transformer K up to 16384 reaches. The width is a
+// measured choice, not a cache-fit one; the sweep is in aikit PR #10.
 const (
 	q8SpanMaxCols     = 16
-	q8SpanBlockFloats = 64 << 10
+	q8SpanBlockFloats = 256 << 10
 )
 
 // q8SpanCols is how many weight rows q8Span widens at once for inner dimension K.

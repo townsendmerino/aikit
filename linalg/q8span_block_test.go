@@ -34,7 +34,7 @@ func TestQ8SpanBlocked_bitIdenticalAtEveryWidth(t *testing.T) {
 }
 
 func TestQ8SpanCols_boundsTheBlock(t *testing.T) {
-	for _, c := range []struct{ K, want int }{{0, 16}, {1, 16}, {4096, 16}, {8192, 8}, {14336, 4}, {1 << 17, 1}} {
+	for _, c := range []struct{ K, want int }{{0, 16}, {1, 16}, {4096, 16}, {14336, 16}, {16384, 16}, {32768, 8}, {1 << 19, 1}} {
 		if got := q8SpanCols(c.K); got != c.want {
 			t.Errorf("q8SpanCols(%d) = %d, want %d", c.K, got, c.want)
 		}
