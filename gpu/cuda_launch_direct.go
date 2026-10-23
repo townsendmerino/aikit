@@ -58,9 +58,11 @@ func (d *Device) BindCurrentThread() error {
 
 // LaunchDirect is Launch issued from the caller's own thread: one cuLaunchKernel,
 // instead of a hand-off to gocudrv's executor thread and back. The calling thread
-// must be locked and bound (BindCurrentThread); on any other thread the driver
-// refuses the launch and the error says so. Stream order is program order, as for
-// Launch, since every gocudrv call returns only after its work is enqueued.
+// must be locked and bound (BindCurrentThread). The driver enforces that only on the
+// null stream, where an unbound launch is refused and the error says so; a queue
+// with its own stream launches in that stream's context. Stream order is program
+// order, as for Launch, since every gocudrv call returns only after its work is
+// enqueued.
 //
 // It takes none of gocudrv's locks: the caller keeps the pipeline's module, the
 // queue's stream and every buffer argument open until the launch has completed,
