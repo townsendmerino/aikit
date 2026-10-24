@@ -11,6 +11,10 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Added
 
+- **`vision`: `Close` on `Qwen3VisionEncoder`, `GlmOcrVisionEncoder`, `PixtralVisionEncoder`, `Gemma4Encoder` and
+  `Siglip2NaFlexEncoder`.** Each releases the checkpoint mapping its weights now read from (below); a forward after `Close`
+  returns an error. `Encoder.Close` and `QwenVisionEncoder.Close` do the same besides releasing a resident backend.
+
 - **`gpu` (CUDA): `Queue.LaunchDirect` and `Device.BindCurrentThread`.** A launch issued from the caller's own locked,
   bound thread: one `cuLaunchKernel`, with the arguments packed into pooled storage, instead of a hand-off to gocudrv's
   executor thread and back. Same kernels and arguments as `Launch`, so outputs are unchanged.
@@ -20,6 +24,21 @@ excluded from that promise and may change in any release until it graduates.
   - The caller owns lifetime: no gocudrv lock is taken, so the module, stream and buffers stay open until the launch completes.
   - RTX 2070 SUPER, driver 595.91.07, in goinfer's resident decode: host cost a launch 10.4 → 2.3 µs; Qwen2.5-Coder-0.5B
     decode 345 → 521 tok/s and gemma3-1b 197 → 291 tok/s, byte-equal logits.
+
+### Changed
+
+- **`vision`: the towers hold their projection weights in the checkpoint mapping instead of copying them (MEM4(a)).** A
+  bf16 or f16 weight is wrapped with `linalg.WrapBF16` / `WrapF16`, an f32 one with `WrapF32`, over the safetensors mapping,
+  which the encoder keeps open until `Close`. Outputs are bit-identical to the copying load (widening is exact), on every
+  tower's tiny fixture and on a bf16 copy of each. `quant=true` still quantizes from a copy, and a tower built from a caller's
+  `TensorSource` still copies.
+  - Qwen2.5-VL-3B's tower: Go heap after load 2,551.7 → 9.6 MiB (its projections are 2,543 MiB as f32).
+  - Speed on arm64 (M1 Pro, CPU tower forward, in-process A/B): 16-bit/f32 time median 0.9666 on Qwen2.5-VL-3B (1,408
+    patches) and 0.9935 on Gemma-3-4B's SigLIP, features equal.
+  - The exports (`Weights`, `QwenGPUWeights`) hand out a 16-bit weight's exact f32 widening as a fresh slice, so a device
+    upload's bytes do not change.
+  - The owner of an encoder now Closes it to release the mapping; one dropped without `Close` keeps its mapping until the
+    process exits (`embed.SafetensorsFile`'s contract).
 
 ## [1.73.0] — 2026-10-23
 

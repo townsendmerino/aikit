@@ -123,21 +123,21 @@ func (m *towerMaps) adopt(from *towerMaps) {
 }
 
 // dropReloads releases the reload mappings, once the blocks that read them are dropped (ReleaseBlocks).
-func (m *towerMaps) dropReloads() error {
+func (m *towerMaps) dropReloads() {
 	m.mu.Lock()
 	rs := m.reloads
 	m.reloads = nil
 	m.mu.Unlock()
-	return closeAll(rs)
+	closeAll(rs)
 }
 
 // close releases every mapping and marks the tower closed. Idempotent.
-func (m *towerMaps) close() error {
+func (m *towerMaps) close() {
 	m.mu.Lock()
 	all := append(m.base, m.reloads...)
 	m.base, m.reloads, m.closed = nil, nil, true
 	m.mu.Unlock()
-	return closeAll(all)
+	closeAll(all)
 }
 
 // check is a forward's guard: errTowerClosed once close has run.
@@ -150,12 +150,12 @@ func (m *towerMaps) check() error {
 	return nil
 }
 
-func closeAll(cs []io.Closer) error {
-	var errs []error
+// closeAll closes each mapping. An unmap failure leaves the region mapped with nothing reading it, so it is not reported: the
+// callers (Close, ReleaseBlocks) have no error of their own to carry it.
+func closeAll(cs []io.Closer) {
 	for _, c := range cs {
-		errs = append(errs, c.Close())
+		_ = c.Close()
 	}
-	return errors.Join(errs...)
 }
 
 // widenHalf16 is a 16-bit-held weight's exact f32 widening, for an export whose consumer reads f32 (a device upload); nil for

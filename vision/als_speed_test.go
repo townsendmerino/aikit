@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"slices"
 	"testing"
 	"time"
@@ -38,14 +40,22 @@ func TestALS_G0_speed(t *testing.T) {
 	if os.Getenv("ALS_G0") != "1" {
 		t.Skip("set ALS_G0=1 (real checkpoints; timed)")
 	}
-	home, _ := os.UserHomeDir()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
 	// idle waits until the 1-minute load average is under 4.0 (half this Mac's 8 cores, the void line), at most 5 minutes, and
 	// returns the load it starts at: the tower forward runs on every core, so the previous run holds the average up for a minute.
 	idle := func() string {
 		for range 60 {
-			la, _ := exec.Command("sysctl", "-n", "vm.loadavg").Output()
+			la, err := exec.Command("sysctl", "-n", "vm.loadavg").Output()
+			if err != nil {
+				t.Fatal(err)
+			}
 			var l1 float64
-			fmt.Sscanf(string(la), "{ %f", &l1)
+			if _, err := fmt.Sscanf(string(la), "{ %f", &l1); err != nil {
+				t.Fatalf("parse %q: %v", la, err)
+			}
 			if l1 < 4.0 {
 				return fmt.Sprintf("%.2f", l1)
 			}
@@ -74,7 +84,10 @@ func TestALS_G0_speed(t *testing.T) {
 		run(true)
 		var ratios []float64
 		for i := range 6 {
-			la, _ := exec.Command("sysctl", "-n", "vm.loadavg").Output()
+			la, err := exec.Command("sysctl", "-n", "vm.loadavg").Output()
+			if err != nil {
+				t.Fatal(err)
+			}
 			var tf, th float64
 			var of, oh []float32
 			if i%2 == 0 {
@@ -171,4 +184,53 @@ func TestALS_G0_speed(t *testing.T) {
 				}
 			})
 	})
+}
+
+// TestALS_G2_heap is MEM4(a)'s ALS-G2: Qwen2.5-VL-3B's tower (~/models/qwen25vl-3b-instruct, bf16) loaded aliased, the Go heap in
+// use after runtime.GC and debug.FreeOSMemory, against 15% of its f32 projection bytes; the copying load (aliasOffForTest) is read
+// beside it for the record. Armed by ALS_G2=1 (a real checkpoint).
+func TestALS_G2_heap(t *testing.T) {
+	if os.Getenv("ALS_G2") != "1" {
+		t.Skip("set ALS_G2=1 (a real checkpoint)")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, "models", "qwen25vl-3b-instruct")
+	heap := func() uint64 {
+		runtime.GC()
+		debug.FreeOSMemory()
+		var ms runtime.MemStats
+		runtime.ReadMemStats(&ms)
+		return ms.HeapInuse
+	}
+	read := func(off bool) (inUse uint64, projBytes int64) {
+		aliasOffForTest = off
+		defer func() { aliasOffForTest = false }()
+		base := heap()
+		e, err := LoadQwenVisionEncoder(dir, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inUse = heap() - base
+		for i := range e.blocks {
+			b := &e.blocks[i]
+			for _, w := range []*linalg.WeightMat{&b.qkvw, &b.projw, &b.gatew, &b.upw, &b.downw} {
+				projBytes += int64(w.Rows()) * int64(w.Cols()) * 4
+			}
+		}
+		projBytes += int64(e.merger0w.Rows())*int64(e.merger0w.Cols())*4 + int64(e.merger2w.Rows())*int64(e.merger2w.Cols())*4
+		e.Close()
+		runtime.KeepAlive(e)
+		return inUse, projBytes
+	}
+	aliased, proj := read(false)
+	copied, _ := read(true)
+	const MiB = 1 << 20
+	fmt.Fprintf(os.Stderr, "[ALS-G2] Qwen2.5-VL-3B tower: f32 projection bytes %.1f MiB; heap in use after load: aliased %.1f MiB (%.1f%%), copied %.1f MiB (%.1f%%)\n",
+		float64(proj)/MiB, float64(aliased)/MiB, 100*float64(aliased)/float64(proj), float64(copied)/MiB, 100*float64(copied)/float64(proj))
+	if float64(aliased) > 0.15*float64(proj) {
+		t.Errorf("aliased heap %.1f MiB is over 15%% of the f32 projection bytes (%.1f MiB)", float64(aliased)/MiB, float64(proj)/MiB)
+	}
 }
