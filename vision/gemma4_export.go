@@ -55,6 +55,10 @@ func (e *Gemma4Encoder) Weights() (Gemma4Weights, error) {
 	var err error
 	proj := func(name string, p clippedProj) Gemma4Proj {
 		f, ok := p.w.F32()
+		if !ok {
+			f = widenHalf16(p.w) // a 16-bit-held weight (aliasQMat) exports as its exact f32 widening
+			ok = f != nil
+		}
 		if !ok && err == nil {
 			err = fmt.Errorf("vision: %s is %s, the export needs float32 weights (LoadGemma4Encoder quant=false)", name, p.w.Kind())
 		}

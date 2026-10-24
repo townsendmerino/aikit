@@ -67,20 +67,24 @@ func (r *blockRelease[E]) isReleased() bool {
 // host forward or weight export loads them again from the checkpoint the tower was loaded from, with the same values. It
 // must not run concurrently with a forward or an export. A tower built from a caller's TensorSource
 // (LoadQwen3VisionEncoderFrom) cannot reload and refuses, keeping its blocks.
-func (e *Qwen3VisionEncoder) ReleaseBlocks() error { return e.rel.release(func() { e.blocks = nil }) }
+func (e *Qwen3VisionEncoder) ReleaseBlocks() error {
+	return e.rel.release(func() { e.blocks = nil; e.maps.dropReloads() })
+}
 
 func (e *Qwen3VisionEncoder) ensureBlocks() error {
-	return e.rel.ensure(func(f *Qwen3VisionEncoder) { e.blocks = f.blocks })
+	return e.rel.ensure(func(f *Qwen3VisionEncoder) { e.blocks = f.blocks; e.maps.adopt(&f.maps) })
 }
 
 // BlocksReleased reports whether ReleaseBlocks has dropped the blocks and no host use has loaded them since.
 func (e *Qwen3VisionEncoder) BlocksReleased() bool { return e.rel.isReleased() }
 
 // ReleaseBlocks is Qwen3VisionEncoder.ReleaseBlocks for GLM-OCR's tower.
-func (e *GlmOcrVisionEncoder) ReleaseBlocks() error { return e.rel.release(func() { e.blocks = nil }) }
+func (e *GlmOcrVisionEncoder) ReleaseBlocks() error {
+	return e.rel.release(func() { e.blocks = nil; e.maps.dropReloads() })
+}
 
 func (e *GlmOcrVisionEncoder) ensureBlocks() error {
-	return e.rel.ensure(func(f *GlmOcrVisionEncoder) { e.blocks = f.blocks })
+	return e.rel.ensure(func(f *GlmOcrVisionEncoder) { e.blocks = f.blocks; e.maps.adopt(&f.maps) })
 }
 
 // BlocksReleased is Qwen3VisionEncoder.BlocksReleased for GLM-OCR's tower.
@@ -88,20 +92,24 @@ func (e *GlmOcrVisionEncoder) BlocksReleased() bool { return e.rel.isReleased() 
 
 // ReleaseBlocks is Qwen3VisionEncoder.ReleaseBlocks for Qwen2.5-VL's tower. A resident encoder (EnableResident) keeps
 // running on its device; only the CPU path and GPUWeights reload.
-func (e *QwenVisionEncoder) ReleaseBlocks() error { return e.rel.release(func() { e.blocks = nil }) }
+func (e *QwenVisionEncoder) ReleaseBlocks() error {
+	return e.rel.release(func() { e.blocks = nil; e.maps.dropReloads() })
+}
 
 func (e *QwenVisionEncoder) ensureBlocks() error {
-	return e.rel.ensure(func(f *QwenVisionEncoder) { e.blocks = f.blocks })
+	return e.rel.ensure(func(f *QwenVisionEncoder) { e.blocks = f.blocks; e.maps.adopt(&f.maps) })
 }
 
 // BlocksReleased is Qwen3VisionEncoder.BlocksReleased for Qwen2.5-VL's tower.
 func (e *QwenVisionEncoder) BlocksReleased() bool { return e.rel.isReleased() }
 
 // ReleaseBlocks is Qwen3VisionEncoder.ReleaseBlocks for Gemma 4's tower (its encoder layers).
-func (e *Gemma4Encoder) ReleaseBlocks() error { return e.rel.release(func() { e.layers = nil }) }
+func (e *Gemma4Encoder) ReleaseBlocks() error {
+	return e.rel.release(func() { e.layers = nil; e.maps.dropReloads() })
+}
 
 func (e *Gemma4Encoder) ensureBlocks() error {
-	return e.rel.ensure(func(f *Gemma4Encoder) { e.layers = f.layers })
+	return e.rel.ensure(func(f *Gemma4Encoder) { e.layers = f.layers; e.maps.adopt(&f.maps) })
 }
 
 // BlocksReleased is Qwen3VisionEncoder.BlocksReleased for Gemma 4's tower.

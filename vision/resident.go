@@ -36,10 +36,15 @@ func (e *Encoder) EnableResident() error {
 	return nil
 }
 
-// Close releases a resident backend if one is attached (no-op otherwise).
+// Close releases a resident backend if one is attached and the checkpoint mappings the block weights alias (aliasQMat); the
+// encoder's forwards and exports return an error afterward. Idempotent.
 func (e *Encoder) Close() {
 	if e.resident != nil {
 		e.resident.Close()
 		e.resident = nil
 	}
+	e.blocksMu.Lock()
+	e.layers = nil
+	e.maps.close()
+	e.blocksMu.Unlock()
 }

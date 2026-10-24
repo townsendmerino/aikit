@@ -14,15 +14,20 @@ import (
 // with quant=false); Weights errors otherwise.
 
 // VisionProj is one biased linear layer: W is nn.Linear's [Out, In] weight in float32, B its [Out] bias (nil when the
-// layer has none). Both alias the encoder's; do not write them.
+// layer has none). Both alias the encoder's (W is a fresh widening for a 16-bit-held weight); do not write them.
 type VisionProj struct {
 	W, B    []float32
 	Out, In int
 }
 
-// exportProj wraps one projection, recording the first non-float32 one in *err.
+// exportProj wraps one projection, recording the first non-float32 one in *err. A 16-bit-held weight (aliasQMat over a bf16
+// or f16 checkpoint) exports as its exact f32 widening, a fresh slice: the f32 values a copying load held.
 func exportProj(err *error, name string, w linalg.WeightMat, b []float32) VisionProj {
 	f, ok := w.F32()
+	if !ok {
+		f = widenHalf16(w)
+		ok = f != nil
+	}
 	if !ok && *err == nil {
 		*err = fmt.Errorf("vision: %s is %s, the export needs float32 weights (load the tower with quant=false)", name, w.Kind())
 	}

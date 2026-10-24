@@ -156,6 +156,8 @@ type Qwen3VisionEncoder struct {
 	rotInvFreq []float32                         // head_dim/4 rotary frequencies
 	deepstack  []qwen3DSMerger                   // one per Cfg.DeepstackVisualIndexes entry (Qwen3-VL); empty for Qwen3.5+
 	rel        *blockRelease[Qwen3VisionEncoder] // nil for a tower from a caller's TensorSource
+	maps       towerMaps                         // the checkpoint mappings its aliased weights read (aliasQMat); Close releases them
+	aliased    bool                              // LoadQwen3VisionEncoderFrom wrapped a weight in place (an ownedSource only)
 }
 
 // qwen3DSMerger is one DeepStack merger: LayerNorm over the merged hidden·merge² row (post-shuffle), fc1, GELU (erf),
@@ -197,10 +199,15 @@ func LoadQwen3VisionEncoder(dir string, quant bool) (*Qwen3VisionEncoder, error)
 	if err != nil {
 		return nil, fmt.Errorf("vision: open safetensors: %w", err)
 	}
-	defer st.Close()
-	e, err := LoadQwen3VisionEncoderFrom(cfg, prefixedSource{st, qwen3TensorPrefix(st)}, quant)
+	e, err := LoadQwen3VisionEncoderFrom(cfg, ownedSource{prefixedSource{st, qwen3TensorPrefix(st)}, st}, quant)
 	if err != nil {
+		st.Close()
 		return nil, err
+	}
+	if e.aliased {
+		e.maps.keep(st)
+	} else {
+		st.Close()
 	}
 	e.rel = newBlockRelease(func() (*Qwen3VisionEncoder, error) { return LoadQwen3VisionEncoder(dir, quant) })
 	return e, nil
@@ -225,6 +232,16 @@ func (p prefixedSource) TensorF32(name string, want ...int) ([]float32, error) {
 	return p.st.TensorF32(p.pfx+name, want...)
 }
 
+// ownedSource is prefixedSource over a checkpoint the loading tower owns (LoadQwen3VisionEncoder). Only through it does
+// LoadQwen3VisionEncoderFrom alias tensors in place (aliasQMat), since the tower then keeps the file open; a caller's
+// TensorSource, even a safetensors file, is copied from.
+type ownedSource struct {
+	prefixedSource
+	file *embed.SafetensorsFile
+}
+
+func (o ownedSource) Tensor(name string) (embed.Tensor, error) { return o.file.Tensor(o.pfx + name) }
+
 // LoadQwen3VisionEncoderFrom builds a Qwen3.5+ tower from cfg and a tensor source (LoadQwen3VisionEncoder's body for
 // any container). cfg is validated here.
 func LoadQwen3VisionEncoderFrom(cfg Qwen3EncoderConfig, src TensorSource, quant bool) (*Qwen3VisionEncoder, error) {
@@ -248,7 +265,17 @@ func LoadQwen3VisionEncoderFrom(cfg Qwen3EncoderConfig, src TensorSource, quant 
 		return append([]float32(nil), v...)
 	}
 	hidden, inter := cfg.HiddenSize, cfg.IntermediateSize
+	_, owned := src.(ownedSource)
 	qm := func(name string, rows, cols int) linalg.WeightMat {
+		if err != nil {
+			return linalg.WeightMat{}
+		}
+		if owned {
+			if w, ok, aerr := aliasQMat(src, name, rows, cols, quant); aerr != nil || ok {
+				err, e.aliased = aerr, e.aliased || ok
+				return w
+			}
+		}
 		w := get(name, rows, cols)
 		if err != nil {
 			return linalg.WeightMat{}
@@ -503,6 +530,9 @@ func (e *Qwen3VisionEncoder) deepMerge(k int, h []float32) []float32 {
 // forwardBlocks is ForwardViT's body; tap, when set, sees each block's output (li, h) right after the block, before the
 // next one overwrites h.
 func (e *Qwen3VisionEncoder) forwardBlocks(pixelValues []float32, gridTHW [][3]int, tap func(li int, h []float32)) ([]float32, error) {
+	if err := e.maps.check(); err != nil {
+		return nil, err
+	}
 	if err := e.ensureBlocks(); err != nil {
 		return nil, err
 	}
@@ -585,4 +615,11 @@ func (e *Qwen3VisionEncoder) merge(hidden []float32) []float32 {
 	e.merger2w.MatmulBT(mid, out, groups)
 	addBias(out, e.merger2b, groups, c.OutHiddenSize)
 	return out
+}
+
+// Close releases the checkpoint mappings the tower's weights alias (aliasQMat); its forwards return an error afterward.
+// Idempotent.
+func (e *Qwen3VisionEncoder) Close() {
+	e.blocks, e.merger1w, e.merger2w, e.deepstack = nil, linalg.WeightMat{}, linalg.WeightMat{}, nil
+	e.maps.close()
 }

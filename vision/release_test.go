@@ -146,47 +146,56 @@ func releasables(t *testing.T) []releasable {
 // TestReleaseBlocks_reloadsTheSameTower is TWR-G1 (goinfer's docs/tasks/task-memory-campaign-2026-10.md, MEM4(b) gates):
 // after ReleaseBlocks the heap falls by at least 80% of the blocks' bytes, the next forward is byte-equal to the one before
 // and reloads the blocks, and the export after it hashes the same as before.
+//
+// It runs twice: with the blocks copied onto the heap (aliasOffForTest), where the heap check above is the point, and with
+// them aliased in the checkpoint mapping (MEM4(a)), where the blocks were never on the heap and only the reload, the forward
+// and the export are checked.
 func TestReleaseBlocks_reloadsTheSameTower(t *testing.T) {
-	for _, r := range releasables(t) {
-		t.Run(r.name, func(t *testing.T) {
-			before, err := r.forward()
-			if err != nil {
-				t.Fatal(err)
-			}
-			blockBytes, _ := exportSig(r.blocks())
-			_, sig := exportSig(r.export())
-			h0 := heapInUse()
-			if err := r.release(); err != nil {
-				t.Fatal(err)
-			}
-			h1 := heapInUse()
-			if !r.released() {
-				t.Error("BlocksReleased is false right after ReleaseBlocks")
-			}
-			freed := h0 - h1
-			t.Logf("%s: blocks %d bytes; heap %d -> %d (freed %d, %.0f%%)", r.name, blockBytes, h0, h1, freed, 100*float64(freed)/float64(blockBytes))
-			if float64(freed) < 0.8*float64(blockBytes) {
-				t.Errorf("the release freed %d bytes of the blocks' %d (under 80%%)", freed, blockBytes)
-			}
-			after, err := r.forward()
-			if err != nil {
-				t.Fatalf("forward after the release: %v", err)
-			}
-			if r.released() {
-				t.Error("BlocksReleased is still true after a forward reloaded them")
-			}
-			if len(after) != len(before) {
-				t.Fatalf("forward after the release: %d values, want %d", len(after), len(before))
-			}
-			for i := range before {
-				if math.Float32bits(before[i]) != math.Float32bits(after[i]) {
-					t.Fatalf("forward after the release differs at %d: %v against %v", i, after[i], before[i])
+	defer func() { aliasOffForTest = false }()
+	for _, aliasOff := range []bool{true, false} {
+		aliasOffForTest = aliasOff
+		mode := map[bool]string{true: "copied", false: "aliased"}[aliasOff]
+		for _, r := range releasables(t) {
+			t.Run(mode+"/"+r.name, func(t *testing.T) {
+				before, err := r.forward()
+				if err != nil {
+					t.Fatal(err)
 				}
-			}
-			if _, sig2 := exportSig(r.export()); sig2 != sig {
-				t.Error("the export after the release differs from the one before")
-			}
-		})
+				blockBytes, _ := exportSig(r.blocks())
+				_, sig := exportSig(r.export())
+				h0 := heapInUse()
+				if err := r.release(); err != nil {
+					t.Fatal(err)
+				}
+				h1 := heapInUse()
+				if !r.released() {
+					t.Error("BlocksReleased is false right after ReleaseBlocks")
+				}
+				freed := h0 - h1
+				t.Logf("%s: blocks %d bytes; heap %d -> %d (freed %d, %.0f%%)", r.name, blockBytes, h0, h1, freed, 100*float64(freed)/float64(blockBytes))
+				if aliasOff && float64(freed) < 0.8*float64(blockBytes) {
+					t.Errorf("the release freed %d bytes of the blocks' %d (under 80%%)", freed, blockBytes)
+				}
+				after, err := r.forward()
+				if err != nil {
+					t.Fatalf("forward after the release: %v", err)
+				}
+				if r.released() {
+					t.Error("BlocksReleased is still true after a forward reloaded them")
+				}
+				if len(after) != len(before) {
+					t.Fatalf("forward after the release: %d values, want %d", len(after), len(before))
+				}
+				for i := range before {
+					if math.Float32bits(before[i]) != math.Float32bits(after[i]) {
+						t.Fatalf("forward after the release differs at %d: %v against %v", i, after[i], before[i])
+					}
+				}
+				if _, sig2 := exportSig(r.export()); sig2 != sig {
+					t.Error("the export after the release differs from the one before")
+				}
+			})
+		}
 	}
 }
 

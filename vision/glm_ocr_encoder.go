@@ -169,6 +169,7 @@ type GlmOcrVisionEncoder struct {
 	mDownW     linalg.WeightMat // [out, inner]
 	rotInvFreq []float32        // head_dim/4 rotary frequencies
 	rel        *blockRelease[GlmOcrVisionEncoder]
+	maps       towerMaps // the checkpoint mappings its aliased weights read (aliasQMat); Close releases them
 }
 
 // LoadGlmOcrVisionEncoder reads a GLM-OCR checkpoint (config.json vision_config + safetensors, tensors
@@ -197,7 +198,12 @@ func LoadGlmOcrVisionEncoder(dir string, quant bool) (*GlmOcrVisionEncoder, erro
 	if err != nil {
 		return nil, fmt.Errorf("vision: open safetensors: %w", err)
 	}
-	defer st.Close()
+	aliased, kept := false, false // a weight aliases st; the loaded tower keeps st open
+	defer func() {
+		if !kept {
+			st.Close()
+		}
+	}()
 
 	e := &GlmOcrVisionEncoder{Cfg: cfg}
 	pfx := glmOcrTensorPrefix(st)
@@ -215,6 +221,13 @@ func LoadGlmOcrVisionEncoder(dir string, quant bool) (*GlmOcrVisionEncoder, erro
 	hidden, inter, out := cfg.HiddenSize, cfg.IntermediateSize, cfg.OutHiddenSize
 	headDim := hidden / cfg.NumHeads
 	qm := func(name string, rows, cols int) linalg.WeightMat {
+		if err != nil {
+			return linalg.WeightMat{}
+		}
+		if w, ok, aerr := aliasQMat(st, pfx+name, rows, cols, quant); aerr != nil || ok {
+			err, aliased = aerr, aliased || ok
+			return w
+		}
 		w := get(name, rows, cols)
 		if err != nil {
 			return linalg.WeightMat{}
@@ -261,6 +274,10 @@ func LoadGlmOcrVisionEncoder(dir string, quant bool) (*GlmOcrVisionEncoder, erro
 		e.rotInvFreq[i] = float32(1.0 / math.Pow(glmOcrRotaryTheta, float64(2*i)/float64(rdim)))
 	}
 	e.rel = newBlockRelease(func() (*GlmOcrVisionEncoder, error) { return LoadGlmOcrVisionEncoder(dir, quant) })
+	if aliased {
+		e.maps.keep(st)
+		kept = true
+	}
 	return e, nil
 }
 
@@ -352,6 +369,9 @@ func (e *GlmOcrVisionEncoder) ForwardViT(pixelValues []float32, gridTHW [][3]int
 // forwardBlocks runs embed + the transformer blocks: the last block's output [n_patches, hidden], before
 // post_layernorm (what a device tower hands to FinishHidden).
 func (e *GlmOcrVisionEncoder) forwardBlocks(pixelValues []float32, gridTHW [][3]int) ([]float32, error) {
+	if err := e.maps.check(); err != nil {
+		return nil, err
+	}
 	if err := e.ensureBlocks(); err != nil {
 		return nil, err
 	}
@@ -526,4 +546,12 @@ func rmsNormEpsInto(out, x, w []float32, rows, dim int, eps float64) {
 			}
 		}
 	})
+}
+
+// Close releases the checkpoint mappings the tower's weights alias (aliasQMat); its forwards return an error afterward.
+// Idempotent.
+func (e *GlmOcrVisionEncoder) Close() {
+	e.blocks = nil
+	e.mProjW, e.mGateW, e.mUpW, e.mDownW = linalg.WeightMat{}, linalg.WeightMat{}, linalg.WeightMat{}, linalg.WeightMat{}
+	e.maps.close()
 }

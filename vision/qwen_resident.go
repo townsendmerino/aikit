@@ -56,12 +56,15 @@ func (e *QwenVisionEncoder) EnableResident() error {
 // ResidentEnabled reports whether the ViT runs on a device backend.
 func (e *QwenVisionEncoder) ResidentEnabled() bool { return e.resident != nil }
 
-// Close releases a resident backend if one is attached (no-op otherwise).
+// Close releases a resident backend if one is attached and the checkpoint mappings the weights alias (aliasQMat); the tower's
+// forwards return an error afterward. Idempotent.
 func (e *QwenVisionEncoder) Close() {
 	if e.resident != nil {
 		e.resident.Close()
 		e.resident = nil
 	}
+	e.blocks, e.merger0w, e.merger2w = nil, linalg.WeightMat{}, linalg.WeightMat{}
+	e.maps.close()
 }
 
 // --- GPU weight export ---
@@ -121,6 +124,7 @@ func qwenGPUMat(m linalg.WeightMat) QwenGPUMat {
 		out.F32 = f
 		return out
 	}
+	out.F32 = widenHalf16(m)
 	return out
 }
 
