@@ -9,13 +9,24 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.74.0] — 2026-10-23
+
+`perfgate` VERDICT: PASS — no regression vs v1.73.0 above each shape's floor — 9/47 shapes resolve the 5.0% class
+
+sensitivity: 9/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), fddeb97 vs v1.73.0, 2026-10-23, under the timing lock, Go 1.27.3, load 1.7 a minute in. A first run read INCONCLUSIVE: one shape (K768_N200000) did not reproduce on its second measurement, and this release changes nothing in `linalg`.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at fddeb97 (2026-10-24T02:00:08Z). nobara (linux/amd64), Go 1.27.3 (GOTOOLCHAIN=go1.27.3).
+
+The vision towers read their projection weights straight from the checkpoint file instead of copying them, which takes a
+3B tower's Go heap from 2.5 GB to 10 MB. Outputs are bit-identical.
+
 ### Added
 
 - **`vision`: `Close` on `Qwen3VisionEncoder`, `GlmOcrVisionEncoder`, `PixtralVisionEncoder`, `Gemma4Encoder` and
   `Siglip2NaFlexEncoder`.** Each releases the checkpoint mapping its weights now read from (below); a forward after `Close`
   returns an error. `Encoder.Close` and `QwenVisionEncoder.Close` do the same besides releasing a resident backend.
 
-- **`gpu` (CUDA): `Queue.LaunchDirect` and `Device.BindCurrentThread`.** A launch issued from the caller's own locked,
+- **`gpu` (CUDA): `Queue.LaunchDirect` and `Device.BindCurrentThread`** (shipped in `gpu/v0.34.0`). A launch issued from the caller's own locked,
   bound thread: one `cuLaunchKernel`, with the arguments packed into pooled storage, instead of a hand-off to gocudrv's
   executor thread and back. Same kernels and arguments as `Launch`, so outputs are unchanged.
   - A `Pipeline` carries its `CUfunction`, read from gocudrv by reflection at creation, so function attributes set through
@@ -5855,7 +5866,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.72.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.74.0...HEAD
+[1.74.0]: https://github.com/townsendmerino/aikit/compare/v1.73.0...v1.74.0
 [1.73.0]: https://github.com/townsendmerino/aikit/compare/v1.72.0...v1.73.0
 [1.72.0]: https://github.com/townsendmerino/aikit/compare/v1.71.0...v1.72.0
 [1.71.0]: https://github.com/townsendmerino/aikit/compare/v1.70.2...v1.71.0
