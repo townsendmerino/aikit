@@ -148,6 +148,24 @@ func alsTowers(t *testing.T) []alsTower {
 		}
 	}
 	return []alsTower{
+		{"glm-ocr", "../testdata/glm-ocr-vision-tiny", func(t *testing.T, dir string) ([]float32, error) {
+			var g struct {
+				GridTHW     [][3]int  `json:"grid_thw"`
+				PixelValues []float32 `json:"pixel_values"`
+			}
+			golden(t, "glm_ocr_vision_golden.json", &g)
+			e, err := LoadGlmOcrVisionEncoder(dir, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := e.Forward(g.PixelValues, g.GridTHW)
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.Close()
+			_, after := e.Forward(g.PixelValues, g.GridTHW)
+			return out, after
+		}},
 		{"qwen3.5", "../testdata/qwen35vl-vision-tiny", func(t *testing.T, dir string) ([]float32, error) {
 			g := readQwen3Golden(t, "../testdata/qwen35vl_vision_golden.json")
 			e, err := LoadQwen3VisionEncoder(dir, false)

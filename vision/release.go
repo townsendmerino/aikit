@@ -79,10 +79,12 @@ func (e *Qwen3VisionEncoder) ensureBlocks() error {
 func (e *Qwen3VisionEncoder) BlocksReleased() bool { return e.rel.isReleased() }
 
 // ReleaseBlocks is Qwen3VisionEncoder.ReleaseBlocks for GLM-OCR's tower.
-func (e *GlmOcrVisionEncoder) ReleaseBlocks() error { return e.rel.release(func() { e.blocks = nil }) }
+func (e *GlmOcrVisionEncoder) ReleaseBlocks() error {
+	return e.rel.release(func() { e.blocks = nil; e.maps.dropReloads() })
+}
 
 func (e *GlmOcrVisionEncoder) ensureBlocks() error {
-	return e.rel.ensure(func(f *GlmOcrVisionEncoder) { e.blocks = f.blocks })
+	return e.rel.ensure(func(f *GlmOcrVisionEncoder) { e.blocks = f.blocks; e.maps.adopt(&f.maps) })
 }
 
 // BlocksReleased is Qwen3VisionEncoder.BlocksReleased for GLM-OCR's tower.
