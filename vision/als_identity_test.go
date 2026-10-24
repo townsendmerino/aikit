@@ -148,6 +148,43 @@ func alsTowers(t *testing.T) []alsTower {
 		}
 	}
 	return []alsTower{
+		{"qwen3.5", "../testdata/qwen35vl-vision-tiny", func(t *testing.T, dir string) ([]float32, error) {
+			g := readQwen3Golden(t, "../testdata/qwen35vl_vision_golden.json")
+			e, err := LoadQwen3VisionEncoder(dir, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out, err := e.Forward(g.PixelValues, g.GridTHW)
+			if err != nil {
+				t.Fatal(err)
+			}
+			e.Close()
+			_, after := e.Forward(g.PixelValues, g.GridTHW)
+			return out, after
+		}},
+		{"qwen3-vl (DeepStack)", "../testdata/qwen3vl-vision-tiny", func(t *testing.T, dir string) ([]float32, error) {
+			e, err := LoadQwen3VisionEncoder(dir, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c := e.Cfg
+			grid := [][3]int{{1, 4, 4}}
+			px := make([]float32, 16*c.InChannels*c.TemporalPatchSize*c.PatchSize*c.PatchSize)
+			for i := range px {
+				px[i] = float32(math.Sin(float64(i) * 0.37))
+			}
+			merged, deep, err := e.ForwardDeepstack(px, grid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			out := append([]float32(nil), merged...)
+			for _, d := range deep {
+				out = append(out, d...)
+			}
+			e.Close()
+			_, _, after := e.ForwardDeepstack(px, grid)
+			return out, after
+		}},
 		{"siglip", "../testdata/siglip-tiny", func(t *testing.T, dir string) ([]float32, error) {
 			var g struct {
 				PixelValues []float32 `json:"pixel_values"`

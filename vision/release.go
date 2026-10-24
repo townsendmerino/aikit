@@ -67,10 +67,12 @@ func (r *blockRelease[E]) isReleased() bool {
 // host forward or weight export loads them again from the checkpoint the tower was loaded from, with the same values. It
 // must not run concurrently with a forward or an export. A tower built from a caller's TensorSource
 // (LoadQwen3VisionEncoderFrom) cannot reload and refuses, keeping its blocks.
-func (e *Qwen3VisionEncoder) ReleaseBlocks() error { return e.rel.release(func() { e.blocks = nil }) }
+func (e *Qwen3VisionEncoder) ReleaseBlocks() error {
+	return e.rel.release(func() { e.blocks = nil; e.maps.dropReloads() })
+}
 
 func (e *Qwen3VisionEncoder) ensureBlocks() error {
-	return e.rel.ensure(func(f *Qwen3VisionEncoder) { e.blocks = f.blocks })
+	return e.rel.ensure(func(f *Qwen3VisionEncoder) { e.blocks = f.blocks; e.maps.adopt(&f.maps) })
 }
 
 // BlocksReleased reports whether ReleaseBlocks has dropped the blocks and no host use has loaded them since.
