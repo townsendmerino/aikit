@@ -104,10 +104,12 @@ func (e *QwenVisionEncoder) ensureBlocks() error {
 func (e *QwenVisionEncoder) BlocksReleased() bool { return e.rel.isReleased() }
 
 // ReleaseBlocks is Qwen3VisionEncoder.ReleaseBlocks for Gemma 4's tower (its encoder layers).
-func (e *Gemma4Encoder) ReleaseBlocks() error { return e.rel.release(func() { e.layers = nil }) }
+func (e *Gemma4Encoder) ReleaseBlocks() error {
+	return e.rel.release(func() { e.layers = nil; e.maps.dropReloads() })
+}
 
 func (e *Gemma4Encoder) ensureBlocks() error {
-	return e.rel.ensure(func(f *Gemma4Encoder) { e.layers = f.layers })
+	return e.rel.ensure(func(f *Gemma4Encoder) { e.layers = f.layers; e.maps.adopt(&f.maps) })
 }
 
 // BlocksReleased is Qwen3VisionEncoder.BlocksReleased for Gemma 4's tower.

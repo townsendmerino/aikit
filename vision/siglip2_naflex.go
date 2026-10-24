@@ -76,7 +76,12 @@ func LoadSiglip2NaFlexEncoder(dir string, quant bool) (*Siglip2NaFlexEncoder, er
 	if err != nil {
 		return nil, fmt.Errorf("vision: open safetensors: %w", err)
 	}
-	defer st.Close()
+	aliased, kept := false, false // a weight aliases st; the loaded tower keeps st open
+	defer func() {
+		if !kept {
+			st.Close()
+		}
+	}()
 	r := &siglipReader{st: st, pfx: tensorPrefix(st, "embeddings.patch_embedding.weight", "vision_tower.vision_model.")}
 	if _, err := st.Tensor("model.vision_tower.vision_model.embeddings.patch_embedding.weight"); err == nil {
 		r.pfx = "model.vision_tower.vision_model."
@@ -92,28 +97,45 @@ func LoadSiglip2NaFlexEncoder(dir string, quant bool) (*Siglip2NaFlexEncoder, er
 		return nil, fmt.Errorf("vision: load weights: %w", r.err)
 	}
 	layers := make([]encLayer, cfg.NumHiddenLayers)
-	qm := func(p VisionProj) linalg.WeightMat {
+	qm := func(name string, rows, cols int) linalg.WeightMat {
 		if r.err != nil {
 			return linalg.WeightMat{}
 		}
-		return newQMat(p.W, p.Out, p.In, quant)
+		if w, ok, err := aliasQMat(st, r.pfx+name, rows, cols, quant); err != nil || ok {
+			if err != nil {
+				r.err = err
+			}
+			aliased = aliased || ok
+			return w
+		}
+		w := r.get(name, rows, cols)
+		if r.err != nil {
+			return linalg.WeightMat{}
+		}
+		return newQMat(w, rows, cols, quant)
 	}
+	inter := cfg.IntermediateSize
 	for l := range layers {
-		b := r.block(l, cfg)
+		p := fmt.Sprintf("encoder.layers.%d.", l)
 		lw := &layers[l]
-		lw.ln1w, lw.ln1b, lw.ln2w, lw.ln2b = b.LN1W, b.LN1B, b.LN2W, b.LN2B
-		lw.qw, lw.qb = qm(b.Q), b.Q.B
-		lw.kw, lw.kb = qm(b.K), b.K.B
-		lw.vw, lw.vb = qm(b.V), b.V.B
-		lw.ow, lw.ob = qm(b.O), b.O.B
-		lw.fc1w, lw.fc1b = qm(b.FC1), b.FC1.B
-		lw.fc2w, lw.fc2b = qm(b.FC2), b.FC2.B
+		lw.ln1w, lw.ln1b = r.get(p+"layer_norm1.weight", hidden), r.get(p+"layer_norm1.bias", hidden)
+		lw.ln2w, lw.ln2b = r.get(p+"layer_norm2.weight", hidden), r.get(p+"layer_norm2.bias", hidden)
+		lw.qw, lw.qb = qm(p+"self_attn.q_proj.weight", hidden, hidden), r.get(p+"self_attn.q_proj.bias", hidden)
+		lw.kw, lw.kb = qm(p+"self_attn.k_proj.weight", hidden, hidden), r.get(p+"self_attn.k_proj.bias", hidden)
+		lw.vw, lw.vb = qm(p+"self_attn.v_proj.weight", hidden, hidden), r.get(p+"self_attn.v_proj.bias", hidden)
+		lw.ow, lw.ob = qm(p+"self_attn.out_proj.weight", hidden, hidden), r.get(p+"self_attn.out_proj.bias", hidden)
+		lw.fc1w, lw.fc1b = qm(p+"mlp.fc1.weight", inter, hidden), r.get(p+"mlp.fc1.bias", inter)
+		lw.fc2w, lw.fc2b = qm(p+"mlp.fc2.weight", hidden, inter), r.get(p+"mlp.fc2.bias", hidden)
 	}
 	if r.err != nil {
 		return nil, fmt.Errorf("vision: load weights: %w", r.err)
 	}
 	enc.layers = layers
 	e.enc = enc
+	if aliased {
+		enc.maps.keep(st)
+		kept = true
+	}
 	return e, nil
 }
 
@@ -171,6 +193,9 @@ func (e *Siglip2NaFlexEncoder) ForwardStages(patches []float32, grid [2]int) ([]
 }
 
 func (e *Siglip2NaFlexEncoder) forward(patches []float32, grid [2]int, stage func([]float32)) ([]float32, error) {
+	if err := e.enc.maps.check(); err != nil {
+		return nil, err
+	}
 	c := e.Cfg
 	hidden, cpp := c.HiddenSize, c.NumChannels*c.PatchSize*c.PatchSize
 	n := grid[0] * grid[1]
@@ -224,3 +249,7 @@ func resizeBilinearPlainFloat(src []float32, h, w, c, th, tw int) []float32 {
 	}
 	return dst
 }
+
+// Close releases the checkpoint mappings the tower's block weights alias (aliasQMat); its forwards return an error afterward.
+// Idempotent.
+func (e *Siglip2NaFlexEncoder) Close() { e.enc.Close() }

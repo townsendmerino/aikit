@@ -90,6 +90,7 @@ type PixtralVisionEncoder struct {
 	lnPreW  []float32
 	blocks  []pixtralBlock
 	invFreq []float32 // head_dim/2 frequencies, float32 as HF computes them
+	maps    towerMaps // the checkpoint mappings its aliased weights read (aliasQMat); Close releases them
 }
 
 // pixtralNormEps is the tower's RMSNorm eps (PixtralRMSNorm, eps=1e-5).
@@ -120,7 +121,12 @@ func LoadPixtralVisionEncoder(dir string, quant bool) (*PixtralVisionEncoder, er
 	if err != nil {
 		return nil, fmt.Errorf("pixtral: open safetensors: %w", err)
 	}
-	defer st.Close()
+	aliased, kept := false, false // a weight aliases st; the loaded tower keeps st open
+	defer func() {
+		if !kept {
+			st.Close()
+		}
+	}()
 	pfx := pixtralTensorPrefix(st)
 	get := func(name string, want ...int) []float32 {
 		if err != nil {
@@ -135,6 +141,13 @@ func LoadPixtralVisionEncoder(dir string, quant bool) (*PixtralVisionEncoder, er
 	}
 	hidden, inter, p := cfg.HiddenSize, cfg.IntermediateSize, cfg.PatchSize
 	qm := func(name string, rows, cols int) linalg.WeightMat {
+		if err != nil {
+			return linalg.WeightMat{}
+		}
+		if w, ok, aerr := aliasQMat(st, pfx+name, rows, cols, quant); aerr != nil || ok {
+			err, aliased = aerr, aliased || ok
+			return w
+		}
 		w := get(name, rows, cols)
 		if err != nil {
 			return linalg.WeightMat{}
@@ -162,6 +175,10 @@ func LoadPixtralVisionEncoder(dir string, quant bool) (*PixtralVisionEncoder, er
 		return nil, fmt.Errorf("pixtral: load weights: %w", err)
 	}
 	e.invFreq = pixtralInvFreq(cfg.HeadDim, cfg.RopeTheta)
+	if aliased {
+		e.maps.keep(st)
+		kept = true
+	}
 	return e, nil
 }
 
@@ -266,6 +283,9 @@ func (e *PixtralVisionEncoder) ForwardStages(patches []float32, grids [][2]int) 
 }
 
 func (e *PixtralVisionEncoder) forward(patches []float32, grids [][2]int, stage func([]float32)) ([]float32, error) {
+	if err := e.maps.check(); err != nil {
+		return nil, err
+	}
 	c := e.Cfg
 	hidden, nH, hd, inter := c.HiddenSize, c.NumAttentionHeads, c.HeadDim, c.IntermediateSize
 	pd := c.NumChannels * c.PatchSize * c.PatchSize
@@ -330,4 +350,11 @@ func (e *PixtralVisionEncoder) forward(patches []float32, grids [][2]int, stage 
 		}
 	}
 	return h, nil
+}
+
+// Close releases the checkpoint mappings the tower's weights alias (aliasQMat); its forwards return an error afterward.
+// Idempotent.
+func (e *PixtralVisionEncoder) Close() {
+	e.blocks = nil
+	e.maps.close()
 }

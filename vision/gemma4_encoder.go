@@ -136,6 +136,7 @@ type Gemma4Encoder struct {
 	stdBias        []float32        // [hidden]; nil unless Cfg.Standardize
 	stdScale       []float32        // [hidden]; nil unless Cfg.Standardize
 	rel            *blockRelease[Gemma4Encoder]
+	maps           towerMaps // the checkpoint mappings its aliased weights read (aliasQMat); Close releases them
 }
 
 // LoadGemma4Encoder reads a Gemma 4 checkpoint (config.json + safetensors) and
@@ -178,7 +179,12 @@ func LoadGemma4Encoder(dir string, quant bool) (*Gemma4Encoder, error) {
 	if err != nil {
 		return nil, fmt.Errorf("vision: open safetensors: %w", err)
 	}
-	defer st.Close()
+	aliased, kept := false, false // a weight aliases st; the loaded tower keeps st open
+	defer func() {
+		if !kept {
+			st.Close()
+		}
+	}()
 
 	// Real checkpoints nest everything under "model." (confirmed against a real
 	// gemma-4-E2B-it model.safetensors header); a stripped tiny fixture may not.
@@ -209,6 +215,13 @@ func LoadGemma4Encoder(dir string, quant bool) (*Gemma4Encoder, error) {
 		return v[0]
 	}
 	qm := func(name string, rows, cols int) linalg.WeightMat {
+		if err != nil {
+			return linalg.WeightMat{}
+		}
+		if w, ok, aerr := aliasQMat(st, pfx+name, rows, cols, quant); aerr != nil || ok {
+			err, aliased = aerr, aliased || ok
+			return w
+		}
 		w := get(name, rows, cols)
 		if err != nil {
 			return linalg.WeightMat{}
@@ -265,6 +278,10 @@ func LoadGemma4Encoder(dir string, quant bool) (*Gemma4Encoder, error) {
 		return nil, fmt.Errorf("vision: load weights: %w", err)
 	}
 	e.rel = newBlockRelease(func() (*Gemma4Encoder, error) { return LoadGemma4Encoder(dir, quant) })
+	if aliased {
+		e.maps.keep(st)
+		kept = true
+	}
 	return e, nil
 }
 
@@ -275,6 +292,9 @@ func LoadGemma4Encoder(dir string, quant bool) (*Gemma4Encoder, error) {
 // [numPooled, TextHiddenSize] in row-major pooled-grid order — what a caller
 // splices into the text decoder's image-token positions.
 func (e *Gemma4Encoder) Forward(patches []float32, positionIDs [][2]int) ([]float32, error) {
+	if err := e.maps.check(); err != nil {
+		return nil, err
+	}
 	if err := e.ensureBlocks(); err != nil {
 		return nil, err
 	}
@@ -765,4 +785,11 @@ func rmsNormUnscaledRows(dst, x []float32, start, end, dim int, eps float64) {
 			dSlice[d] = float32(float64(xr[d]) * inv)
 		}
 	}
+}
+
+// Close releases the checkpoint mappings the tower's weights alias (aliasQMat); its forwards return an error afterward.
+// Idempotent.
+func (e *Gemma4Encoder) Close() {
+	e.layers = nil
+	e.maps.close()
 }
