@@ -31,9 +31,12 @@ func TestMetal_gemmW8A8Reg(t *testing.T) {
 		{128, 256, 1152, true},
 		{64, 4304, 1152, true}, // N%64!=0 is fine now: edge tiles stage zeros (so400m MLP)
 		{64, 64, 1152, true},
-		{63, 64, 16, true}, // M edge tile
-		{64, 63, 16, true}, // N edge tile
+		{63, 64, 16, true},     // M edge tile
+		{64, 63, 16, true},     // N edge tile
+		{64, 64, 20, true},     // K tail: one word past a 16-element step
+		{64, 1280, 3420, true}, // Qwen2.5-VL down proj: K%16=12, K%4=0
 		{64, 64, 15, false},
+		{64, 64, 18, false}, // K%4!=0: rows are not whole words
 		{0, 64, 16, false},
 	} {
 		p, _, _, _, _ := v.GEMMW8A8Plan(c.M, c.N, c.K)
@@ -52,6 +55,9 @@ func TestMetal_gemmW8A8Reg(t *testing.T) {
 		{256, 64, 4304},   // K = the so400m intermediate
 		{63, 65, 512},     // both edges ragged
 		{100, 4304, 1152}, // the so400m MLP shape, M and N both ragged
+		{64, 64, 4},       // K shorter than one k-step
+		{63, 65, 20},      // all three ragged
+		{100, 1280, 3420}, // Qwen2.5-VL down proj: K tail of 3 words
 	} {
 		A := make([]int8, sh.M*sh.K)
 		B := make([]int8, sh.N*sh.K)

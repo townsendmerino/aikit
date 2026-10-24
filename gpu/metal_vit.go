@@ -677,8 +677,9 @@ kernel void gemm_w8a8_tiled(
 //   is the LOW byte of the reinterpreted word, same as CUDA's convention.
 //
 // K steps 16 elements (IBK=4 words), not 64: SigLIP-so400m's intermediate width (4304)
-// is a multiple of 16 but not of 64, so a K%64 kernel would miss the MLP projections
-// that are most of a ViT's work — the same reasoning gemm_w8a8_reg's own comment gives.
+// is a multiple of 16 but not of 64, so a K%64 step would leave a ragged tail on the MLP
+// projections that are most of a ViT's work — the same reasoning gemm_w8a8_reg's own
+// comment gives.
 //
 // The epilogue is byte-for-byte gemm_w8a8_tiled's: an exact int32 accumulator scaled by
 // aScale[m]*bScale[n] in the same order. int32 addition is associative (no overflow at
@@ -686,10 +687,12 @@ kernel void gemm_w8a8_tiled(
 // sum — this kernel and gemm_w8a8_tiled agree bit-for-bit regardless of grouping, and
 // GEMMW8A8Plan can route between them freely.
 //
-// Requires only K%16==0 (IBK words of four int8). M and N are free: edge tiles stage
-// zeros and skip their stores, so the inner loop stays unguarded for any M, N — matters
-// because an M%64/N%64 requirement would have excluded SigLIP-so400m's MLP projections
-// (N=4304, not a multiple of 64).
+// Requires only K%4==0 (the int* view). M, N and the K tail are free: edge tiles and the
+// last k-step's out-of-range words stage zeros, and out-of-range outputs skip their
+// stores, so the inner loop stays unguarded for any M, N, K%4==0 — matters because an
+// M%64/N%64 requirement would have excluded SigLIP-so400m's MLP projections (N=4304, not
+// a multiple of 64), and a K%16 one Qwen2.5-VL's down projection (K=3420). A zero word
+// adds exactly 0 to the int32 sum, so the tail costs no bits.
 #define IBM 64
 #define IBN 64
 #define IBK 4
@@ -723,8 +726,8 @@ kernel void gemm_w8a8_reg(
     for (int k0 = 0; k0 < kw; k0 += IBK) {
         // Edge tiles are handled by STAGING ZEROS, not by bounds-checking the inner
         // loop — see the kernel comment above for why.
-        As[lc][lr] = (m0 + lr < M) ? Aw[(uint)(m0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
-        Bs[lc][lr] = (n0 + lr < N) ? Bw[(uint)(n0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
+        As[lc][lr] = (m0 + lr < M && k0 + lc < kw) ? Aw[(uint)(m0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
+        Bs[lc][lr] = (n0 + lr < N && k0 + lc < kw) ? Bw[(uint)(n0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         for (int kk = 0; kk < IBK; kk++) {
@@ -769,8 +772,8 @@ kernel void gemm_w8a8_bias(
         for (int j = 0; j < IBTN; j++) acc[i][j] = 0;
 
     for (int k0 = 0; k0 < kw; k0 += IBK) {
-        As[lc][lr] = (m0 + lr < M) ? Aw[(uint)(m0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
-        Bs[lc][lr] = (n0 + lr < N) ? Bw[(uint)(n0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
+        As[lc][lr] = (m0 + lr < M && k0 + lc < kw) ? Aw[(uint)(m0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
+        Bs[lc][lr] = (n0 + lr < N && k0 + lc < kw) ? Bw[(uint)(n0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         for (int kk = 0; kk < IBK; kk++) {
@@ -815,8 +818,8 @@ kernel void gemm_w8a8_bias_add(
         for (int j = 0; j < IBTN; j++) acc[i][j] = 0;
 
     for (int k0 = 0; k0 < kw; k0 += IBK) {
-        As[lc][lr] = (m0 + lr < M) ? Aw[(uint)(m0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
-        Bs[lc][lr] = (n0 + lr < N) ? Bw[(uint)(n0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
+        As[lc][lr] = (m0 + lr < M && k0 + lc < kw) ? Aw[(uint)(m0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
+        Bs[lc][lr] = (n0 + lr < N && k0 + lc < kw) ? Bw[(uint)(n0 + lr) * (uint)kw + (uint)(k0 + lc)] : 0;
         threadgroup_barrier(mem_flags::mem_threadgroup);
 
         for (int kk = 0; kk < IBK; kk++) {
@@ -1175,30 +1178,33 @@ func TileDims(M, N int) (gx, gy, tgx, tgy int) {
 }
 
 // IntRegBlock/IntRegK are gemm_w8a8_reg's per-threadgroup output-tile width and K-step
-// in ELEMENTS (IBK words of four int8); together they form the kernel's alignment
-// requirement. Named to match cuda_vit.go's identical constants.
+// in ELEMENTS (IBK words of four int8). Neither is an alignment requirement: edge tiles
+// and the K tail stage zeros. The only requirement is IntRegKAlign — K%4==0, so each row
+// is whole words for the kernel's int* view. Named to match cuda_vit.go's identical
+// constants.
 //
-// 16 rather than 64 is deliberate: SigLIP-so400m's intermediate width is 4304, a
-// multiple of 16 but NOT of 64, so a K%64 kernel would have missed the MLP projections
-// that are most of a ViT's work.
+// K%4 rather than K%16 is what lets Qwen2.5-VL's down projection (K = inter = 3420, a
+// multiple of 4 but not of 16) take the register kernel and the fused epilogues.
 const (
-	IntRegBlock = 64
-	IntRegK     = 16
+	IntRegBlock  = 64
+	IntRegK      = 16
+	IntRegKAlign = 4
 )
 
 // GEMMW8A8Plan picks the int8 GEMM kernel and its Run2D geometry for a shape M×N×K — the
 // int8 analogue of GEMMF32Plan, and the Metal twin of cuda_vit.go's GEMMW8A8Plan (M-15,
 // audit-metal-2026-09-12.md; ported from CUDA's already-shipped M-12 kernel).
 //
-// It needs only K%16==0: M and N edge tiles stage zeros and skip their stores, so the
-// inner loop stays unguarded while any M and N are accepted — SigLIP-so400m's
-// intermediate width (4304) is a multiple of 16 but not 64, and an M%64/N%64
-// requirement would have excluded the MLP projections, which are most of a ViT's work.
-// A K%16!=0 shape falls back to gemm_w8a8_tiled. Both bind identically (A, aScale, B,
+// It needs only K%4==0: M and N edge tiles and the K tail stage zeros and skip their
+// stores, so the inner loop stays unguarded while any M, N and K%4==0 are accepted —
+// SigLIP-so400m's intermediate width (4304) is a multiple of 16 but not 64, and
+// Qwen2.5-VL's (3420) a multiple of 4 but not 16; a stricter requirement would have
+// excluded MLP projections, which are most of a ViT's work. A K%4!=0 shape falls back
+// to gemm_w8a8_tiled. Both bind identically (A, aScale, B,
 // bScale, C, M, N, K) and produce identical bits (int32 addition is associative), so a
 // caller only swaps the pipeline and Run2D geometry.
 func (v ViT) GEMMW8A8Plan(M, N, K int) (p Pipeline, gx, gy, tgx, tgy int) {
-	if K%IntRegK == 0 && M > 0 && N > 0 && K > 0 {
+	if K%IntRegKAlign == 0 && M > 0 && N > 0 && K > 0 {
 		return v.GEMMW8A8Reg, (N + IntRegBlock - 1) / IntRegBlock, (M + IntRegBlock - 1) / IntRegBlock, IntRegBlock / 4, IntRegBlock / 4
 	}
 	gx, gy, tgx, tgy = TileDims(M, N)
@@ -1206,20 +1212,20 @@ func (v ViT) GEMMW8A8Plan(M, N, K int) (p Pipeline, gx, gy, tgx, tgy int) {
 }
 
 // GEMMW8A8BiasPlan picks the fused int8 GEMM+bias kernel and Run2D geometry for M×N×K.
-// Returns an empty pipeline if K%IntRegK != 0.
+// Returns an empty pipeline if K%IntRegKAlign != 0.
 // Bind signature: (Aw [[0]], aScale [[1]], Bw [[2]], bScale [[3]], bias [[4]], C [[5]], M [[6]], N [[7]], K [[8]]).
 func (v ViT) GEMMW8A8BiasPlan(M, N, K int) (p Pipeline, gx, gy, tgx, tgy int) {
-	if K%IntRegK == 0 && M > 0 && N > 0 && K > 0 {
+	if K%IntRegKAlign == 0 && M > 0 && N > 0 && K > 0 {
 		return v.GEMMW8A8Bias, (N + IntRegBlock - 1) / IntRegBlock, (M + IntRegBlock - 1) / IntRegBlock, IntRegBlock / 4, IntRegBlock / 4
 	}
 	return Pipeline{}, 0, 0, 0, 0
 }
 
 // GEMMW8A8BiasAddPlan picks the fused int8 GEMM+bias+residual add kernel and Run2D geometry for M×N×K.
-// Returns an empty pipeline if K%IntRegK != 0.
+// Returns an empty pipeline if K%IntRegKAlign != 0.
 // Bind signature: (Aw [[0]], aScale [[1]], Bw [[2]], bScale [[3]], bias [[4]], residual [[5]], M [[6]], N [[7]], K [[8]]).
 func (v ViT) GEMMW8A8BiasAddPlan(M, N, K int) (p Pipeline, gx, gy, tgx, tgy int) {
-	if K%IntRegK == 0 && M > 0 && N > 0 && K > 0 {
+	if K%IntRegKAlign == 0 && M > 0 && N > 0 && K > 0 {
 		return v.GEMMW8A8BiasAdd, (N + IntRegBlock - 1) / IntRegBlock, (M + IntRegBlock - 1) / IntRegBlock, IntRegBlock / 4, IntRegBlock / 4
 	}
 	return Pipeline{}, 0, 0, 0, 0
@@ -1337,7 +1343,7 @@ type ViT struct {
 	GEMMF32Tiled  Pipeline
 
 	// GEMMW8A8Reg is the register-blocked, packed-word-staged int8 GEMM. Pick it via
-	// GEMMW8A8Plan, never directly — it requires K%16==0 and has no bounds-checked
+	// GEMMW8A8Plan, never directly — it requires K%4==0 and has no bounds-checked
 	// fallback path of its own.
 	GEMMW8A8Reg Pipeline
 

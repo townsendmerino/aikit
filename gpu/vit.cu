@@ -783,18 +783,23 @@ extern "C" __global__ void gemm_w8a8_tiled(
 //   kernel's 8, a 16x better ratio, which is the whole point since the kernel is
 //   load-bound.
 //
-// K steps 16 elements (IBK=4 words) rather than gemm_f32_reg's 16 floats, so the
-// alignment requirement stays K%16==0 — SigLIP-so400m's inter of 4304 is a
-// multiple of 16 but NOT of 64, and a K%64 kernel would have missed the MLP
-// projections that are most of the work.
+// K steps 16 elements (IBK=4 words) rather than gemm_f32_reg's 16 floats.
+// SigLIP-so400m's inter of 4304 is a multiple of 16 but NOT of 64, so a K%64
+// step would have left a ragged tail on the MLP projections that are most of
+// the work.
 //
 // The epilogue is byte-for-byte gemm_w8a8_tiled's: an exact int32 accumulator
 // scaled by aScale[m]*bScale[n] in the same order, so the two kernels agree
 // exactly and GEMMW8A8Plan can route between them freely.
 //
-// Requires only K%16==0 (IBK words of four int8). M and N are free: edge tiles
-// stage zeros and skip their stores, so the inner loop is still unguarded.
-// GEMMW8A8Plan routes a K%16!=0 shape to gemm_w8a8_tiled.
+// Requires only K%4==0 (the int* view: whole words per row, word-aligned row
+// starts). M, N and the K tail are free: edge tiles and the last k-step's
+// out-of-range words stage zeros, and out-of-range outputs skip their stores,
+// so the inner loop is still unguarded. A zero word adds exactly 0 to an int32
+// dp4a sum, so the tail costs no bits. That K tail is what lets Qwen2.5-VL's
+// down projection (K = inter = 3420, a multiple of 4 but not of 16) take this
+// kernel instead of gemm_w8a8_tiled. GEMMW8A8Plan routes a K%4!=0 shape to
+// gemm_w8a8_tiled.
 // ---------------------------------------------------------------------------
 
 #define IBM 64
@@ -825,15 +830,16 @@ extern "C" __global__ void gemm_w8a8_reg(
         for (int j = 0; j < IBTN; j++) acc[i][j] = 0;
 
     for (int k0 = 0; k0 < kw; k0 += IBK) {
-        // Edge tiles are handled by STAGING ZEROS, not by bounds-checking the
-        // inner loop. An out-of-range row contributes zero to its accumulator
+        // Edge tiles — and the K tail when K%16!=0 — are handled by STAGING
+        // ZEROS, not by bounds-checking the inner loop. An out-of-range row or
+        // k-word contributes zero to its accumulator
         // and its output is simply not stored, so the 64 dp4a per k-step stay
         // unguarded. Two predicated global loads per thread per k-step is
         // nothing against that, and it is what lets this kernel take N=4304 —
         // SigLIP-so400m's intermediate width, a multiple of 16 but not of 64,
         // and the shape the MLP projections use, which is most of a ViT's work.
-        As[lc][lr] = (m0 + lr < M) ? Aw[(long)(m0 + lr) * kw + k0 + lc] : 0;
-        Bs[lc][lr] = (n0 + lr < N) ? Bw[(long)(n0 + lr) * kw + k0 + lc] : 0;
+        As[lc][lr] = (m0 + lr < M && k0 + lc < kw) ? Aw[(long)(m0 + lr) * kw + k0 + lc] : 0;
+        Bs[lc][lr] = (n0 + lr < N && k0 + lc < kw) ? Bw[(long)(n0 + lr) * kw + k0 + lc] : 0;
         __syncthreads();
 
         #pragma unroll
@@ -888,8 +894,8 @@ extern "C" __global__ void gemm_w8a8_bias(
         for (int j = 0; j < IBTN; j++) acc[i][j] = 0;
 
     for (int k0 = 0; k0 < kw; k0 += IBK) {
-        As[lc][lr] = (m0 + lr < M) ? Aw[(long)(m0 + lr) * kw + k0 + lc] : 0;
-        Bs[lc][lr] = (n0 + lr < N) ? Bw[(long)(n0 + lr) * kw + k0 + lc] : 0;
+        As[lc][lr] = (m0 + lr < M && k0 + lc < kw) ? Aw[(long)(m0 + lr) * kw + k0 + lc] : 0;
+        Bs[lc][lr] = (n0 + lr < N && k0 + lc < kw) ? Bw[(long)(n0 + lr) * kw + k0 + lc] : 0;
         __syncthreads();
 
         #pragma unroll
@@ -944,8 +950,8 @@ extern "C" __global__ void gemm_w8a8_bias_add(
         for (int j = 0; j < IBTN; j++) acc[i][j] = 0;
 
     for (int k0 = 0; k0 < kw; k0 += IBK) {
-        As[lc][lr] = (m0 + lr < M) ? Aw[(long)(m0 + lr) * kw + k0 + lc] : 0;
-        Bs[lc][lr] = (n0 + lr < N) ? Bw[(long)(n0 + lr) * kw + k0 + lc] : 0;
+        As[lc][lr] = (m0 + lr < M && k0 + lc < kw) ? Aw[(long)(m0 + lr) * kw + k0 + lc] : 0;
+        Bs[lc][lr] = (n0 + lr < N && k0 + lc < kw) ? Bw[(long)(n0 + lr) * kw + k0 + lc] : 0;
         __syncthreads();
 
         #pragma unroll
