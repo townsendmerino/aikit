@@ -9,6 +9,13 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added
+
+- **`embed`: `GGUFFile.Q5KRaw` and `GGUFFile.Q6KRaw`.** These are `Q4KRaw` for tensors stored as Q5_K (176 bytes per 256 elements)
+  and Q6_K (210 bytes per 256 elements). Each returns the raw ggml blocks, aliasing the file mapping, for a consumer that multiplies
+  them natively instead of dequantizing (goinfer's Metal q4k lane, KS-O1). Checked against `RowDequantizer` on every Q5_K and Q6_K
+  tensor of Phi-3 mini q4 and Qwen2.5-Coder-0.5B q4_k_m.
+
 ## [1.74.0] — 2026-10-23
 
 `perfgate` VERDICT: PASS — no regression vs v1.73.0 above each shape's floor — 9/47 shapes resolve the 5.0% class
