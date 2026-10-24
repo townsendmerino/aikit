@@ -120,6 +120,7 @@ type QwenVisionEncoder struct {
 
 	resident QwenResidentEncoder // device-resident ViT (EnableResident); nil = CPU path
 	rel      *blockRelease[QwenVisionEncoder]
+	maps     towerMaps // the checkpoint mappings its aliased weights read (aliasQMat); Close releases them
 }
 
 const qwenRotaryTheta = 10000.0 // Qwen2_5_VisionRotaryEmbedding default theta
@@ -157,7 +158,12 @@ func LoadQwenVisionEncoder(dir string, quant bool) (*QwenVisionEncoder, error) {
 	if err != nil {
 		return nil, fmt.Errorf("vision: open safetensors: %w", err)
 	}
-	defer st.Close()
+	aliased, kept := false, false // a weight aliases st; the loaded tower keeps st open
+	defer func() {
+		if !kept {
+			st.Close()
+		}
+	}()
 
 	e := &QwenVisionEncoder{Cfg: cfg}
 	// "visual." in the tiny checkpoint, "model.visual." inside a full HF VL
@@ -182,6 +188,13 @@ func LoadQwenVisionEncoder(dir string, quant bool) (*QwenVisionEncoder, error) {
 	}
 	hidden, inter := cfg.HiddenSize, cfg.IntermediateSize
 	qm := func(name string, rows, cols int) linalg.WeightMat {
+		if err != nil {
+			return linalg.WeightMat{}
+		}
+		if w, ok, aerr := aliasQMat(st, pfx+name, rows, cols, quant); aerr != nil || ok {
+			err, aliased = aerr, aliased || ok
+			return w
+		}
 		w := get(name, rows, cols)
 		if err != nil {
 			return linalg.WeightMat{}
@@ -221,6 +234,10 @@ func LoadQwenVisionEncoder(dir string, quant bool) (*QwenVisionEncoder, error) {
 		e.rotInvFreq[i] = float32(1.0 / math.Pow(qwenRotaryTheta, float64(2*i)/float64(rdim)))
 	}
 	e.rel = newBlockRelease(func() (*QwenVisionEncoder, error) { return LoadQwenVisionEncoder(dir, quant) })
+	if aliased {
+		e.maps.keep(st)
+		kept = true
+	}
 	return e, nil
 }
 
@@ -382,6 +399,9 @@ func (e *QwenVisionEncoder) computeViTHidden(pixelValues []float32, gridTHW [][3
 
 // ForwardViT exposes the pre-merge hidden state for stage-isolated parity tests.
 func (e *QwenVisionEncoder) ForwardViT(pixelValues []float32, gridTHW [][3]int) ([]float32, error) {
+	if err := e.maps.check(); err != nil {
+		return nil, err
+	}
 	// Device-resident path (EnableResident): the whole ViT runs on the GPU and
 	// returns the same de-windowed, original-order hidden state. The merger stays on
 	// the CPU (see QwenResidentEncoder's doc for why).

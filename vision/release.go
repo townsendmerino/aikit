@@ -88,10 +88,12 @@ func (e *GlmOcrVisionEncoder) BlocksReleased() bool { return e.rel.isReleased() 
 
 // ReleaseBlocks is Qwen3VisionEncoder.ReleaseBlocks for Qwen2.5-VL's tower. A resident encoder (EnableResident) keeps
 // running on its device; only the CPU path and GPUWeights reload.
-func (e *QwenVisionEncoder) ReleaseBlocks() error { return e.rel.release(func() { e.blocks = nil }) }
+func (e *QwenVisionEncoder) ReleaseBlocks() error {
+	return e.rel.release(func() { e.blocks = nil; e.maps.dropReloads() })
+}
 
 func (e *QwenVisionEncoder) ensureBlocks() error {
-	return e.rel.ensure(func(f *QwenVisionEncoder) { e.blocks = f.blocks })
+	return e.rel.ensure(func(f *QwenVisionEncoder) { e.blocks = f.blocks; e.maps.adopt(&f.maps) })
 }
 
 // BlocksReleased is Qwen3VisionEncoder.BlocksReleased for Qwen2.5-VL's tower.

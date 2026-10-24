@@ -93,6 +93,7 @@ type Encoder struct {
 	dir      string
 	quant    bool
 	blocksMu sync.Mutex
+	maps     towerMaps // the checkpoint mappings its aliased block weights read (aliasQMat); Close releases them
 }
 
 // LoadEncoder reads a SigLIP vision checkpoint (config.json + model.safetensors)
@@ -212,6 +213,9 @@ func (r *siglipReader) block(l int, cfg EncoderConfig) SiglipBlock {
 func (e *Encoder) ensureBlocks() error {
 	e.blocksMu.Lock()
 	defer e.blocksMu.Unlock()
+	if err := e.maps.check(); err != nil {
+		return err
+	}
 	if e.layers != nil {
 		return nil
 	}
@@ -219,32 +223,54 @@ func (e *Encoder) ensureBlocks() error {
 	if err != nil {
 		return fmt.Errorf("vision: open safetensors: %w", err)
 	}
-	defer st.Close()
+	aliased, kept := false, false // a weight aliases st; the loaded blocks keep st open
+	defer func() {
+		if !kept {
+			st.Close()
+		}
+	}()
 	r := newSiglipReader(st)
 	layers := make([]encLayer, e.Cfg.NumHiddenLayers)
-	// qm wraps a matmul weight as f32 or int8 (W8A8). Attention/FFN projections quantize under -vision-quant; the
-	// patch-embed conv stays f32 (input embedding — quant error there propagates through every layer).
-	qm := func(p VisionProj) linalg.WeightMat {
+	// qm wraps a matmul weight in place (aliasQMat) or as a copy, f32 or int8 (W8A8). Attention/FFN projections quantize
+	// under -vision-quant; the patch-embed conv stays f32 (input embedding — quant error there propagates through every layer).
+	qm := func(name string, rows, cols int) linalg.WeightMat {
 		if r.err != nil {
 			return linalg.WeightMat{}
 		}
-		return newQMat(p.W, p.Out, p.In, e.quant)
+		if w, ok, err := aliasQMat(st, r.pfx+name, rows, cols, e.quant); err != nil || ok {
+			if err != nil {
+				r.err = err
+			}
+			aliased = aliased || ok
+			return w
+		}
+		w := r.get(name, rows, cols)
+		if r.err != nil {
+			return linalg.WeightMat{}
+		}
+		return newQMat(w, rows, cols, e.quant)
 	}
+	hidden, inter := e.Cfg.HiddenSize, e.Cfg.IntermediateSize
 	for l := range layers {
-		b := r.block(l, e.Cfg)
+		p := fmt.Sprintf("encoder.layers.%d.", l)
 		lw := &layers[l]
-		lw.ln1w, lw.ln1b, lw.ln2w, lw.ln2b = b.LN1W, b.LN1B, b.LN2W, b.LN2B
-		lw.qw, lw.qb = qm(b.Q), b.Q.B
-		lw.kw, lw.kb = qm(b.K), b.K.B
-		lw.vw, lw.vb = qm(b.V), b.V.B
-		lw.ow, lw.ob = qm(b.O), b.O.B
-		lw.fc1w, lw.fc1b = qm(b.FC1), b.FC1.B
-		lw.fc2w, lw.fc2b = qm(b.FC2), b.FC2.B
+		lw.ln1w, lw.ln1b = r.get(p+"layer_norm1.weight", hidden), r.get(p+"layer_norm1.bias", hidden)
+		lw.ln2w, lw.ln2b = r.get(p+"layer_norm2.weight", hidden), r.get(p+"layer_norm2.bias", hidden)
+		lw.qw, lw.qb = qm(p+"self_attn.q_proj.weight", hidden, hidden), r.get(p+"self_attn.q_proj.bias", hidden)
+		lw.kw, lw.kb = qm(p+"self_attn.k_proj.weight", hidden, hidden), r.get(p+"self_attn.k_proj.bias", hidden)
+		lw.vw, lw.vb = qm(p+"self_attn.v_proj.weight", hidden, hidden), r.get(p+"self_attn.v_proj.bias", hidden)
+		lw.ow, lw.ob = qm(p+"self_attn.out_proj.weight", hidden, hidden), r.get(p+"self_attn.out_proj.bias", hidden)
+		lw.fc1w, lw.fc1b = qm(p+"mlp.fc1.weight", inter, hidden), r.get(p+"mlp.fc1.bias", inter)
+		lw.fc2w, lw.fc2b = qm(p+"mlp.fc2.weight", hidden, inter), r.get(p+"mlp.fc2.bias", hidden)
 	}
 	if r.err != nil {
 		return fmt.Errorf("vision: load weights: %w", r.err)
 	}
 	e.layers = layers
+	if aliased {
+		e.maps.keep(st)
+		kept = true
+	}
 	return nil
 }
 
@@ -290,6 +316,9 @@ func (e *Encoder) SiglipHead() (patchW, patchB, posEmb []float32, numPatches int
 // one may read a torn pointer. Enable/close the resident backend before sharing
 // the Encoder across goroutines.
 func (e *Encoder) Forward(pixels []float32) ([]float32, error) {
+	if err := e.maps.check(); err != nil {
+		return nil, err
+	}
 	c := e.Cfg
 	want := c.NumChannels * c.ImageSize * c.ImageSize
 	if len(pixels) != want {
