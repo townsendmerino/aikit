@@ -129,6 +129,16 @@ func (d *Device) SMCount() int {
 	return int(n)
 }
 
+// MaxSharedBytesPerBlockOptIn is the most dynamic shared memory one block may use once its kernel opts in
+// (Pipeline.SetMaxDynamicSharedBytes): 64 KiB on Turing, more on later parts. 0 means unknown.
+func (d *Device) MaxSharedBytesPerBlockOptIn() int {
+	n, err := d.dev.Attribute(gc.DeviceAttribute(97)) // CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return int(n)
+}
+
 // Context exposes the underlying gocudrv context, for consumers that need driver
 // surface this layer does not wrap (events, graphs, cooperative launch). goinfer's
 // tuned decode kernels are the intended caller when they re-point onto this layer.
@@ -260,6 +270,16 @@ func (d *Device) CompileLibrary(ptx []byte) (Library, error) {
 type Pipeline struct {
 	f   *gc.Function
 	raw cudasys.CUfunction
+}
+
+// SetMaxDynamicSharedBytes opts the kernel into launches that request up to n bytes of dynamic shared memory
+// (cuFuncSetAttribute, MAX_DYNAMIC_SHARED_SIZE_BYTES). Without it a launch is limited to the device's 48 KiB default; n above
+// Device.MaxSharedBytesPerBlockOptIn is refused by the driver. It applies to the kernel, so to every launch of it.
+func (p Pipeline) SetMaxDynamicSharedBytes(n int) error {
+	if p.f == nil {
+		return fmt.Errorf("cuda: SetMaxDynamicSharedBytes on a nil pipeline")
+	}
+	return p.f.SetMaxDynamicSharedMemory(n)
 }
 
 // NewComputePipeline looks a kernel up in a loaded module. The kernel must be
