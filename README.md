@@ -29,7 +29,7 @@ large embedded-grammar payload) — is quarantined in the separate
 > | `gpu` (the device module) | `gpu/v0.35.0` | `internal/gpudev` |
 > | `gpu/qwencuda`, `gpu/visioncuda` | `gpu/v0.35.0` | the `cuda` module |
 > | `gpu/qwenmetal`, `gpu/visionmetal` | `gpu/v0.35.0` | the `metal` module |
-> | `gpu/webgpu` | `gpu/v0.35.0` | not carried over (proposed; nothing imports it, and goinfer's `gpu` module has its own WGSL shaders) |
+> | `gpu/webgpu` | `gpu/v0.35.0` | retired, not carried over (owner, 2026-10-26: nothing imports it, and goinfer's `gpu` module has its own WGSL shaders) |
 >
 > `gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda` and `gpu/encmetal` stay in aikit and keep building on
 > the frozen `gpu/v0.35.x` device module; it gets fixes only, no new features. `linalg`, `embed`,
