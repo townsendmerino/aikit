@@ -17,6 +17,26 @@ large embedded-grammar payload) — is quarantined in the separate
 > backend were split out so aikit stays a small, cgo-free retrieval library.
 > goinfer depends inward on aikit (`embed`, `linalg`).
 
+> **Frozen: the vision and audio towers and the GPU backends are moving into goinfer (2026-10-26).**
+> These paths are frozen at the tags the move copies from, root **`v1.75.0`** and **`gpu/v0.35.0`**
+> (the newest tags on 2026-10-26). No change lands on them in aikit after those tags; their
+> development continues in goinfer as internal packages, which cite these tags as their provenance.
+>
+> | aikit path | frozen at | continues in goinfer as |
+> |---|---|---|
+> | `vision` | `v1.75.0` | `internal/vision` |
+> | `audio` | `v1.75.0` | `internal/audio` |
+> | `gpu` (the device module) | `gpu/v0.35.0` | `internal/gpudev` |
+> | `gpu/qwencuda`, `gpu/visioncuda` | `gpu/v0.35.0` | the `cuda` module |
+> | `gpu/qwenmetal`, `gpu/visionmetal` | `gpu/v0.35.0` | the `metal` module |
+> | `gpu/webgpu` | `gpu/v0.35.0` | retired, not carried over (owner, 2026-10-26: nothing imports it, and goinfer's `gpu` module has its own WGSL shaders) |
+>
+> `gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda` and `gpu/encmetal` stay in aikit and keep building on
+> the frozen `gpu/v0.35.x` device module; it gets fixes only, no new features. `linalg`, `embed`,
+> `encoder`, `mmap` and the retrieval packages are unaffected. Existing tags keep working; the
+> deprecation of the moved paths follows in a later release. The plan is goinfer's
+> `docs/tasks/task-subsystems-2026-10.md`, Track AX.
+
 ## Packages
 
 | Package | Purpose | Deps (beyond stdlib) |
