@@ -129,8 +129,9 @@ func (d *Device) SMCount() int {
 	return int(n)
 }
 
-// MaxSharedBytesPerBlockOptIn is the most dynamic shared memory one block may use once its kernel opts in
-// (Pipeline.SetMaxDynamicSharedBytes): 64 KiB on Turing, more on later parts. 0 means unknown.
+// MaxSharedBytesPerBlockOptIn is the most shared memory, static plus dynamic, one block may use once its kernel opts in
+// (CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN): 64 KiB on Turing, more on later parts. 0 means unknown. A kernel's
+// dynamic opt-in is this less the kernel's own static shared memory (Pipeline.MaxDynamicSharedBytes).
 func (d *Device) MaxSharedBytesPerBlockOptIn() int {
 	n, err := d.dev.Attribute(gc.DeviceAttribute(97)) // CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN
 	if err != nil || n <= 0 {
@@ -274,12 +275,27 @@ type Pipeline struct {
 
 // SetMaxDynamicSharedBytes opts the kernel into launches that request up to n bytes of dynamic shared memory
 // (cuFuncSetAttribute, MAX_DYNAMIC_SHARED_SIZE_BYTES). Without it a launch is limited to the device's 48 KiB default; n above
-// Device.MaxSharedBytesPerBlockOptIn is refused by the driver. It applies to the kernel, so to every launch of it.
+// MaxDynamicSharedBytes is refused by the driver. It applies to the kernel, so to every launch of it.
 func (p Pipeline) SetMaxDynamicSharedBytes(n int) error {
 	if p.f == nil {
 		return fmt.Errorf("cuda: SetMaxDynamicSharedBytes on a nil pipeline")
 	}
 	return p.f.SetMaxDynamicSharedMemory(n)
+}
+
+// MaxDynamicSharedBytes is the most dynamic shared memory this kernel can opt into on d: the device's per-block opt-in limit,
+// which counts static and dynamic shared memory together, less the kernel's static shared memory
+// (CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES). 0 means unknown.
+func (p Pipeline) MaxDynamicSharedBytes(d *Device) int {
+	if p.f == nil {
+		return 0
+	}
+	opt := d.MaxSharedBytesPerBlockOptIn()
+	static, err := p.f.Attribute(gc.FuncAttrSharedSizeBytes)
+	if opt <= 0 || err != nil || static > opt {
+		return 0
+	}
+	return opt - static
 }
 
 // NewComputePipeline looks a kernel up in a loaded module. The kernel must be
