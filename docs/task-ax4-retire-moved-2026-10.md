@@ -31,3 +31,14 @@ Tier 0; the Mac by day.
 | AX4-D (the note reaches a consumer) | a scratch module importing `aikit/vision` and `aikit/audio` from this branch (a `replace`), linted with the pinned golangci-lint, reports SA1019 naming each package as deprecated | — | once | seconds |
 | AX4-C (the downstream-consumer gate) | `ken` and `tack` at their current main, each in a scratch workspace with this branch's aikit, build, vet and run their unit tests green, as they do against their pinned aikit; neither imports a deprecated package | a repo's own baseline is red at its pinned aikit (listed, compared by name) | once each | minutes |
 | AX4-R (aikit's release gate) | at the tag step only, after Francis's decision: `go run -C tools ./releasegate X.Y.Z`, the perfgate evidence line and the vulncheck statement, as RELEASING.md requires | — | — | per RELEASING.md |
+
+## Results (2026-10-26, mac-ax01, the MacBook, Go 1.27.3)
+
+| gate | result |
+|---|---|
+| AX4-L | **PASS**: `go run -C tools ./preflight`, VERDICT PASS, 10/10 clean (golangci-lint, the cgo-free graph and build, tests: 1867 passed, 156 skipped by the census's named reasons), 17:47 to 17:48 |
+| AX4-G | **PASS**: `go run -C tools ./gpugate` on Darwin/arm64 at `6d3026a`, 5/6 applicable groups green; lint clean in the 6 modules that build on darwin, the retired Metal backends included; `ptx-repro` n/a on darwin, as documented. CI's ubuntu leg covers the CUDA half |
+| AX4-P | **PASS**: `gpupins` green, all 4 staying backends on `gpu v0.35.0`; with a staying backend planted at `v0.34.0` it read FAIL (3/4) naming that backend, and a retired backend's planted drift was not judged; back to PASS after restoring. Its tests pass, two of them new |
+| AX4-D | **PASS**: a scratch consumer module importing `aikit/vision` and `aikit/audio` from this branch builds, and the pinned golangci-lint reports SA1019 on both imports with the notice text. In aikit itself, removing the new exclusion makes SA1019 fire on exactly `examples/vision` |
+| AX4-C | **PASS**: `ken` (`8db488a`) and `tack` (`9e8bf23`), `git archive` copies of their main: build and vet clean, and `go test -short` per package the same at their pinned aikit v1.70.1 and against this branch (ken 22 ok, tack 25 ok, no failures). Two harness errors on the way, both mine and both fixed before the reading: a workspace file declaring `go 1.27.0` against ken's `go >= 1.27.3`, and an exported `GOWORK` leaking into a tack test that runs `go build` in a temporary module; tack was then run with a `replace` instead |
+| AX4-R | not run: it belongs to the tag step, which waits for Francis |
