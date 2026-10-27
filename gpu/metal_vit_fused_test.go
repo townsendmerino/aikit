@@ -22,6 +22,7 @@ func TestMetal_gemmW8A8Fused(t *testing.T) {
 		{100, 4304, 1152}, // fc1: N ragged
 		{256, 1152, 4304}, // fc2: K = the so400m intermediate
 		{63, 65, 512},     // both edges ragged
+		{100, 1280, 3420}, // Qwen2.5-VL down proj: K%16!=0
 	} {
 		A := make([]int8, sh.M*sh.K)
 		B := make([]int8, sh.N*sh.K)
