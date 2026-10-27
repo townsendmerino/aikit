@@ -1,3 +1,5 @@
+// Frozen on the v0.35.x series: fixes only. It serves gpu/anncuda, gpu/annmetal, gpu/enccuda and gpu/encmetal; the
+// device code goinfer uses moved into goinfer (cuda/internal/gpudev, metal/internal/gpudev).
 module github.com/townsendmerino/aikit/gpu
 
 go 1.27.0

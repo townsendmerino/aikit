@@ -1,3 +1,5 @@
+// Deprecated: retired. This tower backend moved into goinfer's metal module
+// (github.com/townsendmerino/goinfer/metal/internal/visionmetal), which maintains it; this module gets no further tags.
 module github.com/townsendmerino/aikit/gpu/visionmetal
 
 go 1.27.0

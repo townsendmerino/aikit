@@ -1,54 +1,22 @@
-// Command gpupins is the HOME of one fact: this repo publishes two independently-versioned
-// module series — the root `github.com/townsendmerino/aikit` (tags `vX.Y.Z`) and the GPU
-// module `github.com/townsendmerino/aikit/gpu` (tags `gpu/vX.Y.Z`) — and the eight backend
-// modules under gpu/ must `require` BOTH by an exact, current version. A go.mod `require` is
-// static text that MVS reads; it cannot be derived at build time. So the invariant is gated
-// here instead: each of the eight names the latest root tag and the latest gpu tag, drift is
-// a FAIL, and `--fix` rewrites the requires to the current tags so no human restates them.
+// Command gpupins keeps the four GPU backend modules that stay in aikit (gpu/anncuda, gpu/annmetal, gpu/enccuda,
+// gpu/encmetal) on the frozen device module: each must `require github.com/townsendmerino/aikit/gpu` at the latest
+// gpu/v0.35.x tag. Their root `aikit` require is not judged: they no longer track the newest root tag (AX5, owner
+// decision SD2 of 2026-10-26).
 //
-// WHY THIS EXISTS. The two-series fact has caused a defect four times — three downstream in
-// goinfer, once here: the root series advanced to v1.17.1 while all eight backends still
-// pinned aikit v1.17.0, because RELEASING.md step 3 asks a human to hand-edit eight go.mod
-// files and one release didn't. A stale `require` is not merely cosmetic: the eight are
-// consumer-facing modules whose only way to name the root/gpu surface they compile against
-// is this line, and a wrong guess surfaces as a compile error inside someone else's
-// dependency (RELEASING.md "Backend submodules" documents exactly that failure). The fifth
-// instance now has a place to look and a check that goes red before a consumer hits it.
+// The four tower backends (gpu/qwencuda, gpu/qwenmetal, gpu/visioncuda, gpu/visionmetal) moved into goinfer and are
+// retired here with no further tags, so they are outside the invariant, as are chunk/treesitter, the examples and
+// benchmarks modules, and gpu/webgpu.
 //
-// THE INVARIANT, precisely: for each of gpu/{anncuda,annmetal,enccuda,encmetal,qwencuda,
-// qwenmetal,visioncuda,visionmetal}/go.mod,
-//   - `require github.com/townsendmerino/aikit`      == the latest `vX.Y.Z` tag, and
-//   - `require github.com/townsendmerino/aikit/gpu`  == the latest `gpu/vX.Y.Z` tag.
+// `--fix` rewrites the four requires to the latest gpu/v0.35.x tag, and carries examples/gpu-ann along (it requires two
+// of the four, so MVS needs its require to move with them; it is not judged).
 //
-// The `replace` directives are kept — they are for local development and Go ignores them from
-// a dependency's go.mod, so they never mask the require for a consumer.
-//
-// A LEGITIMATE, BRIEF RED. Between tagging a new root (or gpu) version and running
-// `--fix` + re-tagging the eight (RELEASING.md step 3, now one command), the eight lag by
-// design and this gate is red on main. That red is the point — it says "finish the release",
-// not "a bug shipped" — and the direct-push workflow (no branch protection, see RELEASING.md)
-// makes a transient red on main the right nudge rather than a blocked merge.
-//
-// OUT OF SCOPE OF THE VERDICT, on purpose: chunk/treesitter (frozen at v1.0.0 for the v1.0
-// line), the examples/ and benchmarks/ modules (in-tree, `replace`-backed, not published),
-// and the `go 1.26.6` toolchain directive — a different axis with its own single source
-// (go.mod).
-//
-// BUT `--fix` STILL REWRITES ONE OF THEM (see `dependents`). Not being published means an
-// example's require version can't mislead a consumer — it does not mean the version is free
-// to be stale. MVS still reads it: examples/gpu-ann requires anncuda/annmetal, so the moment
-// `--fix` moves those to a new root version, gpu-ann's own root require is BELOW what its
-// own dependencies demand and its go.mod is untidy. `go list` then fails outright with
-// "updates to go.mod needed", which is why v1.25.0 went red in CI on govulncheck (the scan
-// could not load the module at all — UNSCANNED, correctly not a clean result) rather than on
-// anything a consumer would have seen. Judging the eight but fixing nine keeps `--fix` a
-// release step that actually finishes, without claiming the example is part of the pin
-// invariant it is not part of.
+// A require is static go.mod text, so the invariant is gated rather than derived; the replace directives stay, since Go
+// ignores them in a dependency's go.mod.
 //
 // Usage:
 //
 //	go run -C tools ./gpupins          # check; drift is a FAIL
-//	go run -C tools ./gpupins --fix    # rewrite the eight requires to the latest tags
+//	go run -C tools ./gpupins --fix    # rewrite the four requires to the latest gpu/v0.35.x tag
 package main
 
 import (
@@ -67,15 +35,11 @@ const (
 	gpuMod  = "github.com/townsendmerino/aikit/gpu"
 )
 
-// backends are the eight GPU backend modules that restate both series. Enumerated, not
-// discovered, on purpose: this is a fixed set the invariant is written about, and a new
-// backend that should join it is a deliberate edit here — the same reason gpumod.ModuleDirs
-// walks a known tree rather than trusting whatever go.mod happens to exist.
+// backends are the GPU backend modules that stay in aikit, enumerated rather than discovered: a module joining the
+// invariant is a deliberate edit here.
 var backends = []string{
 	"gpu/anncuda", "gpu/annmetal",
 	"gpu/enccuda", "gpu/encmetal",
-	"gpu/qwencuda", "gpu/qwenmetal",
-	"gpu/visioncuda", "gpu/visionmetal",
 }
 
 // dependents are in-tree modules that are NOT part of the pin invariant — never checked,
@@ -88,10 +52,8 @@ var backends = []string{
 // discovery, and getting it wrong is a red CI run, not a silent wrong answer.
 var dependents = []string{"examples/gpu-ann"}
 
-var (
-	reRootTag = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
-	reGpuTag  = regexp.MustCompile(`^gpu/v\d+\.\d+\.\d+$`)
-)
+// reGpuTag is the frozen device-module series the backends stay on (SD2).
+var reGpuTag = regexp.MustCompile(`^gpu/v0\.35\.\d+$`)
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -104,21 +66,20 @@ func run(args []string) int {
 		return 2
 	}
 
-	// The two targets the eight must name. A tag we cannot resolve is INCONCLUSIVE — the
-	// gate could not judge (and --fix has nothing to write) — never a silent pass.
-	wantRoot := latestTag(root, "v*", reRootTag)
-	wantGpuTag := latestTag(root, "gpu/v*", reGpuTag)
-	if wantRoot == "" || wantGpuTag == "" {
-		fmt.Println("gpupins: INCONCLUSIVE — could not resolve the latest tag(s) from git " +
-			"(need `git tag`; CI must checkout with fetch-depth: 0). " +
-			"root=" + orNone(wantRoot) + " gpu=" + orNone(wantGpuTag))
+	// The target the four must name. A tag we cannot resolve is INCONCLUSIVE — the gate could not judge (and --fix has
+	// nothing to write) — never a silent pass. wantRoot stays empty: the root require is not judged.
+	wantRoot := ""
+	wantGpuTag := latestTag(root, "gpu/v0.35.*", reGpuTag)
+	if wantGpuTag == "" {
+		fmt.Println("gpupins: INCONCLUSIVE — could not resolve the latest gpu/v0.35.x tag from git " +
+			"(need `git tag`; CI must checkout with fetch-depth: 0)")
 		return 2
 	}
 	wantGpu := strings.TrimPrefix(wantGpuTag, "gpu/") // the require names the version, not the tag path
 
 	p := gpumod.Provenance(root)
 	fmt.Printf("aikit gpu backend pins — %s%s — %s\n", p.Commit, p.Dirty, p.Date)
-	fmt.Printf("targets: %s %s   |   %s %s\n\n", rootMod, wantRoot, gpuMod, wantGpu)
+	fmt.Printf("target: %s %s (the root require is not judged)\n\n", gpuMod, wantGpu)
 
 	if fix {
 		return runFix(root, wantRoot, wantGpu)
@@ -139,13 +100,13 @@ func run(args []string) int {
 	switch rep.Outcome {
 	case gate.Fail:
 		fmt.Printf("gpupins: %d/%d backend(s) drift from the current tags — run `go run -C tools ./gpupins --fix`.\n", rep.Fail, rep.Total)
-		fmt.Println(gate.Verdict(gate.Fail, fmt.Sprintf("%d/%d pin the latest root+gpu tags", rep.Pass, rep.Total)))
+		fmt.Println(gate.Verdict(gate.Fail, fmt.Sprintf("%d/%d pin the latest gpu/v0.35.x tag", rep.Pass, rep.Total)))
 		return 1
 	case gate.Inconclusive:
 		fmt.Println(gate.Verdict(gate.Inconclusive, "a backend go.mod could not be read"))
 		return 2
 	}
-	fmt.Println(gate.Verdict(gate.OK, fmt.Sprintf("all %d backends pin %s + gpu %s", rep.Total, wantRoot, wantGpu)))
+	fmt.Println(gate.Verdict(gate.OK, fmt.Sprintf("all %d backends pin gpu %s", rep.Total, wantGpu)))
 	return 0
 }
 
@@ -159,7 +120,9 @@ func checkModule(root, mod, wantRoot, wantGpu string) gate.Cell {
 	gotRoot, gotGpu := requires(string(data))
 
 	c := gate.Cell{Name: mod, Outcome: gate.OK}
-	c.Fields = append(c.Fields, pinField("root", gotRoot, wantRoot))
+	if wantRoot != "" {
+		c.Fields = append(c.Fields, pinField("root", gotRoot, wantRoot))
+	}
 	c.Fields = append(c.Fields, pinField("gpu", gotGpu, wantGpu))
 	for _, f := range c.Fields {
 		if f.State != "ok" {
@@ -259,8 +222,8 @@ func fixModule(root, mod, wantRoot, wantGpu string, changed, failed *int) {
 	*changed++
 }
 
-// rewrite returns go.mod text with the two aikit require versions set to the targets, and a
-// list of human-readable edits made. Lines are matched by trimmed prefix so indentation and
+// rewrite returns go.mod text with the two aikit require versions set to the targets (an empty target leaves that
+// require alone), and a list of human-readable edits made. Lines are matched by trimmed prefix so indentation and
 // trailing comments survive; only the version token is replaced.
 func rewrite(gomod, wantRoot, wantGpu string) (string, []string) {
 	lines := strings.Split(gomod, "\n")
@@ -274,7 +237,7 @@ func rewrite(gomod, wantRoot, wantGpu string) (string, []string) {
 				lines[i] = setVersion(indent, gpuMod, t, wantGpu)
 				edits = append(edits, "gpu "+got+"→"+wantGpu)
 			}
-		case strings.HasPrefix(t, rootMod+" "):
+		case strings.HasPrefix(t, rootMod+" ") && wantRoot != "":
 			if got := versionField(t, rootMod); got != wantRoot {
 				lines[i] = setVersion(indent, rootMod, t, wantRoot)
 				edits = append(edits, "root "+got+"→"+wantRoot)

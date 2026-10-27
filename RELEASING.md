@@ -54,20 +54,17 @@ Automated and CI-enforced.
 4. Push the prep commit, wait for **root CI green**, then push the tag `vX.Y.Z`.
    `.github/workflows/release.yml` re-runs the gate on the tag and publishes the GitHub
    Release from the CHANGELOG section.
-5. **Immediately after the tag lands, run `go run -C tools ./gpupins --fix`, commit, and push.**
-   The new root tag `vX.Y.Z` is now the latest, so the eight `gpu/*` backends — which pinned the
-   *previous* root tag — are stale, and the `gpu-pins` CI gate goes red on the next push. That red
-   is correct (it says "finish the release"), but it is avoidable: `--fix` rewrites the eight from
-   git in one command, so closing it here means the gate never reddens for a known, self-inflicted
-   reason. Commit e.g. `release: bump gpu backends to aikit vX.Y.Z (gpupins --fix)`. (This is the
-   root-release counterpart of the gpu-submodule ritual's step 3, which already runs `--fix`.)
-   `--fix` also carries `examples/gpu-ann` along — it is not part of the pin invariant and is
-   never in the gate's verdict, but it requires two of the eight, so MVS forces its own root
-   require up with them. Leaving it behind does not produce a stale-pin red; it produces an
-   untidy go.mod that `go list` refuses outright, which is how v1.25.0 went red on
-   *govulncheck* (`examples/gpu-ann UNSCANNED`, fixed in `71decd9`) rather than on `gpu-pins`.
+5. **No GPU backend step follows a root tag.** The four GPU backends that stay in aikit (`gpu/anncuda`,
+   `gpu/annmetal`, `gpu/enccuda`, `gpu/encmetal`) no longer track the newest root tag (Track AX's AX5, owner
+   decision SD2 of 2026-10-26): `gpupins` judges only their `aikit/gpu` require, against the frozen
+   `gpu/v0.35.x` series.
 
 ## GPU submodule — `github.com/townsendmerino/aikit/gpu` (tags `gpu/vX.Y.Z`)
+
+> **Frozen on `gpu/v0.35.x` since 2026-10-26: fixes only.** The device code goinfer uses moved into goinfer
+> (Track AX), and so did the four tower backends (`gpu/qwencuda`, `gpu/qwenmetal`, `gpu/visioncuda`,
+> `gpu/visionmetal`); they and `gpu/webgpu` are retired here and get no further tags. A fix to the device module
+> is tagged `gpu/v0.35.N` by the ritual below, then the four backends that stay follow with `gpupins --fix`.
 
 **Root CI does NOT exercise this module.** It is a separate module (`gpu/go.mod`) and its
 device tests need a real GPU, so they are hand-run — nothing in `go test ./...` at the
@@ -188,11 +185,10 @@ order is not optional:
 1. **Root** — tag `vX.Y.Z`. Nothing here depends on the rest of the repo.
 2. **`gpu`** — tag `gpu/vX.Y.Z`. Also depends on nothing in-repo (`gpu/go.mod` has no
    replaces).
-3. **The eight** — run **`go run -C tools ./gpupins --fix`**. It reads the latest `vX.Y.Z`
-   and `gpu/vX.Y.Z` tags and sets `require github.com/townsendmerino/aikit <root tag>` and
-   `require github.com/townsendmerino/aikit/gpu <gpu tag>` in all eight go.mod files (keeping
-   the replaces), so the version is derived from git rather than restated by hand in eight
-   places (plus `examples/gpu-ann`, carried but not judged — see the root ritual's step 5).
+3. **The four that stay** — run **`go run -C tools ./gpupins --fix`**. It reads the latest
+   `gpu/v0.35.x` tag and sets `require github.com/townsendmerino/aikit/gpu <gpu tag>` in the four
+   go.mod files (keeping the replaces; their root `aikit` require is not touched), so the version is
+   derived from git rather than restated by hand (plus `examples/gpu-ann`, carried but not judged).
    Commit, then tag `gpu/anncuda/vX.Y.Z` and so on. `gpupins` (no `--fix`) is a CI
    gate on every push — the eight pinning a stale tag is the drift that shipped once (root at
    `v1.17.1`, backends still on `v1.17.0`); it is the HOME of the two-series fact, so if this

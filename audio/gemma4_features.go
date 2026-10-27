@@ -4,6 +4,10 @@
 // Parity reference: transformers 5.19.0's Gemma4AudioFeatureExtractor and Gemma4AudioModel, read and probed in
 // goinfer's docs/measurements/embeddinggemma2-2026-10-06/audio-gate0/spec.md (the section numbers below are that
 // spec's).
+//
+// Deprecated: the audio towers moved into goinfer (github.com/townsendmerino/goinfer), which maintains them. This
+// package stays as it was at aikit v1.75.0 and is removed in the minor release after the first one that carries this
+// notice.
 package audio
 
 import (

@@ -352,10 +352,9 @@ jobs:
 
   gpu-pins:
     name: gpu backend version pins
-    # AK1: the eight gpu/* backend modules each `require` the root and gpu series by an exact
-    # version — static go.mod text MVS reads, not derivable at build. This gate asserts each
-    # names the LATEST vX.Y.Z and gpu/vX.Y.Z tag, so the drift that shipped once (root at
-    # v1.17.1, backends still pinning v1.17.0) goes red on push, not on a consumer's build.
+    # The four gpu/* backends that stay in aikit (ann*, enc*) each `require` the device module by an
+    # exact version, static go.mod text MVS reads. This gate asserts each names the latest
+    # gpu/v0.35.x tag, the frozen series (Track AX, AX5); their root require is not judged.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
