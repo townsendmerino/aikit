@@ -14,6 +14,10 @@
 //
 // "multimodal.md" refers to
 // https://github.com/townsendmerino/goinfer/blob/main/docs/multimodal.md.
+//
+// Deprecated: the vision towers moved into goinfer (github.com/townsendmerino/goinfer), which maintains them and
+// exposes them through its multimodal package. This package stays as it was at aikit v1.75.0 and is removed only at
+// aikit v2.
 package vision
 
 import (

@@ -1,3 +1,5 @@
+// Deprecated: retired. This tower backend moved into goinfer's cuda module
+// (github.com/townsendmerino/goinfer/cuda/internal/visioncuda), which maintains it; this module gets no further tags.
 module github.com/townsendmerino/aikit/gpu/visioncuda
 
 go 1.27.0
