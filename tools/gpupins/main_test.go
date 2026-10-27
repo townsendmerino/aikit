@@ -97,3 +97,30 @@ func contains(hay, needle string) bool {
 	}
 	return false
 }
+
+func TestRewrite_emptyRootTargetLeavesTheRootRequire(t *testing.T) {
+	// AX5: the backends no longer track the newest root tag, so --fix passes no root target.
+	out, edits := rewrite(sampleGomod, "", "v0.35.1")
+	gotRoot, gotGpu := requires(out)
+	if gotRoot != "v1.17.0" || gotGpu != "v0.35.1" {
+		t.Errorf("after rewrite root=%q gpu=%q, want v1.17.0 (untouched) and v0.35.1", gotRoot, gotGpu)
+	}
+	if len(edits) != 1 {
+		t.Errorf("edits = %v, want exactly the gpu bump", edits)
+	}
+}
+
+func TestBackends_areTheFourThatStay(t *testing.T) {
+	want := []string{"gpu/anncuda", "gpu/annmetal", "gpu/enccuda", "gpu/encmetal"}
+	if len(backends) != len(want) {
+		t.Fatalf("backends = %v, want %v", backends, want)
+	}
+	for i := range want {
+		if backends[i] != want[i] {
+			t.Fatalf("backends = %v, want %v", backends, want)
+		}
+	}
+	if !reGpuTag.MatchString("gpu/v0.35.0") || reGpuTag.MatchString("gpu/v0.36.0") || reGpuTag.MatchString("gpu/anncuda/v0.35.0") {
+		t.Error("reGpuTag must match exactly the gpu/v0.35.x series")
+	}
+}
