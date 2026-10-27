@@ -9,27 +9,39 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.76.0] — 2026-10-26
+
+`perfgate` VERDICT: PASS — no regression vs v1.75.0 above each shape's floor — 11/47 shapes resolve the 5.0% class
+
+sensitivity: 11/47 shapes have a floor ≤ 5.0% (the class this gate targets). nobara (Ryzen 7 3700X, linux/amd64), 6d95b81 vs v1.75.0, 2026-10-26, under the timing lock, Go 1.27.3, load 0.00 a minute in.
+
+STATEMENT: no reachable vulnerabilities in 16/16 modules at 6d95b81 (2026-10-27T02:30:49Z). nobara (linux/amd64), Go 1.27.3 (GOTOOLCHAIN=go1.27.3).
+
+The vision and audio towers moved into goinfer, which maintains them. This release marks them deprecated; it changes no code.
+
+### Deprecated
+
+- `vision` and `audio` carry a `Deprecated:` notice and stay as they were at v1.75.0. `vision` is in the Hard tier and
+  remains until a v2; `audio` is removed in the next minor release. Code that imports either keeps building; staticcheck's
+  SA1019 points at the notice.
+- `gpu/qwencuda`, `gpu/qwenmetal`, `gpu/visioncuda`, `gpu/visionmetal` and `gpu/webgpu` are retired: no further tags.
+  Their existing tags keep resolving.
+
+### Changed
+
+- The `gpu` device module is frozen on v0.35.x, fixes only, for `gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda` and
+  `gpu/encmetal`, which no longer track the newest root tag.
+
+## [1.75.0] — 2026-10-24
+
+This section was written with v1.76.0; v1.75.0 was tagged without one.
+
 ### Added
 
 - **`embed`: `GGUFFile.Q5KRaw` and `GGUFFile.Q6KRaw`.** These are `Q4KRaw` for tensors stored as Q5_K (176 bytes per 256 elements)
   and Q6_K (210 bytes per 256 elements). Each returns the raw ggml blocks, aliasing the file mapping, for a consumer that multiplies
   them natively instead of dequantizing (goinfer's Metal q4k lane, KS-O1). Checked against `RowDequantizer` on every Q5_K and Q6_K
   tensor of Phi-3 mini q4 and Qwen2.5-Coder-0.5B q4_k_m.
-
-### Deprecated
-
-- **`vision` and `audio` moved into goinfer, which maintains them** (owner decision, 2026-10-26). Both packages now
-  carry a `Deprecated:` notice and stay as they were at v1.75.0. `vision` is in the Hard tier, so it remains until a v2.
-  `audio` is removed in the minor release after this one. Code that imports either keeps building; staticcheck's SA1019
-  will point at the notice.
-- **The GPU tower backends are retired:** `gpu/qwencuda`, `gpu/qwenmetal`, `gpu/visioncuda`, `gpu/visionmetal` and
-  `gpu/webgpu` carry a retirement note in their `go.mod` and get no further tags; their existing tags keep resolving.
-
-### Changed
-
-- **The `gpu` device module is frozen on the v0.35.x series, fixes only.** It still serves `gpu/anncuda`,
-  `gpu/annmetal`, `gpu/enccuda` and `gpu/encmetal`, which no longer track the newest root tag: `tools/gpupins` checks
-  only their `aikit/gpu` require, against the latest `gpu/v0.35.x` tag.
 
 ## [1.74.0] — 2026-10-23
 
@@ -5888,7 +5900,9 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.74.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.76.0...HEAD
+[1.76.0]: https://github.com/townsendmerino/aikit/compare/v1.75.0...v1.76.0
+[1.75.0]: https://github.com/townsendmerino/aikit/compare/v1.74.0...v1.75.0
 [1.74.0]: https://github.com/townsendmerino/aikit/compare/v1.73.0...v1.74.0
 [1.73.0]: https://github.com/townsendmerino/aikit/compare/v1.72.0...v1.73.0
 [1.72.0]: https://github.com/townsendmerino/aikit/compare/v1.71.0...v1.72.0
