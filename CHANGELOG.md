@@ -16,6 +16,21 @@ excluded from that promise and may change in any release until it graduates.
   them natively instead of dequantizing (goinfer's Metal q4k lane, KS-O1). Checked against `RowDequantizer` on every Q5_K and Q6_K
   tensor of Phi-3 mini q4 and Qwen2.5-Coder-0.5B q4_k_m.
 
+### Deprecated
+
+- **`vision` and `audio` moved into goinfer, which maintains them** (owner decision, 2026-10-26). Both packages now
+  carry a `Deprecated:` notice and stay as they were at v1.75.0. `vision` is in the Hard tier, so it remains until a v2.
+  `audio` is removed in the minor release after this one. Code that imports either keeps building; staticcheck's SA1019
+  will point at the notice.
+- **The GPU tower backends are retired:** `gpu/qwencuda`, `gpu/qwenmetal`, `gpu/visioncuda`, `gpu/visionmetal` and
+  `gpu/webgpu` carry a retirement note in their `go.mod` and get no further tags; their existing tags keep resolving.
+
+### Changed
+
+- **The `gpu` device module is frozen on the v0.35.x series, fixes only.** It still serves `gpu/anncuda`,
+  `gpu/annmetal`, `gpu/enccuda` and `gpu/encmetal`, which no longer track the newest root tag: `tools/gpupins` checks
+  only their `aikit/gpu` require, against the latest `gpu/v0.35.x` tag.
+
 ## [1.74.0] — 2026-10-23
 
 `perfgate` VERDICT: PASS — no regression vs v1.73.0 above each shape's floor — 9/47 shapes resolve the 5.0% class

@@ -17,25 +17,27 @@ large embedded-grammar payload) — is quarantined in the separate
 > backend were split out so aikit stays a small, cgo-free retrieval library.
 > goinfer depends inward on aikit (`embed`, `linalg`).
 
-> **Frozen: the vision and audio towers and the GPU backends are moving into goinfer (2026-10-26).**
-> These paths are frozen at the tags the move copies from, root **`v1.75.0`** and **`gpu/v0.35.0`**
-> (the newest tags on 2026-10-26). No change lands on them in aikit after those tags; their
-> development continues in goinfer as internal packages, which cite these tags as their provenance.
+> **Moved to goinfer: the vision and audio towers and the GPU tower backends (2026-10-26).**
+> These paths are frozen at the tags the move copied from, root **`v1.75.0`** and **`gpu/v0.35.0`**.
+> No code change lands on them in aikit after those tags, only the notices below; their development
+> continues in goinfer as internal packages, which cite these tags as their provenance.
 >
 > | aikit path | frozen at | continues in goinfer as |
 > |---|---|---|
 > | `vision` | `v1.75.0` | `internal/vision` |
 > | `audio` | `v1.75.0` | `internal/audio` |
-> | `gpu` (the device module) | `gpu/v0.35.0` | `internal/gpudev` |
+> | `gpu` (the device module) | `gpu/v0.35.0` | `cuda/internal/gpudev` and `metal/internal/gpudev`; aikit's stays, below |
 > | `gpu/qwencuda`, `gpu/visioncuda` | `gpu/v0.35.0` | the `cuda` module |
 > | `gpu/qwenmetal`, `gpu/visionmetal` | `gpu/v0.35.0` | the `metal` module |
 > | `gpu/webgpu` | `gpu/v0.35.0` | retired, not carried over (owner, 2026-10-26: nothing imports it, and goinfer's `gpu` module has its own WGSL shaders) |
 >
+> `vision` and `audio` carry `Deprecated:` notices. `vision` (Hard tier) stays, frozen, and is removed only
+> at a v2; `audio` is removed in the minor after the first release carrying its notice. The four tower
+> backends and `gpu/webgpu` carry retirement notes in their `go.mod` and get no further tags.
 > `gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda` and `gpu/encmetal` stay in aikit and keep building on
-> the frozen `gpu/v0.35.x` device module; it gets fixes only, no new features. `linalg`, `embed`,
-> `encoder`, `mmap` and the retrieval packages are unaffected. Existing tags keep working; the
-> deprecation of the moved paths follows in a later release. The plan is goinfer's
-> `docs/tasks/task-subsystems-2026-10.md`, Track AX.
+> the frozen `gpu/v0.35.x` device module, which gets fixes only. `linalg`, `embed`, `encoder`, `mmap`
+> and the retrieval packages are unaffected, and existing tags keep working. The plan is goinfer's
+> `docs/tasks/task-subsystems-2026-10.md`, Track AX; aikit's side is `docs/task-ax4-retire-moved-2026-10.md`.
 
 ## Packages
 
@@ -53,9 +55,9 @@ large embedded-grammar payload) — is quarantined in the separate
 | `mmap` | read-only file mapping + `madvise` residency hints + a demand-signal-agnostic `SpanCache` (LRU spans under a byte budget) — the substrate `ann`/`embed` mmap loaders sit on; cgo-free, `!unix` heap fallback | `golang.org/x/sys` *(darwin only)* |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `golang.org/x/text` |
 | `encoder` | BERT/RoBERTa/XLM-R/GTE/nomic-bert(+MoE) embedder family (12 certified models, `docs/embedder-coverage.md`, incl. CodeRankEmbed) + SPLADE expansion + cross-encoder reranker — transformer inference scored by cosine / sparse dot / relevance logit; pluggable matmul `Backend` | `embed`, `linalg`, `sparse` |
-| `vision` | SigLIP / ViT image encoder — decode → preprocess → pure-Go transformer forward → image embeddings (f32 or int8 W8A8), parity-pinned to HF `SiglipVisionModel`; stdlib image codecs, no cgo | `embed`, `linalg` |
+| `vision` *(Deprecated: moved to goinfer)* | SigLIP / ViT image encoder — decode → preprocess → pure-Go transformer forward → image embeddings (f32 or int8 W8A8), parity-pinned to HF `SiglipVisionModel`; stdlib image codecs, no cgo | `embed`, `linalg` |
 | `chunk` | language-aware chunker registry + `regex`, `markdown`, `line` chunkers | — |
-| `gpu` *(Experimental, darwin+linux; separate modules)* | cgo-free native-GPU device substrate — `Device`/`Buffer`/`Queue`/`Pipeline`/`Encoder` over Metal (darwin, runtime MSL compiler) or CUDA (linux, embedded PTX); the GPU analogue of `linalg`'s CPU role. 8 one-backend-per-module leaves plug into 3 seams: `anncuda`/`annmetal` → `FlatI8.EnableGPU`; `enccuda`/`encmetal` → `encoder.RegisterBackend("cuda"/"metal", …)`; `qwencuda`/`qwenmetal` + `visioncuda`/`visionmetal` → `vision.RegisterResident`. Device tests are hand-run (no GPU CI); the default aikit build never imports any of them and stays pure-Go. See [`examples/gpu-ann`](examples/gpu-ann) for the `FlatI8.EnableGPU` seam end to end. | `github.com/ebitengine/purego` *(darwin)*, `github.com/eitamring/gocudrv` *(linux)* |
+| `gpu` *(Experimental, darwin+linux; separate modules)* | cgo-free native-GPU device substrate — `Device`/`Buffer`/`Queue`/`Pipeline`/`Encoder` over Metal (darwin, runtime MSL compiler) or CUDA (linux, embedded PTX); the GPU analogue of `linalg`'s CPU role. Frozen on `gpu/v0.35.x`, fixes only. 4 one-backend-per-module leaves plug into 2 seams: `anncuda`/`annmetal` → `FlatI8.EnableGPU`; `enccuda`/`encmetal` → `encoder.RegisterBackend("cuda"/"metal", …)`. The tower backends (`qwencuda`/`qwenmetal`, `visioncuda`/`visionmetal`) moved to goinfer and are retired here. Device tests are hand-run (no GPU CI); the default aikit build never imports any of them and stays pure-Go. See [`examples/gpu-ann`](examples/gpu-ann) for the `FlatI8.EnableGPU` seam end to end. | `github.com/ebitengine/purego` *(darwin)*, `github.com/eitamring/gocudrv` *(linux)* |
 | `chunk/treesitter` *(submodule)* | tree-sitter-backed syntactic chunker | `gotreesitter`, `…/aikit` |
 
 `chunk/treesitter` is a **separate Go module** (`…/aikit/chunk/treesitter`) so the
@@ -283,7 +285,8 @@ No breaking change before a v2.0. This is the API to build on.
 - `vision` — the whole package (SigLIP/ViT image encoder). In aikit since
   v1.7.0 (14 minors survived); goinfer's serving path (`vision_serve.go`),
   GPU backend registration (`gpu/vision_*.go`), and demo agent all depend on
-  it directly. **Graduated 2026-08-18.**
+  it directly. **Graduated 2026-08-18.** **Deprecated 2026-10:** the towers moved into goinfer; the package
+  stays, frozen at v1.75.0's code, and is removed only at a v2.
 - `mmap` — the whole package. In aikit since v1.9.0 (12 minors survived);
   goinfer imports it in 4 non-test files. **Graduated 2026-08-18.**
 
