@@ -191,10 +191,13 @@ jobs:
         with:
           go-version-file: go.mod
       - name: install qemu-user
+        # qemu-user, not qemu-user-static: Ubuntu 26.04 (ubuntu-latest since October 2026) has no installable package by
+        # that name, only a virtual one. qemunodotprod runs qemu-aarch64-static or qemu-aarch64, whichever is on PATH.
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends qemu-user-static
-          qemu-aarch64-static --version | head -1
+          sudo apt-get install -y --no-install-recommends qemu-user
+          q=$(command -v qemu-aarch64-static || command -v qemu-aarch64)
+          "$q" --version | head -1
       - name: every linalg test on a core without DotProd
         run: go run -C tools ./qemunodotprod -j 4
 
