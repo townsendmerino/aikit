@@ -245,5 +245,5 @@ func findQEMU() (string, error) {
 			return p, nil
 		}
 	}
-	return "", fmt.Errorf("no qemu-aarch64-static or qemu-aarch64 on PATH (apt-get install qemu-user-static)")
+	return "", fmt.Errorf("no qemu-aarch64-static or qemu-aarch64 on PATH (apt-get install qemu-user)")
 }

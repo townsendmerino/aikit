@@ -56,8 +56,8 @@ Automated and CI-enforced.
    Release from the CHANGELOG section.
 5. **No GPU backend step follows a root tag.** The four GPU backends that stay in aikit (`gpu/anncuda`,
    `gpu/annmetal`, `gpu/enccuda`, `gpu/encmetal`) no longer track the newest root tag (Track AX's AX5, owner
-   decision SD2 of 2026-10-26): `gpupins` judges only their `aikit/gpu` require, against the frozen
-   `gpu/v0.35.x` series.
+   decision SD2 of 2026-10-26): `gpupins` holds their `aikit` require at the freeze tag v1.75.0, and
+   fails if it moves, and their `aikit/gpu` require at the latest `gpu/v0.35.x` tag.
 
 ## GPU submodule — `github.com/townsendmerino/aikit/gpu` (tags `gpu/vX.Y.Z`)
 
