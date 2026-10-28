@@ -1,14 +1,14 @@
 // Command gpupins keeps the four GPU backend modules that stay in aikit (gpu/anncuda, gpu/annmetal, gpu/enccuda,
-// gpu/encmetal) on the frozen device module: each must `require github.com/townsendmerino/aikit/gpu` at the latest
-// gpu/v0.35.x tag. Their root `aikit` require is not judged: they no longer track the newest root tag (AX5, owner
-// decision SD2 of 2026-10-26).
+// gpu/encmetal) frozen (owner decision SD2 of 2026-10-26): each must `require github.com/townsendmerino/aikit/gpu` at the
+// latest gpu/v0.35.x tag, and `require github.com/townsendmerino/aikit` at frozenRoot, the tag they were frozen at. They
+// no longer track the newest root tag, so a root require that moves is a FAIL, not drift for --fix to follow.
 //
 // The four tower backends (gpu/qwencuda, gpu/qwenmetal, gpu/visioncuda, gpu/visionmetal) moved into goinfer and are
 // retired here with no further tags, so they are outside the invariant, as are chunk/treesitter, the examples and
 // benchmarks modules, and gpu/webgpu.
 //
-// `--fix` rewrites the four requires to the latest gpu/v0.35.x tag, and carries examples/gpu-ann along (it requires two
-// of the four, so MVS needs its require to move with them; it is not judged).
+// `--fix` rewrites the four gpu requires to the latest gpu/v0.35.x tag, and carries examples/gpu-ann along (it requires
+// two of the four, so MVS needs its require to move with them; it is not judged). It never writes a root require.
 //
 // A require is static go.mod text, so the invariant is gated rather than derived; the replace directives stay, since Go
 // ignores them in a dependency's go.mod.
@@ -55,6 +55,10 @@ var dependents = []string{"examples/gpu-ann"}
 // reGpuTag is the frozen device-module series the backends stay on (SD2).
 var reGpuTag = regexp.MustCompile(`^gpu/v0\.35\.\d+$`)
 
+// frozenRoot is the root aikit tag the four backends require since SD2 froze them. Changing it is a decision of the
+// owner's, the same as SD2 itself, not a release step.
+const frozenRoot = "v1.75.0"
+
 func main() { os.Exit(run(os.Args[1:])) }
 
 func run(args []string) int {
@@ -66,9 +70,9 @@ func run(args []string) int {
 		return 2
 	}
 
-	// The target the four must name. A tag we cannot resolve is INCONCLUSIVE — the gate could not judge (and --fix has
-	// nothing to write) — never a silent pass. wantRoot stays empty: the root require is not judged.
-	wantRoot := ""
+	// The targets the four must name. A tag we cannot resolve is INCONCLUSIVE — the gate could not judge (and --fix has
+	// nothing to write) — never a silent pass. The root target is the freeze, not a tag read from git.
+	wantRoot := frozenRoot
 	wantGpuTag := latestTag(root, "gpu/v0.35.*", reGpuTag)
 	if wantGpuTag == "" {
 		fmt.Println("gpupins: INCONCLUSIVE — could not resolve the latest gpu/v0.35.x tag from git " +
@@ -79,10 +83,10 @@ func run(args []string) int {
 
 	p := gpumod.Provenance(root)
 	fmt.Printf("aikit gpu backend pins — %s%s — %s\n", p.Commit, p.Dirty, p.Date)
-	fmt.Printf("target: %s %s (the root require is not judged)\n\n", gpuMod, wantGpu)
+	fmt.Printf("target: %s %s, %s %s (frozen, SD2)\n\n", gpuMod, wantGpu, rootMod, wantRoot)
 
 	if fix {
-		return runFix(root, wantRoot, wantGpu)
+		return runFix(root, "", wantGpu) // the root require is frozen: --fix never moves it
 	}
 
 	checks := make([]gate.Check, 0, len(backends))
@@ -99,15 +103,31 @@ func run(args []string) int {
 	fmt.Println()
 	switch rep.Outcome {
 	case gate.Fail:
-		fmt.Printf("gpupins: %d/%d backend(s) drift from the current tags — run `go run -C tools ./gpupins --fix`.\n", rep.Fail, rep.Total)
-		fmt.Println(gate.Verdict(gate.Fail, fmt.Sprintf("%d/%d pin the latest gpu/v0.35.x tag", rep.Pass, rep.Total)))
+		if rootMoved(cells) {
+			fmt.Printf("gpupins: a root aikit require moved off %s. The four are frozen there (SD2): restore it by hand; --fix does not move it.\n", frozenRoot)
+		} else {
+			fmt.Printf("gpupins: %d/%d backend(s) drift from the latest gpu/v0.35.x tag — run `go run -C tools ./gpupins --fix`.\n", rep.Fail, rep.Total)
+		}
+		fmt.Println(gate.Verdict(gate.Fail, fmt.Sprintf("%d/%d pin aikit %s and the latest gpu/v0.35.x tag", rep.Pass, rep.Total, frozenRoot)))
 		return 1
 	case gate.Inconclusive:
 		fmt.Println(gate.Verdict(gate.Inconclusive, "a backend go.mod could not be read"))
 		return 2
 	}
-	fmt.Println(gate.Verdict(gate.OK, fmt.Sprintf("all %d backends pin gpu %s", rep.Total, wantGpu)))
+	fmt.Println(gate.Verdict(gate.OK, fmt.Sprintf("all %d backends pin aikit %s and gpu %s", rep.Total, wantRoot, wantGpu)))
 	return 0
+}
+
+// rootMoved reports whether any cell's root require is not the freeze.
+func rootMoved(cells []gate.Cell) bool {
+	for _, c := range cells {
+		for _, f := range c.Fields {
+			if f.Key == "root" && f.State != "ok" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // checkModule reads one backend's go.mod and compares its two aikit requires to the targets.
@@ -193,7 +213,7 @@ func runFix(root, wantRoot, wantGpu string) int {
 		fmt.Println(gate.Verdict(gate.Inconclusive, fmt.Sprintf("%d rewritten, %d could not be written", changed, failed)))
 		return 2
 	}
-	fmt.Println(gate.Verdict(gate.OK, fmt.Sprintf("%d module(s) rewritten to %s + gpu %s", changed, wantRoot, wantGpu)))
+	fmt.Println(gate.Verdict(gate.OK, fmt.Sprintf("%d module(s) rewritten to gpu %s", changed, wantGpu)))
 	return 0
 }
 

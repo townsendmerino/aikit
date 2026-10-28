@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/townsendmerino/aikit/tools/gate"
+)
 
 // a realistic backend go.mod: a require block with both aikit series, an indirect block, and
 // the two replace directives that must NOT be mistaken for requires.
@@ -122,5 +128,54 @@ func TestBackends_areTheFourThatStay(t *testing.T) {
 	}
 	if !reGpuTag.MatchString("gpu/v0.35.0") || reGpuTag.MatchString("gpu/v0.36.0") || reGpuTag.MatchString("gpu/anncuda/v0.35.0") {
 		t.Error("reGpuTag must match exactly the gpu/v0.35.x series")
+	}
+}
+
+// writeBackend writes a backend go.mod requiring rootV and gpuV under dir/mod.
+func writeBackend(t *testing.T, dir, mod, rootV, gpuV string) {
+	t.Helper()
+	gm := "module github.com/townsendmerino/aikit/" + mod + "\n\ngo 1.27.0\n\nrequire (\n" +
+		"\tgithub.com/townsendmerino/aikit " + rootV + "\n\tgithub.com/townsendmerino/aikit/gpu " + gpuV + "\n)\n\n" +
+		"replace github.com/townsendmerino/aikit => ../../\n\nreplace github.com/townsendmerino/aikit/gpu => ../\n"
+	if err := os.MkdirAll(filepath.Join(dir, mod), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, mod, "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestCheckModule_theFreezeHolds is SD2's check: a backend that bumps its root require off the freeze, or moves its gpu
+// require off the v0.35 series, FAILs, and the frozen pair passes.
+func TestCheckModule_theFreezeHolds(t *testing.T) {
+	dir := t.TempDir()
+	cases := []struct {
+		name, root, gpu string
+		ok              bool
+	}{
+		{"frozen", frozenRoot, "v0.35.0", true},
+		{"root bumped", "v1.76.0", "v0.35.0", false},
+		{"root pseudo-version", "v1.76.1-0.20261027120000-abcdefabcdef", "v0.35.0", false},
+		{"gpu off the series", frozenRoot, "v0.36.0", false},
+	}
+	for _, c := range cases {
+		writeBackend(t, dir, "gpu/anncuda", c.root, c.gpu)
+		cell := checkModule(dir, "gpu/anncuda", frozenRoot, "v0.35.0")
+		if got := cell.Outcome == gate.OK; got != c.ok {
+			t.Errorf("%s (root %s, gpu %s): outcome %v, want ok=%v", c.name, c.root, c.gpu, cell.Outcome, c.ok)
+		}
+		if moved := rootMoved([]gate.Cell{cell}); moved != (c.root != frozenRoot) {
+			t.Errorf("%s: rootMoved = %v", c.name, moved)
+		}
+	}
+}
+
+// TestFix_neverMovesTheFrozenRoot: --fix passes no root target, so a stale gpu require is rewritten and the root
+// require, frozen, is left as it is.
+func TestFix_neverMovesTheFrozenRoot(t *testing.T) {
+	gm := "require (\n\tgithub.com/townsendmerino/aikit " + frozenRoot + "\n\tgithub.com/townsendmerino/aikit/gpu v0.35.0\n)\n"
+	out, edits := rewrite(gm, "", "v0.35.1")
+	if r, g := requires(out); r != frozenRoot || g != "v0.35.1" || len(edits) != 1 {
+		t.Errorf("after --fix's rewrite root=%q gpu=%q edits=%v, want %s untouched and gpu v0.35.1", r, g, edits, frozenRoot)
 	}
 }
