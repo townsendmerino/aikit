@@ -307,10 +307,3 @@ func statusLine(c gate.Cell) string {
 	}
 	return fmt.Sprintf("%-4s  %s", word, strings.Join(parts, "  "))
 }
-
-func orNone(s string) string {
-	if s == "" {
-		return "(none)"
-	}
-	return s
-}

@@ -9,6 +9,12 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Changed
+
+- `tools/gpupins` holds the four GPU backends that stay (`gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda`, `gpu/encmetal`)
+  to their freeze: a root `aikit` require other than v1.75.0 now fails the check, as a `gpu` require off the v0.35.x
+  series already did. `--fix` still writes only the `gpu` require. No module's requirements change.
+
 ## [1.76.0] — 2026-10-26
 
 `perfgate` VERDICT: PASS — no regression vs v1.75.0 above each shape's floor — 11/47 shapes resolve the 5.0% class
