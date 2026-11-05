@@ -7,7 +7,6 @@ import "fmt"
 func archContractCases() []contractCase {
 	var cs []contractCase
 	for _, s := range []struct{ M, K, N int }{{1, 64, 10}, {3, 96, 19}, {8, 64, 33}} {
-		s := s
 		cs = append(cs, contractCase{fmt.Sprintf("WeightMat.MatmulBTW4A8Into[splithalf]/M=%d,K=%d,N=%d", s.M, s.K, s.N), func() (func(), []*outBuf) {
 			wm := weightMatKind("int4", rf32(41, s.N*s.K), s.N, s.K)
 			if !wm.RepackInt4SplitHalf() {
