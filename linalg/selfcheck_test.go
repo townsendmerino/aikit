@@ -2,6 +2,7 @@ package linalg
 
 import (
 	"math"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -130,10 +131,5 @@ func TestActiveKernels_isConsistent(t *testing.T) {
 }
 
 func contains(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s, v)
 }

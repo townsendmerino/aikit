@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -74,10 +75,8 @@ func checkKernels(output string) error {
 		return fmt.Errorf("the test binary ran as %q, not arm64", m[1])
 	}
 	for _, s := range []string{m[2], m[3]} {
-		for _, k := range strings.Fields(s) {
-			if k == "dotprod" {
-				return fmt.Errorf("DotProd is still detected or active (detected [%s] active [%s]): -cpu did not remove it, so this would be a green run on the wrong CPU", m[2], m[3])
-			}
+		if slices.Contains(strings.Fields(s), "dotprod") {
+			return fmt.Errorf("DotProd is still detected or active (detected [%s] active [%s]): -cpu did not remove it, so this would be a green run on the wrong CPU", m[2], m[3])
 		}
 	}
 	return nil
