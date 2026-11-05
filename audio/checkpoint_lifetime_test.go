@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"math/rand"
 	"os"
@@ -150,9 +151,7 @@ func audioLifetimeCases() []lifetimeCase {
 			write: func(t *testing.T, dir string) {
 				const inter, H = 4 * D, 3
 				audio := map[string]any{"intermediate_size": inter}
-				for k, v := range whisperCfg {
-					audio[k] = v
-				}
+				maps.Copy(audio, whisperCfg)
 				s := newTensorSet()
 				whisperTensors(s, "audio_tower.", D, mels, ffn)
 				s.add("multi_modal_projector.linear_1.weight", H, inter)
