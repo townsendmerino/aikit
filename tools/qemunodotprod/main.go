@@ -159,7 +159,7 @@ func run() int {
 		return 1
 	}
 	var names, skipped []string
-	for _, l := range strings.Split(lout, "\n") {
+	for l := range strings.SplitSeq(lout, "\n") {
 		l = strings.TrimSpace(l)
 		if !strings.HasPrefix(l, "Test") {
 			continue
