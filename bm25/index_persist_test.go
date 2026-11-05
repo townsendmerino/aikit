@@ -233,7 +233,7 @@ func TestReadIndex_rejectsDamage(t *testing.T) {
 	dictStart := indexHeaderSize + 4*ndocs + docLenPad(ndocs) + 8*npost
 	postStart := dictStart - 8*npost
 	offsets := func(yield func(int) bool) {
-		for off := 0; off < len(blob); off++ {
+		for off := range blob {
 			if off >= postStart && off < dictStart && (off-postStart)%7 != 0 {
 				continue
 			}

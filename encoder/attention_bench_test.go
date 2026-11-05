@@ -32,7 +32,7 @@ func BenchmarkAttentionHeadExtraction(b *testing.B) {
 	b.ResetTimer()
 
 	for b.Loop() {
-		for headIdx := 0; headIdx < heads; headIdx++ {
+		for headIdx := range heads {
 			headOff := headIdx * headDim
 			for i := range L {
 				src := i*D + headOff

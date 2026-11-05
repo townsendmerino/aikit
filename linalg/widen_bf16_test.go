@@ -15,7 +15,7 @@ func TestWidenBF16_exhaustive(t *testing.T) {
 	for i := range src {
 		src[i] = uint16(i)
 	}
-	for off := 0; off < 8; off++ {
+	for off := range 8 {
 		s := src[off:]
 		dst := make([]float32, len(s)+off)
 		widenBF16(dst[off:], s)

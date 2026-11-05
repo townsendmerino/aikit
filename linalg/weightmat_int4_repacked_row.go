@@ -39,10 +39,10 @@ func dequantizeRowFromRow4(q4Row4 []byte, q4Row4Scales []uint16, cols, i int, ds
 		chunk := q4Row4[quadBase+g*64+r*16 : quadBase+g*64+r*16+16]
 		_ = chunk[15]
 		if end-gk == groupSize {
-			for kl := 0; kl < 16; kl++ {
+			for kl := range 16 {
 				dst[gk+kl] = float32(int(chunk[kl]&0x0F)-8) * s
 			}
-			for kl := 0; kl < 16; kl++ {
+			for kl := range 16 {
 				dst[gk+16+kl] = float32(int(chunk[kl]>>4)-8) * s
 			}
 		} else {
@@ -89,10 +89,10 @@ func dequantizeRowFromSplitHalf(q4SplitHalf []byte, scales []uint16, cols, i int
 		chunk := row[ob : ob+16]
 		_ = chunk[15]
 		if end-gk == groupSize {
-			for kl := 0; kl < 16; kl++ {
+			for kl := range 16 {
 				dst[gk+kl] = float32(int(chunk[kl]&0x0F)-8) * s
 			}
-			for kl := 0; kl < 16; kl++ {
+			for kl := range 16 {
 				dst[gk+16+kl] = float32(int(chunk[kl]>>4)-8) * s
 			}
 		} else {

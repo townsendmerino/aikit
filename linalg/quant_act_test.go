@@ -176,7 +176,7 @@ func TestQuantizeRowInt8_corners(t *testing.T) {
 		// to 1 (the scalar math.Round gives 0) and passed every corner above; this one catches it.
 		"every-rounding-boundary": func() []float32 {
 			r := []float32{127}
-			for k := 0; k < 127; k++ {
+			for k := range 127 {
 				h := float32(k) + 0.5
 				for _, v := range []float32{math.Nextafter32(h, 0), h, math.Nextafter32(h, 128)} {
 					r = append(r, v, -v)

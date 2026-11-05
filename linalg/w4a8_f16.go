@@ -60,7 +60,7 @@ func w4a8SpanF16(aq []int8, aScales []float32, w4 []byte, wScales16 []uint16, ds
 		for j := j0; j < j1; j++ {
 			prow := w4[j*bpr : j*bpr+bpr]
 			srow := wScales16[j*nGroups : j*nGroups+nGroups]
-			for i := 0; i < M; i++ {
+			for i := range M {
 				if aScales[i] == 0 {
 					dst[i*N+j] = 0
 					continue

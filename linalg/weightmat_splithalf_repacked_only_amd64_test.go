@@ -104,7 +104,7 @@ func oldRepackSplitHalfReference(packed []byte, rows, cols, group int) []byte {
 		return b >> 4
 	}
 	out := make([]byte, len(packed))
-	for r := 0; r < rows; r++ {
+	for r := range rows {
 		row := packed[r*bpr : (r+1)*bpr]
 		dst := out[r*bpr : (r+1)*bpr]
 		for g := 0; g < cols/group; g++ {
@@ -180,7 +180,7 @@ func TestRepackInt4SplitHalfRow_streamedMatchesInPlace(t *testing.T) {
 	_, bpr := groupsFor(1536, group)
 
 	streamed := make([]byte, len(q4))
-	for r := 0; r < 8; r++ {
+	for r := range 8 {
 		RepackInt4SplitHalfRow(streamed[r*bpr:(r+1)*bpr], q4[r*bpr:(r+1)*bpr], 1536)
 	}
 

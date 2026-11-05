@@ -15,16 +15,16 @@ func benchmarkCorpus(nDocs, d int, seed int64) (*ann.Flat, *bm25.Index) {
 	docs := make([][]string, nDocs)
 	vocab := []string{"apple", "banana", "cherry", "date", "elderberry", "fig", "grape", "honeydew", "kiwi", "lemon"}
 
-	for i := 0; i < nDocs; i++ {
+	for i := range nDocs {
 		v := make([]float32, d)
-		for j := 0; j < d; j++ {
+		for j := range d {
 			v[j] = float32(rng.NormFloat64())
 		}
 		vecs[i] = v
 
 		tokCount := 5 + rng.Intn(10)
 		toks := make([]string, tokCount)
-		for j := 0; j < tokCount; j++ {
+		for j := range tokCount {
 			toks[j] = vocab[rng.Intn(len(vocab))]
 		}
 		docs[i] = toks

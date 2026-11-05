@@ -69,7 +69,7 @@ func (o *outBuf) hasNaN() bool {
 	case o.f64:
 		for i := 0; i+8 <= len(o.cov); i += 8 {
 			var u uint64
-			for b := 0; b < 8; b++ {
+			for b := range 8 {
 				u |= uint64(o.cov[i+b]) << (8 * b)
 			}
 			if math.IsNaN(math.Float64frombits(u)) {

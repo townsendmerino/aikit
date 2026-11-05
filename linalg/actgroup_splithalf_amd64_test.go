@@ -69,7 +69,7 @@ func TestActGroup_splitHalfScaledKernelOddGroups(t *testing.T) {
 	for nG := 1; nG <= 9; nG++ {
 		K := 32 * nG
 		a := agRandMat(r, K)
-		for i := 0; i < 32; i++ {
+		for i := range 32 {
 			a[i] = 0 // group 0 all-zero: its scale is 0
 		}
 		aq := make([]int8, K)
