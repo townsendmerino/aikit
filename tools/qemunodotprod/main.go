@@ -179,15 +179,13 @@ func run() int {
 	results := make(chan result)
 	var wg sync.WaitGroup
 	for i := 0; i < *jobs; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for n := range work {
 				out, err, to := runTest(ctx, "-test.run", "^"+regexp.QuoteMeta(n)+"$", "-test.v")
 				o := classify(out, err, to)
 				results <- result{n, o, tailOf(out, o)}
 			}
-		}()
+		})
 	}
 	go func() {
 		for _, n := range names {
