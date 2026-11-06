@@ -41,7 +41,7 @@ var apiChangeLine = regexp.MustCompile(`^- (.+?): (.+)$`)
 func parseAPIDiff(out string) []apiChange {
 	var cs []apiChange
 	section := ""
-	for _, ln := range strings.Split(out, "\n") {
+	for ln := range strings.SplitSeq(out, "\n") {
 		ln = strings.TrimRight(ln, " \t\r")
 		switch {
 		case strings.HasSuffix(ln, " changes:") && !strings.HasPrefix(ln, "-"):
@@ -133,7 +133,7 @@ func publicPackages(root string) ([]string, error) {
 		return nil, fmt.Errorf("go list ./... failed: %s", firstLine(out))
 	}
 	var pkgs []string
-	for _, p := range strings.Fields(out) {
+	for p := range strings.FieldsSeq(out) {
 		rel := strings.TrimPrefix(strings.TrimPrefix(p, rootMod), "/")
 		if rel == "" || strings.HasPrefix(rel, "internal") || strings.Contains(rel, "/internal") || strings.HasPrefix(rel, "tools") ||
 			strings.HasPrefix(rel, "examples") || strings.HasPrefix(rel, "bench/cmd") {

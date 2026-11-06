@@ -10,7 +10,7 @@ import (
 // value, ties resolved away from zero (round-half-up on the magnitude, goinfer's F16Bits), every binary16
 // value round-trips, overflow saturates to ±Inf, and NaN stays NaN.
 func TestF32ToF16_rounding(t *testing.T) {
-	for h := 0; h < 1<<16; h++ {
+	for h := range 1 << 16 {
 		f := F16ToF32(uint16(h))
 		if f != f {
 			if g := F16ToF32(F32ToF16(f)); g == g {
@@ -23,7 +23,7 @@ func TestF32ToF16_rounding(t *testing.T) {
 		}
 	}
 	rng := rand.New(rand.NewPCG(5, 6))
-	for n := 0; n < 200000; n++ {
+	for range 200000 {
 		x := float32(math.Ldexp(rng.Float64()*2-1, rng.IntN(40)-26)) // magnitudes across subnormal..overflow
 		got := F32ToF16(x)
 		if math.Abs(float64(x)) >= 65520 { // at or past the half-way point above 65504
@@ -214,7 +214,7 @@ func TestWidenF16_exhaustive(t *testing.T) {
 	// past len(src) (canaries after the end).
 	const canary = float32(-12345.5)
 	for n := 0; n <= 40; n++ {
-		for off := 0; off < 8; off++ {
+		for off := range 8 {
 			s := src[0x3C00+off*97 : 0x3C00+off*97+n] // around 1.0: normal values with varied mantissas
 			d := make([]float32, n+8)
 			for i := range d {

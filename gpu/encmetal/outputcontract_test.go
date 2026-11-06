@@ -40,7 +40,7 @@ func TestEncMetal_outputContract(t *testing.T) {
 	}
 	check := func(t *testing.T, what string, dst []float32, n int) {
 		t.Helper()
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if v := float64(dst[i]); math.IsNaN(v) || math.IsInf(v, 0) {
 				t.Fatalf("%s: dst[%d] = %v after the call: not overwritten (NaN pre-fill survived)", what, i, dst[i])
 			}
@@ -53,7 +53,7 @@ func TestEncMetal_outputContract(t *testing.T) {
 	}
 	same := func(t *testing.T, what string, x, y []float32, n int) {
 		t.Helper()
-		for i := 0; i < n; i++ {
+		for i := range n {
 			if math.Float32bits(x[i]) != math.Float32bits(y[i]) {
 				t.Fatalf("%s: dst[%d] depends on the pre-fill: %v after NaN, %v after 7.5", what, i, x[i], y[i])
 			}
@@ -95,7 +95,7 @@ func TestEncMetal_outputContract(t *testing.T) {
 			cpu := make([]float32, n)
 			b.cpu.MatmulBT(a, w, cpu, s.M, s.K, s.N)
 			differ := 0
-			for i := 0; i < n; i++ {
+			for i := range n {
 				if math.Float32bits(cpu[i]) != math.Float32bits(nanDst[i]) {
 					differ++
 				}

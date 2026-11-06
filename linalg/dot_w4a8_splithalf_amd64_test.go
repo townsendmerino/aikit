@@ -26,7 +26,7 @@ func repackSplitHalfRowAMD64(packed []byte, K int) []byte {
 	out := make([]byte, len(packed))
 	for g := 0; g < K/32; g++ {
 		gk, ob := g*32, g*16
-		for i := 0; i < 16; i++ {
+		for i := range 16 {
 			out[ob+i] = nib(gk+i) | (nib(gk+i+16) << 4)
 		}
 	}
@@ -131,7 +131,7 @@ func BenchmarkW4A8_CanonicalVsSplitHalf(b *testing.B) {
 		canonAll[i] = byte(rng.Intn(256))
 	}
 	shAll := make([]byte, N*bpr)
-	for r := 0; r < N; r++ {
+	for r := range N {
 		copy(shAll[r*bpr:(r+1)*bpr], repackSplitHalfRowAMD64(canonAll[r*bpr:(r+1)*bpr], K))
 	}
 	scAll := make([]float32, N*nGroups)

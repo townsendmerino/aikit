@@ -162,7 +162,7 @@ func TokenizePlain(text string) []string {
 		if !hasUpper {
 			out = append(out, text[start:i])
 		} else if tokLen <= len(stackBuf) {
-			for j := 0; j < tokLen; j++ {
+			for j := range tokLen {
 				ch := text[start+j]
 				if ch >= 'A' && ch <= 'Z' {
 					stackBuf[j] = ch + ('a' - 'A')
@@ -173,7 +173,7 @@ func TokenizePlain(text string) []string {
 			out = append(out, string(stackBuf[:tokLen]))
 		} else {
 			buf := make([]byte, tokLen)
-			for j := 0; j < tokLen; j++ {
+			for j := range tokLen {
 				ch := text[start+j]
 				if ch >= 'A' && ch <= 'Z' {
 					buf[j] = ch + ('a' - 'A')

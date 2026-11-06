@@ -42,13 +42,11 @@ func TestRoundInt4_matchesMathRound(t *testing.T) {
 	var wg sync.WaitGroup
 	const parts = 64
 	for p := range parts {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for b := uint64(p)<<26 + uint64(p)%stride; b < uint64(p+1)<<26; b += stride {
 				check(uint32(b))
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if n := bad.Load(); n != 0 {

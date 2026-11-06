@@ -56,7 +56,6 @@ func TestOutputContract_dequantWritersOverwrite(t *testing.T) {
 		runDstIndependent(t, "dequantRange/"+name, n, func(dst []float32) { dequantRange(typ, raw, start, dst, be) })
 	}
 	for _, nb := range []int{1, 3} {
-		nb := nb
 		raw := rnd(nb * MXFP4BlockBytes)
 		runDstIndependent(t, fmt.Sprintf("DequantMXFP4Blocks/nBlocks=%d", nb), nb*MXFP4BlockElems, func(dst []float32) {
 			if err := DequantMXFP4Blocks(raw, nb, dst); err != nil {

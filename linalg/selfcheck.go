@@ -57,7 +57,7 @@ var (
 func SelfCheck(repair bool) SelfCheckReport {
 	start := time.Now()
 	var rep SelfCheckReport
-	for pass := 0; pass < 4; pass++ {
+	for pass := range 4 {
 		ms := runSelfChecks()
 		if pass == 0 {
 			rep.Mismatches = ms

@@ -63,7 +63,7 @@ func RepackInt4SplitHalfRow(dst, src []byte, K int) {
 	requireLen("RepackInt4SplitHalfRow", "dst", len(dst), bpr)
 	requireLen("RepackInt4SplitHalfRow", "src", len(src), bpr)
 	nGroups := K / 32
-	for g := 0; g < nGroups; g++ {
+	for g := range nGroups {
 		ob := g * 16
 		repackSplitHalfGroup(dst[ob:ob+16], src[ob:ob+16])
 	}

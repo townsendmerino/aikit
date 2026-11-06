@@ -69,7 +69,7 @@ func (o *outBuf) hasNaN() bool {
 	case o.f64:
 		for i := 0; i+8 <= len(o.cov); i += 8 {
 			var u uint64
-			for b := 0; b < 8; b++ {
+			for b := range 8 {
 				u |= uint64(o.cov[i+b]) << (8 * b)
 			}
 			if math.IsNaN(math.Float64frombits(u)) {
@@ -272,7 +272,6 @@ func outputContractCases() []contractCase {
 
 	// ---- conversions and quantizers
 	for _, n := range []int{5, 37, 130} {
-		n := n
 		add(fmt.Sprintf("F32ToF16Slice/n=%d", n), func() (func(), []*outBuf) {
 			src := rf32(7, n)
 			dst, o := mkOut[uint16]("dst", n)
@@ -306,7 +305,6 @@ func outputContractCases() []contractCase {
 		return func() { DequantizeRowsInt8Into(dst, q, scales, rows, cols) }, []*outBuf{o}
 	})
 	for _, kind := range []string{"f32", "int8", "int8-weightonly", "int4"} {
-		kind := kind
 		add("WeightMat.Row/"+kind, func() (func(), []*outBuf) {
 			const rows, cols = 5, 64
 			w := rf32(13, rows*cols)
@@ -334,7 +332,6 @@ func outputContractCases() []contractCase {
 			return func() { QuantizeActivationsInto(aq, sc, a, M, K) }, []*outBuf{o1, o2}
 		})
 		for _, g := range []int{16, 32} {
-			g := g
 			ng := (K + g - 1) / g
 			add(fmt.Sprintf("QuantizeActivationsGroupedInto/M=%d,K=%d,group=%d", M, K, g), func() (func(), []*outBuf) {
 				a := rf32(15, M*K)
@@ -354,7 +351,6 @@ func outputContractCases() []contractCase {
 	type shape struct{ M, K, N int }
 	shapes := []shape{{1, 64, 10}, {3, 96, 19}, {8, 64, 33}}
 	for _, s := range shapes {
-		s := s
 		nm := fmt.Sprintf("M=%d,K=%d,N=%d", s.M, s.K, s.N)
 		a := func() []float32 { return rf32(20, s.M*s.K) }
 		b := func() []float32 { return rf32(21, s.N*s.K) }
@@ -370,7 +366,6 @@ func outputContractCases() []contractCase {
 			"MatmulQKAcc64":                   func(d, a, b []float32) { MatmulQKAcc64(a, b, d, s.M, s.K, s.N, 0, s.K) },
 		}
 		for name, f := range f32mm {
-			f := f
 			add(name+"/"+nm, func() (func(), []*outBuf) {
 				dst, o := mkOut[float32]("dst", s.M*s.N)
 				aa, bb := a(), b()
@@ -378,7 +373,6 @@ func outputContractCases() []contractCase {
 			})
 		}
 		for _, wk := range []string{"int8", "int8-weightonly", "int4", "f32"} {
-			wk := wk
 			add("WeightMat.MatmulBT/"+wk+"/"+nm, func() (func(), []*outBuf) {
 				wm := weightMatKind(wk, rf32(22, s.N*s.K), s.N, s.K)
 				dst, o := mkOut[float32]("dst", s.M*s.N)
@@ -457,7 +451,6 @@ func outputContractCases() []contractCase {
 		})
 		// int4 (group 32) for the Q4 / W4A8 family
 		for _, g := range []int{32} {
-			g := g
 			q4w := func() ([]byte, []float32) { return QuantizeGroupsInt4(rf32(26, s.N*s.K), s.N, s.K, g) }
 			add(fmt.Sprintf("MatmulBTQ4/%s,group=%d", nm, g), func() (func(), []*outBuf) {
 				pk, sc := q4w()
@@ -503,7 +496,6 @@ func outputContractCases() []contractCase {
 	}
 	// GGUF K-quant GEMVs: K a multiple of 256.
 	for _, q := range []string{"Q4K", "Q6K"} {
-		q := q
 		add("MatmulBTGGUF"+q, func() (func(), []*outBuf) {
 			const M, K, N = 2, 512, 5
 			nb := K / qkK
@@ -554,9 +546,7 @@ func outputContractCases() []contractCase {
 		contractExp  bool
 		maskFirstRow bool
 	}{{"AttendTileFused", false, false}, {"AttendTileFusedContractExp", true, false}, {"AttendTileFused/maskedRow", false, true}} {
-		fc := fc
 		for _, nKeys := range []int{70, 600} {
-			nKeys := nKeys
 			add(fmt.Sprintf("%s/nKeys=%d", fc.name, nKeys), func() (func(), []*outBuf) {
 				const kt, hd = 4, 64
 				qh, kh := rf32(50, kt*hd), rf32(51, nKeys*hd)
@@ -597,7 +587,6 @@ func outputContractCases() []contractCase {
 
 	// ---- packing, Hamming, and the Dot tiles (they write a sums array)
 	for _, dim := range []int{37, 64, 130} {
-		dim := dim
 		words := (dim + 63) / 64
 		add(fmt.Sprintf("PackSignBitsRow/dim=%d", dim), func() (func(), []*outBuf) {
 			v := rf32(60, dim)
@@ -621,7 +610,6 @@ func outputContractCases() []contractCase {
 		})
 	}
 	for _, n4 := range []int{1, 5, 16} {
-		n4 := n4
 		add(fmt.Sprintf("Dot4x4/n4=%d", n4), func() (func(), []*outBuf) {
 			rs := make([][]float32, 5)
 			for i := range rs {
@@ -654,7 +642,6 @@ func outputContractCases() []contractCase {
 
 	// ---- the split-half row repack is portable Go (and the arm64 quad repack is built from it).
 	for _, K := range []int{32, 96} {
-		K := K
 		add(fmt.Sprintf("RepackInt4SplitHalfRow/K=%d", K), func() (func(), []*outBuf) {
 			src := ri8(int64(K), K/2)
 			sb := make([]byte, len(src))
