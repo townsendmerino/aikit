@@ -25,6 +25,11 @@ excluded from that promise and may change in any release until it graduates.
   a `no` the files contradict. The retrieval zone it judges against is listed in `docs/architecture.md`. A consumer
   that uses only the retrieval packages can skip its parity and recall checks on a `no` release. Of the 30 releases
   v1.51.1 to v1.76.0, 16 would have been `no`.
+- CI now checks each published nested module on main against the versions its `go.mod` requires: a new job runs
+  `tools/consumergate --head`, which copies the module out, drops its `replace` directives and vets it with
+  `GOWORK=off` against the proxy (and tests it, outside `gpu/`). `chunk/treesitter` also gets a leg against the tree.
+  `docs/architecture.md` gains a section on how the nested modules are versioned; it and the README no longer say
+  `chunk/treesitter` is versioned in lockstep with the core. No module's requirements change.
 
 ## [1.76.0] — 2026-10-26
 

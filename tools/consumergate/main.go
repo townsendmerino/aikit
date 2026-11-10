@@ -30,6 +30,8 @@
 //	go run -C tools ./consumergate                     # every published module @latest (watch)
 //	go run -C tools ./consumergate MOD@VER [MOD@VER…]  # explicit pairs
 //	go run -C tools ./consumergate --tag <ref>         # map one pushed tag → its module@version
+//	go run -C tools ./consumergate --head              # the TREE's copy of each published nested module,
+//	                                                   # replaces dropped, against the versions it requires (head.go)
 //
 // Env:
 //
@@ -89,6 +91,10 @@ func run(args []string) int {
 		fmt.Println(gate.Verdict(gate.Fail, err.Error()))
 		fmt.Printf("  (%d go.mod files enumerated at %s, %s, %s)\n", total, prov, box, date)
 		return 1
+	}
+
+	if len(args) == 1 && args[0] == "--head" {
+		return runHead(cfg, root, pub, prov, box, date)
 	}
 
 	pairs, code, msg := decidePairs(args, pub)

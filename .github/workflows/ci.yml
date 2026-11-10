@@ -370,6 +370,33 @@ jobs:
       - name: gpu backend pins
         run: go run -C tools ./gpupins
 
+  nested-required:
+    name: nested modules at their required versions (${{ matrix.os }})
+    # Most nested modules commit `replace` directives into the tree, so every other job here
+    # builds them against the tree's aikit, whatever version their go.mod names. A consumer's
+    # build ignores those replaces and gets the named version. This job is the one place the
+    # code on main meets the versions it claims: each published nested module is copied out,
+    # its replaces dropped, and vetted (tested, outside gpu/) with GOWORK=off against the
+    # proxy. chunk/treesitter, which has no replace, also gets the opposite leg: against the
+    # tree. Two OSes because the *metal modules have packages only on darwin and the *cuda
+    # only on Linux. See tools/consumergate/head.go.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      GOWORK: "off" # quoted: unquoted `off` is a YAML boolean
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: nested modules vs the versions their go.mod requires
+        run: go run -C tools ./consumergate --head
+
   gpu-kernels:
     name: gpu mechanical gate (${{ matrix.os }})
     # The mechanical half of the gpu pre-tag ritual, run in CI on BOTH OSes so CI and the

@@ -451,9 +451,9 @@ no such consumer has surfaced yet.
   GQA group size), gated bit-identical against `G` separate per-head calls
   (528+ adversarial cases). New surface, tuning-driven (the NEON port's register
   allocation is hand-tuned per `G`), so Experimental like `MatmulBTAcc64`.
-- `chunk/treesitter` — its own opt-in module, **tagged in lockstep with the core
-  whenever the submodule itself changes** (`chunk/treesitter/v1.0.0` requires
-  `aikit v1.0.0`). When a core release doesn't touch the submodule it gets no new
+- `chunk/treesitter` — its own opt-in module, **on its own tag series, tagged
+  when the submodule itself changes** (it requires `aikit v1.0.0` as a minimum).
+  When a core release doesn't touch the submodule it gets no new
   tag — the existing one keeps working, since the core's `chunk.Chunker` contract
   is Hard-tier stable (e.g. nothing in 1.1.x or 1.2.0 changed it). Its
   `treesitter.Chunker` API is stable, but it stays Experimental because it depends

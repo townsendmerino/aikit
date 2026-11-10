@@ -1,7 +1,10 @@
 # Releasing
 
-This repo ships **two independently-versioned Go modules**, and they have different
-release rituals. Read the one you're tagging.
+This repo ships **several independently-versioned Go modules**: the root, the `gpu` device
+module, the gpu backends and `chunk/treesitter`. None is versioned in lockstep with another;
+[`docs/architecture.md` § Nested modules](docs/architecture.md#nested-modules-and-their-versions)
+lists each one, what its `go.mod` requires, and which CI job checks it. The root and `gpu` have
+different release rituals. Read the one you're tagging.
 
 ## Root module — `github.com/townsendmerino/aikit` (tags `vX.Y.Z`)
 
@@ -156,9 +159,15 @@ someone can visibly fail to complete.
 
 ## Backend submodules — the eight that have never been tagged
 
+> **Status, 2026-11-10: all eight have since been tagged** (`gpu/anncuda/v0.1.0`, `gpu/annmetal/v0.2.1`,
+> `gpu/enccuda/v0.1.0`, `gpu/encmetal/v0.1.0`, and the four retired tower backends). The section is kept for
+> what it found and for the tagging order below. The standing check for this class is now CI's
+> `nested modules at their required versions` job (`consumergate --head`): it builds each published nested
+> module on main with its replaces dropped, so code that has moved past its `require` goes red before a tag.
+
 `gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda`, `gpu/encmetal`, `gpu/qwencuda`,
 `gpu/qwenmetal`, `gpu/visioncuda`, `gpu/visionmetal` are separate Go modules and **none
-of them has ever carried a tag**. Until 2026-08-12 nothing above said so, and the
+of them had ever carried a tag** when this was written (2026-08-12). Until 2026-08-12 nothing above said so, and the
 consequence was invisible from inside the repo: everything here builds, because each of
 them carries `replace` directives into the tree.
 

@@ -305,8 +305,56 @@ each by a different mechanism (CI enforces all three):
 | Dependency | Why quarantined | Mechanism |
 |---|---|---|
 | `cogentcore/webgpu` (cgo) | would break the no-cgo promise | inverted behind `encoder.Backend`; lives in `goinfer/gpu`, not this repo |
-| `gotreesitter` (pure Go, ~large embedded grammars; pre-1.0 upstream) | payload size + upstream churn risk | separate module `chunk/treesitter`, registers via `chunk.Register`; versioned in lockstep with the core |
-| CUDA/Metal bindings (cgo) — aikit's own native GPU backends | would break the no-cgo promise | `gpu/*`: a shared device-substrate module (`gpu`) plus 8 one-backend-per-module leaves (`anncuda`/`annmetal` → `FlatI8.EnableGPU`; `enccuda`/`encmetal` → `encoder.RegisterBackend("cuda"/"metal", …)`, the same seam `goinfer/gpu` uses; `qwencuda`/`qwenmetal` and `visioncuda`/`visionmetal` → `vision.RegisterResident`); each versioned in lockstep with the core (the two-tag-series, `tools/gpupins`); full detail in [`docs/task-native-gpu.md`](task-native-gpu.md) |
+| `gotreesitter` (pure Go, ~large embedded grammars; pre-1.0 upstream) | payload size + upstream churn risk | separate module `chunk/treesitter`, registers via `chunk.Register`; its own tag series (§ Nested modules) |
+| CUDA/Metal bindings (cgo) — aikit's own native GPU backends | would break the no-cgo promise | `gpu/*`: a shared device-substrate module (`gpu`) plus 8 one-backend-per-module leaves (`anncuda`/`annmetal` → `FlatI8.EnableGPU`; `enccuda`/`encmetal` → `encoder.RegisterBackend("cuda"/"metal", …)`, the same seam `goinfer/gpu` uses; `qwencuda`/`qwenmetal` and `visioncuda`/`visionmetal` → `vision.RegisterResident`); each on its own tag series, pinned to the frozen `gpu/v0.35.x` device module by `tools/gpupins` (§ Nested modules); full detail in [`docs/task-native-gpu.md`](task-native-gpu.md) |
+
+## Nested modules and their versions
+
+The repo holds one core module and a set of nested ones. **They are not
+versioned in lockstep.** Each published nested module has its own tag series
+(`<dir>/vX.Y.Z`) and gets a tag when its own code changes, not when the root
+does. What its `go.mod` says about the root is a requirement, and it means
+different things per module:
+
+| Module | Published | What its `go.mod` requires of this repo | `replace` into the tree |
+|---|---|---|---|
+| `chunk/treesitter` | yes | `aikit v1.0.0`, a **minimum**: it needs only the `chunk.Chunker` contract, which is Hard tier | no |
+| `gpu` (device module) | yes, frozen on `gpu/v0.35.x`, fixes only | nothing | no |
+| `gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda`, `gpu/encmetal` | yes | `aikit v1.75.0` and `aikit/gpu v0.35.x`, a **freeze pin** held by `tools/gpupins` | yes |
+| `gpu/qwencuda`, `gpu/qwenmetal`, `gpu/visioncuda`, `gpu/visionmetal`, `gpu/webgpu` | retired: existing tags resolve, no further tags | as tagged | yes (not `webgpu`) |
+| `benchmarks`, `examples/embedded-corpus`, `examples/gpu-ann`, `tools`, `tools/canary/vulnfixture` | **no: tree-only**, never tagged | a placeholder | yes, where it requires the root |
+
+Three things follow, and each has a check.
+
+**A consumer gets the newest of the versions in play, not the one the nested
+module names.** ken requires `chunk/treesitter v1.2.0` and `aikit v1.76.0`, so
+it builds the chunker against v1.76.0 even though the chunker's `go.mod` says
+v1.0.0. Both ends therefore matter: the required version (the oldest a consumer
+could get) and the tree (the newest).
+
+**A `replace` hides the required version from every in-tree build.** With the
+replace in place, the gpu backends build, lint and test against the tree's
+aikit; a consumer's build ignores a dependency's replaces and gets v1.75.0. So
+CI has one job that takes the replaces away: `nested modules at their required
+versions` runs `go run -C tools ./consumergate --head`, which copies each
+published nested module out of the checkout, drops its replace directives, and
+vets it with `GOWORK=off` against the proxy (and runs its tests, outside
+`gpu/`, whose tests need a device and are hand-run). `chunk/treesitter`, which
+has no replace and so is otherwise built only at its minimum, gets a second leg
+there against the tree. The other legs already existed: `gpu mechanical gate`
+builds the gpu modules against the tree, and `consumer-resolution` resolves and
+builds each published *tag* from a scratch module, on every tag push and weekly.
+
+**A tree-only module's require line is not a claim.** `benchmarks` names
+`aikit v1.2.1` and `examples/embedded-corpus` names `v1.3.0`; neither compiles
+against that version without its replace (measured 2026-11-10:
+`encoder.LoadBERT` and `StaticModel.EncodeBatch` are newer), and
+`examples/gpu-ann` requires backend versions `v0.0.0` that do not exist. They
+are programs that live in the tree and are built there. They are listed as
+`internal` in `tools/consumergate/classify.go`, which fails on any `go.mod` it
+does not know, so a new module cannot be added without choosing a side. If one
+of them is ever tagged, move it to `published` there and `--head` will hold it
+to its require.
 
 ## Retrieval pipeline (how a consumer composes it)
 
