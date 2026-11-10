@@ -118,7 +118,7 @@ linters:
         linters: [errcheck]
         text: "^Error return value is not checked$"
       # vision CPU forward in a scratch/fuzz benchmark (vision.Encoder is CPU; the GPU vision
-      # forward lives in gpu/visionmetal + gpu/visioncuda and is not covered here).
+      # forward moved to goinfer and is not covered here).
       - path: vision/.*_test\.go
         linters: [errcheck]
         text: "Error return value of `.*\\.Forward` is not checked"
@@ -132,16 +132,9 @@ linters:
       - path: gpu/cuda\.go
         linters: [errcheck]
         text: "Error return value of `.*\\.Close` is not checked"
-      # gpu/visioncuda's encoder.Close destroys a captured CUDA graph exec handle on
-      # teardown — same release-not-flush posture as gpu/cuda.go's own Graph.Close
-      # discards above, and encoder.Close() (the vision.ResidentBackend interface method)
-      # has no error return to propagate a failure to.
-      - path: gpu/visioncuda/encoder\.go
-        linters: [errcheck]
-        text: "Error return value of `e\\.graph\\.Close` is not checked"
-      # vision and audio are deprecated (they moved into goinfer, AX4). The retired tower backends and the vision
-      # example import vision and stay as they are, frozen, so their SA1019 is expected; any other importer still fires.
-      - path: (gpu/(visioncuda|visionmetal)/|examples/vision/)
+      # vision and audio are deprecated (they moved into goinfer, AX4). The vision example imports vision and
+      # stays as it is, frozen, so its SA1019 is expected; any other importer still fires.
+      - path: examples/vision/
         linters: [staticcheck]
         text: "SA1019: .*townsendmerino/aikit/(vision|audio)"
 

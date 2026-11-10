@@ -3,9 +3,9 @@
 // latest gpu/v0.35.x tag, and `require github.com/townsendmerino/aikit` at frozenRoot, the tag they were frozen at. They
 // no longer track the newest root tag, so a root require that moves is a FAIL, not drift for --fix to follow.
 //
-// The four tower backends (gpu/qwencuda, gpu/qwenmetal, gpu/visioncuda, gpu/visionmetal) moved into goinfer and are
-// retired here with no further tags, so they are outside the invariant, as are chunk/treesitter, the examples and
-// benchmarks modules, and gpu/webgpu.
+// The four tower backends (gpu/qwencuda, gpu/qwenmetal, gpu/visioncuda, gpu/visionmetal) moved into goinfer and were
+// deleted from this tree on 2026-11-10 (their tags still resolve). chunk/treesitter, the examples and the benchmarks
+// module are outside the invariant.
 //
 // `--fix` rewrites the four gpu requires to the latest gpu/v0.35.x tag, and carries examples/gpu-ann along (it requires
 // two of the four, so MVS needs its require to move with them; it is not judged). It never writes a root require.

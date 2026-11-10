@@ -115,10 +115,9 @@ graph TD
         bench --> ann
     end
     ts["chunk/treesitter<br/><i>separate module</i>"] -.->|implements chunk.Chunker| chunk
-    gpu["gpu/* — device module + 6 CUDA/Metal backends<br/><i>separate modules; 4 live, 2 retired</i>"]
+    gpu["gpu/* — device module + 4 CUDA/Metal backends<br/><i>separate modules</i>"]
     gpu -.->|EnableGPU| ann
     gpu -.->|RegisterBackend #quot;cuda#quot;/#quot;metal#quot;| encoder
-    gpu -.->|RegisterResident, retired backends only| vision
     ts --> gts["gotreesitter<br/>(pure Go, large grammars)"]
     embed --> xtext["golang.org/x/text"]
     embed -->|amd64 only| xsys["golang.org/x/sys"]
@@ -168,8 +167,7 @@ Q4_K dequant kernel); `mmap` imports `golang.org/x/sys/unix` on darwin only
 asserts that no core package reaches `gpu/` or `chunk/treesitter`, directly or
 through a dependency. `chunk/treesitter` registers itself via `chunk.Register`
 on import, and each `gpu/*` backend registers itself via the matching seam
-(`FlatI8.EnableGPU`, `encoder.RegisterBackend`, `vision.RegisterResident`) on
-import. Like `encoder`, `vision` exposes an import-free GPU-export seam
+(`FlatI8.EnableGPU`, `encoder.RegisterBackend`) on import. Like `encoder`, `vision` exposes an import-free GPU-export seam
 (`GPUWeights`) plus the `RegisterResident` inversion, so a WebGPU backend
 (e.g. goinfer's) plugs in without the core importing it. See § Quarantines and
 [`docs/task-native-gpu.md`](task-native-gpu.md) for the backend-by-backend
@@ -250,7 +248,7 @@ automatically, because aikit's CI has no ken checkout.
 
 ## Repo ecosystem
 
-aikit is the stable middle of a three-repo system:
+aikit is the stable middle of a four-repo system:
 
 ```mermaid
 graph LR
@@ -258,8 +256,14 @@ graph LR
     aikit["<b>aikit</b><br/>retrieval library<br/><i>this repo — semver, cgo-free</i>"]
     goinfer["<b>goinfer</b><br/>LLM decoder runtime<br/>Gemma/Qwen/Llama, tokenizers<br/><i>faster-moving</i>"]
     gpu["goinfer/gpu<br/>WebGPU backend (cgo)<br/><i>opt-in, -tags gpu</i>"]
-    ken --> aikit
-    goinfer -->|"embed, linalg, vision"| aikit
+    tack["<b>tack</b><br/>local coding agent<br/><i>built on ken and goinfer</i>"]
+    ts["aikit/chunk/treesitter<br/><i>separate module, own tags</i>"]
+    ken -->|"retrieval packages (§ Retrieval zone)"| aikit
+    ken --> ts
+    goinfer -->|"embed, linalg, mmap, encoder"| aikit
+    tack -->|"chunk"| aikit
+    tack --> ts
+    ts -->|"chunk"| aikit
     gpu -.->|"RegisterBackend(#quot;webgpu#quot;)"| aikit
     gpu --- goinfer
 ```
@@ -269,8 +273,9 @@ the LLM runtime keeps moving (the split is recorded in goinfer's
 [`migration-plan.md`](https://github.com/townsendmerino/goinfer/blob/main/docs/migration-plan.md);
 the motivating critique in
 [`internal/archive/road-to-1.0-critique.md`](./internal/archive/road-to-1.0-critique.md)).
-Dependencies point inward only: goinfer and ken import aikit; aikit imports
-neither.
+Dependencies point inward only: goinfer, ken and tack import aikit; aikit imports
+none of them. What each one imports was read from its tree on 2026-11-10
+(goinfer also imports `bench` in a release-gate tool).
 
 ## The Backend seam
 
@@ -306,7 +311,7 @@ each by a different mechanism (CI enforces all three):
 |---|---|---|
 | `cogentcore/webgpu` (cgo) | would break the no-cgo promise | inverted behind `encoder.Backend`; lives in `goinfer/gpu`, not this repo |
 | `gotreesitter` (pure Go, ~large embedded grammars; pre-1.0 upstream) | payload size + upstream churn risk | separate module `chunk/treesitter`, registers via `chunk.Register`; its own tag series (§ Nested modules) |
-| CUDA/Metal bindings — aikit's own native GPU backends | their dependencies (`purego`, `gocudrv`) and device code stay out of the core graph | `gpu/*`: a shared device-substrate module (`gpu`) plus 6 one-backend-per-module leaves. Four are live (`anncuda`/`annmetal` → `FlatI8.EnableGPU`; `enccuda`/`encmetal` → `encoder.RegisterBackend("cuda"/"metal", …)`, the same seam `goinfer/gpu` uses). Two are retired and frozen (`visioncuda`/`visionmetal` → `vision.RegisterResident`; they moved to goinfer, as did `qwencuda`/`qwenmetal`, which were deleted from this tree on 2026-11-10 and whose tags still resolve); each on its own tag series, pinned to the frozen `gpu/v0.35.x` device module by `tools/gpupins` (§ Nested modules); full detail in [`docs/task-native-gpu.md`](task-native-gpu.md) |
+| CUDA/Metal bindings — aikit's own native GPU backends | their dependencies (`purego`, `gocudrv`) and device code stay out of the core graph | `gpu/*`: a shared device-substrate module (`gpu`) plus 4 one-backend-per-module leaves (`anncuda`/`annmetal` → `FlatI8.EnableGPU`; `enccuda`/`encmetal` → `encoder.RegisterBackend("cuda"/"metal", …)`, the same seam `goinfer/gpu` uses). The four tower backends (`qwencuda`/`qwenmetal`, `visioncuda`/`visionmetal` → `vision.RegisterResident`) moved to goinfer and were deleted from this tree on 2026-11-10; their tags still resolve; each on its own tag series, pinned to the frozen `gpu/v0.35.x` device module by `tools/gpupins` (§ Nested modules); full detail in [`docs/task-native-gpu.md`](task-native-gpu.md) |
 
 ## Nested modules and their versions
 
@@ -321,12 +326,13 @@ different things per module:
 | `chunk/treesitter` | yes | `aikit v1.0.0`, a **minimum**: it needs only the `chunk.Chunker` contract, which is Hard tier | no |
 | `gpu` (device module) | yes, frozen on `gpu/v0.35.x`, fixes only | nothing | no |
 | `gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda`, `gpu/encmetal` | yes | `aikit v1.75.0` and `aikit/gpu v0.35.x`, a **freeze pin** held by `tools/gpupins` | yes |
-| `gpu/visioncuda`, `gpu/visionmetal` | retired: existing tags resolve, no further tags | as tagged | yes |
 | `benchmarks`, `examples/embedded-corpus`, `examples/gpu-ann`, `tools`, `tools/canary/vulnfixture` | **no: tree-only**, never tagged | a placeholder | yes, where it requires the root |
 
-Deleted from the tree, tags still resolving: `gpu/qwencuda` and `gpu/qwenmetal`
-(last tags `v0.1.1`), removed 2026-11-10 after confirming no `go.mod` in goinfer
-or ken required them. `gpu/webgpu` was removed with them; it never had a tag.
+Deleted from the tree, tags still resolving: the four tower backends
+(`gpu/qwencuda` and `gpu/qwenmetal`, last tags `v0.1.1`; `gpu/visioncuda` and
+`gpu/visionmetal`, `v0.1.0`), removed 2026-11-10 after confirming no `go.mod` in
+goinfer, ken or tack required them. `gpu/webgpu` was removed with them; it never
+had a tag.
 
 Three things follow, and each has a check.
 

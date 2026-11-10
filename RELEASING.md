@@ -73,8 +73,8 @@ Automated and CI-enforced.
 
 > **Frozen on `gpu/v0.35.x` since 2026-10-26: fixes only.** The device code goinfer uses moved into goinfer
 > (Track AX), and so did the four tower backends (`gpu/qwencuda`, `gpu/qwenmetal`, `gpu/visioncuda`,
-> `gpu/visionmetal`); they and `gpu/webgpu` are retired here and get no further tags. `gpu/qwencuda`,
-> `gpu/qwenmetal` and `gpu/webgpu` were deleted from the tree on 2026-11-10; their tags still resolve. A fix to the device module
+> `gpu/visionmetal`); they and `gpu/webgpu` are retired here, get no further tags, and were deleted
+> from the tree on 2026-11-10; their tags still resolve. A fix to the device module
 > is tagged `gpu/v0.35.N` by the ritual below, then the four backends that stay follow with `gpupins --fix`.
 
 **Root CI does NOT exercise this module.** It is a separate module (`gpu/go.mod`) and its
@@ -268,20 +268,26 @@ and their first CI" is a real line item rather than the whole changelog.
 The general form: *a release needs a reason a consumer can receive.* Test coverage,
 lint rules and CI are properties of the repository, not of the artifact.
 
-### Why CI is not the enforcement point (revisit at v1.0)
+### What protects `main`, and why the tag ritual is still the enforcement point
 
-`main` has **no branch protection and no rulesets**, so no aikit CI check is required —
-not `gpu-kernels`, not `core`, not any of them. That is a deliberate choice, not an
-oversight:
+> **Corrected 2026-11-10.** This section used to say `main` has no branch protection. It does, and the
+> text below describes it as read from GitHub that day (`gh api repos/townsendmerino/aikit/branches/main/protection`).
 
-- Required status checks effectively force **PR-only merges**, because a direct push
-  cannot carry passing checks for a commit that does not exist yet. Both development
-  boxes push straight to `main` and rebase on each other; that workflow would end.
-- The friction buys protection against a threat model aikit does not have. There are no
-  outside contributors — every push is a maintainer's.
-- The real risk is **a maintainer not running the check**, and protection relocates that
-  risk rather than solving it: the same person can merge a PR whose checks they did not
-  read. Putting the gate in the tagging ritual puts it where the risk actually is.
+`main` is a protected branch. Every job in `ci.yml` is a **required status check** (20 on 2026-11-10: the 18
+from before, plus the two `nested modules at their required versions` jobs), force pushes and branch deletion
+are off, and **"Do not allow bypassing the above settings" is off** (`enforce_admins: false`).
 
-Revisit when external contributors become plausible, i.e. at v1.0. At that point
-required checks are the right tool, because the threat model will have changed.
+What that means in practice:
+
+- **A pull request cannot merge until the required checks pass.** That holds for anyone without admin rights.
+- **A maintainer's direct push to `main` still goes through.** A direct push cannot carry passing checks for a
+  commit that does not exist yet, so GitHub accepts it from an admin and prints
+  `Bypassed rule violations for refs/heads/main: N of N required status checks are expected`. Both development
+  boxes push straight to `main`, so for the day-to-day workflow the checks run *after* the push, not before it.
+  Watch the run (`gh run watch`), and fix forward if it goes red.
+- **So CI is still not what stops a bad release.** A red commit can sit on `main`. The tagging ritual above is
+  the enforcement point for a release, because that is where the remaining risk is: a maintainer not looking at
+  a check. Do not tag from a commit whose CI run on `main` is not green (step 4).
+
+Turning on admin enforcement would make the checks binding on direct pushes too, which in practice means
+PR-only merges. That is the switch to revisit when outside contributors become plausible.

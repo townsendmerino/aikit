@@ -35,9 +35,8 @@ large embedded-grammar payload) — is quarantined in the separate
 >
 > `vision` and `audio` carry `Deprecated:` notices. `vision` (Hard tier) stays, frozen, and is removed only
 > at a v2; `audio` is removed in the minor after the first release carrying its notice. The four tower
-> backends and `gpu/webgpu` are retired and get no further tags. `gpu/visioncuda` and `gpu/visionmetal` are
-> still in the tree, with a retirement note in their `go.mod`; `gpu/qwencuda`, `gpu/qwenmetal` and `gpu/webgpu`
-> were deleted from it on 2026-11-10. Their existing tags keep resolving, so a build pinned to one is unaffected.
+> backends and `gpu/webgpu` are retired, get no further tags, and were deleted from the tree on 2026-11-10.
+> Their existing tags keep resolving, so a build pinned to one is unaffected.
 > `gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda` and `gpu/encmetal` stay in aikit and keep building on
 > the frozen `gpu/v0.35.x` device module, which gets fixes only. `linalg`, `embed`, `encoder`, `mmap`
 > and the retrieval packages are unaffected, and existing tags keep working. The plan is goinfer's
@@ -61,7 +60,7 @@ large embedded-grammar payload) — is quarantined in the separate
 | `encoder` | BERT/RoBERTa/XLM-R/GTE/nomic-bert(+MoE) embedder family (12 certified models, `docs/embedder-coverage.md`, incl. CodeRankEmbed) + SPLADE expansion + cross-encoder reranker — transformer inference scored by cosine / sparse dot / relevance logit; pluggable matmul `Backend` | `embed`, `linalg`, `sparse` |
 | `vision` *(Deprecated: moved to goinfer)* | SigLIP / ViT image encoder — decode → preprocess → pure-Go transformer forward → image embeddings (f32 or int8 W8A8), parity-pinned to HF `SiglipVisionModel`; stdlib image codecs, no cgo | `embed`, `linalg` |
 | `chunk` | language-aware chunker registry + `regex`, `markdown`, `line` chunkers | — |
-| `gpu` *(Experimental, darwin+linux; separate modules)* | cgo-free native-GPU device substrate — `Device`/`Buffer`/`Queue`/`Pipeline`/`Encoder` over Metal (darwin, runtime MSL compiler) or CUDA (linux, embedded PTX); the GPU analogue of `linalg`'s CPU role. Frozen on `gpu/v0.35.x`, fixes only. 4 one-backend-per-module leaves plug into 2 seams: `anncuda`/`annmetal` → `FlatI8.EnableGPU`; `enccuda`/`encmetal` → `encoder.RegisterBackend("cuda"/"metal", …)`. The tower backends moved to goinfer and are retired here: `visioncuda`/`visionmetal` remain in the tree, frozen; `qwencuda`/`qwenmetal` were deleted (their tags still resolve). Device tests are hand-run (no GPU CI); the default aikit build never imports any of them and stays pure-Go. See [`examples/gpu-ann`](examples/gpu-ann) for the `FlatI8.EnableGPU` seam end to end. | `github.com/ebitengine/purego` *(darwin)*, `github.com/eitamring/gocudrv` *(linux)* |
+| `gpu` *(Experimental, darwin+linux; separate modules)* | cgo-free native-GPU device substrate — `Device`/`Buffer`/`Queue`/`Pipeline`/`Encoder` over Metal (darwin, runtime MSL compiler) or CUDA (linux, embedded PTX); the GPU analogue of `linalg`'s CPU role. Frozen on `gpu/v0.35.x`, fixes only. 4 one-backend-per-module leaves plug into 2 seams: `anncuda`/`annmetal` → `FlatI8.EnableGPU`; `enccuda`/`encmetal` → `encoder.RegisterBackend("cuda"/"metal", …)`. The tower backends (`qwencuda`/`qwenmetal`, `visioncuda`/`visionmetal`) moved to goinfer and were deleted here; their tags still resolve. Device tests are hand-run (no GPU CI); the default aikit build never imports any of them and stays pure-Go. See [`examples/gpu-ann`](examples/gpu-ann) for the `FlatI8.EnableGPU` seam end to end. | `github.com/ebitengine/purego` *(darwin)*, `github.com/eitamring/gocudrv` *(linux)* |
 | `chunk/treesitter` *(submodule)* | tree-sitter-backed syntactic chunker | `gotreesitter`, `…/aikit` |
 
 `chunk/treesitter` is a **separate Go module** (`…/aikit/chunk/treesitter`) so the
