@@ -25,7 +25,10 @@ excluded from that promise and may change in any release until it graduates.
   package imports, checked against `go list` for linux, windows and darwin on amd64 and arm64, and that nothing in the
   core reaches `gpu/` or `chunk/treesitter`. `docs/architecture.md`'s package diagram is redrawn from it. No import
   and no public API changes.
-- README: the two "current release" lines said v1.21.0; they say v1.76.0.
+- README: the two "current release" lines said v1.21.0. They no longer state a version (they point at this file), so
+  there is nothing to go stale. The package table's dependency column and the intro are corrected (`bm25`, `ann`,
+  `linalg` and `embed` use `mmap`; the core also uses `golang.org/x/sys`), and `internal/importrules` now checks that
+  column against the import graph.
 - Each release now says whether it could change retrieval results or the retrieval API. A new tool,
   `tools/retrievalmark`, answers from the files changed since the previous tag and prints a `RETRIEVAL: yes` or
   `RETRIEVAL: no` line for the release's section here; `tools/releasegate` refuses a release without the line, or with

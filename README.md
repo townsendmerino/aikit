@@ -1,13 +1,15 @@
 # aikit — a pure-Go retrieval toolkit
 
 Composable building blocks for code/document retrieval and reranking, in **pure
-Go with no cgo** in the core (stdlib + `golang.org/x/text` only). Chunk text,
+Go with no cgo** in the core (stdlib + `golang.org/x/text` and `golang.org/x/sys` only). Chunk text,
 embed it, search it lexically and semantically, fuse the rankings, and rerank
 with a transformer reranking model — each package is small, independently
 importable, and parity-tested against a Python reference.
 
-The dependency DAG is shallow: most packages are leaves; `encoder` requires
-`embed` + `linalg` (+ `sparse` for the SPLADE expansion head). The one heavier dependency — `gotreesitter` (pure-Go, but a
+The dependency DAG is shallow, and a test pins it
+([`docs/architecture.md` § Package DAG](docs/architecture.md#package-dag)): `topk`, `fuse`, `chunk` and `mmap`
+import no other aikit package, the indexes and kernels sit one or two imports above them, and nothing is more
+than three deep. `encoder` requires `embed` + `linalg` (+ `sparse` for the SPLADE expansion head). The one heavier dependency — `gotreesitter` (pure-Go, but a
 large embedded-grammar payload) — is quarantined in the separate
 `chunk/treesitter` submodule, so importing the core never pulls it in.
 
@@ -46,16 +48,16 @@ large embedded-grammar payload) — is quarantined in the separate
 | Package | Purpose | Deps (beyond stdlib) |
 |---|---|---|
 | `topk` | bounded min-heap top-K selector (generic) | — |
-| `ann` | cosine ANN over a dense matrix — exact flat scan + approximate HNSW graph | `linalg`, `topk` |
-| `bm25` | identifier-aware BM25 lexical index (Lucene-variant); `Tokenize` (code) + `TokenizePlain` (general text) | `topk` |
+| `ann` | cosine ANN over a dense matrix — exact flat scan + approximate HNSW graph | `linalg`, `mmap`, `topk` |
+| `bm25` | identifier-aware BM25 lexical index (Lucene-variant); `Tokenize` (code) + `TokenizePlain` (general text) | `mmap`, `topk` |
 | `fuse` | rank fusion (RRF) + relative-score fusion (RSF) — blend lexical + dense rankings for hybrid search | — |
 | `hybrid` *(Experimental)* | thin, opt-in wrapper around "retrieve dense + lexical, then `fuse.RRF`" — composes already-built indices, doesn't build/embed/tokenize/rerank | `ann`, `bm25`, `fuse` |
 | `sparse` | learned-sparse (SPLADE) retrieval — inverted index + sparse-dot scoring over vectors from `encoder.SPLADE` (in-process) or precomputed | `topk` |
 | `late` *(Experimental)* | ColBERT-style late-interaction (MaxSim) reranking over pre-computed per-token vectors (`encoder.Model.EncodeTokens`) — a shortlist reranker, not a corpus-scale index | `linalg`, `topk` |
 | `bench` | reproducible recall + latency harness for the dense indexes (Flat / HNSW / FlatI8) — Experimental tooling | `ann` |
-| `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | — |
-| `mmap` | read-only file mapping + `madvise` residency hints + a demand-signal-agnostic `SpanCache` (LRU spans under a byte budget) — the substrate `ann`/`embed` mmap loaders sit on; cgo-free, `!unix` heap fallback | `golang.org/x/sys` *(darwin only)* |
-| `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `golang.org/x/text` |
+| `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | `mmap` |
+| `mmap` | read-only file mapping + `madvise` residency hints + a demand-signal-agnostic `SpanCache` (LRU spans under a byte budget) — the substrate the `ann`, `bm25`, `embed` and `linalg` mmap loaders sit on; cgo-free, `!unix` heap fallback | `golang.org/x/sys` *(darwin only)* |
+| `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `mmap`, `golang.org/x/text`, `golang.org/x/sys` *(amd64 only)* |
 | `encoder` | BERT/RoBERTa/XLM-R/GTE/nomic-bert(+MoE) embedder family (12 certified models, `docs/embedder-coverage.md`, incl. CodeRankEmbed) + SPLADE expansion + cross-encoder reranker — transformer inference scored by cosine / sparse dot / relevance logit; pluggable matmul `Backend` | `embed`, `linalg`, `sparse` |
 | `vision` *(Deprecated: moved to goinfer)* | SigLIP / ViT image encoder — decode → preprocess → pure-Go transformer forward → image embeddings (f32 or int8 W8A8), parity-pinned to HF `SiglipVisionModel`; stdlib image codecs, no cgo | `embed`, `linalg` |
 | `chunk` | language-aware chunker registry + `regex`, `markdown`, `line` chunkers | — |
@@ -257,7 +259,7 @@ Two tiers define aikit's compatibility promise: the Hard tier follows semver
 (no breaking change before a v2.0), verified by `apidiff` on every tagged
 release (`tools/releasegate`, enforced since v1.0 — see `RELEASING.md`); the
 Experimental tier is explicitly excluded from that promise and may change in
-any release until it graduates. aikit is at v1.76.0; the Hard tier has held
+any release until it graduates. The Hard tier has held
 backward-compatible across every release since 1.0.
 
 ### Hard — the semver-covered surface
@@ -521,8 +523,8 @@ Regenerate the committed golden fixtures:
 
 ## Versioning
 
-aikit is past 1.0 — current release: **v1.76.0** (see the
-[CHANGELOG](CHANGELOG.md)). **v0.4.0** split the LLM runtime out to `goinfer`,
+aikit is past 1.0; the current release is the top entry of the
+[CHANGELOG](CHANGELOG.md). **v0.4.0** split the LLM runtime out to `goinfer`,
 promoted `linalg` to public, and added the `encoder.Backend` seam — the last
 Hard-tier-affecting break before 1.0. The Hard tier has held
 backward-compatible ever since, verified by `apidiff` on every tagged release

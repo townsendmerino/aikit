@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -287,5 +288,63 @@ func diff(t *testing.T, p platform, from, kind string, got, want []string) {
 			t.Errorf("%s: stale rule %s -> %s: the table allows this %s but %s no longer imports it; delete it from the entry",
 				p, from, w, kind, from)
 		}
+	}
+}
+
+var backticked = regexp.MustCompile("`([^`]+)`")
+
+// The README's package table has a "Deps (beyond stdlib)" column. It went stale the
+// same way the architecture doc did, so it is held to the rules table: each row's deps
+// must be exactly the package's aikit imports (internal/ packages aside: an importer
+// never sees them) plus the external modules it reaches.
+func TestREADMEPackageTable(t *testing.T) {
+	readme, err := os.ReadFile("../../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sec, ok := strings.Cut(string(readme), "\n## Packages\n")
+	if !ok {
+		t.Fatal("README.md has no '## Packages' section")
+	}
+	if i := strings.Index(sec, "\n## "); i >= 0 {
+		sec = sec[:i]
+	}
+	rows := 0
+	for line := range strings.Lines(sec) {
+		cells := strings.Split(strings.Trim(strings.TrimSpace(line), "|"), "|")
+		if len(cells) != 3 {
+			continue
+		}
+		name := backticked.FindStringSubmatch(cells[0])
+		if name == nil {
+			continue
+		}
+		r, ok := rules[name[1]]
+		if !ok {
+			continue // a row for something outside the core module (gpu)
+		}
+		rows++
+		var want []string
+		for _, a := range r.aikit {
+			if !strings.HasPrefix(a, "internal/") {
+				want = append(want, a)
+			}
+		}
+		for _, e := range r.ext {
+			want = append(want, strings.Join(strings.Split(e.path, "/")[:3], "/"))
+		}
+		var got []string
+		for _, m := range backticked.FindAllStringSubmatch(cells[2], -1) {
+			got = append(got, m[1])
+		}
+		sort.Strings(want)
+		sort.Strings(got)
+		want, got = slices.Compact(want), slices.Compact(got)
+		if !slices.Equal(got, want) {
+			t.Errorf("README.md package table, row `%s`: deps column lists %v, the rules table says %v", name[1], got, want)
+		}
+	}
+	if rows < 10 {
+		t.Errorf("matched only %d rows of the README package table; the table moved or changed shape", rows)
 	}
 }

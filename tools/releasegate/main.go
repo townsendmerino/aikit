@@ -13,7 +13,7 @@
 //  3. apidiff shows NO incompatible change in any Hard-tier package vs the previous tag —
 //     the 1.0 compatibility bar — with documented-Experimental symbols/members exempted.
 //  4. The core module pulls no external dependency beyond golang.org/x/text and
-//     golang.org/x/sys (darwin-only madvise) — the cgo-free, dependency-light invariant.
+//     golang.org/x/sys (madvise on darwin, CPU feature detection on amd64) — the cgo-free, dependency-light invariant.
 //
 // EXTERNAL TOOLS ARE INVOKED, NOT DEPENDED ON. golangci-lint and apidiff are run via
 // `go run pkg@ver`; nothing enters tools/go.mod, and either being unbuildable is
