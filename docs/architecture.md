@@ -175,6 +175,79 @@ import. Like `encoder`, `vision` exposes an import-free GPU-export seam
 [`docs/task-native-gpu.md`](task-native-gpu.md) for the backend-by-backend
 detail (device substrate, per-seam kernels, parity gates).
 
+## Retrieval zone
+
+aikit serves two consumers on one version line. **ken** uses the retrieval
+packages. **goinfer** uses `linalg` and `embed`'s model-file readers, and
+drives most releases. ken re-runs its parity and recall checks on every aikit
+bump, so each release says whether it could reach ken at all: its CHANGELOG
+section carries a line `RETRIEVAL: yes` or `RETRIEVAL: no`, computed by
+`go run -C tools ./retrievalmark` from the files changed since the previous
+tag, and the release gate refuses a release without it. On a `no` release a
+retrieval-only consumer can skip those checks.
+
+The zone is the part of the module a retrieval result or the retrieval API
+depends on.
+
+**In the zone whole.** A change to any non-test file in these packages is a
+retrieval change:
+
+| Package | ken imports it |
+|---|---|
+| `topk`, `fuse` | yes |
+| `chunk`, `chunk/regex`, `chunk/markdown` | yes |
+| `bm25`, `ann` | yes |
+| `encoder` | yes |
+| `sparse` | no; it is in ken's build through `encoder` |
+| `hybrid`, `late` | no; retrieval API that ken does not use today |
+
+**In the zone in part.** ken imports `embed` and `linalg` directly, for a few
+entry points, and the zone packages reach into both. A file in these packages
+(and in `mmap`, `internal/accum` and `internal/cursor`, which only the
+packages above reach) is in the zone if the zone reaches a declaration in it:
+
+| Package | ken's entry points |
+|---|---|
+| `embed` | `embed.StaticModel`, `embed.Load`, `embed.LoadFromFS`, `embed.LoadMmap` (Model2Vec and its tokenizer) |
+| `linalg` | `linalg.Workspace`, `linalg.QuantizeRowInt8`, `linalg.PackSignBitsRow` |
+
+On 2026-11-10 that put 8 of `embed`'s 24 files in the zone (the GGUF readers
+and dequant kernels are out) and 158 of `linalg`'s 185 (fused attention, the
+`Acc64` attention kernels and the FMA peak probes are out). `encoder` is why
+so much of `linalg` is in: it uses the quantized matmuls, not only the dot
+kernels. `go run -C tools ./retrievalmark --files` prints the current split
+with the reason for each file.
+
+**Outside the zone.** `vision`, `audio`, `bench`, the examples, every test
+file and fixture, the docs, and every nested module. `chunk/treesitter` is on
+ken's search path, but it is a separate module with its own tags, so a root
+release cannot change it.
+
+**How a file is classified.** `tools/retrievalzone` parses every non-test Go
+file in the module, whatever its build constraints, and walks names outward
+from the zone packages and the entry points above. The walk over-approximates
+on purpose: a reached file brings everything it declares, a reached type
+brings all its methods, every `init` function and every package-level variable
+initialized by a call is reached in each package the zone links, and a reached
+assembly stub brings the `.s` file that implements it. A test deletes every
+file the walk left out and type-checks the zone on each platform and build tag
+the core is built for, so a name the walk missed fails to compile.
+
+**How it fails safe.** There is no list of files, so a new file needs no
+entry. A path no rule recognizes is in the zone, and so is every changed path
+when a tree does not parse. A file is judged in the tree before the change and
+the tree after, and either saying "zone" is enough. In `go.mod`, only a
+change confined to the `toolchain` line (which a consumer's build does not
+read) is outside. The gate accepts a recorded `yes` over a computed `no`, and
+never the reverse.
+
+**What keeps the lists honest.** The two tables above are checked against
+`tools/retrievalzone` by its tests. Whether they still match ken is checked by
+`go run -C tools ./retrievalmark --ken <ken checkout>`, which fails if ken
+imports an aikit package, or uses an `embed` or `linalg` name, that the zone
+does not list. Run it when ken's use of aikit changes; nothing runs it
+automatically, because aikit's CI has no ken checkout.
+
 ## Repo ecosystem
 
 aikit is the stable middle of a three-repo system:

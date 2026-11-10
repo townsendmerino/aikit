@@ -4,6 +4,8 @@
 // version that is immutable once the proxy fetches it.
 //
 // FIVE CHECKS, and a sixth (apiadditions.go: every exported symbol added since the previous tag is named in the release's CHANGELOG section):
+// and a seventh (retrieval.go: the CHANGELOG section carries a RETRIEVAL: yes|no line, and it is not "no" when a
+// file changed since the previous tag is in the retrieval zone):
 //  1. CHANGELOG.md has a `## [X.Y.Z]` section AND a `[X.Y.Z]:` compare link — a release
 //     deliverable; its failure messages name exactly what is missing.
 //  2. golangci-lint clean against .golangci.yml, build-pinned via `go run @v2.14.0` (the
@@ -75,6 +77,7 @@ func run(args []string) int {
 		{Name: "core-deps", Run: func() gate.Cell { return checkCoreDeps(root) }},
 		{Name: "perf-evidence", Run: func() gate.Cell { return checkPerfEvidence(root, ver) }},
 		{Name: "changelog-api", Run: func() gate.Cell { return checkAPIAdditions(root, ver) }},
+		{Name: "retrieval-mark", Run: func() gate.Cell { return checkRetrievalMark(root, ver) }},
 	}
 	cells := gate.RunAll(checks)
 	rep := gate.ReconcileWith(cells, gate.FailWins)

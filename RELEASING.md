@@ -11,7 +11,7 @@ Automated and CI-enforced.
    link at the bottom. Additive changes bump the **minor**; bug fixes the **patch**.
 2. Run the gate locally first: `go run -C tools ./releasegate X.Y.Z` — it checks the CHANGELOG
    section, `golangci-lint`, `apidiff` (no Hard-tier API breakage vs the previous tag),
-   the cgo-free dependency invariant, the perfgate evidence line, and that **every exported symbol added
+   the cgo-free dependency invariant, the perfgate evidence line, the retrieval mark (step 2c), and that **every exported symbol added
    since the previous tag, in any public package, is named in the release's CHANGELOG section** (a
    whole-word match; a new type covers its members; a name ending `ForTest` is exempt; anything else
    not worth a line goes in `tools/releasegate/api-waivers.txt` as `<package> <symbol> <reason>`, the
@@ -44,6 +44,13 @@ Automated and CI-enforced.
    > adequate floor sensitivity, conflicting with `linalg/quant.go`'s own +5% characterization
    > at that exact shape/box — recorded as an open, non-blocking follow-up in the result doc,
    > not grounds to withhold acceptance given the other shape already confirms the mechanism.
+2c. Run `go run -C tools ./retrievalmark` and **put its last line, `RETRIEVAL: yes — …` or `RETRIEVAL: no — …`,
+   on a line of its own in the release's CHANGELOG section.** It says whether a file changed since the previous
+   tag is in the retrieval zone ([`docs/architecture.md` § Retrieval zone](docs/architecture.md#retrieval-zone)),
+   which is what tells ken whether it must re-run its parity and recall checks for this bump. The release gate
+   recomputes it and fails if the line is missing, or says `no` where the files say `yes`. You may record `yes`
+   over a computed `no` (say why on the same line); never the reverse. Run it after the last code change: the
+   answer is about the files, so a later edit can change it.
 3. Run `go run -C tools ./vulncheck` and **put its `STATEMENT:` line in the release notes.**
    This is a deliverable, not hygiene: aikit's pitch is a static binary someone scps
    somewhere and runs offline, and a binary deployed that way cannot be patched in

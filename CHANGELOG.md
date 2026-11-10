@@ -19,6 +19,12 @@ excluded from that promise and may change in any release until it graduates.
   core reaches `gpu/` or `chunk/treesitter`. `docs/architecture.md`'s package diagram is redrawn from it. No import
   and no public API changes.
 - README: the two "current release" lines said v1.21.0; they say v1.76.0.
+- Each release now says whether it could change retrieval results or the retrieval API. A new tool,
+  `tools/retrievalmark`, answers from the files changed since the previous tag and prints a `RETRIEVAL: yes` or
+  `RETRIEVAL: no` line for the release's section here; `tools/releasegate` refuses a release without the line, or with
+  a `no` the files contradict. The retrieval zone it judges against is listed in `docs/architecture.md`. A consumer
+  that uses only the retrieval packages can skip its parity and recall checks on a `no` release. Of the 30 releases
+  v1.51.1 to v1.76.0, 16 would have been `no`.
 
 ## [1.76.0] — 2026-10-26
 
