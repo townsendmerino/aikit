@@ -115,10 +115,10 @@ graph TD
         bench --> ann
     end
     ts["chunk/treesitter<br/><i>separate module</i>"] -.->|implements chunk.Chunker| chunk
-    gpu["gpu/* — 8 native CUDA/Metal backends<br/><i>separate modules, cgo, ~14.6k LOC</i>"]
+    gpu["gpu/* — device module + 6 CUDA/Metal backends<br/><i>separate modules; 4 live, 2 retired</i>"]
     gpu -.->|EnableGPU| ann
     gpu -.->|RegisterBackend #quot;cuda#quot;/#quot;metal#quot;| encoder
-    gpu -.->|RegisterResident| vision
+    gpu -.->|RegisterResident, retired backends only| vision
     ts --> gts["gotreesitter<br/>(pure Go, large grammars)"]
     embed --> xtext["golang.org/x/text"]
     embed -->|amd64 only| xsys["golang.org/x/sys"]
@@ -306,7 +306,7 @@ each by a different mechanism (CI enforces all three):
 |---|---|---|
 | `cogentcore/webgpu` (cgo) | would break the no-cgo promise | inverted behind `encoder.Backend`; lives in `goinfer/gpu`, not this repo |
 | `gotreesitter` (pure Go, ~large embedded grammars; pre-1.0 upstream) | payload size + upstream churn risk | separate module `chunk/treesitter`, registers via `chunk.Register`; its own tag series (§ Nested modules) |
-| CUDA/Metal bindings (cgo) — aikit's own native GPU backends | would break the no-cgo promise | `gpu/*`: a shared device-substrate module (`gpu`) plus 8 one-backend-per-module leaves (`anncuda`/`annmetal` → `FlatI8.EnableGPU`; `enccuda`/`encmetal` → `encoder.RegisterBackend("cuda"/"metal", …)`, the same seam `goinfer/gpu` uses; `qwencuda`/`qwenmetal` and `visioncuda`/`visionmetal` → `vision.RegisterResident`); each on its own tag series, pinned to the frozen `gpu/v0.35.x` device module by `tools/gpupins` (§ Nested modules); full detail in [`docs/task-native-gpu.md`](task-native-gpu.md) |
+| CUDA/Metal bindings — aikit's own native GPU backends | their dependencies (`purego`, `gocudrv`) and device code stay out of the core graph | `gpu/*`: a shared device-substrate module (`gpu`) plus 6 one-backend-per-module leaves. Four are live (`anncuda`/`annmetal` → `FlatI8.EnableGPU`; `enccuda`/`encmetal` → `encoder.RegisterBackend("cuda"/"metal", …)`, the same seam `goinfer/gpu` uses). Two are retired and frozen (`visioncuda`/`visionmetal` → `vision.RegisterResident`; they moved to goinfer, as did `qwencuda`/`qwenmetal`, which were deleted from this tree on 2026-11-10 and whose tags still resolve); each on its own tag series, pinned to the frozen `gpu/v0.35.x` device module by `tools/gpupins` (§ Nested modules); full detail in [`docs/task-native-gpu.md`](task-native-gpu.md) |
 
 ## Nested modules and their versions
 
@@ -321,8 +321,12 @@ different things per module:
 | `chunk/treesitter` | yes | `aikit v1.0.0`, a **minimum**: it needs only the `chunk.Chunker` contract, which is Hard tier | no |
 | `gpu` (device module) | yes, frozen on `gpu/v0.35.x`, fixes only | nothing | no |
 | `gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda`, `gpu/encmetal` | yes | `aikit v1.75.0` and `aikit/gpu v0.35.x`, a **freeze pin** held by `tools/gpupins` | yes |
-| `gpu/qwencuda`, `gpu/qwenmetal`, `gpu/visioncuda`, `gpu/visionmetal`, `gpu/webgpu` | retired: existing tags resolve, no further tags | as tagged | yes (not `webgpu`) |
+| `gpu/visioncuda`, `gpu/visionmetal` | retired: existing tags resolve, no further tags | as tagged | yes |
 | `benchmarks`, `examples/embedded-corpus`, `examples/gpu-ann`, `tools`, `tools/canary/vulnfixture` | **no: tree-only**, never tagged | a placeholder | yes, where it requires the root |
+
+Deleted from the tree, tags still resolving: `gpu/qwencuda` and `gpu/qwenmetal`
+(last tags `v0.1.1`), removed 2026-11-10 after confirming no `go.mod` in goinfer
+or ken required them. `gpu/webgpu` was removed with them; it never had a tag.
 
 Three things follow, and each has a check.
 

@@ -10,14 +10,14 @@
 // it by construction — so the only honest check runs from OUTSIDE the tree: a scratch
 // module, no replaces, GOWORK=off, and the public proxy as the only source.
 //
-// TWO TIERS, because one machine cannot compile all nine gpu modules:
+// TWO TIERS, because one machine cannot compile every gpu module:
 //   - resolve  (platform-INDEPENDENT): `go get module@version` + `go mod download` against
 //     the proxy. This tier alone would have caught the v0.0.0 404 on ANY OS, because it
 //     fetches the whole require graph. It runs and is judged even when compile is n/a.
 //   - compile  (platform-DEPENDENT): `go build module/...`. A platform-gated module on the
-//     wrong OS (the four *metal on Linux, the four *cuda on darwin) has no packages there;
+//     wrong OS (the *metal modules on Linux, the *cuda modules on darwin) has no packages there;
 //     that is n/a — neither ok nor FAIL — as gpu_device.sh classifies it. The union of a
-//     Linux run and a macOS run covers all nine.
+//     Linux run and a macOS run covers them all.
 //
 // WHAT THIS GATE CANNOT DO. A Go module tag is IMMUTABLE once the proxy fetches it, so a
 // red tag-triggered run cannot unpublish anything. It shortens detection of the "does not

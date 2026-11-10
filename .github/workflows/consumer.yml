@@ -17,9 +17,9 @@ name: consumer-resolution
 # complains" to "minutes after push"; the fix is a follow-up tag. PREVENTION lives in the
 # ordered tagging steps of RELEASING.md, not here. This gate reports; it does not prevent.
 #
-# TWO OSes ON PURPOSE. The compile tier is platform-dependent: the four *metal modules have
-# no packages on Linux and the four *cuda none on macOS, reported n/a (not FAIL) there. No
-# single runner compiles all nine, so both jobs fan out across ubuntu + macOS and the union
+# TWO OSes ON PURPOSE. The compile tier is platform-dependent: the *metal modules have
+# no packages on Linux and the *cuda modules none on macOS, reported n/a (not FAIL) there. No
+# single runner compiles them all, so both jobs fan out across ubuntu + macOS and the union
 # covers the tree — the same n/a arithmetic scripts/gpu_device.sh uses.
 #
 # EXIT CODES. The tool's contract is PASS=0, FAIL=1, INCONCLUSIVE=2 (proxy unreachable /
@@ -32,7 +32,7 @@ on:
     tags:
       - 'v*'                      # root: github.com/townsendmerino/aikit
       - 'gpu/v*'                  # gpu substrate
-      - 'gpu/*/v*'                # the eight backends
+      - 'gpu/*/v*'                # the gpu backends
       - 'chunk/treesitter/v*'     # treesitter chunker
   schedule:
     - cron: '0 6 * * 1'           # weekly, Mondays 06:00 UTC — the standing watch. Weekly is
@@ -79,7 +79,7 @@ jobs:
         run: go run -C tools ./consumergate --tag "${{ github.ref_name }}"
 
   # Scheduled standing watch (also the workflow_dispatch dry-run target): every published
-  # module @latest, on both OSes, whose union covers all nine gpu modules no single runner
+  # module @latest, on both OSes, whose union covers every gpu module no single runner
   # can. This is what catches a module that silently stops resolving between releases.
   watch:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'

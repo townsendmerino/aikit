@@ -4,8 +4,8 @@
 //
 // WHY THIS IS THE GATE AND NOT CI. The device tests need a GPU and no CI runner has one, so
 // the release ritual is the enforcement; this is the half that needs no hardware. The six
-// groups: all nine gpu modules build cgo-free; gofmt+vet on gpu/; golangci-lint across the
-// nine modules (the root CI job lints only the root module — `./...` stops at module
+// groups: every gpu module builds cgo-free; gofmt+vet on gpu/; golangci-lint across the
+// gpu modules (the root CI job lints only the root module — `./...` stops at module
 // boundaries); and the three kernel assertions (FMA lint, fma histogram, PTX reproducibility).
 //
 // CONTRACTS CARRIED FROM THE SHELL, verbatim in intent:
@@ -140,7 +140,7 @@ func checkFmtVet(root string) gate.Cell {
 // not just the version, is pinned.
 const golangciLint = gpumod.GolangciLint
 
-// (3) lint — the pinned golangci-lint across the nine modules. A preflight `version` run
+// (3) lint — the pinned golangci-lint across the gpu modules. A preflight `version` run
 // separates "the linter could not be built or run" (INCONCLUSIVE — could not judge, e.g. no
 // network to fetch it) from "the linter found issues" (FAIL); it also warms the build cache
 // so the per-module runs are fast. Modules with no buildable packages on this OS (go list

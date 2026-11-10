@@ -9,6 +9,13 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Removed
+
+- `gpu/qwencuda`, `gpu/qwenmetal` and `gpu/webgpu` are deleted from the tree. They were retired at v1.76.0 (the two
+  tower backends moved into goinfer; nothing imported `gpu/webgpu`). No `go.mod` in goinfer or ken required any of
+  them. Their existing tags (`gpu/qwencuda/v0.1.1`, `gpu/qwenmetal/v0.1.1` and earlier) keep resolving, so a build
+  pinned to one is unaffected; `gpu/webgpu` never had a tag. `gpu/visioncuda` and `gpu/visionmetal` stay, retired.
+
 ### Changed
 
 - `tools/gpupins` holds the four GPU backends that stay (`gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda`, `gpu/encmetal`)

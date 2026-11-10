@@ -3,13 +3,13 @@
 // print a verdict for the tag message. Run it on BOTH a Mac and an NVIDIA box; a gpu/ tag
 // needs both lines.
 //
-// THE ARITHMETIC IS THE CONTRACT. Each of the nine modules resolves to one of three states,
+// THE ARITHMETIC IS THE CONTRACT. Each gpu module resolves to one of three states,
 // and the split is the point:
 //   - ok      — tests ran and passed, with the passed/skipped counts shown (a module whose
 //     every test skipped also prints `ok` from `go test`, so the counts matter).
 //   - n/a     — no buildable packages on this OS (the four *metal on Linux, the four *cuda on
 //     darwin). Excluded from the tally, not counted red or green — which is what
-//     makes visible that NO SINGLE MACHINE COVERS ALL NINE.
+//     makes visible that NO SINGLE MACHINE COVERS THEM ALL.
 //   - FAIL    — tests failed, or (a distinct case) `go list` could not even load the
 //     packages, reported with the loader's own message rather than excused as a
 //     platform difference.

@@ -69,7 +69,7 @@ func moduleDirs(root string) (map[string]string, error) {
 }
 
 // copyModule copies the tracked files of the module at dir into dst, leaving out any
-// nested module below it (gpu/ holds eight).
+// nested module below it (gpu/ holds the backends).
 func copyModule(root, dir, dst string, dirs map[string]string) error {
 	cmd := exec.Command("git", "ls-files", "-z", "--", dir)
 	cmd.Dir = root

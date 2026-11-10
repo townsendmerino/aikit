@@ -401,8 +401,8 @@ jobs:
     name: gpu mechanical gate (${{ matrix.os }})
     # The mechanical half of the gpu pre-tag ritual, run in CI on BOTH OSes so CI and the
     # ritual run the IDENTICAL gate (tools/gpugate) — one check set, nothing to drift. The
-    # union covers all nine gpu modules: the four *metal build and lint only on darwin, the
-    # four *cuda only on Linux. golangci-lint across the nine modules is now actually RUN
+    # union covers every gpu module: the *metal ones build and lint only on darwin, the
+    # *cuda ones only on Linux. golangci-lint across the gpu modules is now actually RUN
     # here (it was installed-but-never-invoked before — a check that could not fail); the
     # gate pins its BUILD via `go run @v2.14.0`, so its bundled staticcheck matches every box.
     strategy:

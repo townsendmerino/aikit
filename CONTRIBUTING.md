@@ -27,7 +27,7 @@ aikit is **several Go modules in one repo**, not one:
 - `tools/` — the gate commands this file describes, its own module so
   nothing it needs shows up in the root module's own `go.mod`/`go.sum`;
 - `chunk/treesitter` — quarantines the `gotreesitter` dependency;
-- `gpu` + eight backend modules (`gpu/anncuda`, `gpu/annmetal`, …) —
+- `gpu` + its backend modules (`gpu/anncuda`, `gpu/annmetal`, …) —
   quarantine cgo (CUDA/Metal).
 
 See [`docs/architecture.md`](docs/architecture.md) for the full package DAG

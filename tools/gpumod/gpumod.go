@@ -1,5 +1,5 @@
 // Package gpumod holds the helpers the two gpu pre-tag gates (gpugate, gpudevice) share:
-// enumerating the nine gpu modules, reading the commit provenance a VERDICT line names, and
+// enumerating the gpu modules, reading the commit provenance a VERDICT line names, and
 // running a `go` subprocess under the environment those gates pin. It is HELPERS, not a
 // runner — the runner is tools/gate; this package decides nothing.
 package gpumod
@@ -47,10 +47,10 @@ func RepoRoot() (string, error) {
 	}
 }
 
-// ModuleDirs returns the nine gpu module directories relative to root ("gpu",
+// ModuleDirs returns every gpu module directory relative to root ("gpu",
 // "gpu/anncuda", …), sorted — the same enumeration the shells did with
 // `find gpu -name go.mod -exec dirname`. A break in one module is invisible from the
-// others, and none of them is in the root module's build, so every gate walks all nine.
+// others, and none of them is in the root module's build, so every gate walks them all.
 func ModuleDirs(root string) ([]string, error) {
 	var dirs []string
 	gpuRoot := filepath.Join(root, "gpu")

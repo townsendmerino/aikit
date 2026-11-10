@@ -9,7 +9,7 @@ name: gpu tag evidence
 # by decision (2026-08-26).
 #
 # What IS automatable is the EVIDENCE. The ritual requires the tagger to run
-# tools/gpudevice on BOTH a Mac and an NVIDIA box — no single machine covers all nine
+# tools/gpudevice on BOTH a Mac and an NVIDIA box — no single machine covers every gpu module
 # modules — and paste both VERDICT: lines into the annotated tag message. That step was
 # enforced by prose, which is to say by memory. This job reads the pushed tag's message and
 # fails if either half is missing.

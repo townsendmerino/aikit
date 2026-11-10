@@ -141,7 +141,7 @@ linters:
         text: "Error return value of `e\\.graph\\.Close` is not checked"
       # vision and audio are deprecated (they moved into goinfer, AX4). The retired tower backends and the vision
       # example import vision and stay as they are, frozen, so their SA1019 is expected; any other importer still fires.
-      - path: (gpu/(qwencuda|qwenmetal|visioncuda|visionmetal)/|examples/vision/)
+      - path: (gpu/(visioncuda|visionmetal)/|examples/vision/)
         linters: [staticcheck]
         text: "SA1019: .*townsendmerino/aikit/(vision|audio)"
 

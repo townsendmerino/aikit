@@ -73,7 +73,8 @@ Automated and CI-enforced.
 
 > **Frozen on `gpu/v0.35.x` since 2026-10-26: fixes only.** The device code goinfer uses moved into goinfer
 > (Track AX), and so did the four tower backends (`gpu/qwencuda`, `gpu/qwenmetal`, `gpu/visioncuda`,
-> `gpu/visionmetal`); they and `gpu/webgpu` are retired here and get no further tags. A fix to the device module
+> `gpu/visionmetal`); they and `gpu/webgpu` are retired here and get no further tags. `gpu/qwencuda`,
+> `gpu/qwenmetal` and `gpu/webgpu` were deleted from the tree on 2026-11-10; their tags still resolve. A fix to the device module
 > is tagged `gpu/v0.35.N` by the ritual below, then the four backends that stay follow with `gpupins --fix`.
 
 **Root CI does NOT exercise this module.** It is a separate module (`gpu/go.mod`) and its
@@ -117,9 +118,9 @@ Concretely:
    still the enforcement point (CI is advisory here by choice — see the note at the end).
 1. **Run the device half: `go run -C tools ./gpudevice`, on BOTH a Mac and an NVIDIA
    box.** Paste both `VERDICT:` lines into the tag message — this is the half the
-   mechanical gate cannot do for you. It runs all nine gpu modules' suites and reports
-   each ok / n/a / FAIL; the `n/a` state (the four `*metal` on Linux, the four `*cuda` on
-   darwin) is why **no single machine can cover all nine** — a Mac's verdict and an NVIDIA
+   mechanical gate cannot do for you. It runs every gpu module's suite and reports
+   each ok / n/a / FAIL; the `n/a` state (the `*metal` modules on Linux, the `*cuda` modules on
+   darwin) is why **no single machine can cover them all** — a Mac's verdict and an NVIDIA
    box's are different halves, and a `gpu/vX.Y.Z` tag needs both.
 
    > It replaced `cd gpu && CGO_ENABLED=0 go test ./...`, whose `./...` stopped at module
