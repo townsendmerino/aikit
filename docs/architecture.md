@@ -13,13 +13,18 @@ Four rules generate most of the structure:
 1. **The core stays pure Go (no cgo).** Enforced in CI (`CGO_ENABLED=0` build
    + a dependency-graph grep). Anything that would break this is pushed
    behind a seam (§ Backend) or into a separate module (§ Quarantines).
-2. **Packages are small leaves; the DAG stays shallow.** Most packages depend
-   on nothing but the stdlib. `encoder` is the one public composite; two
-   Go-internal packages (invisible to importers) cut duplication between
-   otherwise-independent leaves that had drifted apart: `bm25` and `sparse`
-   share `internal/accum` (a pooled scoring accumulator), and `ann` and
+2. **Packages are small leaves; the DAG stays shallow.** Enforced by a test:
+   [`internal/importrules`](../internal/importrules/importrules_test.go) holds
+   the exact list of aikit and external packages each core package imports,
+   and fails, naming the edge, when the tree and the list disagree
+   (§ Package DAG). Six packages import nothing but the stdlib and
+   `golang.org/x`; the longest chain in the library is three imports
+   (`hybrid` → `ann` → `linalg` → `mmap`). Two Go-internal packages
+   (invisible to importers) cut duplication between otherwise-independent
+   packages that had drifted apart: `bm25` and `sparse` share
+   `internal/accum` (a pooled scoring accumulator), and `ann`, `bm25` and
    `embed` share `internal/cursor` (the bounds-checked little-endian reader
-   behind HNSW/FlatI8's blob formats and GGUF's container format).
+   behind the HNSW/FlatI8 and BM25 blob formats and GGUF's container format).
 3. **Numerics are parity-pinned.** Every model-touching path (`embed`,
    `encoder`, the `linalg` quant kernels) is tested against golden fixtures
    produced by Python references in [`scripts/`](../scripts/) — see
@@ -51,29 +56,62 @@ Four rules generate most of the structure:
 
 ## Package DAG
 
+Drawn from the table in
+[`internal/importrules`](../internal/importrules/importrules_test.go), which
+`go test ./...` checks against `go list` on linux, windows and darwin, amd64 and
+arm64. A solid arrow is an import. If you change an import, the test fails
+until the table changes, and this diagram changes with the table.
+
 ```mermaid
 graph TD
     subgraph core ["aikit core (one module, pure Go, no cgo)"]
-        topk["topk<br/><i>bounded top-K heap</i>"]
-        ann["ann<br/><i>flat / FlatI8 / HNSW cosine ANN</i>"]
-        bm25["bm25<br/><i>identifier-aware lexical index</i>"]
-        sparse["sparse<br/><i>learned-sparse (SPLADE) index</i>"]
-        fuse["fuse<br/><i>RRF + RSF rank fusion</i>"]
-        chunk["chunk (+ regex, markdown, line)<br/><i>chunker registry</i>"]
+        subgraph leaves ["leaves: no aikit imports"]
+            topk["topk<br/><i>bounded top-K heap</i>"]
+            fuse["fuse<br/><i>RRF + RSF rank fusion</i>"]
+            chunk["chunk<br/><i>chunker registry + line chunker</i>"]
+            mmap["mmap<br/><i>read-only file mapping, SpanCache</i>"]
+            accum["internal/accum<br/><i>pooled scoring accumulator</i>"]
+            cursor["internal/cursor<br/><i>bounds-checked LE reader</i>"]
+        end
+        chunkers["chunk/regex, chunk/markdown<br/><i>chunkers</i>"]
         linalg["linalg<br/><i>SIMD f32/int8/int4 kernels</i>"]
         embed["embed<br/><i>Model2Vec + safetensors/GGUF loaders</i>"]
-        encoder["encoder<br/><i>BERT-family embedders (9 architectures) +<br/>SPLADE expansion + cross-encoder reranker</i>"]
-        vision["vision<br/><i>SigLIP/ViT image encoder</i>"]
+        bm25["bm25<br/><i>identifier-aware lexical index</i>"]
+        sparse["sparse<br/><i>learned-sparse (SPLADE) index</i>"]
+        ann["ann<br/><i>flat / FlatI8 / HNSW cosine ANN</i>"]
+        late["late<br/><i>MaxSim late-interaction reranker</i>"]
+        encoder["encoder<br/><i>BERT-family embedders +<br/>SPLADE expansion + cross-encoder reranker</i>"]
+        vision["vision<br/><i>SigLIP/ViT image encoder (deprecated)</i>"]
+        audio["audio<br/><i>Gemma 4 audio tower (deprecated)</i>"]
+        hybrid["hybrid<br/><i>dense + lexical + fuse.RRF wrapper</i>"]
         bench["bench<br/><i>recall + latency harness</i>"]
+
+        chunkers --> chunk
+        linalg --> mmap
+        embed --> mmap
+        embed --> cursor
+        bm25 --> topk
+        bm25 --> mmap
+        bm25 --> accum
+        bm25 --> cursor
+        sparse --> topk
+        sparse --> accum
+        ann --> linalg
+        ann --> topk
+        ann --> mmap
+        ann --> cursor
+        late --> linalg
+        late --> topk
         encoder --> embed
         encoder --> linalg
         encoder --> sparse
         vision --> embed
         vision --> linalg
-        ann --> linalg
-        ann --> topk
-        bm25 --> topk
-        sparse --> topk
+        audio --> embed
+        audio --> linalg
+        hybrid --> ann
+        hybrid --> bm25
+        hybrid --> fuse
         bench --> ann
     end
     ts["chunk/treesitter<br/><i>separate module</i>"] -.->|implements chunk.Chunker| chunk
@@ -83,27 +121,58 @@ graph TD
     gpu -.->|RegisterResident| vision
     ts --> gts["gotreesitter<br/>(pure Go, large grammars)"]
     embed --> xtext["golang.org/x/text"]
+    embed -->|amd64 only| xsys["golang.org/x/sys"]
+    mmap -->|darwin only| xsys
 ```
 
-Everything not shown depending on something depends only on the stdlib.
-`topk`, `fuse`, `chunk`, and `linalg` are leaves; the index packages (`ann`,
-`bm25`, `sparse`) use `topk` for selection, and since v1.2 `ann` scores
-through `linalg`'s SIMD dot kernels; `embed` adds the one external dependency
-(`golang.org/x/text`, for tokenizer normalization); `encoder`, `vision`, and
-`bench` are the composites. `encoder` also imports `sparse` directly:
-`encoder.SPLADE.Expand` produces the `sparse.SparseVec` values the `sparse`
-package indexes, so the SPLADE loop (BERT + masked-LM head → sparse vector →
-inverted index) runs end-to-end in-process. `vision` (the SigLIP/ViT image
-encoder) is a new leaf consumer on `embed`+`linalg` and adds **no** external
-dependency — its image decode uses only stdlib codecs (`image/jpeg`,
-`image/png`), and like `encoder` it exposes an import-free GPU-export seam
-(`GPUWeights`) plus a `RegisterResident` inversion so a WebGPU backend (e.g.
-goinfer's) plugs in without the core importing it. The dotted edges are
-registry-based, not imports: `chunk/treesitter` registers itself via
-`chunk.Register` on import, and each `gpu/*` backend registers itself via the
-matching seam (`FlatI8.EnableGPU`, `encoder.RegisterBackend`,
-`vision.RegisterResident`) on import — see § Quarantines and
-[`docs/task-native-gpu.md`](task-native-gpu.md) for the full backend-by-backend
+Not drawn, but in the table: the four `examples/*` programs and
+`bench/cmd/benchreport`, which sit on top and which nothing imports, and
+`internal/importrules` itself. Test-only imports are not in the table either
+(`ann`'s tests import `embed` and `fuse`, for one); the rule is about what an
+importer's build pulls in.
+
+**Leaves.** `topk`, `fuse`, `chunk`, `mmap`, `internal/accum` and
+`internal/cursor` import no aikit package. `mmap` is the newest of them and
+the one most of the tree now rests on: it is the read-only file mapping under
+every loader that maps a blob from disk instead of copying it.
+
+**One step up.** `linalg` imports `mmap` and nothing else, so it is no longer
+a leaf. `embed` imports `mmap` and `internal/cursor`. `sparse` imports `topk`
+and `internal/accum`. `bm25` imports `topk`, `internal/accum`,
+`internal/cursor` and `mmap`: its postings arena maps from disk and its blob
+format is read through the shared cursor. `chunk/regex` and `chunk/markdown`
+import `chunk`; the line chunker is a file in `chunk`, not a package.
+
+**Two steps up.** `ann` selects through `topk`, scores through `linalg`'s SIMD
+dot kernels, reads its blobs through `internal/cursor` and maps them through
+`mmap`. `late` (ColBERT-style MaxSim reranking) imports `linalg` and `topk`.
+`encoder`, `vision` and `audio` are the model towers, each on `embed` +
+`linalg`. `encoder` also imports `sparse`: `encoder.SPLADE.Expand` produces
+the `sparse.SparseVec` values the `sparse` package indexes, so the SPLADE loop
+(BERT + masked-LM head → sparse vector → inverted index) runs end-to-end
+in-process. `vision` and `audio` are deprecated and frozen at v1.75.0; they
+moved to goinfer (see the README).
+
+**Three steps up.** `hybrid` composes `ann`, `bm25` and `fuse`; `bench`
+imports `ann`. Nothing in the library is deeper.
+
+**External dependencies.** Two modules, three imports, all in the table:
+`embed` imports `golang.org/x/text/unicode/norm` (tokenizer normalization) on
+every platform and `golang.org/x/sys/cpu` on amd64 (feature detection for the
+Q4_K dequant kernel); `mmap` imports `golang.org/x/sys/unix` on darwin only
+(`madvise`). No other package imports anything outside the stdlib and aikit.
+`vision` adds none: its image decode uses only stdlib codecs (`image/jpeg`,
+`image/png`).
+
+**The dotted edges are registry-based, not imports**, and the same test
+asserts that no core package reaches `gpu/` or `chunk/treesitter`, directly or
+through a dependency. `chunk/treesitter` registers itself via `chunk.Register`
+on import, and each `gpu/*` backend registers itself via the matching seam
+(`FlatI8.EnableGPU`, `encoder.RegisterBackend`, `vision.RegisterResident`) on
+import. Like `encoder`, `vision` exposes an import-free GPU-export seam
+(`GPUWeights`) plus the `RegisterResident` inversion, so a WebGPU backend
+(e.g. goinfer's) plugs in without the core importing it. See § Quarantines and
+[`docs/task-native-gpu.md`](task-native-gpu.md) for the backend-by-backend
 detail (device substrate, per-seam kernels, parity gates).
 
 ## Repo ecosystem

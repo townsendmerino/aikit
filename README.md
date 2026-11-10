@@ -255,7 +255,7 @@ Two tiers define aikit's compatibility promise: the Hard tier follows semver
 (no breaking change before a v2.0), verified by `apidiff` on every tagged
 release (`tools/releasegate`, enforced since v1.0 — see `RELEASING.md`); the
 Experimental tier is explicitly excluded from that promise and may change in
-any release until it graduates. aikit is at v1.21.0; the Hard tier has held
+any release until it graduates. aikit is at v1.76.0; the Hard tier has held
 backward-compatible across every release since 1.0.
 
 ### Hard — the semver-covered surface
@@ -519,7 +519,7 @@ Regenerate the committed golden fixtures:
 
 ## Versioning
 
-aikit is past 1.0 — current release: **v1.21.0** (see the
+aikit is past 1.0 — current release: **v1.76.0** (see the
 [CHANGELOG](CHANGELOG.md)). **v0.4.0** split the LLM runtime out to `goinfer`,
 promoted `linalg` to public, and added the `encoder.Backend` seam — the last
 Hard-tier-affecting break before 1.0. The Hard tier has held

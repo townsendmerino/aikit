@@ -14,6 +14,11 @@ excluded from that promise and may change in any release until it graduates.
 - `tools/gpupins` holds the four GPU backends that stay (`gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda`, `gpu/encmetal`)
   to their freeze: a root `aikit` require other than v1.75.0 now fails the check, as a `gpu` require off the v0.35.x
   series already did. `--fix` still writes only the `gpu` require. No module's requirements change.
+- A new test, `internal/importrules`, pins the core module's import graph: the aikit and external packages each
+  package imports, checked against `go list` for linux, windows and darwin on amd64 and arm64, and that nothing in the
+  core reaches `gpu/` or `chunk/treesitter`. `docs/architecture.md`'s package diagram is redrawn from it. No import
+  and no public API changes.
+- README: the two "current release" lines said v1.21.0; they say v1.76.0.
 
 ## [1.76.0] — 2026-10-26
 
