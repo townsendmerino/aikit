@@ -104,6 +104,15 @@ func TestMatmulBTQ8Into_parallelScratchPooled(t *testing.T) {
 	for range 4 {
 		MatmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N) // warm the pool
 	}
+	if raceEnabled {
+		// sync.Pool.Put drops one item in four under the race detector (sync/pool.go,
+		// "Randomly drop x on floor"), so each worker's scratch is re-made about one
+		// call in four and the count below measures the detector, not the pool.
+		// Measured at 4 workers: always 5 allocs/call without -race; 6 to 8 with it,
+		// against a bound of 7. It failed CI once that way (2026-11-10). The parallel
+		// path has still run above, which is what -race is here to watch.
+		t.Skip("allocation count not judged under -race: sync.Pool drops 1 Put in 4 there")
+	}
 	workers := resolveWidth(0)
 	allocs := testing.AllocsPerRun(20, func() {
 		MatmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
