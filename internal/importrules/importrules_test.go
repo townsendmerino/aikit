@@ -302,7 +302,8 @@ func TestREADMEPackageTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, sec, ok := strings.Cut(string(readme), "\n## Packages\n")
+	// A Windows checkout may store CRLF.
+	_, sec, ok := strings.Cut(strings.ReplaceAll(string(readme), "\r\n", "\n"), "\n## Packages\n")
 	if !ok {
 		t.Fatal("README.md has no '## Packages' section")
 	}

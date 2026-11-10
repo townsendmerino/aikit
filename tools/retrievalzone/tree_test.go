@@ -52,7 +52,7 @@ func TestArchitectureDocListsTheZone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, sec, ok := strings.Cut(string(doc), "\n## Retrieval zone\n")
+	_, sec, ok := strings.Cut(strings.ReplaceAll(string(doc), "\r\n", "\n"), "\n## Retrieval zone\n")
 	if !ok {
 		t.Fatal("docs/architecture.md has no '## Retrieval zone' section")
 	}
