@@ -186,7 +186,7 @@ func checkHead(cfg config, root, mod string, dirs map[string]string) gate.Cell {
 	if err != nil {
 		return incon(err.Error())
 	}
-	defer os.RemoveAll(tmp)
+	defer os.RemoveAll(tmp) //nolint:errcheck // a scratch copy under the OS temp dir: nothing to report
 	if err := copyModule(root, dir, tmp, dirs); err != nil {
 		return incon(err.Error())
 	}
