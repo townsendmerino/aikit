@@ -370,6 +370,29 @@ jobs:
       - name: gpu backend pins
         run: go run -C tools ./gpupins
 
+  tools:
+    name: tools module (vet + tests)
+    # tools/ is its own module, so the root jobs' `./...` never reaches it. Its tests were
+    # hand-run until 2026-11-10, which left the gates' own logic unchecked in CI: among them
+    # tools/retrievalzone's compile proof (the retrieval zone type-checks with every file
+    # the walk calls unreached deleted), which is what the RETRIEVAL mark's "no" rests on.
+    runs-on: ubuntu-latest
+    env:
+      GOWORK: "off" # quoted: unquoted `off` is a YAML boolean
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+      - name: vet
+        working-directory: tools
+        run: go vet ./...
+      - name: test
+        working-directory: tools
+        run: go test ./...
+
   nested-required:
     name: nested modules at their required versions (${{ matrix.os }})
     # Most nested modules commit `replace` directives into the tree, so every other job here

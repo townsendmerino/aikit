@@ -41,6 +41,8 @@ excluded from that promise and may change in any release until it graduates.
   `GOWORK=off` against the proxy (and tests it, outside `gpu/`). `chunk/treesitter` also gets a leg against the tree.
   `docs/architecture.md` gains a section on how the nested modules are versioned; it and the README no longer say
   `chunk/treesitter` is versioned in lockstep with the core. No module's requirements change.
+- CI now vets and tests the `tools` module (a new `tools module` job). Its tests were hand-run before, including the
+  check the `RETRIEVAL` mark rests on.
 
 ## [1.76.0] — 2026-10-26
 
