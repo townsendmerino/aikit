@@ -1,0 +1,176 @@
+USED	Arg	func	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+FREE	ArgNull	func
+USED	ArgValue	func	gpu/enccuda,gpu/enccuda (tests)
+FREE	AttentionGrid	func
+FREE	AttentionSegTiledLaunchConfig	func
+FREE	AttentionTiledEligible	func
+FREE	AttentionTiledLaunchConfig	func
+FREE	AttentionTiledMinNP	const
+FREE	AttnTiledKTile	const
+FREE	AttnTiledMaxHD	const
+FREE	AttnTiledQTile	const
+USED	Buffer	type	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+FREE	Buffer.At	method
+USED	Buffer.Len	method	gpu/anncuda,gpu/anncuda (tests)
+USED	Buffer.SetU32	method	gpu/anncuda,gpu/anncuda (tests)
+FREE	CopyDevice	func
+FREE	CopyDeviceBatch	func
+USED	CreateSystemDefaultDevice	func	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+USED	Device	type	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+FREE	Device.BindCurrentThread	method
+USED	Device.CompileLibrary	method	gpu/anncuda,gpu/anncuda (tests)
+FREE	Device.Context	method
+FREE	Device.LedgerLen	method
+FREE	Device.MaxSharedBytesPerBlockOptIn	method
+FREE	Device.MustBuf	method
+USED	Device.Name	method	gpu/anncuda (tests)
+FREE	Device.NewBufferBytes	method
+USED	Device.NewBufferLen	method	gpu/anncuda,gpu/anncuda (tests)
+USED	Device.NewCommandQueue	method	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+USED	Device.NewComputePipeline	method	gpu/anncuda,gpu/anncuda (tests)
+FREE	Device.NewEvent	method
+FREE	Device.NewMappedHostBuffer	method
+FREE	Device.NewQuantGEMV	method
+USED	Device.NewViT	method	gpu/enccuda,gpu/enccuda (tests)
+FREE	Device.RegisterMappedHostBuffer	method
+FREE	Device.ReleaseAll	method
+USED	Device.ReleaseBuf	method	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+USED	Device.ReleaseObjects	method	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+USED	Device.SMCount	method	gpu/anncuda,gpu/anncuda (tests)
+FREE	Device.TrackObj	method
+FREE	DeviceCopy	type
+FREE	DeviceCopy.Bytes	field
+FREE	DeviceCopy.Dst	field
+FREE	DeviceCopy.Src	field
+USED	Download	func	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+FREE	Encoder	type
+FREE	Encoder.Dispatch	method
+FREE	Encoder.End	method
+FREE	Encoder.Err	method
+FREE	Event	type
+FREE	Event.Sync	method
+FREE	GEMMTile	const
+FREE	GEMVGrid	func
+FREE	GEMVWarpsPerBlock	const
+FREE	Graph	type
+FREE	Graph.Close	method
+FREE	Graph.Replay	method
+USED	Grid1D	func	gpu/anncuda,gpu/anncuda (tests)
+FREE	GridOne	func
+USED	HostBuffer	type	gpu/enccuda,gpu/enccuda (tests)
+USED	HostBuffer.Close	method	gpu/enccuda,gpu/enccuda (tests)
+FREE	HostBuffer.Len	method
+USED	HostBuffer.Slice	method	gpu/enccuda,gpu/enccuda (tests)
+USED	HostCopy	type	gpu/anncuda,gpu/anncuda (tests)
+USED	HostCopy.Dst	field	gpu/anncuda,gpu/anncuda (tests)
+USED	HostCopy.Src	field	gpu/anncuda,gpu/anncuda (tests)
+FREE	IntRegBlock	const
+FREE	IntRegK	const
+FREE	KernelAddBias	const
+FREE	KernelAddVec	const
+FREE	KernelArg	type
+FREE	KernelAttention	const
+FREE	KernelAttentionSeg	const
+FREE	KernelAttentionSegTiled	const
+FREE	KernelAttentionTiled	const
+FREE	KernelGELUErf	const
+FREE	KernelGELUTanh	const
+FREE	KernelGEMMF32	const
+FREE	KernelGEMMF32Bias	const
+FREE	KernelGEMMF32BiasAdd	const
+FREE	KernelGEMMF32Reg	const
+FREE	KernelGEMMF32Tiled	const
+FREE	KernelGEMMW8A8	const
+FREE	KernelGEMMW8A8Bias	const
+FREE	KernelGEMMW8A8BiasAdd	const
+FREE	KernelGEMMW8A8Reg	const
+FREE	KernelGEMMW8A8Tiled	const
+FREE	KernelGEMVW4A8	const
+FREE	KernelGEMVW8A8	const
+FREE	KernelLayerNorm	const
+FREE	KernelQuantRows	const
+FREE	KernelRMSNorm	const
+FREE	KernelRopeQK	const
+FREE	KernelSiLUMul	const
+USED	LaunchConfig	type	gpu/anncuda,gpu/anncuda (tests)
+USED	LaunchConfig.BlockX	field	gpu/anncuda,gpu/anncuda (tests)
+USED	LaunchConfig.BlockY	field	gpu/anncuda,gpu/anncuda (tests)
+USED	LaunchConfig.BlockZ	field	gpu/anncuda,gpu/anncuda (tests)
+USED	LaunchConfig.GridX	field	gpu/anncuda,gpu/anncuda (tests)
+USED	LaunchConfig.GridY	field	gpu/anncuda,gpu/anncuda (tests)
+USED	LaunchConfig.GridZ	field	gpu/anncuda,gpu/anncuda (tests)
+USED	LaunchConfig.SharedMemBytes	field	gpu/anncuda,gpu/anncuda (tests)
+USED	Library	type	gpu/anncuda (tests)
+FREE	MappedHostBuffer	type
+FREE	MappedHostBuffer.Buffer	method
+FREE	MappedHostBuffer.Bytes	method
+FREE	MappedHostBuffer.Close	method
+FREE	MappedHostBuffer.Host	method
+USED	NewBufferLenOf	func	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+USED	NewBufferOf	func	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+USED	NewHostBuffer	func	gpu/enccuda,gpu/enccuda (tests)
+USED	Pipeline	type	gpu/anncuda,gpu/anncuda (tests)
+FREE	Pipeline.MaxDynamicSharedBytes	method
+FREE	Pipeline.SetMaxDynamicSharedBytes	method
+FREE	QuantGEMV	type
+FREE	QuantGEMV.W4A8	field
+FREE	QuantGEMV.W8A8	field
+FREE	QuantGEMVPTX	var
+USED	Queue	type	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+FREE	Queue.Begin	method
+FREE	Queue.Capture	method
+USED	Queue.Launch	method	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+FREE	Queue.LaunchDirect	method
+FREE	Queue.Record	method
+USED	Queue.Run1D	method	gpu/anncuda,gpu/anncuda (tests)
+FREE	Queue.Run1DBatch	method
+USED	Queue.Sync	method	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+USED	Queue.UploadAsync	method	gpu/enccuda,gpu/enccuda (tests)
+FREE	Queue.UploadAsyncAt	method
+FREE	Queue.UploadAsyncAtFrom	method
+FREE	Queue.Wait	method
+FREE	Queue.ZeroAsync	method
+FREE	RTM	const
+FREE	RTN	const
+USED	ReadToHost	func	gpu/enccuda,gpu/enccuda (tests)
+FREE	RegBlock	const
+FREE	RegK	const
+FREE	RowGrid	func
+FREE	Scalar	type
+FREE	SegAttentionGrid	func
+FREE	TileGrid	func
+USED	Upload	func	gpu/anncuda,gpu/anncuda (tests),gpu/enccuda,gpu/enccuda (tests)
+USED	UploadBatch	func	gpu/anncuda,gpu/anncuda (tests)
+USED	ViT	type	gpu/enccuda,gpu/enccuda (tests)
+FREE	ViT.AddBias	field
+FREE	ViT.AddVec	field
+FREE	ViT.Attention	field
+FREE	ViT.AttentionPlan	method
+FREE	ViT.AttentionSeg	field
+FREE	ViT.AttentionSegTiled	field
+FREE	ViT.AttentionTiled	field
+FREE	ViT.GELUErf	field
+FREE	ViT.GELUTanh	field
+FREE	ViT.GEMMF32	field
+FREE	ViT.GEMMF32Bias	field
+FREE	ViT.GEMMF32BiasAdd	field
+FREE	ViT.GEMMF32BiasAddPlan	method
+FREE	ViT.GEMMF32BiasPlan	method
+USED	ViT.GEMMF32Plan	method	gpu/enccuda,gpu/enccuda (tests)
+FREE	ViT.GEMMF32Reg	field
+FREE	ViT.GEMMF32Tiled	field
+FREE	ViT.GEMMW8A8	field
+FREE	ViT.GEMMW8A8Bias	field
+FREE	ViT.GEMMW8A8BiasAdd	field
+FREE	ViT.GEMMW8A8BiasAddPlan	method
+FREE	ViT.GEMMW8A8BiasPlan	method
+FREE	ViT.GEMMW8A8Plan	method
+FREE	ViT.GEMMW8A8Reg	field
+FREE	ViT.GEMMW8A8Tiled	field
+FREE	ViT.LayerNorm	field
+FREE	ViT.QuantRows	field
+FREE	ViT.RMSNorm	field
+FREE	ViT.RopeQK	field
+FREE	ViT.SiLUMul	field
+FREE	ViTBlock	const
+FREE	ViTPTX	var

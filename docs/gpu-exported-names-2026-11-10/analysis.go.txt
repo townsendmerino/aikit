@@ -1,0 +1,170 @@
+// gpuapi lists the exported API of package gpu for the current GOOS/GOARCH and which
+// of it the given consumer packages reference. One-off analysis; stdlib only.
+//
+//	GOOS=darwin GOARCH=arm64 go run . <repo root> <consumer dir>...
+//
+// Output: one line per exported name, "USED <key> <kind> <by>" or "FREE <key> <kind>".
+package main
+
+import (
+	"fmt"
+	"go/ast"
+	"go/build"
+	"go/importer"
+	"go/parser"
+	"go/token"
+	"go/types"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+)
+
+const gpuPath = "github.com/townsendmerino/aikit/gpu"
+
+func main() {
+	root := os.Args[1]
+	fset := token.NewFileSet()
+	imp := importer.ForCompiler(fset, "source", nil).(types.ImporterFrom)
+
+	gpu, err := imp.ImportFrom(gpuPath, filepath.Join(root, os.Args[2]), 0)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "import gpu:", err)
+		os.Exit(2)
+	}
+
+	// The exported API: package-level names, exported methods and fields of exported types.
+	keys := map[types.Object]string{}
+	kind := map[string]string{}
+	add := func(o types.Object, key, k string) { keys[o] = key; kind[key] = k }
+	scope := gpu.Scope()
+	for _, name := range scope.Names() {
+		o := scope.Lookup(name)
+		if !o.Exported() {
+			continue
+		}
+		switch o := o.(type) {
+		case *types.Func:
+			add(o, name, "func")
+		case *types.Var:
+			add(o, name, "var")
+		case *types.Const:
+			add(o, name, "const")
+		case *types.TypeName:
+			add(o, name, "type")
+			named, ok := o.Type().(*types.Named)
+			if !ok {
+				continue
+			}
+			for i := 0; i < named.NumMethods(); i++ {
+				if m := named.Method(i); m.Exported() {
+					add(m, name+"."+m.Name(), "method")
+				}
+			}
+			switch u := named.Underlying().(type) {
+			case *types.Struct:
+				for i := 0; i < u.NumFields(); i++ {
+					if f := u.Field(i); f.Exported() {
+						add(f, name+"."+f.Name(), "field")
+					}
+				}
+			case *types.Interface:
+				for i := 0; i < u.NumExplicitMethods(); i++ {
+					if m := u.ExplicitMethod(i); m.Exported() {
+						add(m, name+"."+m.Name(), "ifacemethod")
+					}
+				}
+			}
+		}
+	}
+
+	usedBy := map[string]map[string]bool{}
+	nerr := 0
+	check := func(dir, label string, files []string) {
+		if len(files) == 0 {
+			return
+		}
+		var parsed []*ast.File
+		for _, f := range files {
+			af, err := parser.ParseFile(fset, filepath.Join(dir, f), nil, 0)
+			if err != nil {
+				fmt.Fprintln(os.Stderr, "parse:", err)
+				os.Exit(2)
+			}
+			parsed = append(parsed, af)
+		}
+		info := &types.Info{Uses: map[*ast.Ident]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}}
+		conf := types.Config{Importer: importerAt{imp, dir}, Error: func(err error) {
+			nerr++
+			if nerr <= 5 {
+				fmt.Fprintln(os.Stderr, "typecheck:", err)
+			}
+		}}
+		conf.Check(label, fset, parsed, info) //nolint:errcheck // errors are counted above
+		mark := func(o types.Object) {
+			if f, ok := o.(*types.Func); ok {
+				o = f.Origin()
+			}
+			if v, ok := o.(*types.Var); ok {
+				o = v.Origin()
+			}
+			if key, ok := keys[o]; ok {
+				if usedBy[key] == nil {
+					usedBy[key] = map[string]bool{}
+				}
+				usedBy[key][label] = true
+			}
+		}
+		for _, o := range info.Uses {
+			mark(o)
+		}
+		for _, s := range info.Selections {
+			mark(s.Obj())
+		}
+	}
+	for _, rel := range os.Args[2:] {
+		dir := filepath.Join(root, rel)
+		bp, err := build.Default.ImportDir(dir, 0)
+		if err != nil {
+			if _, ok := err.(*build.NoGoError); ok {
+				fmt.Fprintf(os.Stderr, "note: %s has no Go files for %s/%s\n", rel, build.Default.GOOS, build.Default.GOARCH)
+				continue
+			}
+			fmt.Fprintln(os.Stderr, "importdir:", err)
+			os.Exit(2)
+		}
+		check(dir, rel, bp.GoFiles)
+		check(dir, rel+" (tests)", append(append([]string{}, bp.GoFiles...), bp.TestGoFiles...))
+		check(dir, rel+" (tests)", bp.XTestGoFiles)
+	}
+	if nerr > 0 {
+		fmt.Fprintf(os.Stderr, "typecheck errors: %d\n", nerr)
+	}
+
+	var all []string
+	for k := range kind {
+		all = append(all, k)
+	}
+	sort.Strings(all)
+	for _, k := range all {
+		if by := usedBy[k]; len(by) > 0 {
+			var who []string
+			for w := range by {
+				who = append(who, w)
+			}
+			sort.Strings(who)
+			fmt.Printf("USED\t%s\t%s\t%s\n", k, kind[k], strings.Join(who, ","))
+		} else {
+			fmt.Printf("FREE\t%s\t%s\n", k, kind[k])
+		}
+	}
+}
+
+// importerAt resolves imports from a fixed source directory, so each consumer's own
+// go.mod (and its replace directives) decides what an import path means.
+type importerAt struct {
+	imp types.ImporterFrom
+	dir string
+}
+
+func (i importerAt) Import(path string) (*types.Package, error) { return i.imp.ImportFrom(path, i.dir, 0) }

@@ -1,0 +1,160 @@
+FREE	ARPool	type
+FREE	ARPool.Drain	method
+FREE	AttentionSegTiledDispatch	func
+FREE	AttentionTiledDispatch	func
+FREE	AttentionTiledEligible	func
+FREE	AttentionTiledEnabledOnMetal	const
+FREE	AttentionTiledMinNP	const
+FREE	AttnTiledKTile	const
+FREE	AttnTiledMaxHD	const
+FREE	AttnTiledQTile	const
+USED	Buffer	type	gpu/annmetal,gpu/annmetal (tests),gpu/encmetal,gpu/encmetal (tests)
+USED	Buffer.At	method	gpu/annmetal,gpu/annmetal (tests)
+USED	Buffer.Floats	method	gpu/annmetal,gpu/annmetal (tests),gpu/encmetal,gpu/encmetal (tests)
+USED	Buffer.Int8s	method	gpu/annmetal,gpu/annmetal (tests)
+USED	Buffer.Len	method	gpu/annmetal,gpu/annmetal (tests)
+USED	Buffer.SetU32	method	gpu/annmetal,gpu/annmetal (tests),gpu/encmetal,gpu/encmetal (tests)
+FREE	Buffer.U16s	method
+FREE	Buffer.U32	method
+USED	Buffer.U32s	method	gpu/annmetal,gpu/annmetal (tests)
+FREE	CopyDevice	func
+FREE	CopyDeviceBatch	func
+USED	CreateSystemDefaultDevice	func	gpu/annmetal,gpu/annmetal (tests),gpu/encmetal,gpu/encmetal (tests)
+USED	Device	type	gpu/annmetal,gpu/annmetal (tests),gpu/encmetal,gpu/encmetal (tests)
+USED	Device.CompileLibrary	method	gpu/annmetal,gpu/annmetal (tests)
+FREE	Device.CompileLibraryPrecise	method
+USED	Device.CurrentAllocatedSize	method	gpu/annmetal (tests)
+FREE	Device.LedgerLen	method
+FREE	Device.MaxThreadgroupMemoryLength	method
+FREE	Device.MustBuf	method
+USED	Device.Name	method	gpu/annmetal (tests)
+FREE	Device.NewBufferBytes	method
+USED	Device.NewBufferLen	method	gpu/annmetal,gpu/annmetal (tests),gpu/encmetal,gpu/encmetal (tests)
+USED	Device.NewBufferNoCopy	method	gpu/annmetal,gpu/annmetal (tests)
+USED	Device.NewCommandQueue	method	gpu/annmetal,gpu/annmetal (tests),gpu/encmetal,gpu/encmetal (tests)
+USED	Device.NewComputePipeline	method	gpu/annmetal,gpu/annmetal (tests)
+FREE	Device.NewResidencySet	method
+FREE	Device.NewSharedEvent	method
+USED	Device.NewViT	method	gpu/encmetal,gpu/encmetal (tests)
+USED	Device.ReleaseAll	method	gpu/annmetal (tests),gpu/encmetal,gpu/encmetal (tests)
+USED	Device.ReleaseBuf	method	gpu/annmetal,gpu/annmetal (tests),gpu/encmetal,gpu/encmetal (tests)
+USED	Device.ReleaseObjects	method	gpu/annmetal,gpu/annmetal (tests),gpu/encmetal,gpu/encmetal (tests)
+FREE	Device.TrackObj	method
+FREE	DeviceCopy	type
+FREE	DeviceCopy.Bytes	field
+FREE	DeviceCopy.Dst	field
+FREE	DeviceCopy.Src	field
+FREE	Download	func
+FREE	Encoder	type
+FREE	Encoder.Commit	method
+USED	Encoder.Dispatch	method	gpu/annmetal (tests)
+FREE	Encoder.Dispatch2D	method
+FREE	Encoder.DispatchTG	method
+FREE	Encoder.DrainPool	method
+USED	Encoder.End	method	gpu/annmetal (tests)
+USED	Encoder.Err	method	gpu/annmetal (tests)
+FREE	Encoder.EventBoundary	method
+FREE	Encoder.FinishEncoding	method
+USED	Encoder.GPUEnd	method	gpu/annmetal (tests)
+USED	Encoder.GPUStart	method	gpu/annmetal (tests)
+FREE	Encoder.KernEnd	method
+FREE	Encoder.KernStart	method
+FREE	Encoder.ReadTimes	method
+FREE	Encoder.UseResidencySet	method
+FREE	Encoder.WaitDone	method
+FREE	GEMMTile	const
+FREE	HostCopy	type
+FREE	HostCopy.Dst	field
+FREE	HostCopy.Src	field
+FREE	IntRegBlock	const
+FREE	IntRegK	const
+FREE	KernelAddBias	const
+FREE	KernelAddVec	const
+FREE	KernelAttention	const
+FREE	KernelAttentionSeg	const
+FREE	KernelAttentionSegTiled	const
+FREE	KernelAttentionTiled	const
+FREE	KernelGELUErf	const
+FREE	KernelGELUTanh	const
+FREE	KernelGEMMF32	const
+FREE	KernelGEMMF32Bias	const
+FREE	KernelGEMMF32BiasAdd	const
+FREE	KernelGEMMF32SG	const
+FREE	KernelGEMMF32SGBig	const
+FREE	KernelGEMMF32Tiled	const
+FREE	KernelGEMMW8A8	const
+FREE	KernelGEMMW8A8Bias	const
+FREE	KernelGEMMW8A8BiasAdd	const
+FREE	KernelGEMMW8A8Reg	const
+FREE	KernelGEMMW8A8Tiled	const
+FREE	KernelLayerNorm	const
+FREE	KernelQuantRows	const
+FREE	KernelRMSNorm	const
+FREE	KernelRopeQK	const
+FREE	KernelSiLUMul	const
+USED	MSL3_1	const	gpu/annmetal,gpu/annmetal (tests)
+FREE	NewARPool	func
+FREE	NewBufferLenOf	func
+USED	NewBufferOf	func	gpu/annmetal,gpu/annmetal (tests),gpu/encmetal,gpu/encmetal (tests)
+USED	Pipeline	type	gpu/annmetal,gpu/annmetal (tests)
+USED	Pipeline.ThreadExecutionWidth	method	gpu/annmetal,gpu/annmetal (tests)
+USED	Queue	type	gpu/annmetal,gpu/annmetal (tests),gpu/encmetal,gpu/encmetal (tests)
+FREE	Queue.AddResidencySet	method
+USED	Queue.Begin	method	gpu/annmetal (tests)
+FREE	Queue.BeginNP	method
+USED	Queue.Run1D	method	gpu/annmetal,gpu/annmetal (tests)
+FREE	Queue.Run1DBatch	method
+FREE	Queue.Run1DBatchTG	method
+FREE	Queue.Run1DTG	method
+USED	Queue.Run2D	method	gpu/annmetal,gpu/annmetal (tests),gpu/encmetal,gpu/encmetal (tests)
+FREE	ResidencySet	type
+FREE	ResidencySet.Add	method
+FREE	ResidencySet.AddAllDeviceBuffers	method
+FREE	ResidencySet.AddAllDeviceBuffersExcept	method
+FREE	ResidencySet.Commit	method
+FREE	ResidencySet.EndResidency	method
+FREE	ResidencySet.RequestResidency	method
+FREE	ResidencySetsSupported	func
+FREE	SGBigBlock	const
+FREE	SGBlock	const
+FREE	SGDims	func
+FREE	SGThreads	const
+FREE	Scalar	type
+FREE	SharedEvent	type
+FREE	SharedEvent.SetValue	method
+FREE	SharedEvent.Value	method
+FREE	TileDims	func
+FREE	Upload	func
+FREE	UploadBatch	func
+USED	ViT	type	gpu/encmetal,gpu/encmetal (tests)
+FREE	ViT.AddBias	field
+FREE	ViT.AddVec	field
+FREE	ViT.Attention	field
+FREE	ViT.AttentionSeg	field
+FREE	ViT.AttentionSegTiled	field
+FREE	ViT.AttentionTiled	field
+FREE	ViT.GELUErf	field
+FREE	ViT.GELUTanh	field
+FREE	ViT.GEMMF32	field
+FREE	ViT.GEMMF32Bias	field
+FREE	ViT.GEMMF32BiasAdd	field
+FREE	ViT.GEMMF32BiasAddPlan	method
+FREE	ViT.GEMMF32BiasPlan	method
+USED	ViT.GEMMF32Plan	method	gpu/encmetal,gpu/encmetal (tests)
+FREE	ViT.GEMMF32SG	field
+FREE	ViT.GEMMF32SGBig	field
+FREE	ViT.GEMMF32Tiled	field
+FREE	ViT.GEMMW8A8	field
+FREE	ViT.GEMMW8A8Bias	field
+FREE	ViT.GEMMW8A8BiasAdd	field
+FREE	ViT.GEMMW8A8BiasAddPlan	method
+FREE	ViT.GEMMW8A8BiasPlan	method
+FREE	ViT.GEMMW8A8Plan	method
+FREE	ViT.GEMMW8A8Reg	field
+FREE	ViT.GEMMW8A8Tiled	field
+FREE	ViT.LayerNorm	field
+FREE	ViT.QuantRows	field
+FREE	ViT.RMSNorm	field
+FREE	ViT.RopeQK	field
+FREE	ViT.SiLUMul	field
+FREE	ViTBlock	const
