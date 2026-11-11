@@ -27,14 +27,15 @@ large embedded-grammar payload) — is quarantined in the separate
 > | aikit path | frozen at | continues in goinfer as |
 > |---|---|---|
 > | `vision` | `v1.75.0` | `internal/vision` |
-> | `audio` | `v1.75.0` | `internal/audio` |
+> | `audio` | `v1.75.0`; **removed from aikit in v1.77.0** | `internal/audio` |
 > | `gpu` (the device module) | `gpu/v0.35.0` | `cuda/internal/gpudev` and `metal/internal/gpudev`; aikit's stays, below |
 > | `gpu/qwencuda`, `gpu/visioncuda` | `gpu/v0.35.0` | the `cuda` module |
 > | `gpu/qwenmetal`, `gpu/visionmetal` | `gpu/v0.35.0` | the `metal` module |
 > | `gpu/webgpu` | `gpu/v0.35.0` | retired, not carried over (owner, 2026-10-26: nothing imported it, and goinfer's `gpu` module has its own WGSL shaders) |
 >
-> `vision` and `audio` carry `Deprecated:` notices. `vision` (Hard tier) stays, frozen, and is removed only
-> at a v2; `audio` is removed in the minor after the first release carrying its notice. The four tower
+> `vision` carries a `Deprecated:` notice. It is in the Hard tier, so it stays, frozen, and is removed only
+> at a v2. `audio` was Experimental: it carried its notice in v1.76.0 and is removed in the next minor,
+> v1.77.0. A build that still imports `aikit/audio` keeps working on v1.76.x and earlier. The four tower
 > backends and `gpu/webgpu` are retired, get no further tags, and were deleted from the tree on 2026-11-10.
 > Their existing tags keep resolving, so a build pinned to one is unaffected.
 > `gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda` and `gpu/encmetal` stay in aikit and keep building on

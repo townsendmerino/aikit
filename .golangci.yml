@@ -132,11 +132,11 @@ linters:
       - path: gpu/cuda\.go
         linters: [errcheck]
         text: "Error return value of `.*\\.Close` is not checked"
-      # vision and audio are deprecated (they moved into goinfer, AX4). The vision example imports vision and
+      # vision is deprecated (it moved into goinfer, AX4; audio moved too and is removed). The vision example imports vision and
       # stays as it is, frozen, so its SA1019 is expected; any other importer still fires.
       - path: examples/vision/
         linters: [staticcheck]
-        text: "SA1019: .*townsendmerino/aikit/(vision|audio)"
+        text: "SA1019: .*townsendmerino/aikit/vision"
 
 issues:
   # Show every finding so the cleanup pass can't miss any. Default is 50
