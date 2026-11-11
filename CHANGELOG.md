@@ -11,6 +11,11 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Removed
 
+- **`audio` is removed.** The package (Experimental: the Gemma 4, Whisper, Voxtral and Qwen3-ASR audio towers) moved
+  into goinfer, which maintains it as `internal/audio`. It carried a `Deprecated:` notice in v1.76.0, with removal
+  promised for the following minor; this is that minor. Nothing in goinfer, ken or tack imports `aikit/audio`. A build
+  that still does keeps working on v1.76.x and earlier, where the package is frozen at v1.75.0's code. `vision`, which
+  moved at the same time, is in the Hard tier and stays, frozen, until a v2.
 - The retired gpu modules are deleted from the tree: the four tower backends (`gpu/qwencuda`, `gpu/qwenmetal`,
   `gpu/visioncuda`, `gpu/visionmetal`), which moved into goinfer, and `gpu/webgpu`, which nothing imported. They were
   retired at v1.76.0. No `go.mod` in goinfer, ken or tack required any of them. Their existing tags
