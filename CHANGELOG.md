@@ -59,6 +59,8 @@ excluded from that promise and may change in any release until it graduates.
     `VULNCHECK EXCEPTION` blockquote. It refuses a perfgate line marked `NOT RELEASE EVIDENCE`, and lists every check
     that did not pass, by name, with its reason.
   - `RELEASING.md` puts the steps in the order they must run (the gate last), with `GOWORK=off` in every command.
+    It identifies each line to paste by how it starts, not as "the last line" (`go run` adds `exit status N` after a
+    tool that exits non-zero), and says what to do on a FAIL or INCONCLUSIVE perfgate verdict.
 - The `gpu` package doc says the module is frozen for fixes and which part of its exported surface is maintained: the
   63 names the four GPU backends use. The other 170 are kept exported and unmaintained; the lists are in
   `docs/gpu-exported-names-2026-11-10/`. No code changes in `gpu`.

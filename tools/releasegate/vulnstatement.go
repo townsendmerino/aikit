@@ -51,7 +51,7 @@ func judgeVulnStatement(sec, ver string) gate.Cell {
 	switch {
 	case m == nil:
 		return failMsg(name, fmt.Sprintf("CHANGELOG [%s] has no clean vulncheck STATEMENT line. Run `go run -C tools ./vulncheck` "+
-			"and paste its last line (\"STATEMENT: no reachable vulnerabilities in N/N modules at …\") on a line of its own, "+
+			"and paste its STATEMENT line (\"STATEMENT: no reachable vulnerabilities in N/N modules at …\") on a line of its own, "+
 			"or record a \"> **VULNCHECK EXCEPTION: …**\" blockquote saying why this release ships without one", ver))
 	case m[1] != m[2]:
 		return failMsg(name, fmt.Sprintf("CHANGELOG [%s]'s STATEMENT covers %s of %s modules; a statement is about all of them", ver, m[1], m[2]))

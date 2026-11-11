@@ -39,7 +39,7 @@
 //	go run -C tools ./perfgate --visits 8 --benchtime 300ms v1.17.1
 //	go run -C tools ./perfgate --allow-dirty       # measure uncommitted kernel work; verdict is marked, not release evidence
 //
-// Its last line, "`perfgate` VERDICT: …", goes into the release's CHANGELOG section as printed.
+// Its "`perfgate` VERDICT: …" line goes into the release's CHANGELOG section as printed.
 // A tree dirty only in CHANGELOG.md is measured as release evidence; see dirtOutsideChangelog.
 package main
 

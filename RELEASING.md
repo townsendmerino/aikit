@@ -20,9 +20,15 @@ that the gate in step 5 requires. Every command is written with `GOWORK=off`; a 
 
 2. **Perf gate, on a real box (not a shared CI runner):**
    `GOWORK=off go run -C tools ./perfgate`
-   **Paste two of its lines, as printed, into the section, each on a line of its own:** the last line,
-   which starts `` `perfgate` VERDICT: ``, and the line near the end that starts `sensitivity:`. The gate
-   reads the first. After the second, add the machine it ran on.
+   **Paste two of its lines, as printed, into the section, each on a line of its own:** the line that
+   starts `` `perfgate` VERDICT: `` and the line that starts `sensitivity:`, both near the end. The gate
+   reads the first. After the second, add the machine it ran on. (Find them by how they start, not by
+   position: when a tool exits non-zero, `go run` adds an `exit status N` line after its output.)
+   **If the verdict is FAIL or INCONCLUSIVE, stop.** The gate would accept the line, because it checks that
+   the question was asked, not the answer. INCONCLUSIVE usually means a shape crossed its floor once and did
+   not reproduce: check that the box is quiet (nothing else running; on the shared reference box, a load
+   average near zero for a couple of minutes) and run it again. A release goes out on a FAIL only with a
+   `> **PERFGATE EXCEPTION: …**` blockquote in the section saying why.
    It builds the working tree and the previous tag into two benchmark binaries and runs them
    INTERLEAVED in one session — never a stored baseline, which measures the machine, not the
    change (session drift on the reference box was ~5%, larger than the 3% regression v1.17.0
@@ -56,8 +62,8 @@ that the gate in step 5 requires. Every command is written with `GOWORK=off`; a 
    > not grounds to withhold acceptance given the other shape already confirms the mechanism.
 3. **Retrieval mark:**
    `GOWORK=off go run -C tools ./retrievalmark`
-   **Paste its last line, `RETRIEVAL: yes — …` or `RETRIEVAL: no — …`, into the section** on a line of its
-   own. It says whether a file changed since the previous tag is in the retrieval zone
+   **Paste the line that starts `RETRIEVAL:` (`RETRIEVAL: yes — …` or `RETRIEVAL: no — …`) into the
+   section** on a line of its own. It says whether a file changed since the previous tag is in the retrieval zone
    ([`docs/architecture.md` § Retrieval zone](docs/architecture.md#retrieval-zone)), which is what tells ken
    whether it must re-run its parity and recall checks for this bump. The gate recomputes it and fails if the
    line is missing, or says `no` where the files say `yes`. You may record `yes` over a computed `no` (say why
@@ -66,8 +72,8 @@ that the gate in step 5 requires. Every command is written with `GOWORK=off`; a 
 
 4. **Vulnerability statement, on Linux, with the pinned toolchain:**
    `GOWORK=off GOTOOLCHAIN=<the root go.mod's toolchain line> go run -C tools ./vulncheck`
-   (today `GOTOOLCHAIN=go1.27.3`). **Paste its last line, `STATEMENT: no reachable vulnerabilities in N/N
-   modules at …`, into the section.** The tool refuses to run anywhere else and says why: off Linux the
+   (today `GOTOOLCHAIN=go1.27.3`). **Paste the line that starts `STATEMENT:` (`STATEMENT: no reachable vulnerabilities
+   in N/N modules at …`) into the section.** The tool refuses to run anywhere else and says why: off Linux the
    `*cuda` modules have no packages to scan, and on another Go the modules without their own `toolchain`
    line are judged against that Go's standard library. This is a deliverable, not hygiene: aikit's pitch is
    a static binary someone scps somewhere and runs offline, and a binary deployed that way cannot be patched

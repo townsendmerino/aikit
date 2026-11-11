@@ -373,7 +373,7 @@ func checkPerfEvidence(root, ver string) gate.Cell {
 		return failMsg("perf-evidence", fmt.Sprintf(
 			"CHANGELOG [%s] has no perfgate VERDICT line (its own line, exactly "+
 				"\"`perfgate` VERDICT: PASS|FAIL|INCONCLUSIVE — ...\") or PERFGATE EXCEPTION blockquote — "+
-				"run `go run -C tools ./perfgate` and paste its last line as printed, or record "+
+				"run `go run -C tools ./perfgate` and paste its \"`perfgate` VERDICT:\" line as printed, or record "+
 				"an explicit EXCEPTION saying why this release does not need one", ver))
 	}
 	fmt.Println("release-gate: perfgate VERDICT/EXCEPTION recorded for v" + ver)

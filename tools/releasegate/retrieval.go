@@ -61,7 +61,7 @@ func judgeRetrievalMark(sec, ver, prev string, m retrievalzone.Mark) gate.Cell {
 	switch {
 	case len(found) == 0:
 		return fail(fmt.Sprintf("CHANGELOG [%s] has no RETRIEVAL line. Run `go run -C tools ./retrievalmark` "+
-			"and paste its last line on a line of its own: %q", ver, want))
+			"and paste its RETRIEVAL line on a line of its own: %q", ver, want))
 	case len(found) > 1:
 		return fail(fmt.Sprintf("CHANGELOG [%s] has %d RETRIEVAL lines; it must have one", ver, len(found)))
 	}
