@@ -19,6 +19,10 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed
 
+- The Go 1.27 `go fix` modernizers were applied across the module (`for range n`, `min`/`max`, `maps`/`slices`
+  helpers, `strings.SplitSeq`, `sync.WaitGroup.Go`): mechanical rewrites with no intended change in behavior. In the
+  core they touch nine non-test files, in `audio`, `bm25`, `embed`, `linalg` and `vision`, and they are the only
+  source changes there since v1.76.0. `linalg`'s parallel matmul path keeps its explicit `wg.Add`/`go`/`defer wg.Done`.
 - `tools/gpupins` holds the four GPU backends that stay (`gpu/anncuda`, `gpu/annmetal`, `gpu/enccuda`, `gpu/encmetal`)
   to their freeze: a root `aikit` require other than v1.75.0 now fails the check, as a `gpu` require off the v0.35.x
   series already did. `--fix` still writes only the `gpu` require. No module's requirements change.
