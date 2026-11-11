@@ -45,6 +45,16 @@ excluded from that promise and may change in any release until it graduates.
   the check the `RETRIEVAL` mark rests on, and it had never been linted: 19 `errcheck` findings are cleared. Two were
   real: `perfgate` read an unparsable `--visits` or `--target` as zero (it now stops, INCONCLUSIVE), and `preflight`
   reported `go test` as passed when it could not be started (it now reports INCONCLUSIVE).
+- The root release steps were dry-run for v1.76.1 (nothing was tagged) and corrected, in the tools where possible:
+  - `perfgate` prints its verdict as `` `perfgate` VERDICT: … ``, the form the gate reads, so the line is pasted as
+    printed. It measures a tree dirty only in `CHANGELOG.md` (the release section is written first) and stops on any
+    other uncommitted change; `--allow-dirty` measures anyway and marks the line `NOT RELEASE EVIDENCE`.
+  - `vulncheck` refuses to run off Linux or off the root `go.mod`'s toolchain, and says why. Both used to produce an
+    INCOMPLETE or falsely VULNERABLE report. `benchmarks/go.mod` gains the `toolchain go1.27.3` line.
+  - `releasegate` has an eighth check: the section must carry vulncheck's clean `STATEMENT:` line for every module, or a
+    `VULNCHECK EXCEPTION` blockquote. It refuses a perfgate line marked `NOT RELEASE EVIDENCE`, and lists every check
+    that did not pass, by name, with its reason.
+  - `RELEASING.md` puts the steps in the order they must run (the gate last), with `GOWORK=off` in every command.
 - The `gpu` package doc says the module is frozen for fixes and which part of its exported surface is maintained: the
   63 names the four GPU backends use. The other 170 are kept exported and unmaintained; the lists are in
   `docs/gpu-exported-names-2026-11-10/`. No code changes in `gpu`.

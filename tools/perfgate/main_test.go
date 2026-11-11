@@ -2,6 +2,8 @@ package main
 
 import (
 	"math"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/townsendmerino/aikit/tools/gate"
@@ -107,6 +109,38 @@ func TestRun_rejectsUnparsableFlagValues(t *testing.T) {
 	} {
 		if rc := run(args); rc != 2 {
 			t.Errorf("run(%v) = %d, want 2", args, rc)
+		}
+	}
+}
+
+// The line perfgate prints is the line the release gate reads: pasted as printed, it passes.
+func TestVerdict_isPasteReady(t *testing.T) {
+	got := verdict(config{}, gate.OK, "no regression vs v1.76.0 above each shape's floor")
+	if want := "`perfgate` VERDICT: PASS — no regression vs v1.76.0 above each shape's floor"; got != want {
+		t.Errorf("verdict = %q, want %q", got, want)
+	}
+	dirty := verdict(config{dirtyOutside: true}, gate.OK, "x")
+	if !strings.HasSuffix(dirty, "NOT RELEASE EVIDENCE") {
+		t.Errorf("a verdict measured with --allow-dirty is not marked: %q", dirty)
+	}
+}
+
+// CHANGELOG.md is dirty by design when perfgate runs in the release steps; nothing else may be.
+func TestDirtOutsideChangelog(t *testing.T) {
+	for _, tc := range []struct {
+		name, porcelain string
+		want            []string
+	}{
+		{"clean", "", nil},
+		{"the release section", " M CHANGELOG.md\n", nil},
+		{"paths the go tool ignores", "?? .claude/settings.local.json.bak\n?? _to_delete/x.go\n M CHANGELOG.md\n", nil},
+		{"a kernel edit", " M CHANGELOG.md\n M linalg/quant.go\n", []string{"linalg/quant.go"}},
+		{"an untracked source file", "?? linalg/new_kernel.go\n", []string{"linalg/new_kernel.go"}},
+		{"a rename", "R  linalg/a.go -> linalg/b.go\n", []string{"linalg/b.go"}},
+		{"another changelog is not the changelog", " M docs/CHANGELOG.md\n", []string{"docs/CHANGELOG.md"}},
+	} {
+		if got := dirtOutsideChangelog(tc.porcelain); !slices.Equal(got, tc.want) {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
 	}
 }

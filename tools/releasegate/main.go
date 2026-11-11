@@ -4,6 +4,7 @@
 // version that is immutable once the proxy fetches it.
 //
 // FIVE CHECKS, and a sixth (apiadditions.go: every exported symbol added since the previous tag is named in the release's CHANGELOG section):
+// an eighth (vulnstatement.go: the CHANGELOG section carries vulncheck's clean STATEMENT line or a VULNCHECK EXCEPTION),
 // and a seventh (retrieval.go: the CHANGELOG section carries a RETRIEVAL: yes|no line, and it is not "no" when a
 // file changed since the previous tag is in the retrieval zone):
 //  1. CHANGELOG.md has a `## [X.Y.Z]` section AND a `[X.Y.Z]:` compare link — a release
@@ -78,9 +79,18 @@ func run(args []string) int {
 		{Name: "perf-evidence", Run: func() gate.Cell { return checkPerfEvidence(root, ver) }},
 		{Name: "changelog-api", Run: func() gate.Cell { return checkAPIAdditions(root, ver) }},
 		{Name: "retrieval-mark", Run: func() gate.Cell { return checkRetrievalMark(root, ver) }},
+		{Name: "vuln-statement", Run: func() gate.Cell { return checkVulnStatement(root, ver) }},
 	}
 	cells := gate.RunAll(checks)
 	rep := gate.ReconcileWith(cells, gate.FailWins)
+
+	// Every check that did not pass, by name, with its reason: a bare count sends the reader
+	// back through the log to find out which one (the v1.76.1 dry run, 2026-11-10).
+	for _, c := range cells {
+		if c.Outcome == gate.Fail || c.Outcome == gate.Inconclusive {
+			fmt.Printf("::error::release-gate: %s %s: %s\n", c.Outcome, c.Name, c.Field("msg"))
+		}
+	}
 
 	switch rep.Outcome {
 	case gate.Fail:
@@ -322,11 +332,15 @@ func firstLine(s string) string {
 // "perfgate" anywhere AND ("VERDICT" or "EXCEPTION") anywhere, independently
 // — read that as a real result and passed. A prose sentence EXPLAINING that
 // no verdict exists yet must not be indistinguishable from one.
-var perfgateVerdictLine = regexp.MustCompile("(?m)^`perfgate` VERDICT: (PASS|FAIL|INCONCLUSIVE)\\b")
+var perfgateVerdictLine = regexp.MustCompile("(?m)^`perfgate` VERDICT: (PASS|FAIL|INCONCLUSIVE)\\b.*$")
+
+// perfgateNotEvidence is what perfgate appends to a verdict measured with --allow-dirty, on a
+// tree with uncommitted changes outside CHANGELOG.md. Such a line describes no commit.
+const perfgateNotEvidence = "NOT RELEASE EVIDENCE"
 
 // perfgateExceptionLine matches the documented-exception form (the PERFGATE
 // EXCEPTION blockquote v1.40.0 introduced for a known false-positive VERDICT
-// FAIL) — RELEASING.md step 2b's "or record an explicit EXCEPTION". Same
+// FAIL) — RELEASING.md step 2's "or record an explicit EXCEPTION". Same
 // line-start anchoring, same reasoning.
 var perfgateExceptionLine = regexp.MustCompile(`(?m)^>\s*\*\*PERFGATE EXCEPTION:`)
 
@@ -351,11 +365,15 @@ func checkPerfEvidence(root, ver string) gate.Cell {
 			Fields: []gate.Field{{Key: "section", State: "absent (reported by changelog check)"}}}
 	}
 	hasVerdict := perfgateVerdictLine.MatchString(sec) || perfgateExceptionLine.MatchString(sec)
+	if line := perfgateVerdictLine.FindString(sec); strings.Contains(line, perfgateNotEvidence) {
+		return failMsg("perf-evidence", fmt.Sprintf("CHANGELOG [%s] carries a perfgate line measured with --allow-dirty "+
+			"(%q): it describes a tree with uncommitted changes. Commit, re-run perfgate without the flag, and paste that line", ver, perfgateNotEvidence))
+	}
 	if !hasVerdict {
 		return failMsg("perf-evidence", fmt.Sprintf(
 			"CHANGELOG [%s] has no perfgate VERDICT line (its own line, exactly "+
 				"\"`perfgate` VERDICT: PASS|FAIL|INCONCLUSIVE — ...\") or PERFGATE EXCEPTION blockquote — "+
-				"run `go run -C tools ./perfgate <prev-tag>` and paste its VERDICT line verbatim, or record "+
+				"run `go run -C tools ./perfgate` and paste its last line as printed, or record "+
 				"an explicit EXCEPTION saying why this release does not need one", ver))
 	}
 	fmt.Println("release-gate: perfgate VERDICT/EXCEPTION recorded for v" + ver)

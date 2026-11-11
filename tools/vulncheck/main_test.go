@@ -182,3 +182,42 @@ func TestScannerVersion_unknownOnMissingBinary(t *testing.T) {
 		t.Errorf("scannerVersion(missing binary) = %q, want %q", got, want)
 	}
 }
+
+func TestPrecondition(t *testing.T) {
+	for _, tc := range []struct {
+		name, goos, ambient, pinned, want string
+	}{
+		{"linux on the pin", "linux", "go1.27.3", "go1.27.3", ""},
+		{"a Mac", "darwin", "go1.27.3", "go1.27.3", "must run on linux"},
+		{"an older Go", "linux", "go1.27.0", "go1.27.3", "set GOTOOLCHAIN=go1.27.3"},
+		{"a newer Go is not the pin either", "linux", "go1.27.4", "go1.27.3", "pinned toolchain go1.27.3"},
+		{"no toolchain line", "linux", "go1.27.3", "", "no toolchain line"},
+	} {
+		got := precondition(tc.goos, tc.ambient, tc.pinned)
+		if (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
+			t.Errorf("%s: precondition = %q, want it to contain %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// The pin is read from the real root go.mod, and every module that names a toolchain names
+// the same one: a module left on an older line would be scanned against an older stdlib.
+func TestToolchainLinesAgree(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pin := pinnedToolchain(root)
+	if pin == "" {
+		t.Fatal("the root go.mod has no toolchain line")
+	}
+	for _, m := range allModuleDirs(root) {
+		data, err := os.ReadFile(filepath.Join(root, m, "go.mod"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if mm := reToolchain.FindSubmatch(data); mm != nil && string(mm[1]) != pin {
+			t.Errorf("%s/go.mod says toolchain %s, the root says %s", m, mm[1], pin)
+		}
+	}
+}

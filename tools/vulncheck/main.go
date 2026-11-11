@@ -1,5 +1,5 @@
 // Command vulncheck is the vulnerability STATEMENT for every module in this repo — the
-// release-notes deliverable RELEASING.md step 3 pastes into the notes, not hygiene. It
+// release-notes deliverable RELEASING.md step 4 pastes into the notes, not hygiene. It
 // replaces scripts/vulncheck.sh, expressed as a gate.Check matrix over tools/gate.
 //
 // WHY A DELIVERABLE. aikit's pitch is a single static binary scp'd somewhere and run
@@ -36,6 +36,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -76,6 +77,59 @@ func reportCells(cells []gate.Cell) (clean, vuln, unscanned int) {
 	return clean, vuln, unscanned
 }
 
+// precondition says why a scan here could not produce the STATEMENT, or "" if it can.
+//
+// Two things made a scan on a development Mac INCOMPLETE without saying why (found by the
+// v1.76.1 dry run, 2026-11-10), and both are refused up front now rather than discovered in
+// the report:
+//
+//   - NOT LINUX. The *cuda modules have packages only on linux, and unlike the *metal ones
+//     (scanned under GOOS=darwin from anywhere) their sources need the host to be linux, so
+//     elsewhere they come back UNSCANNED.
+//   - NOT THE PINNED TOOLCHAIN. govulncheck judges the standard library of the Go that runs
+//     it. Only modules with a `toolchain` line switch to the pinned one by themselves; the
+//     rest are scanned with whatever is installed, and an older one re-reports advisories the
+//     pin already fixed (Go 1.27.0 reported nine against a tree pinned to 1.27.3).
+func precondition(goos, ambient, pinned string) string {
+	switch {
+	case goos != "linux":
+		return "vulncheck must run on linux, and this is " + goos + ": the *cuda modules have no packages here and would be UNSCANNED"
+	case pinned == "":
+		return "the root go.mod has no toolchain line to scan against"
+	case ambient != pinned:
+		return "vulncheck must run on the pinned toolchain " + pinned + ", and `go` here is " + ambient +
+			": set GOTOOLCHAIN=" + pinned + " (modules without their own toolchain line are scanned with the Go that is installed)"
+	}
+	return ""
+}
+
+var reToolchain = regexp.MustCompile(`(?m)^toolchain\s+(go\S+)`)
+
+// pinnedToolchain is the root go.mod's toolchain line, e.g. "go1.27.3", or "".
+func pinnedToolchain(root string) string {
+	data, err := os.ReadFile(filepath.Join(root, "go.mod"))
+	if err != nil {
+		return ""
+	}
+	if m := reToolchain.FindSubmatch(data); m != nil {
+		return string(m[1])
+	}
+	return ""
+}
+
+// ambientGoVersion is the Go a module WITHOUT a toolchain line gets: `go env GOVERSION`
+// asked from outside any module, so no go.mod switches it.
+func ambientGoVersion() string {
+	cmd := exec.Command("go", "env", "GOVERSION")
+	cmd.Dir = os.TempDir()
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+	out, err := cmd.Output()
+	if err != nil {
+		return "unknown"
+	}
+	return strings.TrimSpace(string(out))
+}
+
 func run() int {
 	root, err := gpumod.RepoRoot()
 	if err != nil {
@@ -85,6 +139,10 @@ func run() int {
 	gvc := findGovulncheck()
 	if gvc == "" {
 		fmt.Println("STATEMENT: INCONCLUSIVE — govulncheck not found (go install golang.org/x/vuln/cmd/govulncheck@latest); nothing scanned")
+		return 2
+	}
+	if why := precondition(runtime.GOOS, ambientGoVersion(), pinnedToolchain(root)); why != "" {
+		fmt.Println("STATEMENT: INCONCLUSIVE — " + why + "; nothing scanned")
 		return 2
 	}
 	p := gpumod.Provenance(root)

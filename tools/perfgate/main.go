@@ -37,6 +37,10 @@
 //
 //	go run -C tools ./perfgate [previous-tag]      # default: the latest vX.Y.Z tag
 //	go run -C tools ./perfgate --visits 8 --benchtime 300ms v1.17.1
+//	go run -C tools ./perfgate --allow-dirty       # measure uncommitted kernel work; verdict is marked, not release evidence
+//
+// Its last line, "`perfgate` VERDICT: …", goes into the release's CHANGELOG section as printed.
+// A tree dirty only in CHANGELOG.md is measured as release evidence; see dirtOutsideChangelog.
 package main
 
 import (
@@ -90,9 +94,66 @@ type config struct {
 	floorK      float64
 	minFloor    float64
 	targetClass float64 // the regression magnitude this gate exists to catch (percent)
+
+	allowDirty   bool // --allow-dirty: measure a tree with uncommitted changes outside CHANGELOG.md
+	dirtyOutside bool // such changes are present; the verdict line is marked notEvidence
 }
 
 func main() { os.Exit(run(os.Args[1:])) }
+
+// verdictPrefix opens perfgate's result line. tools/releasegate looks for exactly this
+// at the start of a line in the release's CHANGELOG section, so the line this tool
+// prints can be pasted there as it is.
+const verdictPrefix = "`perfgate` "
+
+// notEvidence marks a verdict measured on a tree with uncommitted changes other than
+// CHANGELOG.md (--allow-dirty). releasegate refuses a line that carries it.
+const notEvidence = " — DIRTY TREE, NOT RELEASE EVIDENCE"
+
+func verdict(cfg config, o gate.Outcome, msg string) string {
+	line := verdictPrefix + gate.Verdict(o, msg)
+	if cfg.dirtyOutside {
+		line += notEvidence
+	}
+	return line
+}
+
+// dirtOutsideChangelog lists what `git status --porcelain` reports, leaving out
+// CHANGELOG.md and paths the go tool never builds (an element starting with "." or "_").
+//
+// THE RULE FOR A DIRTY TREE. RELEASING.md has the release's CHANGELOG section written
+// before perfgate runs, so the tree is dirty by design at that step, and CHANGELOG.md
+// cannot change a benchmark: that case is measured and is release evidence. Any other
+// uncommitted change means the verdict describes a tree no commit names, so perfgate
+// stops before measuring. --allow-dirty measures it anyway (the A/B use while developing
+// a kernel) and marks the verdict line so it cannot pass for release evidence.
+func dirtOutsideChangelog(porcelain string) []string {
+	var out []string
+	for ln := range strings.SplitSeq(porcelain, "\n") {
+		if len(ln) < 4 {
+			continue
+		}
+		path := strings.TrimSpace(ln[3:])
+		if i := strings.Index(path, " -> "); i >= 0 {
+			path = path[i+4:]
+		}
+		path = strings.Trim(path, `"`)
+		if path == "CHANGELOG.md" || ignoredByGo(path) {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
+}
+
+func ignoredByGo(path string) bool {
+	for el := range strings.SplitSeq(path, "/") {
+		if strings.HasPrefix(el, ".") || strings.HasPrefix(el, "_") {
+			return true
+		}
+	}
+	return false
+}
 
 func run(args []string) int {
 	cfg := config{pkg: defaultPkg, benchRe: defaultBench, benchtime: "200ms", visits: 6, floorK: 3.0, minFloor: 2.0, targetClass: 5.0}
@@ -107,6 +168,8 @@ func run(args []string) int {
 				return 2
 			}
 			cfg.visits = n
+		case "--allow-dirty":
+			cfg.allowDirty = true
 		case "--benchtime":
 			i++
 			cfg.benchtime = args[i]
@@ -141,6 +204,26 @@ func run(args []string) int {
 	}
 
 	p := gpumod.Provenance(root)
+	porcelain, err := gitIn(root, "status", "--porcelain")
+	if err != nil {
+		fmt.Println(verdict(cfg, gate.Inconclusive, "cannot read git status: "+err.Error()))
+		return 2
+	}
+	if dirt := dirtOutsideChangelog(porcelain); len(dirt) > 0 {
+		show := dirt
+		if len(show) > 5 {
+			show = append(append([]string{}, show[:5]...), fmt.Sprintf("and %d more", len(dirt)-5))
+		}
+		if !cfg.allowDirty {
+			fmt.Println(verdict(cfg, gate.Inconclusive, "the tree has uncommitted changes outside CHANGELOG.md ("+strings.Join(show, ", ")+
+				"), so a verdict would describe no commit. Commit or stash them, or pass --allow-dirty to measure anyway (not release evidence)"))
+			return 2
+		}
+		cfg.dirtyOutside = true
+		fmt.Println("perfgate: --allow-dirty: measuring a tree with uncommitted changes outside CHANGELOG.md (" + strings.Join(show, ", ") + "); the verdict is marked and is not release evidence")
+	} else if p.Dirty != "" {
+		fmt.Println("perfgate: the tree is dirty only in CHANGELOG.md or in paths the go tool ignores (the release section is written before this step): measured as release evidence")
+	}
 	fmt.Printf("aikit perf gate — %s%s vs %s — %s/%s — %s\n", p.Commit, p.Dirty, cfg.prevTag, p.OSName, p.Arch, p.Date)
 	fmt.Printf("instrument: %s %s   visits: %d   benchtime: %s   floor: max(%.1f%%, %.1f·σ)   targets: %.1f%% regressions\n\n",
 		cfg.pkg, cfg.benchRe, cfg.visits, cfg.benchtime, cfg.minFloor, cfg.floorK, cfg.targetClass)
@@ -175,12 +258,12 @@ func run(args []string) int {
 	for v := 0; v < cfg.visits; v++ {
 		a, err := runVisit(curBin, cfg)
 		if err != nil {
-			fmt.Println(gate.Verdict(gate.Inconclusive, "characterization: "+err.Error()))
+			fmt.Println(verdict(cfg, gate.Inconclusive, "characterization: "+err.Error()))
 			return 4
 		}
 		b, err := runVisit(curBin, cfg)
 		if err != nil {
-			fmt.Println(gate.Verdict(gate.Inconclusive, "characterization: "+err.Error()))
+			fmt.Println(verdict(cfg, gate.Inconclusive, "characterization: "+err.Error()))
 			return 4
 		}
 		charA, charB = append(charA, a), append(charB, b)
@@ -204,12 +287,12 @@ func run(args []string) int {
 		}
 		r1, err := runVisit(first, cfg)
 		if err != nil {
-			fmt.Println(gate.Verdict(gate.Inconclusive, "comparison: "+err.Error()))
+			fmt.Println(verdict(cfg, gate.Inconclusive, "comparison: "+err.Error()))
 			return 4
 		}
 		r2, err := runVisit(second, cfg)
 		if err != nil {
-			fmt.Println(gate.Verdict(gate.Inconclusive, "comparison: "+err.Error()))
+			fmt.Println(verdict(cfg, gate.Inconclusive, "comparison: "+err.Error()))
 			return 4
 		}
 		if v%2 == 1 {
@@ -284,12 +367,12 @@ func run(args []string) int {
 			}
 			r1, err := runVisit(first, cfg)
 			if err != nil {
-				fmt.Println(gate.Verdict(gate.Inconclusive, "confirmation: "+err.Error()))
+				fmt.Println(verdict(cfg, gate.Inconclusive, "confirmation: "+err.Error()))
 				return 4
 			}
 			r2, err := runVisit(second, cfg)
 			if err != nil {
-				fmt.Println(gate.Verdict(gate.Inconclusive, "confirmation: "+err.Error()))
+				fmt.Println(verdict(cfg, gate.Inconclusive, "confirmation: "+err.Error()))
 				return 4
 			}
 			if v%2 == 1 {
@@ -311,17 +394,17 @@ func run(args []string) int {
 			fmt.Printf("  did NOT reproduce: %s\n", strings.Join(transient, " "))
 		}
 		if len(confirmed) == 0 {
-			fmt.Println(gate.Verdict(gate.Inconclusive, fmt.Sprintf(
+			fmt.Println(verdict(cfg, gate.Inconclusive, fmt.Sprintf(
 				"%d regression(s) did not reproduce on a second measurement — not green, not a fail; re-run or investigate",
 				len(transient))))
 			return 5
 		}
 		fmt.Printf("  reproduced: %s\n", strings.Join(confirmed, " "))
-		fmt.Println(gate.Verdict(gate.Fail, fmt.Sprintf("%d regression(s) vs %s across %d shapes, confirmed on a second measurement",
+		fmt.Println(verdict(cfg, gate.Fail, fmt.Sprintf("%d regression(s) vs %s across %d shapes, confirmed on a second measurement",
 			len(confirmed), cfg.prevTag, rep.Total)))
 		return 1
 	case gate.Inconclusive:
-		fmt.Println(gate.Verdict(gate.Inconclusive, "a shape could not be measured"))
+		fmt.Println(verdict(cfg, gate.Inconclusive, "a shape could not be measured"))
 		return 2
 	}
 	// A gate that measured nothing, or that resolved the class it targets on
@@ -329,16 +412,16 @@ func run(args []string) int {
 	// Distinct codes so a caller can tell "this found no regression" from "this
 	// could not have found one".
 	if rep.Total == 0 {
-		fmt.Println(gate.Verdict(gate.Inconclusive, "no shapes were measured — the gate did not run"))
+		fmt.Println(verdict(cfg, gate.Inconclusive, "no shapes were measured — the gate did not run"))
 		return 4
 	}
 	if below == 0 {
-		fmt.Println(gate.Verdict(gate.Inconclusive, fmt.Sprintf(
+		fmt.Println(verdict(cfg, gate.Inconclusive, fmt.Sprintf(
 			"BLIND — 0/%d shapes resolve the %.1f%% class, so this run is not evidence against a %.1f%% regression",
 			rep.Total, cfg.targetClass, cfg.targetClass)))
 		return 3
 	}
-	fmt.Println(gate.Verdict(gate.OK, fmt.Sprintf("no regression vs %s above each shape's floor — %d/%d shapes resolve the %.1f%% class",
+	fmt.Println(verdict(cfg, gate.OK, fmt.Sprintf("no regression vs %s above each shape's floor — %d/%d shapes resolve the %.1f%% class",
 		cfg.prevTag, below, rep.Total, cfg.targetClass)))
 	return 0
 }

@@ -56,10 +56,7 @@ func checkRetrievalMark(root, ver string) gate.Cell {
 func judgeRetrievalMark(sec, ver, prev string, m retrievalzone.Mark) gate.Cell {
 	const name = "retrieval-mark"
 	want := m.Line(prev)
-	fail := func(msg string) gate.Cell {
-		fmt.Println("::error::release-gate: " + msg)
-		return failMsg(name, msg)
-	}
+	fail := func(msg string) gate.Cell { return failMsg(name, msg) } // run() prints every failure's reason
 	found := retrievalMarkLine.FindAllStringSubmatch(sec, -1)
 	switch {
 	case len(found) == 0:

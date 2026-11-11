@@ -8,32 +8,39 @@ different release rituals. Read the one you're tagging.
 
 ## Root module — `github.com/townsendmerino/aikit` (tags `vX.Y.Z`)
 
-Automated and CI-enforced.
+Automated and CI-enforced. The steps are in the order they have to run: 2, 3 and 4 each produce a line
+that the gate in step 5 requires. Every command is written with `GOWORK=off`; a development checkout has a
+`go.work` (gitignored), and without the override `go run -C tools` cannot find the tools module.
 
-1. Add a `## [X.Y.Z] — <date>` section to `CHANGELOG.md` and its `[X.Y.Z]:` compare
-   link at the bottom. Additive changes bump the **minor**; bug fixes the **patch**.
-2. Run the gate locally first: `go run -C tools ./releasegate X.Y.Z` — it checks the CHANGELOG
-   section, `golangci-lint`, `apidiff` (no Hard-tier API breakage vs the previous tag),
-   the cgo-free dependency invariant, the perfgate evidence line, the retrieval mark (step 2c), and that **every exported symbol added
-   since the previous tag, in any public package, is named in the release's CHANGELOG section** (a
-   whole-word match; a new type covers its members; a name ending `ForTest` is exempt; anything else
-   not worth a line goes in `tools/releasegate/api-waivers.txt` as `<package> <symbol> <reason>`, the
-   reason mandatory). Run on v1.60.0 to v1.68.0 it flagged one real omission (v1.62.0's
-   `VoxtralDefectCountForTest`, now exempt by name).
-2b. **On a real box (not a shared CI runner), run the perf gate: `go run -C tools ./perfgate`.**
+1. **Write the release's CHANGELOG section.** Add `## [X.Y.Z] — <date>` under `## [Unreleased]` in
+   `CHANGELOG.md`, add its `[X.Y.Z]:` compare link at the bottom, and point the `[Unreleased]:` link there at
+   `vX.Y.Z`. Additive changes bump the **minor**; bug fixes the **patch**; a release with neither (mechanical
+   rewrites, docs, tooling) is a patch. Leave this edit uncommitted until step 6: the next three steps add
+   one line each to the section.
+
+2. **Perf gate, on a real box (not a shared CI runner):**
+   `GOWORK=off go run -C tools ./perfgate`
+   **Paste two of its lines, as printed, into the section, each on a line of its own:** the last line,
+   which starts `` `perfgate` VERDICT: ``, and the line near the end that starts `sensitivity:`. The gate
+   reads the first. After the second, add the machine it ran on.
    It builds the working tree and the previous tag into two benchmark binaries and runs them
    INTERLEAVED in one session — never a stored baseline, which measures the machine, not the
    change (session drift on the reference box was ~5%, larger than the 3% regression v1.17.0
    shipped). The per-shape floor is derived from a characterization pass and fixed before the
    first comparison sample; a shape slower than the previous tag by more than its floor is a
-   FAIL. It also prints its own SENSITIVITY — per shape whether the derived floor is ≤ the 5%
-   class it targets, and a summary (`N/M shapes have a floor ≤ 5.0%`). Read a green as "no
-   regression above each shape's floor", NOT "no regression": on a shape whose floor is >5%,
-   the green is only evidence against a larger regression. Paste the `VERDICT:` and the
-   sensitivity line into the release notes. The regime axis is the point:
-   `BenchmarkW8A8SpanShapes` samples both cache-resident and streamed B, because v1.17.0's
-   regression was invisible at the one resident shape it was measured at. The `perf-smoke` CI
-   job only executes the benchmarks (catches a panic/OOM); it does not judge timing.
+   FAIL. Read a green as "no regression above each shape's floor", NOT "no regression": the
+   sensitivity line says how many shapes have a floor ≤ the 5% class the gate targets, and on a shape whose
+   floor is wider the green is only evidence against a larger regression. A laptop resolves few of them
+   (4 of 49 on an M1 Pro in the v1.76.1 dry run, against 11 of 47 on the reference box for v1.76.0), so
+   measure on the reference box. `BenchmarkW8A8SpanShapes` samples both cache-resident and streamed B,
+   because v1.17.0's regression was invisible at the one resident shape it was measured at. The
+   `perf-smoke` CI job only executes the benchmarks (catches a panic/OOM); it does not judge timing.
+
+   **A dirty tree.** Step 1 leaves `CHANGELOG.md` modified, and that is expected here: perfgate measures a
+   tree that is dirty only in `CHANGELOG.md` (or in paths the go tool ignores) and its verdict is release
+   evidence. Any other uncommitted change makes it stop before measuring, because the verdict would describe
+   no commit. `--allow-dirty` measures anyway, for A/B work on a kernel, and marks the line
+   `NOT RELEASE EVIDENCE`, which the gate refuses.
 
    > **ACCEPTANCE STATUS — MET, with a recorded follow-up (2026-08-14).** perfgate's
    > plumbing is verified (M1 Pro: working tree vs previous tag flat; a reconstructed
@@ -47,24 +54,44 @@ Automated and CI-enforced.
    > adequate floor sensitivity, conflicting with `linalg/quant.go`'s own +5% characterization
    > at that exact shape/box — recorded as an open, non-blocking follow-up in the result doc,
    > not grounds to withhold acceptance given the other shape already confirms the mechanism.
-2c. Run `go run -C tools ./retrievalmark` and **put its last line, `RETRIEVAL: yes — …` or `RETRIEVAL: no — …`,
-   on a line of its own in the release's CHANGELOG section.** It says whether a file changed since the previous
-   tag is in the retrieval zone ([`docs/architecture.md` § Retrieval zone](docs/architecture.md#retrieval-zone)),
-   which is what tells ken whether it must re-run its parity and recall checks for this bump. The release gate
-   recomputes it and fails if the line is missing, or says `no` where the files say `yes`. You may record `yes`
-   over a computed `no` (say why on the same line); never the reverse. Run it after the last code change: the
-   answer is about the files, so a later edit can change it.
-3. Run `go run -C tools ./vulncheck` and **put its `STATEMENT:` line in the release notes.**
-   This is a deliverable, not hygiene: aikit's pitch is a static binary someone scps
-   somewhere and runs offline, and a binary deployed that way cannot be patched in
-   place by whoever is running it. "What is in it, and is any of it known-vulnerable"
-   is part of the same claim as cgo-free and dependency-light, both of which already
-   have gates. `govulncheck` is reachability-filtered, so a clean result is a statement
-   about the binary rather than about the dependency list.
-4. Push the prep commit, wait for **root CI green**, then push the tag `vX.Y.Z`.
+3. **Retrieval mark:**
+   `GOWORK=off go run -C tools ./retrievalmark`
+   **Paste its last line, `RETRIEVAL: yes — …` or `RETRIEVAL: no — …`, into the section** on a line of its
+   own. It says whether a file changed since the previous tag is in the retrieval zone
+   ([`docs/architecture.md` § Retrieval zone](docs/architecture.md#retrieval-zone)), which is what tells ken
+   whether it must re-run its parity and recall checks for this bump. The gate recomputes it and fails if the
+   line is missing, or says `no` where the files say `yes`. You may record `yes` over a computed `no` (say why
+   on the same line); never the reverse. If source changes after this step, run it again: the answer is about
+   the files.
+
+4. **Vulnerability statement, on Linux, with the pinned toolchain:**
+   `GOWORK=off GOTOOLCHAIN=<the root go.mod's toolchain line> go run -C tools ./vulncheck`
+   (today `GOTOOLCHAIN=go1.27.3`). **Paste its last line, `STATEMENT: no reachable vulnerabilities in N/N
+   modules at …`, into the section.** The tool refuses to run anywhere else and says why: off Linux the
+   `*cuda` modules have no packages to scan, and on another Go the modules without their own `toolchain`
+   line are judged against that Go's standard library. This is a deliverable, not hygiene: aikit's pitch is
+   a static binary someone scps somewhere and runs offline, and a binary deployed that way cannot be patched
+   in place by whoever is running it. "What is in it, and is any of it known-vulnerable" is part of the same
+   claim as cgo-free and dependency-light. `govulncheck` is reachability-filtered, so a clean result is a
+   statement about the binary rather than about the dependency list. If a release must ship without a clean
+   statement, the section says so in a `> **VULNCHECK EXCEPTION: …**` blockquote, and the gate accepts that.
+
+5. **The gate:**
+   `GOWORK=off go run -C tools ./releasegate X.Y.Z`
+   It must end `VERDICT: PASS — vX.Y.Z — 8/8 checks passed`. It checks the CHANGELOG section and compare
+   link, `golangci-lint`, `apidiff` (no Hard-tier API breakage vs the previous tag), the cgo-free dependency
+   invariant, the three lines from steps 2 to 4, and that **every exported symbol added since the previous
+   tag, in any public package, is named in the release's CHANGELOG section** (a whole-word match; a new type
+   covers its members; a name ending `ForTest` is exempt; anything else not worth a line goes in
+   `tools/releasegate/api-waivers.txt` as `<package> <symbol> <reason>`, the reason mandatory). Run on
+   v1.60.0 to v1.68.0 that last check flagged one real omission (v1.62.0's `VoxtralDefectCountForTest`, now
+   exempt by name). A check that does not pass is listed by name with its reason just above the verdict.
+
+6. **Commit the CHANGELOG, push, wait for root CI green, then push the tag `vX.Y.Z`.**
    `.github/workflows/release.yml` re-runs the gate on the tag and publishes the GitHub
    Release from the CHANGELOG section.
-5. **No GPU backend step follows a root tag.** The four GPU backends that stay in aikit (`gpu/anncuda`,
+
+7. **No GPU backend step follows a root tag.** The four GPU backends that stay in aikit (`gpu/anncuda`,
    `gpu/annmetal`, `gpu/enccuda`, `gpu/encmetal`) no longer track the newest root tag (Track AX's AX5, owner
    decision SD2 of 2026-10-26): `gpupins` holds their `aikit` require at the freeze tag v1.75.0, and
    fails if it moves, and their `aikit/gpu` require at the latest `gpu/v0.35.x` tag.
@@ -288,7 +315,7 @@ What that means in practice:
   Watch the run (`gh run watch`), and fix forward if it goes red.
 - **So CI is still not what stops a bad release.** A red commit can sit on `main`. The tagging ritual above is
   the enforcement point for a release, because that is where the remaining risk is: a maintainer not looking at
-  a check. Do not tag from a commit whose CI run on `main` is not green (step 4).
+  a check. Do not tag from a commit whose CI run on `main` is not green (step 6).
 
 Turning on admin enforcement would make the checks binding on direct pushes too, which in practice means
 PR-only merges. That is the switch to revisit when outside contributors become plausible.
