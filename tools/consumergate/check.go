@@ -49,7 +49,7 @@ func checkPair(cfg config, p Pair) gate.Cell {
 		cell.Fields = []gate.Field{{Key: "setup", State: "INCONCLUSIVE", Detail: err.Error()}}
 		return cell
 	}
-	defer os.RemoveAll(sb)
+	defer os.RemoveAll(sb) //nolint:errcheck // a scratch module under the OS temp dir: nothing to report
 	if out, err := goRun(cfg, sb, "go", "mod", "init", "consumergate.invalid/scratch"); err != nil {
 		cell.Outcome = gate.Inconclusive
 		cell.Fields = []gate.Field{{Key: "setup", State: "INCONCLUSIVE", Detail: firstLine(out)}}

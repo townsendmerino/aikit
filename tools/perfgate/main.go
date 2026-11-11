@@ -101,7 +101,12 @@ func run(args []string) int {
 		switch args[i] {
 		case "--visits":
 			i++
-			cfg.visits, _ = strconv.Atoi(args[i])
+			n, err := strconv.Atoi(args[i])
+			if err != nil || n < 1 {
+				fmt.Printf("perfgate: INCONCLUSIVE — --visits wants a positive integer, got %q\n", args[i])
+				return 2
+			}
+			cfg.visits = n
 		case "--benchtime":
 			i++
 			cfg.benchtime = args[i]
@@ -113,7 +118,12 @@ func run(args []string) int {
 			cfg.pkg = args[i]
 		case "--target":
 			i++
-			cfg.targetClass, _ = strconv.ParseFloat(args[i], 64)
+			f, err := strconv.ParseFloat(args[i], 64)
+			if err != nil || f <= 0 {
+				fmt.Printf("perfgate: INCONCLUSIVE — --target wants a positive percentage, got %q\n", args[i])
+				return 2
+			}
+			cfg.targetClass = f
 		default:
 			pos = append(pos, args[i])
 		}
@@ -142,7 +152,7 @@ func run(args []string) int {
 		fmt.Println("perfgate: INCONCLUSIVE — could not build the working-tree benchmark: " + err.Error())
 		return 2
 	}
-	defer os.Remove(curBin)
+	defer os.Remove(curBin) //nolint:errcheck // a temp benchmark binary: nothing to report
 
 	wt, cleanup, err := worktreeAt(root, cfg.prevTag)
 	if err != nil {
@@ -155,7 +165,7 @@ func run(args []string) int {
 		fmt.Println("perfgate: INCONCLUSIVE — could not build the " + cfg.prevTag + " benchmark: " + err.Error())
 		return 2
 	}
-	defer os.Remove(prevBin)
+	defer os.Remove(prevBin) //nolint:errcheck // a temp benchmark binary: nothing to report
 
 	// CHARACTERIZATION — the current binary against itself, interleaved exactly as the
 	// comparison will be, to derive the per-shape floor BEFORE any comparison sample exists.
@@ -524,7 +534,7 @@ func defaultTag(root string, pos []string) string {
 	if len(pos) > 0 && strings.TrimSpace(pos[0]) != "" {
 		return pos[0]
 	}
-	out, _ := gitIn(root, "tag", "--list", "v*", "--sort=-v:refname")
+	out, _ := gitIn(root, "tag", "--list", "v*", "--sort=-v:refname") //nolint:errcheck // a failed listing yields no tag, which the caller reports as INCONCLUSIVE
 	re := regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 	for ln := range strings.SplitSeq(out, "\n") {
 		t := strings.TrimSpace(ln)
@@ -558,8 +568,8 @@ func worktreeAt(root, tag string) (string, func(), error) {
 		return "", func() {}, fmt.Errorf("worktree add: %s", firstLine(b))
 	}
 	cleanup := func() {
-		gitIn(root, "worktree", "remove", "--force", wt)
-		gitIn(root, "worktree", "prune")
+		gitIn(root, "worktree", "remove", "--force", wt) //nolint:errcheck // cleanup of a temp worktree: nothing to report
+		gitIn(root, "worktree", "prune")                 //nolint:errcheck // same
 	}
 	return wt, cleanup, nil
 }

@@ -73,7 +73,7 @@ func TestSkips(t *testing.T) { t.Skip("no fixture present") }
 	os.Stdout = w
 	done := make(chan struct{})
 	go func() {
-		buf.ReadFrom(r)
+		buf.ReadFrom(r) //nolint:errcheck // a pipe read in a test: a short read shows up as a failed assertion below
 		close(done)
 	}()
 

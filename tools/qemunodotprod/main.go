@@ -119,7 +119,7 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "qemunodotprod:", err)
 		return 2
 	}
-	defer os.RemoveAll(tmp)
+	defer os.RemoveAll(tmp) //nolint:errcheck // a scratch dir under the OS temp dir: nothing to report
 	bin := filepath.Join(tmp, "pkg.test")
 
 	build := exec.Command("go", "test", "-c", "-o", bin, *pkg)

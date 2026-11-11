@@ -44,11 +44,12 @@ func run() int {
 	}
 	scripts := filepath.Join(root, "scripts")
 	var oracle, fixtures, strayPy, straySh []string
+	//nolint:errcheck // the callback never returns an error, so WalkDir cannot; unreadable entries are skipped below
 	_ = filepath.WalkDir(scripts, func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-		rel, _ := filepath.Rel(scripts, p) // e.g. "oracle/pin_bge.py"
+		rel, _ := filepath.Rel(scripts, p) //nolint:errcheck // p is under scripts, so Rel cannot fail; e.g. "oracle/pin_bge.py"
 		switch {
 		case strings.HasSuffix(d.Name(), ".sh"):
 			straySh = append(straySh, "scripts/"+rel)

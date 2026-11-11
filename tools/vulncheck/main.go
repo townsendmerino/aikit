@@ -136,7 +136,7 @@ func scanRaw(root, gvc, m string) string {
 	cmd := exec.Command(gvc, "./...")
 	cmd.Dir = filepath.Join(root, m)
 	cmd.Env = os.Environ()
-	out, _ := cmd.CombinedOutput()
+	out, _ := cmd.CombinedOutput() //nolint:errcheck // the canary judges the output text; a failed run has none and does not fire
 	return string(out)
 }
 
@@ -152,7 +152,7 @@ func scanModule(root, gvc, m string) gate.Cell {
 		// scanning them under GOOS=darwin is what the shell did to avoid a vacuous pass.
 		cmd.Env = append(cmd.Env, "GOOS=darwin", "GOARCH=arm64")
 	}
-	outB, _ := cmd.CombinedOutput()
+	outB, _ := cmd.CombinedOutput() //nolint:errcheck // judged by the output below: anything that is not CLEAN or VULNERABLE is UNSCANNED
 	out := string(outB)
 
 	switch {
@@ -185,6 +185,7 @@ func scanModule(root, gvc, m string) gate.Cell {
 // a govulncheck positive control; it is required by nothing and must never enter this scan).
 func allModuleDirs(root string) []string {
 	var dirs []string
+	//nolint:errcheck // the callback never returns an error other than SkipDir, so WalkDir cannot
 	filepath.WalkDir(root, func(pth string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -193,12 +194,12 @@ func allModuleDirs(root string) []string {
 			return filepath.SkipDir
 		}
 		if d.IsDir() {
-			if rel, _ := filepath.Rel(root, pth); rel == canary.VulnFixtureDir {
+			if rel, _ := filepath.Rel(root, pth); rel == canary.VulnFixtureDir { //nolint:errcheck // pth is under root
 				return filepath.SkipDir // the intentionally-vulnerable canary module
 			}
 		}
 		if !d.IsDir() && d.Name() == "go.mod" {
-			rel, _ := filepath.Rel(root, filepath.Dir(pth))
+			rel, _ := filepath.Rel(root, filepath.Dir(pth)) //nolint:errcheck // pth is under root
 			dirs = append(dirs, rel)
 		}
 		return nil

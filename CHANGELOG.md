@@ -41,8 +41,13 @@ excluded from that promise and may change in any release until it graduates.
   `GOWORK=off` against the proxy (and tests it, outside `gpu/`). `chunk/treesitter` also gets a leg against the tree.
   `docs/architecture.md` gains a section on how the nested modules are versioned; it and the README no longer say
   `chunk/treesitter` is versioned in lockstep with the core. No module's requirements change.
-- CI now vets and tests the `tools` module (a new `tools module` job). Its tests were hand-run before, including the
-  check the `RETRIEVAL` mark rests on.
+- CI now vets, lints and tests the `tools` module (a new `tools module` job). Its tests were hand-run before, including
+  the check the `RETRIEVAL` mark rests on, and it had never been linted: 19 `errcheck` findings are cleared. Two were
+  real: `perfgate` read an unparsable `--visits` or `--target` as zero (it now stops, INCONCLUSIVE), and `preflight`
+  reported `go test` as passed when it could not be started (it now reports INCONCLUSIVE).
+- The `gpu` package doc says the module is frozen for fixes and which part of its exported surface is maintained: the
+  63 names the four GPU backends use. The other 170 are kept exported and unmaintained; the lists are in
+  `docs/gpu-exported-names-2026-11-10/`. No code changes in `gpu`.
 
 ## [1.76.0] — 2026-10-26
 

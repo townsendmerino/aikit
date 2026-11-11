@@ -274,8 +274,8 @@ lint rules and CI are properties of the repository, not of the artifact.
 > text below describes it as read from GitHub that day (`gh api repos/townsendmerino/aikit/branches/main/protection`).
 
 `main` is a protected branch. The jobs in `ci.yml` are **required status checks** (20 on 2026-11-10: the 18
-from before, plus the two `nested modules at their required versions` jobs; the `tools module` job added later
-that day is not on the list unless someone has added it since), force pushes and branch deletion
+from before, plus the two `nested modules at their required versions` jobs; the `tools module` job, added
+later that day, makes 21), force pushes and branch deletion
 are off, and **"Do not allow bypassing the above settings" is off** (`enforce_admins: false`).
 
 What that means in practice:

@@ -114,7 +114,7 @@ func Run(dir string, extraEnv, args []string, out io.Writer) (Result, error) {
 		key := ev.Package + "\x00" + ev.Test
 		switch ev.Action {
 		case "output":
-			io.WriteString(out, ev.Output) // reproduce the normal go-test log
+			io.WriteString(out, ev.Output) //nolint:errcheck // reproduce the normal go-test log; a write error on the log is not a test result
 			if ev.Test != "" {
 				buf[key] = append(buf[key], ev.Output)
 			}

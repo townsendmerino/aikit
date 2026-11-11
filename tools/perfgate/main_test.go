@@ -97,3 +97,16 @@ func TestStats(t *testing.T) {
 		t.Errorf("stddev = %v, want ~2.138", s)
 	}
 }
+
+// A flag value that does not parse used to become zero without a word (zero visits,
+// a zero target). It is INCONCLUSIVE now: exit 2 before anything is measured.
+func TestRun_rejectsUnparsableFlagValues(t *testing.T) {
+	for _, args := range [][]string{
+		{"--visits", "many"}, {"--visits", "0"}, {"--visits", "-3"},
+		{"--target", "five"}, {"--target", "0"},
+	} {
+		if rc := run(args); rc != 2 {
+			t.Errorf("run(%v) = %d, want 2", args, rc)
+		}
+	}
+}

@@ -229,7 +229,13 @@ func goStep(root, name string, extraEnv []string, args ...string) gate.Cell {
 // way the census summary is printed under the row.
 func goTest(root string) gate.Cell {
 	var buf bytes.Buffer
-	res, _ := skips.Run(root, []string{"GOWORK=off"}, []string{"./..."}, &buf)
+	res, err := skips.Run(root, []string{"GOWORK=off"}, []string{"./..."}, &buf)
+	if err != nil {
+		// `go test` never started: its zero exit code is not a pass.
+		c := cell("go test", gate.Inconclusive, "GOWORK=off")
+		c.Fields = append(c.Fields, gate.Field{Key: "line", State: "could not run go test: " + err.Error()})
+		return c
+	}
 	outcome := gate.OK
 	if res.ExitCode != 0 {
 		outcome = gate.Fail

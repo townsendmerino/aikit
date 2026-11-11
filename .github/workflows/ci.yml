@@ -371,7 +371,7 @@ jobs:
         run: go run -C tools ./gpupins
 
   tools:
-    name: tools module (vet + tests)
+    name: tools module (vet + lint + tests)
     # tools/ is its own module, so the root jobs' `./...` never reaches it. Its tests were
     # hand-run until 2026-11-10, which left the gates' own logic unchecked in CI: among them
     # tools/retrievalzone's compile proof (the retrieval zone type-checks with every file
@@ -389,6 +389,11 @@ jobs:
       - name: vet
         working-directory: tools
         run: go vet ./...
+      # The pinned linter, built with this job's Go, the way the gpu gate and preflight run it
+      # (gpumod.GolangciLint). It finds .golangci.yml in the parent directory.
+      - name: golangci-lint
+        working-directory: tools
+        run: go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0 run ./...
       - name: test
         working-directory: tools
         run: go test ./...
