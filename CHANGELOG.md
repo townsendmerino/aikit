@@ -9,6 +9,12 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Changed
+
+- `Flat.QueryFilter` and `FlatI8.QueryFilter` skip a disallowed row before scoring it instead of scoring every row and
+  filtering before the select, so a narrow scope costs in proportion to the scope. Results are bit-identical to before.
+  `FlatBinary` and `FlatBinaryI8` keep their existing filtered path.
+
 ### Removed
 
 - The retired gpu modules are deleted from the tree: the four tower backends (`gpu/qwencuda`, `gpu/qwenmetal`,
