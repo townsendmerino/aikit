@@ -105,10 +105,40 @@ func (ix *Index) TopK(query []string, k int) []Result {
 	return ix.topKExhaustive(query, k)
 }
 
+// TopKFilter is TopK restricted to documents for which allow(doc) is true.
+// It returns exactly what scoring every document and then filtering would —
+// the same documents, scores and order, with IDF still computed over the whole
+// corpus, not the scope — but it keeps TopK's dynamic pruning and never scores
+// a document allow rejects. A nil allow is exactly TopK; an allow that admits
+// nothing returns an empty result.
+//
+// allow must be a pure predicate: it is called serially on the calling
+// goroutine, but how often and for which documents depends on pruning, so it
+// must not count calls or depend on their order.
+func (ix *Index) TopKFilter(query []string, k int, allow func(doc int) bool) []Result {
+	ix.checkOpen()
+	defer runtime.KeepAlive(ix) // a mapped index's postings alias its mapping; see LoadIndexMmap
+	if allow == nil {
+		return ix.TopK(query, k)
+	}
+	if k >= 0 {
+		if out, ok := ix.topKWANDFilter(query, k, allow); ok {
+			return out
+		}
+	}
+	return ix.topKExhaustiveFilter(query, k, allow)
+}
+
 // topKExhaustive is the pre-item-39 TopK: score every posting of every query
 // term, then select. It remains the reference the pruning path is gated
 // against, the answer for k<0, and the fallback whenever the bound is unusable.
 func (ix *Index) topKExhaustive(query []string, k int) []Result {
+	return ix.topKExhaustiveFilter(query, k, nil)
+}
+
+// topKExhaustiveFilter is topKExhaustive over the documents allow admits (nil
+// admits all): the reference path TopKFilter falls back to.
+func (ix *Index) topKExhaustiveFilter(query []string, k int, allow func(doc int) bool) []Result {
 	a := ix.scoreQuery(query)
 	defer accum.Put(a)
 
@@ -116,7 +146,7 @@ func (ix *Index) topKExhaustive(query []string, k int) []Result {
 	if k < 0 {
 		res := make([]Result, 0, len(a.Touched))
 		for _, d := range a.Touched {
-			if s := a.Scores[d]; s > 0 {
+			if s := a.Scores[d]; s > 0 && (allow == nil || allow(int(d))) {
 				res = append(res, Result{Doc: int(d), Score: s})
 			}
 		}
@@ -133,7 +163,7 @@ func (ix *Index) topKExhaustive(query []string, k int) []Result {
 	sel := topk.New[int](k)
 	th := sel.Threshold()
 	for _, d := range a.Touched {
-		if s := a.Scores[d]; s > 0 && s > th {
+		if s := a.Scores[d]; s > 0 && s > th && (allow == nil || allow(int(d))) {
 			sel.Push(int(d), s)
 			th = sel.Threshold()
 		}
