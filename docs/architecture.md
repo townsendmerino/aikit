@@ -82,7 +82,6 @@ graph TD
         late["late<br/><i>MaxSim late-interaction reranker</i>"]
         encoder["encoder<br/><i>BERT-family embedders +<br/>SPLADE expansion + cross-encoder reranker</i>"]
         vision["vision<br/><i>SigLIP/ViT image encoder (deprecated)</i>"]
-        audio["audio<br/><i>Gemma 4 audio tower (deprecated)</i>"]
         hybrid["hybrid<br/><i>dense + lexical + fuse.RRF wrapper</i>"]
         bench["bench<br/><i>recall + latency harness</i>"]
 
@@ -107,8 +106,6 @@ graph TD
         encoder --> sparse
         vision --> embed
         vision --> linalg
-        audio --> embed
-        audio --> linalg
         hybrid --> ann
         hybrid --> bm25
         hybrid --> fuse
@@ -145,12 +142,12 @@ import `chunk`; the line chunker is a file in `chunk`, not a package.
 **Two steps up.** `ann` selects through `topk`, scores through `linalg`'s SIMD
 dot kernels, reads its blobs through `internal/cursor` and maps them through
 `mmap`. `late` (ColBERT-style MaxSim reranking) imports `linalg` and `topk`.
-`encoder`, `vision` and `audio` are the model towers, each on `embed` +
+`encoder` and `vision` are the model towers, each on `embed` +
 `linalg`. `encoder` also imports `sparse`: `encoder.SPLADE.Expand` produces
 the `sparse.SparseVec` values the `sparse` package indexes, so the SPLADE loop
 (BERT + masked-LM head → sparse vector → inverted index) runs end-to-end
-in-process. `vision` and `audio` are deprecated and frozen at v1.75.0; they
-moved to goinfer (see the README).
+in-process. `vision` is deprecated and frozen at v1.75.0; it moved to goinfer, as did
+`audio`, which has been removed (see the README).
 
 **Three steps up.** `hybrid` composes `ann`, `bm25` and `fuse`; `bench`
 imports `ann`. Nothing in the library is deeper.
@@ -216,7 +213,7 @@ so much of `linalg` is in: it uses the quantized matmuls, not only the dot
 kernels. `go run -C tools ./retrievalmark --files` prints the current split
 with the reason for each file.
 
-**Outside the zone.** `vision`, `audio`, `bench`, the examples, every test
+**Outside the zone.** `vision`, `bench`, the examples, every test
 file and fixture, the docs, and every nested module. `chunk/treesitter` is on
 ken's search path, but it is a separate module with its own tags, so a root
 release cannot change it.

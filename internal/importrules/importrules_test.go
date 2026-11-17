@@ -74,7 +74,6 @@ var rules = map[string]rule{
 	// Model towers.
 	"encoder": {aikit: []string{"embed", "linalg", "sparse"}},
 	"vision":  {aikit: []string{"embed", "linalg"}},
-	"audio":   {aikit: []string{"embed", "linalg"}},
 
 	// Harness and programs.
 	"bench":                 {aikit: []string{"ann"}},
