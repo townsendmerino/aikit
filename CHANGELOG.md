@@ -65,6 +65,11 @@ excluded from that promise and may change in any release until it graduates.
   63 names the four GPU backends use. The other 170 are kept exported and unmaintained; the lists are in
   `docs/gpu-exported-names-2026-11-10/`. No code changes in `gpu`.
 
+### Added
+
+- `bm25.Index.TopKFilter(tokens, k, allow)`: `TopK` restricted to documents `allow` admits. It keeps WAND pruning, never
+  scores a rejected document, and returns exactly what score-everything-then-filter returns (IDF stays whole-corpus).
+
 ## [1.76.0] — 2026-10-26
 
 `perfgate` VERDICT: PASS — no regression vs v1.75.0 above each shape's floor — 11/47 shapes resolve the 5.0% class

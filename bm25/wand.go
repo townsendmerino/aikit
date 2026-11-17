@@ -138,9 +138,15 @@ func (ix *Index) wandUsable() bool { return ix.K1 >= 0 && ix.B >= 0 && ix.B <= 1
 // topKWAND is TopK's pruning implementation. It returns ok=false when it
 // declines, and the caller falls back to the exhaustive scan.
 func (ix *Index) topKWAND(query []string, k int) ([]Result, bool) {
+	return ix.topKWANDFilter(query, k, nil)
+}
+
+// topKWANDFilter is topKWAND restricted to documents allow admits (nil admits
+// every document).
+func (ix *Index) topKWANDFilter(query []string, k int, allow func(doc int) bool) ([]Result, bool) {
 	w := wandPool.Get().(*wandState)
 	defer wandPool.Put(w)
-	return ix.topKWANDState(query, k, w)
+	return ix.topKWANDStateFilter(query, k, w, allow)
 }
 
 // topKWANDState is topKWAND with the scratch supplied by the caller, so a test
@@ -153,6 +159,28 @@ func (ix *Index) topKWAND(query []string, k int) ([]Result, bool) {
 // exactly like an exhaustive walk. What is saved is documents evaluated, and
 // only a counter sees it.
 func (ix *Index) topKWANDState(query []string, k int, w *wandState) ([]Result, bool) {
+	return ix.topKWANDStateFilter(query, k, w, nil)
+}
+
+// topKWANDStateFilter is the pruning loop with an optional scope.
+//
+// A disallowed document is skipped WITHOUT being scored, and nothing else about
+// the loop changes, which is why the result equals score-everything-then-filter:
+//
+//   - The upper bounds are per-term properties of the whole posting list and so
+//     stay valid for any subset of documents; a filter can only lower the true
+//     maximum, never raise it past a bound.
+//   - IDF is whole-corpus (idfOf), not recomputed over the scope, so every
+//     allowed document's score is exactly the one the unscoped query gives it.
+//   - theta only rises when an allowed document is retained, so it is the
+//     k-th best ALLOWED score, a lower bound on the final one, and the pivot
+//     rule's "nothing before the pivot can beat theta" still holds.
+//
+// When the pivot document is disallowed, no document up to and including it can
+// be retained: everything strictly before it is bounded by theta (the pivot
+// rule) and it itself is out of scope. So every cursor at or before it jumps
+// straight past it, without waiting to be aligned on it first.
+func (ix *Index) topKWANDStateFilter(query []string, k int, w *wandState, allow func(doc int) bool) ([]Result, bool) {
 	if !ix.wandUsable() {
 		return nil, false
 	}
@@ -233,6 +261,23 @@ func (ix *Index) topKWANDState(query []string, k int, w *wandState) ([]Result, b
 			break // no remaining document can beat theta
 		}
 		pivotDoc := cur[ord[piv]].doc
+
+		if allow != nil && !allow(int(pivotDoc)) {
+			// pivotDoc < sentinelDoc here (an exhausted cursor ends the pivot walk),
+			// so pivotDoc+1 cannot overflow. Cursors past pivotDoc are untouched.
+			for j := range ord {
+				c := &cur[ord[j]]
+				if c.doc > pivotDoc {
+					break
+				}
+				if c.doc == pivotDoc {
+					c.setPos(c.i + 1) // a posting list holds a document once
+				} else {
+					c.setPos(advanceTo(c.post, c.i, pivotDoc+1))
+				}
+			}
+			continue
+		}
 
 		if cur[ord[0]].doc != pivotDoc {
 			// Not every cursor has reached the pivot document. Everything
