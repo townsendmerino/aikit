@@ -72,7 +72,7 @@ that the gate in step 5 requires. Every command is written with `GOWORK=off`; a 
 
 4. **Vulnerability statement, on Linux, with the pinned toolchain:**
    `GOWORK=off GOTOOLCHAIN=<the root go.mod's toolchain line> go run -C tools ./vulncheck`
-   (today `GOTOOLCHAIN=go1.27.3`). **Paste the line that starts `STATEMENT:` (`STATEMENT: no reachable vulnerabilities
+   (today `GOTOOLCHAIN=go1.27.4`). **Paste the line that starts `STATEMENT:` (`STATEMENT: no reachable vulnerabilities
    in N/N modules at …`) into the section.** The tool refuses to run anywhere else and says why: off Linux the
    `*cuda` modules have no packages to scan, and on another Go the modules without their own `toolchain`
    line are judged against that Go's standard library. This is a deliverable, not hygiene: aikit's pitch is

@@ -2,7 +2,7 @@ module github.com/townsendmerino/aikit/benchmarks
 
 go 1.27.0
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	github.com/coder/hnsw v0.6.1
