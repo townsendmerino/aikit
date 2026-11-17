@@ -19,6 +19,9 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed
 
+- `Flat.QueryFilter` and `FlatI8.QueryFilter` skip a disallowed row before scoring it instead of scoring every row and
+  filtering before the select, so a narrow scope costs in proportion to the scope. Results are bit-identical to before.
+  `FlatBinary` and `FlatBinaryI8` keep their existing filtered path.
 - The Go 1.27 `go fix` modernizers were applied across the module (`for range n`, `min`/`max`, `maps`/`slices`
   helpers, `strings.SplitSeq`, `sync.WaitGroup.Go`): mechanical rewrites with no intended change in behavior. In the
   core they touch nine non-test files, in `audio`, `bm25`, `embed`, `linalg` and `vision`, and they are the only

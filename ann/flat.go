@@ -94,8 +94,8 @@ func (f *Flat) Query(q []float32, k int) []Hit {
 
 // QueryFilter is Query restricted to documents for which keep(id) is true — a
 // logical-delete / live-set filter applied at query time, so the index stays
-// immutable. Exact for Flat (it scores every vector and filters before selecting),
-// unlike the approximate HNSW.QueryFilter. A nil keep is exactly Query.
+// immutable. Exact for Flat (a disallowed row is skipped before its dot product, never
+// scored), unlike the approximate HNSW.QueryFilter. A nil keep is exactly Query.
 //
 // keep MUST be a pure predicate that is safe for concurrent use. The scan is
 // sharded across cores, so keep is called from several goroutines at once, and
@@ -115,11 +115,12 @@ func (f *Flat) query(q []float32, k int, keep func(int) bool) []Hit {
 	// to discard anyway. Either way the heap buys us nothing.
 	if k <= 0 || k >= len(f.vecs) {
 		hits := make([]Hit, 0, len(f.vecs))
-		scanFlat(q, f.vecs, func(i int, score float64) {
-			if keep == nil || keep(i) {
-				hits = append(hits, Hit{Index: i, Score: score})
-			}
-		})
+		emit := func(i int, score float64) { hits = append(hits, Hit{Index: i, Score: score}) }
+		if keep == nil {
+			scanFlat(q, f.vecs, emit)
+		} else {
+			scanFlatKeep(q, f.vecs, 0, keep, emit)
+		}
 		slices.SortFunc(hits, hitCmp)
 		return hits
 	}
@@ -158,9 +159,19 @@ func scanTopK(q []float32, vecs [][]float32, base, k int, keep func(int) bool) [
 	// See ann/flat_i8.go's topHits: the threshold is hoisted so the non-inlinable
 	// Push is only called for candidates that can actually be retained.
 	th := sel.Threshold()
+	if keep != nil {
+		// Disallowed rows are skipped BEFORE the dot product (scanFlatKeep).
+		scanFlatKeep(q, vecs, base, keep, func(gi int, score float64) {
+			if score > th {
+				sel.Push(gi, score)
+				th = sel.Threshold()
+			}
+		})
+		return sel.Result()
+	}
 	scanFlat(q, vecs, func(i int, score float64) {
 		gi := base + i
-		if score > th && (keep == nil || keep(gi)) {
+		if score > th {
 			sel.Push(gi, score)
 			th = sel.Threshold()
 		}
@@ -226,6 +237,70 @@ func (f *Flat) queryShards(q []float32, k, workers int, keep func(int) bool) []t
 		merged = merged[:k]
 	}
 	return merged
+}
+
+// scanFlatKeep is scanFlat over only the rows keep(base+i) allows: a disallowed
+// row is never dotted. emit receives the GLOBAL index base+i.
+//
+// Scores are bit-identical to scanFlat's over the same vecs. scanFlat dots rows
+// [0, ⌊len/8⌋·8) through the 8-wide kernel and the remainder through linalg.Dot,
+// and the two kernels are not guaranteed to agree in the last bit, so a row must
+// go through the same one here: allowed rows in the body are gathered 8 at a time
+// (the kernel is row-independent, so which rows share a call cannot change a
+// row's score; a short final group is padded with a repeat of its first row and
+// the padding discarded), and allowed rows in the tail use linalg.Dot.
+//
+// keep is called once per row, in ascending order, on the calling goroutine.
+func scanFlatKeep(q []float32, vecs [][]float32, base int, keep func(int) bool, emit func(gi int, score float64)) {
+	d := len(q)
+	n4 := d / 4
+	tailStart := n4 * 4
+	body := 0
+	if d > 0 {
+		body = len(vecs) / 8 * 8
+	}
+	var sums [32]float32
+	var group [8][]float32
+	var gidx [8]int
+	m := 0
+	flush := func() {
+		for j := m; j < 8; j++ {
+			group[j] = group[0] // padding: scored, never emitted
+		}
+		linalg.Dot8x4(&q[0], &group[0][0], &group[1][0], &group[2][0], &group[3][0],
+			&group[4][0], &group[5][0], &group[6][0], &group[7][0], n4, &sums)
+		for j := range m {
+			b := j * 4
+			s := sums[b] + sums[b+1] + sums[b+2] + sums[b+3]
+			for kk := tailStart; kk < d; kk++ {
+				s += q[kk] * group[j][kk]
+			}
+			emit(gidx[j], float64(s))
+		}
+		m = 0
+	}
+	for i := range body {
+		if !keep(base + i) {
+			continue
+		}
+		v := vecs[i]
+		if len(v) != d {
+			// Ragged row (defensive, as in scanFlat): skipped, never panicked.
+			continue
+		}
+		group[m], gidx[m] = v, base+i
+		if m++; m == 8 {
+			flush()
+		}
+	}
+	if m > 0 {
+		flush()
+	}
+	for i := body; i < len(vecs); i++ {
+		if v := vecs[i]; len(v) == d && keep(base+i) {
+			emit(base+i, float64(linalg.Dot(q, v)))
+		}
+	}
 }
 
 func scanFlat(q []float32, vecs [][]float32, emit func(i int, score float64)) {

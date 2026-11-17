@@ -130,9 +130,8 @@ func (f *FlatI8) Query(q []float32, k int) []Hit {
 // immutable. Exact over the int8 scores. A nil keep is exactly Query.
 // keep must be a pure predicate that is safe for concurrent use, per
 // Flat.QueryFilter — that sibling shards its scan and calls keep from several
-// goroutines. This implementation applies it serially today; the requirement is
-// stated uniformly so one filter works with every index and so this path can
-// shard later without a second contract change.
+// goroutines. On the CPU path this implementation asks keep for every row (from
+// several goroutines on a large index) and scores only the allowed ones.
 func (f *FlatI8) QueryFilter(q []float32, k int, keep func(id int) bool) []Hit {
 	return f.query(q, k, keep)
 }
@@ -179,6 +178,15 @@ func (f *FlatI8) query(q []float32, k int, keep func(int) bool) []Hit {
 	// Width-inert: SetThreshold changes only the fan-out, and w8a8Span is
 	// bit-identical across any column split (TestW8A8Batch_widthInert).
 	sc.ws.SetThreshold(flatParallelThreshold)
+	// A filtered CPU scan scores only the allowed rows. Gathering costs a dim-byte
+	// copy per allowed row, so it pays below roughly half the corpus; above that
+	// the full matmul is cheaper than gathering most of it.
+	if keep != nil && f.gpu == nil && f.pager == nil {
+		sc.ids = allowedIDs(sc.ids[:0], f.n, flatQueryWorkers(f.n, f.dim), keep)
+		if len(sc.ids)*2 <= f.n {
+			return f.queryGathered(sc, q, k)
+		}
+	}
 	if cap(sc.dst) < f.n {
 		sc.dst = make([]float32, f.n)
 	}
@@ -214,6 +222,115 @@ func (f *FlatI8) query(q []float32, k int, keep func(int) bool) []Hit {
 	}
 
 	return f.topHits(dst, k, keep)
+}
+
+// allowedIDs appends, ascending, every i in [0, n) with keep(i) true. With w > 1
+// workers it asks keep from several goroutines (keep is
+// documented safe for that, per Flat.QueryFilter) and joins the spans in order,
+// so the result is the same list either way.
+func allowedIDs(dst []int32, n, w int, keep func(int) bool) []int32 {
+	if w <= 1 {
+		for i := range n {
+			if keep(i) {
+				dst = append(dst, int32(i))
+			}
+		}
+		return dst
+	}
+	per := (n + w - 1) / w
+	parts := make([][]int32, w)
+	var wg sync.WaitGroup
+	for p := range w {
+		lo := p * per
+		if lo >= n {
+			break
+		}
+		wg.Add(1)
+		go func(p, lo, hi int) {
+			defer wg.Done()
+			ids := make([]int32, 0, (hi-lo)/4)
+			for i := lo; i < hi; i++ {
+				if keep(i) {
+					ids = append(ids, int32(i))
+				}
+			}
+			parts[p] = ids
+		}(p, lo, min(lo+per, n))
+	}
+	wg.Wait()
+	for _, ids := range parts {
+		dst = append(dst, ids...)
+	}
+	return dst
+}
+
+// queryGathered scores only the rows in sc.ids (ascending, already filtered) by
+// gathering their int8 codes and scales into one contiguous block and running the
+// same W8A8 kernel over it. The kernel assigns each output from its own row, so a
+// gathered row's score is bit-identical to its score in the full scan
+// (w8a8Span is width-inert; TestFlatQueryFilter_skipIdentical gates it).
+// Selection runs over the compact scores and maps back to ids; ids ascend, so the
+// ascending-index tie-break is preserved.
+func (f *FlatI8) queryGathered(sc *flatI8Scratch, q []float32, k int) []Hit {
+	m, dim := len(sc.ids), f.dim
+	if m == 0 {
+		return []Hit{}
+	}
+	if lo := int(sc.ids[0]); int(sc.ids[m-1])-lo == m-1 {
+		// One contiguous run (a directory-shaped scope): score it in place. Copying
+		// it first only adds a pass over the same bytes — on arm64 it made a clustered
+		// scope slower than the unfiltered scan.
+		if cap(sc.dst) < m {
+			sc.dst = make([]float32, m)
+		}
+		dst := sc.dst[:m]
+		linalg.MatmulBTW8A8Into(&sc.ws, q, f.bq[lo*dim:(lo+m)*dim], f.scales[lo:lo+m], dst, 1, dim, m)
+		hits := f.topHits(dst, k, nil)
+		for i := range hits {
+			hits[i].Index += lo
+		}
+		return hits
+	}
+	if cap(sc.gatherCodes) < m*dim {
+		sc.gatherCodes = make([]int8, m*dim)
+	}
+	if cap(sc.gatherScales) < m {
+		sc.gatherScales = make([]float32, m)
+	}
+	codes, scales := sc.gatherCodes[:m*dim], sc.gatherScales[:m]
+	gather := func(lo, hi int) {
+		for j := lo; j < hi; j++ {
+			id := int(sc.ids[j])
+			copy(codes[j*dim:(j+1)*dim], f.bq[id*dim:id*dim+dim])
+			scales[j] = f.scales[id]
+		}
+	}
+	// The copy is cache-miss bound (a scattered row per allowed id), so it
+	// fans out like the matmul does, on the same MAC-count threshold.
+	if w := flatQueryWorkers(m, dim); w > 1 {
+		per := (m + w - 1) / w
+		var wg sync.WaitGroup
+		for lo := 0; lo < m; lo += per {
+			wg.Add(1)
+			go func(lo, hi int) {
+				defer wg.Done()
+				gather(lo, hi)
+			}(lo, min(lo+per, m))
+		}
+		wg.Wait()
+	} else {
+		gather(0, m)
+	}
+	if cap(sc.dst) < m {
+		sc.dst = make([]float32, m)
+	}
+	dst := sc.dst[:m]
+	linalg.MatmulBTW8A8Into(&sc.ws, q, codes, scales, dst, 1, dim, m)
+	hits := f.topHits(dst, k, nil)
+	for i := range hits {
+		hits[i].Index = int(sc.ids[hits[i].Index])
+	}
+	return hits
 }
 
 // topHits selects the k highest scores from dst (one score per indexed vector,
@@ -262,6 +379,10 @@ func (f *FlatI8) topHits(dst []float32, k int, keep func(int) bool) []Hit {
 type flatI8Scratch struct {
 	ws  linalg.Workspace
 	dst []float32
+	// Filtered-scan gather buffers (queryGathered).
+	ids          []int32
+	gatherCodes  []int8
+	gatherScales []float32
 }
 
 var flatI8ScratchPool = sync.Pool{New: func() any { return new(flatI8Scratch) }}
