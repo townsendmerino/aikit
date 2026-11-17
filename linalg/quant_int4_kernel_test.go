@@ -49,7 +49,10 @@ func TestQuantizeInt4Block_matchesScalar(t *testing.T) {
 	var wg sync.WaitGroup
 	const parts = 64
 	for p := range parts {
-		wg.Go(func() {
+		// wg.Add/go/defer, not wg.Go, on purpose: see TestRoundInt4_matchesMathRound.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			row, packed := make([]float32, block), make([]byte, block/2)
 			n := 0
 			for b := uint64(p)<<26 + uint64(p)%stride; b < uint64(p+1)<<26; b += stride {
@@ -63,7 +66,7 @@ func TestQuantizeInt4Block_matchesScalar(t *testing.T) {
 				row[n] = 0
 			}
 			check(row, packed, 1)
-		})
+		}()
 	}
 	wg.Wait()
 
