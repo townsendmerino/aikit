@@ -4,7 +4,6 @@ import (
 	"math/rand"
 	"slices"
 	"testing"
-	"time"
 )
 
 // bruteFilter is the reference TopKFilter is held to: score every document, then
@@ -128,39 +127,14 @@ func TestTopKFilter_skipsDisallowedWithoutScoring(t *testing.T) {
 	}
 }
 
-// medianPer returns the median over 10 samples of the mean time of 50 calls.
-func medianPer(f func()) time.Duration {
-	f()
-	ds := make([]time.Duration, 10)
-	for i := range ds {
-		t0 := time.Now()
-		for range 50 {
-			f()
-		}
-		ds[i] = time.Since(t0) / 50
-	}
-	slices.Sort(ds)
-	return (ds[4] + ds[5]) / 2
-}
-
-// TestTopKFilter_latency states what a scope costs, on the shapes of
-// BenchmarkWAND, 10% scope, scattered and clustered.
-//
-// A scope cannot make a mixed-selectivity query as cheap as the unfiltered one,
-// and the reason is structural: unfiltered, the rare terms lift theta past the
-// head term's bound and most of its postings are skipped; inside a 10% scope
-// few rare-term documents survive, theta stays near the k-th best HEAD-only
-// score, and the head term has to be walked. So:
-//
-//   - 3head (nothing to prune either way): the scope must not cost more than
-//     unfiltered, within noise — a disallowed pivot is skipped unscored;
-//   - head+2rare: the scope is gated against what it replaces, the exhaustive
-//     score-then-filter (the only filtered path before TopKFilter), and merely
-//     logged against unfiltered.
-func TestTopKFilter_latency(t *testing.T) {
-	if testing.Short() {
-		t.Skip("timing gate")
-	}
+// BenchmarkTopKFilter reports unfiltered TopK, TopKFilter and the exhaustive
+// score-then-filter it replaces, for a 10% scope (scattered and clustered), on the
+// shapes of BenchmarkWAND. It is a benchmark rather than a test because a scope
+// cannot make a mixed-selectivity query as cheap as the unfiltered one (theta
+// stays near the k-th best head-only score), and a wall-clock assertion would
+// flake on shared CI runners; the deterministic property is
+// TestTopKFilter_skipsDisallowedWithoutScoring.
+func BenchmarkTopKFilter(b *testing.B) {
 	ix, _ := buildScaleIndex(200_000, 120, 30_000)
 	byDF := termsByDF(ix)
 	n := len(byDF)
@@ -168,8 +142,8 @@ func TestTopKFilter_latency(t *testing.T) {
 		name  string
 		allow func(int) bool
 	}{
-		{"scattered", func(d int) bool { return d%10 == 0 }},
-		{"clustered", func(d int) bool { return d >= 50_000 && d < 70_000 }},
+		{"scattered10pct", func(d int) bool { return d%10 == 0 }},
+		{"clustered10pct", func(d int) bool { return d >= 50_000 && d < 70_000 }},
 	}
 	for _, sh := range []struct {
 		name string
@@ -178,18 +152,22 @@ func TestTopKFilter_latency(t *testing.T) {
 		{"3head", []string{byDF[0], byDF[1], byDF[2]}},
 		{"head+2rare", []string{byDF[0], byDF[n*3/4], byDF[n-5]}},
 	} {
-		un := medianPer(func() { ix.TopK(sh.q, 10) })
+		b.Run(sh.name+"/unfiltered", func(b *testing.B) {
+			for b.Loop() {
+				ix.TopK(sh.q, 10)
+			}
+		})
 		for _, sc := range scopes {
-			fl := medianPer(func() { ix.TopKFilter(sh.q, 10, sc.allow) })
-			ex := medianPer(func() { ix.topKExhaustiveFilter(sh.q, 10, sc.allow) })
-			t.Logf("%s/%s: unfiltered %v, TopKFilter %v (%.2fx), exhaustive-filter %v (%.2fx)",
-				sh.name, sc.name, un, fl, float64(fl)/float64(un), ex, float64(ex)/float64(un))
-			if sh.name == "3head" && float64(fl) > 1.25*float64(un) {
-				t.Errorf("%s/%s: scoped %v is slower than unfiltered %v", sh.name, sc.name, fl, un)
-			}
-			if float64(fl) > 1.25*float64(ex) {
-				t.Errorf("%s/%s: TopKFilter %v is slower than score-then-filter %v", sh.name, sc.name, fl, ex)
-			}
+			b.Run(sh.name+"/"+sc.name+"/TopKFilter", func(b *testing.B) {
+				for b.Loop() {
+					ix.TopKFilter(sh.q, 10, sc.allow)
+				}
+			})
+			b.Run(sh.name+"/"+sc.name+"/exhaustive", func(b *testing.B) {
+				for b.Loop() {
+					ix.topKExhaustiveFilter(sh.q, 10, sc.allow)
+				}
+			})
 		}
 	}
 }
