@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"slices"
 	"testing"
-	"time"
 
 	"github.com/townsendmerino/aikit/topk"
 )
@@ -118,55 +117,66 @@ func TestFlatQueryFilter_skipIdentical(t *testing.T) {
 	}
 }
 
-// medianDur runs f 10 times and returns the median wall time.
-func medianDur(f func()) time.Duration {
-	f() // warm
-	ds := make([]time.Duration, 10)
-	for i := range ds {
-		t0 := time.Now()
-		f()
-		ds[i] = time.Since(t0)
+// TestFlatQueryFilter_scoresOnlyAllowedRows is the deterministic form of "a
+// narrow scope does less work": the scan emits a score for exactly the allowed
+// rows and for no others. (Wall-clock ratios are in BenchmarkQueryFilterScope,
+// not asserted here: a timing assertion flakes on shared CI runners.)
+func TestFlatQueryFilter_scoresOnlyAllowedRows(t *testing.T) {
+	rng := rand.New(rand.NewPCG(31, 32))
+	vecs := randUnitSet(rng, 5003, 30)
+	q := randUnit(rng, 30)
+	for _, keep := range []func(int) bool{
+		func(id int) bool { return id%10 == 0 },
+		func(id int) bool { return id >= 1000 && id < 1500 },
+		func(int) bool { return false },
+	} {
+		want, got := 0, 0
+		for i := range vecs {
+			if keep(i) {
+				want++
+			}
+		}
+		seen := map[int]bool{}
+		scanFlatKeep(q, vecs, 0, keep, func(gi int, _ float64) {
+			got++
+			if !keep(gi) || seen[gi] {
+				t.Fatalf("row %d scored but not allowed, or scored twice", gi)
+			}
+			seen[gi] = true
+		})
+		if got != want {
+			t.Fatalf("scored %d rows, want exactly the %d allowed", got, want)
+		}
 	}
-	slices.Sort(ds)
-	return (ds[4] + ds[5]) / 2
 }
 
-// narrowScopeFaster fails unless a 10%-of-rows filter is at most maxRatio of the
-// median unfiltered query. Margins are loose for noisy CI; measured ratios are in
-// the log.
-func narrowScopeFaster(t *testing.T, name string, ix queryFilterer, q []float32, keep func(int) bool, maxRatio float64) {
-	t.Helper()
-	un := medianDur(func() { ix.Query(q, 10) })
-	fl := medianDur(func() { ix.QueryFilter(q, 10, keep) })
-	t.Logf("%s: unfiltered %v, 10%% scope %v (%.2fx)", name, un, fl, float64(fl)/float64(un))
-	if float64(fl) > maxRatio*float64(un) {
-		t.Errorf("%s: 10%% scope (%v) is not measurably faster than unfiltered (%v)", name, fl, un)
-	}
-}
-
-func TestQueryFilter_narrowScopeIsFaster(t *testing.T) {
-	if testing.Short() {
-		t.Skip("timing gate")
-	}
+// BenchmarkQueryFilterScope reports unfiltered vs a 10% scope (clustered and
+// scattered) per store, for the release perf gate and for A/B by hand.
+func BenchmarkQueryFilterScope(b *testing.B) {
 	rng := rand.New(rand.NewPCG(21, 22))
 	const n = 60000
 	vecs := randUnitSet(rng, n, 256)
 	q := randUnit(rng, 256)
-	// A scope shaped like a directory: one contiguous tenth of the corpus.
 	clustered := func(id int) bool { return id >= n/3 && id < n/3+n/10 }
-	// A scope with no locality: every tenth row.
 	scattered := func(id int) bool { return id%10 == 0 }
-	// Only the exact stores are gated. The binary stores' prefilter is a dense
-	// Hamming scan of ~1-3 ns per row; an opaque func(int) bool costs about that
-	// per row to ask, so gathering allowed rows cannot beat the scan it replaces
-	// (measured 1.5-2.5x SLOWER than the old keep-only-candidates heap path). They
-	// keep that path and are covered by the exactness tests in flat_binary_test.go.
-	stores := []struct {
+	for _, st := range []struct {
 		name string
 		ix   queryFilterer
-	}{{"Flat", New(vecs)}, {"FlatI8", NewFlatI8(vecs)}}
-	for _, st := range stores {
-		narrowScopeFaster(t, st.name+"/clustered", st.ix, q, clustered, 0.7)
-		narrowScopeFaster(t, st.name+"/scattered", st.ix, q, scattered, 0.8)
+	}{{"Flat", New(vecs)}, {"FlatI8", NewFlatI8(vecs)}} {
+		b.Run(st.name+"/unfiltered", func(b *testing.B) {
+			for b.Loop() {
+				st.ix.Query(q, 10)
+			}
+		})
+		b.Run(st.name+"/clustered10pct", func(b *testing.B) {
+			for b.Loop() {
+				st.ix.QueryFilter(q, 10, clustered)
+			}
+		})
+		b.Run(st.name+"/scattered10pct", func(b *testing.B) {
+			for b.Loop() {
+				st.ix.QueryFilter(q, 10, scattered)
+			}
+		})
 	}
 }

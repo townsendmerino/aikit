@@ -276,6 +276,21 @@ func (f *FlatI8) queryGathered(sc *flatI8Scratch, q []float32, k int) []Hit {
 	if m == 0 {
 		return []Hit{}
 	}
+	if lo := int(sc.ids[0]); int(sc.ids[m-1])-lo == m-1 {
+		// One contiguous run (a directory-shaped scope): score it in place. Copying
+		// it first only adds a pass over the same bytes — on arm64 it made a clustered
+		// scope slower than the unfiltered scan.
+		if cap(sc.dst) < m {
+			sc.dst = make([]float32, m)
+		}
+		dst := sc.dst[:m]
+		linalg.MatmulBTW8A8Into(&sc.ws, q, f.bq[lo*dim:(lo+m)*dim], f.scales[lo:lo+m], dst, 1, dim, m)
+		hits := f.topHits(dst, k, nil)
+		for i := range hits {
+			hits[i].Index += lo
+		}
+		return hits
+	}
 	if cap(sc.gatherCodes) < m*dim {
 		sc.gatherCodes = make([]int8, m*dim)
 	}
