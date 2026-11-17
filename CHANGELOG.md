@@ -9,6 +9,18 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.77.0] — 2026-11-17
+
+`perfgate` VERDICT: PASS — no regression vs v1.76.0 above each shape's floor — 16/47 shapes resolve the 5.0% class
+
+sensitivity: 16/47 shapes have a floor ≤ 5.0% (the class this gate targets) nobara (Ryzen 7 3700X, linux/amd64), 311261c vs v1.76.0, 2026-11-17, under the timing lock, Go 1.27.4.
+
+STATEMENT: no reachable vulnerabilities in 11/11 modules at 311261c +dirty (2026-11-17T22:57:05Z). nobara (linux/amd64), Go 1.27.4 (GOTOOLCHAIN=go1.27.4).
+
+This release removes `audio` (the promised minor after its v1.76.0 deprecation), makes `Flat`/`FlatI8` `QueryFilter` skip disallowed rows before scoring, and adds `bm25.Index.TopKFilter`.
+
+RETRIEVAL: yes — vs v1.76.0, 9 of 134 changed files are in the retrieval zone (ann/flat.go, ann/flat_i8.go, bm25/query.go, bm25/tokenize_plain.go, and 5 more)
+
 ### Removed
 
 - **`audio` is removed.** The package (Experimental: the Gemma 4, Whisper, Voxtral and Qwen3-ASR audio towers) moved
@@ -5969,7 +5981,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.76.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.77.0...HEAD
+[1.77.0]: https://github.com/townsendmerino/aikit/compare/v1.76.0...v1.77.0
 [1.76.0]: https://github.com/townsendmerino/aikit/compare/v1.75.0...v1.76.0
 [1.75.0]: https://github.com/townsendmerino/aikit/compare/v1.74.0...v1.75.0
 [1.74.0]: https://github.com/townsendmerino/aikit/compare/v1.73.0...v1.74.0
