@@ -2,8 +2,6 @@ package linalg
 
 import (
 	"runtime"
-	"sync"
-	"sync/atomic"
 )
 
 // Dot returns Σ a[i]*b[i]. len(a) must equal len(b).
@@ -214,8 +212,9 @@ func parallelCols(work, N int, fn func(j0, j1 int)) {
 	parallelSpawnCols(N, resolveWidth(0), fn)
 }
 
-// parallelSpawnCols splits [0,N) into one chunk per worker and runs fn on each
-// in its own goroutine. The caller has already decided parallelism is worth it
+// parallelSpawnCols runs fn over [0,N) in 8-aligned chunks on the calling goroutine
+// plus workers-1 helpers from the persistent spanWorkers pool. The caller has already
+// decided parallelism is worth it
 // (so the fn closure's heap escape here is paid only on the parallel path —
 // callers that want a zero-alloc serial path call their span function directly
 // when below threshold, rather than routing a closure through parallelCols).
@@ -263,20 +262,9 @@ func parallelSpawnCols(N, workers int, fn func(j0, j1 int)) {
 	if grain < 8 {
 		grain = 8
 	}
-	var next atomic.Int64
-	var wg sync.WaitGroup
-	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				j0 := int(next.Add(int64(grain))) - grain
-				if j0 >= N {
-					return
-				}
-				fn(j0, min(j0+grain, N))
-			}
-		}()
+	if workers == 1 {
+		fn(0, N)
+		return
 	}
-	wg.Wait()
+	spanWorkers.run(N, grain, workers-1, fn)
 }

@@ -80,8 +80,8 @@ func (w *Workspace) parallelCols(work, N int, fn func(j0, j1 int)) {
 // output columns, so any width is bit-identical. Pairs with SetThreshold.
 func (w *Workspace) SetWorkers(n int) { w.width = n }
 
-// parallel runs fn over [0,N) as a per-call goroutine fan-out capped at this
-// Workspace's width. Caller has already decided the work clears the threshold.
+// parallel runs fn over [0,N) on the shared helper pool (parallelSpawnCols), capped at
+// this Workspace's width. Caller has already decided the work clears the threshold.
 func (w *Workspace) parallel(N int, fn func(j0, j1 int)) {
 	parallelSpawnCols(N, resolveWidth(w.width), fn)
 }

@@ -76,8 +76,9 @@ On top of the dot kernels, `linalg` provides:
   `SetParallelWidth` (cap fan-out shards, for P/E straggler control) — both
   numerically inert (output columns are partitioned). (`pool.go`, the optional
   per-`Workspace` spin-then-park worker pool this used to name, was PULLED —
-  see perf-dead-ends §8.1. `workspace.go` spawns per call, and since audit M-08
-  hands the shards out from an atomic counter rather than one fixed slice each.)
+  see perf-dead-ends §8.1. Since audit M-08 the shards are handed out from an atomic counter
+  rather than one fixed slice each, and they now run on `spanpool.go`'s process-wide
+  helper pool rather than per-call goroutines.)
 
 **2. `encoder/` — the encoder's matmul orchestration.** `encoder/linalg.go` is now
 thin: `matmulBTInto` dispatches small shapes to a naive in-package loop and large ones

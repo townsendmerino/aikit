@@ -326,6 +326,12 @@ analysis kept predicting load-reduction wins that do not exist on arm64.
   no; the pool was built correctly, measured honestly, and pulled. (linalg item 11,
   dynamic work-stealing over column chunks for E-core straggler imbalance, is a
   *different* thing; the bar for re-entering this area stays high.)
+- **Re-entered, on a changed premise:** the pool above was pulled because M=1 decode
+  then ran serially (commit `902cbec`: "bypassed where it would have helped"). goinfer's
+  decode projections now clear its fan-out threshold, so every decode matmul pays the
+  per-call spawn. `linalg/spanpool.go` is a process-wide, caller-participating pool
+  behind `parallelSpawnCols`; its keep-or-pull is goinfer's `BenchmarkDecode` on phi3
+  q4k and qwen 1.5B (kill under 3%).
 
 ### 8.2 · Regex union — **9× SLOWER**, `nvidia-rtx2070s` (inferred)
 - **Tried:** compile the N chunker regex patterns into one alternation so a single

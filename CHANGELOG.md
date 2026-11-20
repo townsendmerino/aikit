@@ -9,6 +9,14 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Changed
+
+- **`linalg`'s parallel matmuls reuse a persistent helper pool instead of starting goroutines on every call.** The
+  calling goroutine takes chunks too, so concurrent and nested calls cannot deadlock; idle helpers poll for about
+  50 µs and then park, using no CPU between calls. Output is bit-identical at every width
+  (`TestParallelWidth_bitIdentical`); no API change. This re-enters perf-dead-ends §8.1 on a changed premise: that pool
+  was pulled because M=1 decode then ran serially, and goinfer's decode matmuls now fan out.
+
 ## [1.77.0] — 2026-11-17
 
 `perfgate` VERDICT: PASS — no regression vs v1.76.0 above each shape's floor — 16/47 shapes resolve the 5.0% class
