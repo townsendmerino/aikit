@@ -9,6 +9,18 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.78.0] — 2026-11-20
+
+`perfgate` VERDICT: PASS — no regression vs v1.77.0 above each shape's floor — 9/47 shapes resolve the 5.0% class
+
+sensitivity: 9/47 shapes have a floor ≤ 5.0% (the class this gate targets) nobara (Ryzen 7 3700X, linux/amd64), b4e420f vs v1.77.0, 2026-11-20, under the timing lock, Go 1.27.4.
+
+STATEMENT: no reachable vulnerabilities in 11/11 modules at 043fa45 (2026-11-20T20:44:31Z). mbp2 (linux/amd64), Go 1.27.4 (GOTOOLCHAIN=go1.27.4), govulncheck v1.10.0.
+
+This release adds native Q5_K and Q6_K `WeightMat` kinds with AVX2 kernels, so a Q4_K_M GGUF's Q5_K and Q6_K tensors run as the file stores them instead of widened to int8. On nobara, goinfer's CPU Phi-3-mini q4k decode runs 1.102× faster with them (10/10 pairs), and its logits sit closer to an f32 load's.
+
+RETRIEVAL: yes — vs v1.77.0, 6 of 9 changed files are in the retrieval zone (linalg/q4k.go, linalg/q56k.go, linalg/q56k_amd64.s, linalg/q56k_dot.go, and 2 more)
+
 ### Added (Experimental tier)
 
 - **Q5_K and Q6_K `WeightMat` kinds, the Q4_K kind's siblings** (`linalg/q56k.go`). A Q4_K_M GGUF stores some
@@ -5996,7 +6008,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.77.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.78.0...HEAD
+[1.78.0]: https://github.com/townsendmerino/aikit/compare/v1.77.0...v1.78.0
 [1.77.0]: https://github.com/townsendmerino/aikit/compare/v1.76.0...v1.77.0
 [1.76.0]: https://github.com/townsendmerino/aikit/compare/v1.75.0...v1.76.0
 [1.75.0]: https://github.com/townsendmerino/aikit/compare/v1.74.0...v1.75.0
