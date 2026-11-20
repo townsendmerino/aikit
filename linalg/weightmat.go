@@ -37,6 +37,8 @@ type WeightMat struct {
 	q4s16   []uint16  // [rows*nGroups] per-group int4 scales, IEEE binary16 (f16scale.go)
 	group   int       // int4 group size (0 unless int4)
 	q4k     []byte    // non-nil ⇒ GGUF Q4_K super-blocks, verbatim (q4k.go); activations always per-32
+	q5k     []byte    // non-nil ⇒ GGUF Q5_K super-blocks, verbatim (q56k.go); activations always per-32
+	q6k     []byte    // non-nil ⇒ GGUF Q6_K super-blocks, verbatim (q56k.go); activations always per-32
 	w8a8    bool      // int8 weights run full int8×int8 (W8A8) instead of weight-only Q8
 	h16     []uint16  // non-nil ⇒ 16-bit weights (weightmat_half16.go): bf16 or binary16 bit patterns, widened a tile at a time
 	h16Kind uint8     // half16BF16 or half16F16 when h16 is set
@@ -385,6 +387,10 @@ func (w *WeightMat) MatmulBT(a, dst []float32, M int) {
 	switch {
 	case w.q4k != nil:
 		matmulQ4K(nil, a, w.q4k, dst, M, w.cols, w.rows)
+	case w.q5k != nil:
+		matmulQ5K(nil, a, w.q5k, dst, M, w.cols, w.rows)
+	case w.q6k != nil:
+		matmulQ6K(nil, a, w.q6k, dst, M, w.cols, w.rows)
 	case w.q4 != nil:
 		var ws Workspace
 		MatmulBTW4A8F16Into(&ws, a, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
@@ -430,6 +436,10 @@ func (w *WeightMat) MatmulBTInto(ws *Workspace, a, dst []float32, M int) {
 	switch {
 	case w.q4k != nil:
 		matmulQ4K(ws, a, w.q4k, dst, M, w.cols, w.rows)
+	case w.q5k != nil:
+		matmulQ5K(ws, a, w.q5k, dst, M, w.cols, w.rows)
+	case w.q6k != nil:
+		matmulQ6K(ws, a, w.q6k, dst, M, w.cols, w.rows)
 	case w.q4 != nil:
 		MatmulBTW4A8F16Into(ws, a, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
 	case w.q4Row4 != nil, w.q4SplitHalf != nil:
@@ -469,6 +479,12 @@ func (w *WeightMat) Row(i int, dst []float32) {
 	case w.q4k != nil:
 		rb := Q4KRowBytes(w.cols)
 		dequantQ4KRow(w.q4k[i*rb:(i+1)*rb], w.cols, dst)
+	case w.q5k != nil:
+		rb := Q5KRowBytes(w.cols)
+		dequantQ5KRow(w.q5k[i*rb:(i+1)*rb], w.cols, dst)
+	case w.q6k != nil:
+		rb := Q6KRowBytes(w.cols)
+		dequantQ6KRow(w.q6k[i*rb:(i+1)*rb], w.cols, dst)
 	case w.q4 != nil:
 		bpr := (w.cols + 1) / 2
 		nGroups := (w.cols + w.group - 1) / w.group
@@ -490,13 +506,17 @@ func (w *WeightMat) Row(i int, dst []float32) {
 func (w *WeightMat) Rows() int { return w.rows }
 func (w *WeightMat) Cols() int { return w.cols }
 
-// Kind reports the stored precision: "q4k", "int4", "int8", "bf16", "f16", "f32", or "" (empty/zero value).
+// Kind reports the stored precision: "q4k", "q5k", "q6k", "int4", "int8", "bf16", "f16", "f32", or "" (empty/zero value).
 // Reports "int4" for a repacked-only WeightMat too (audit M-22) — Kind is a
 // precision label, not a "canonical bytes present" check; use Int4() for that.
 func (w *WeightMat) Kind() string {
 	switch {
 	case w.q4k != nil:
 		return "q4k"
+	case w.q5k != nil:
+		return "q5k"
+	case w.q6k != nil:
+		return "q6k"
 	case w.q4 != nil, w.q4Row4 != nil, w.q4SplitHalf != nil:
 		return "int4"
 	case w.q8 != nil:

@@ -9,6 +9,21 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added (Experimental tier)
+
+- **Q5_K and Q6_K `WeightMat` kinds, the Q4_K kind's siblings** (`linalg/q56k.go`). A Q4_K_M GGUF stores some
+  tensors at Q5_K and Q6_K (Phi-3-mini: every fused qkv at Q5_K, half the down projections and the LM head at
+  Q6_K, 43% of its bytes). A consumer that widened those to int8 read more bytes than the file holds and rounded
+  them a second time; these kinds multiply the file's super-blocks verbatim, with per-32 int8 activations like Q4_K.
+  - `WrapQ5K` / `WrapQ6K` wrap the super-blocks without copying, `Q5KRowBytes` / `Q6KRowBytes` size a row, and
+    `WeightMat.Q5K` / `WeightMat.Q6K` return the bytes. `MatmulBT`, `MatmulBTInto`, `Row` and `Kind` ("q5k", "q6k")
+    dispatch on the kind.
+  - Kernels: `dotQ5KGo` and `dotQ6KGo` are the oracles; `dotQ5KAVX2` and `dotQ6KAVX2` (AVX2 + F16C, detected as for
+    Q4_K) compute eight groups per FMA. Q6_K's two sub-scales per group are applied in int32, exactly.
+  - `KQuantNative` reports whether the K-quant kinds have an arch kernel on this CPU (amd64 with AVX2 + F16C today).
+    Without one they run the Go oracle, far slower than int8, so a consumer choosing a kind for speed should widen.
+  - kquant.go's scalar Q4_K/Q6_K × Q8_K matmul stays the recorded negative result it was; these kinds do not use it.
+
 ## [1.77.0] — 2026-11-17
 
 `perfgate` VERDICT: PASS — no regression vs v1.76.0 above each shape's floor — 16/47 shapes resolve the 5.0% class
