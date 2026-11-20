@@ -327,6 +327,22 @@ analysis kept predicting load-reduction wins that do not exist on arm64.
   dynamic work-stealing over column chunks for E-core straggler imbalance, is a
   *different* thing; the bar for re-entering this area stays high.)
 
+### 8.1b · Process-wide caller-participating pool, re-entered on decode — **built, measured, KILLED** (aikit#34, 2026-11-20)
+- **Tried:** re-entry of 8.1 on a changed premise (goinfer's decode matmuls now fan out, so every one paid a goroutine
+  spawn): one process-wide helper pool behind `parallelSpawnCols`. The caller drains its own job (concurrent and nested
+  calls safe), helpers spin ~50 µs yielding every 64 polls, then park on a cond. Same 8-aligned dynamic chunks;
+  bit-identical (fingerprints equal on both models). Branch `perf-cpu-worker-pool` at `feec618`, not merged.
+- **Number / box:** goinfer `BenchmarkDecode`, nobara (Ryzen 7 3700X, 16 threads), A B B A ×10 per model, one session:
+  **phi3-mini q4k −2.56% (0/10 pairs faster), qwen2.5-coder 1.5B −3.55% (0/10)**. Allocations fell (phi3 3767 → 721
+  allocs/op) while throughput dropped. perfgate on v1.77.0 + the pool: **FAIL**, three regressions confirmed on a second
+  measurement (`BenchmarkMatmulBTW4A8SplitHalfTile/M32` +7.20%, `/M128` +3.10%, `BenchmarkMatmulBTW8A8Batch_prefill/gateup/M32`
+  +2.43%), all flat without it. Timing record: aikit#34's comments.
+- **Why (unprofiled):** the likeliest cost is the spin window and the caller-drains handoff on 16 SMT threads: spinning
+  helpers hold Ps that the next shard's work and goinfer's own attention workers want, and the queue lock is taken per
+  call. Per-call spawn on Go's scheduler is already cheap enough that the pool does not pay for itself.
+- **Before a third try:** profile first (scheduler latency, `runtime.Gosched` share, lock contention), and register the
+  kill bar against both decode models and perfgate's SplitHalfTile shapes.
+
 ### 8.2 · Regex union — **9× SLOWER**, `nvidia-rtx2070s` (inferred)
 - **Tried:** compile the N chunker regex patterns into one alternation so a single
   machine acquisition covers all of them.
