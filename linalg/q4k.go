@@ -44,12 +44,12 @@ func WrapQ4K(raw []byte, rows, cols int) (WeightMat, error) {
 	if want := mul(rows, Q4KRowBytes(cols)); len(raw) != want {
 		return WeightMat{}, fmt.Errorf("linalg: WrapQ4K: %d bytes for %dx%d, want %d", len(raw), rows, cols, want)
 	}
-	return WeightMat{q4k: raw, rows: rows, cols: cols}, nil
+	return WeightMat{kq: raw, kqKind: kqQ4K, rows: rows, cols: cols}, nil
 }
 
 // Q4K returns the raw Q4_K super-blocks (ok=false unless this is a Q4_K WeightMat), for a consumer's
 // GPU export.
-func (w *WeightMat) Q4K() (raw []byte, ok bool) { return w.q4k, w.q4k != nil }
+func (w *WeightMat) Q4K() (raw []byte, ok bool) { return w.kquantRaw(kqQ4K) }
 
 // dequantQ4KRow writes one row's weights (cols of them) into dst.
 func dequantQ4KRow(row []byte, cols int, dst []float32) {

@@ -54,7 +54,7 @@ func WrapQ5K(raw []byte, rows, cols int) (WeightMat, error) {
 	if err := wrapKQuant("WrapQ5K", raw, rows, cols, Q5KRowBytes(cols)); err != nil {
 		return WeightMat{}, err
 	}
-	return WeightMat{q5k: raw, rows: rows, cols: cols}, nil
+	return WeightMat{kq: raw, kqKind: kqQ5K, rows: rows, cols: cols}, nil
 }
 
 // WrapQ6K wraps rows×cols weights already in GGUF Q6_K layout WITHOUT copying (raw may point into an
@@ -64,14 +64,67 @@ func WrapQ6K(raw []byte, rows, cols int) (WeightMat, error) {
 	if err := wrapKQuant("WrapQ6K", raw, rows, cols, Q6KRowBytes(cols)); err != nil {
 		return WeightMat{}, err
 	}
-	return WeightMat{q6k: raw, rows: rows, cols: cols}, nil
+	return WeightMat{kq: raw, kqKind: kqQ6K, rows: rows, cols: cols}, nil
 }
 
 // Q5K returns the raw Q5_K super-blocks (ok=false unless this is a Q5_K WeightMat).
-func (w *WeightMat) Q5K() (raw []byte, ok bool) { return w.q5k, w.q5k != nil }
+func (w *WeightMat) Q5K() (raw []byte, ok bool) { return w.kquantRaw(kqQ5K) }
 
 // Q6K returns the raw Q6_K super-blocks (ok=false unless this is a Q6_K WeightMat).
-func (w *WeightMat) Q6K() (raw []byte, ok bool) { return w.q6k, w.q6k != nil }
+func (w *WeightMat) Q6K() (raw []byte, ok bool) { return w.kquantRaw(kqQ6K) }
+
+// The K-quant kinds a WeightMat's kq holds (kqKind). Zero is none of them.
+const (
+	kqQ4K uint8 = 4
+	kqQ5K uint8 = 5
+	kqQ6K uint8 = 6
+)
+
+// kquantRaw returns kq when it holds kind k.
+func (w *WeightMat) kquantRaw(k uint8) ([]byte, bool) {
+	if w.kq == nil || w.kqKind != k {
+		return nil, false
+	}
+	return w.kq, true
+}
+
+// kquantKind is Kind's label for the K-quant kinds.
+func (w *WeightMat) kquantKind() string {
+	switch w.kqKind {
+	case kqQ5K:
+		return "q5k"
+	case kqQ6K:
+		return "q6k"
+	}
+	return "q4k"
+}
+
+// matmulKQuant is MatmulBT / MatmulBTInto for the K-quant kinds; ws may be nil.
+func (w *WeightMat) matmulKQuant(ws *Workspace, a, dst []float32, M int) {
+	switch w.kqKind {
+	case kqQ5K:
+		matmulQ5K(ws, a, w.kq, dst, M, w.cols, w.rows)
+	case kqQ6K:
+		matmulQ6K(ws, a, w.kq, dst, M, w.cols, w.rows)
+	default:
+		matmulQ4K(ws, a, w.kq, dst, M, w.cols, w.rows)
+	}
+}
+
+// kquantRow is Row for the K-quant kinds.
+func (w *WeightMat) kquantRow(i int, dst []float32) {
+	switch w.kqKind {
+	case kqQ5K:
+		rb := Q5KRowBytes(w.cols)
+		dequantQ5KRow(w.kq[i*rb:(i+1)*rb], w.cols, dst)
+	case kqQ6K:
+		rb := Q6KRowBytes(w.cols)
+		dequantQ6KRow(w.kq[i*rb:(i+1)*rb], w.cols, dst)
+	default:
+		rb := Q4KRowBytes(w.cols)
+		dequantQ4KRow(w.kq[i*rb:(i+1)*rb], w.cols, dst)
+	}
+}
 
 // q5kCode is element 64j+l (hi=false) or 64j+32+l (hi=true) of a Q5_K block's codes.
 func q5kCode(qh, qs []byte, j, l int, hi bool) uint8 {

@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+	"unsafe"
 )
 
 // kqF16 is a random normal f16 in [2^-6, 2^1), as two little-endian bytes.
@@ -291,5 +292,16 @@ func TestQ56K_kernelMatchesGo(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestWeightMat_kquantTagInPadding: the K-quant kind tag sits in WeightMat's padding. Consumers count WeightMat headers in their
+// memory accounting (goinfer's decision census), so a field that grows the struct moves their numbers and wants its own change.
+func TestWeightMat_kquantTagInPadding(t *testing.T) {
+	if unsafe.Sizeof(uintptr(0)) != 8 {
+		t.Skip("the size is pinned for 64-bit builds")
+	}
+	if got := unsafe.Sizeof(WeightMat{}); got != 288 {
+		t.Errorf("unsafe.Sizeof(WeightMat{}) = %d, want 288", got)
 	}
 }
