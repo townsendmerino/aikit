@@ -48,6 +48,15 @@ func poolingFromFS(fsys fs.FS, dir string, fallback pooling) (pooling, error) {
 	return poolingFromBytes(raw, fallback)
 }
 
+// poolingFromFiles is poolingFromConfig over a BERT load's file source (bertFiles).
+func poolingFromFiles(files bertFiles, fallback pooling) (pooling, error) {
+	raw, err := files.readFile("1_Pooling/config.json")
+	if err != nil {
+		return fallback, nil
+	}
+	return poolingFromBytes(raw, fallback)
+}
+
 // poolingFromBytes parses a sentence-transformers 1_Pooling/config.json body.
 // cls/mean map to the mode; an unsupported mode (max / mean-sqrt-len) is a hard
 // error rather than a silent mispool — an embedder that pools the wrong way

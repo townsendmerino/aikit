@@ -375,6 +375,10 @@ no such consumer has surfaced yet.
 - `encoder.LoadBERT` / `encoder.BERT` / `BERT.Encode` — MiniLM-class BERT encoder
   (learned positions + GELU FFN + mean pooling), cgo-free, parity-pinned to
   all-MiniLM-L6-v2 (cosine 1.0). New surface, settling.
+- `encoder.LoadBERTFromFS` / `BERT.Tokenizer` — `LoadBERT` reading its five files
+  through an `fs.FS` (an `embed.FS`, or bytes a caller has already read and
+  checked), each once; and the tokenizer the load parsed, for a caller that wraps
+  ids itself. Bit-identical to `LoadBERT`. New surface.
 - `encoder.LoadSPLADE` / `encoder.SPLADE` / `SPLADE.Expand` — in-process SPLADE
   learned-sparse expansion (BERT + masked-LM head → `sparse.SparseVec`), parity 1.0
   vs the reference. Closes the `sparse` loop end-to-end. New surface.

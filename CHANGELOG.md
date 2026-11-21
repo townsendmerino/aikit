@@ -9,6 +9,19 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added (Experimental tier)
+
+- **`encoder.LoadBERTFromFS`, the BERT loader over an `fs.FS`** (`encoder/bert.go`), as `encoder.LoadFromFS` is for
+  nomic-bert. It reads `config.json`, `model.safetensors`, `sentence_bert_config.json`, `1_Pooling/config.json` and
+  `tokenizer.json` through the given `fs.FS`, each once and nothing else, so a caller can serve a model from an
+  `embed.FS` or from bytes it has already read and checked, without a path. It loads what `LoadBERT` loads, bit for
+  bit (`TestLoadBERTFromFS_matchesLoadBERT`; `TestBGE_loadBERTFromFSMatchesLoadBERT` on bge-small-en-v1.5). The
+  weights may alias the bytes `fs.ReadFile` returns for `model.safetensors`; a caller whose `fs.FS` hands out its own
+  buffer must not modify it while the `BERT` is in use.
+  - `BERT.Tokenizer` returns the tokenizer the load parsed (nil when `tokenizer.json` was absent or unsupported), so a
+    caller that cuts and wraps ids itself before `Embed` need not read `tokenizer.json` a second time.
+  - `LoadBERT` and `LoadBERTWithOptions` are unchanged; both loaders now share one body over a file source.
+
 ## [1.78.0] — 2026-11-20
 
 `perfgate` VERDICT: PASS — no regression vs v1.77.0 above each shape's floor — 9/47 shapes resolve the 5.0% class

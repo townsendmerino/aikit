@@ -3,7 +3,9 @@ package encoder
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/townsendmerino/aikit/embed"
@@ -93,10 +95,58 @@ func positionOffset(modelType string, padTokenID int) int {
 // precision, read from the mapping (WordEmbNative; see LoadBERTWithOptions).
 func LoadBERT(dir string) (*BERT, error) { return LoadBERTWithOptions(dir, LoadOptions{}) }
 
+// LoadBERTFromFS is LoadBERT reading every file through fsys, rooted at dir: config.json, model.safetensors,
+// sentence_bert_config.json, 1_Pooling/config.json and tokenizer.json, each once and nothing else. It lets a caller serve
+// a model it has already read and checked, from an embed.FS or an fstest.MapFS, without opening a path. The word-embedding
+// table is held as LoadBERT holds it. The weights may alias the bytes fs.ReadFile returns for model.safetensors: when
+// fsys hands out its own buffer rather than a copy, the caller must not modify that buffer while the BERT is in use.
+func LoadBERTFromFS(fsys fs.FS, dir string) (*BERT, error) {
+	return loadBERTFrom(fsFiles{fsys: fsys, dir: dir}, true)
+}
+
 // loadBERT is the load itself. native lets the word-embedding table be a mapped
 // 16-bit view (F16/BF16 checkpoints); without it the table is f32 (SPLADE).
 func loadBERT(dir string, native bool) (*BERT, error) {
-	raw, err := os.ReadFile(filepath.Join(dir, "config.json"))
+	return loadBERTFrom(dirFiles(dir), native)
+}
+
+// bertFiles is where a BERT load reads its files: a directory on disk (LoadBERT, whose weights are mapped) or an
+// fs.FS (LoadBERTFromFS, whose weights are read whole). name is relative to the model's root, slash-separated.
+type bertFiles interface {
+	readFile(name string) ([]byte, error)
+	safetensors(name string) (*embed.SafetensorsFile, error)
+	tokenizer(name string) (*embed.Tokenizer, error)
+}
+
+type dirFiles string
+
+func (d dirFiles) path(name string) string              { return filepath.Join(string(d), filepath.FromSlash(name)) }
+func (d dirFiles) readFile(name string) ([]byte, error) { return os.ReadFile(d.path(name)) }
+func (d dirFiles) safetensors(name string) (*embed.SafetensorsFile, error) {
+	return embed.OpenSafetensorsMmap(d.path(name))
+}
+func (d dirFiles) tokenizer(name string) (*embed.Tokenizer, error) {
+	return embed.LoadTokenizer(d.path(name))
+}
+
+type fsFiles struct {
+	fsys fs.FS
+	dir  string
+}
+
+func (f fsFiles) readFile(name string) ([]byte, error) {
+	return fs.ReadFile(f.fsys, path.Join(f.dir, name))
+}
+func (f fsFiles) safetensors(name string) (*embed.SafetensorsFile, error) {
+	return embed.OpenSafetensorsFromFS(f.fsys, path.Join(f.dir, name))
+}
+func (f fsFiles) tokenizer(name string) (*embed.Tokenizer, error) {
+	return embed.LoadTokenizerFromFS(f.fsys, path.Join(f.dir, name))
+}
+
+// loadBERTFrom is the load over either file source.
+func loadBERTFrom(files bertFiles, native bool) (*BERT, error) {
+	raw, err := files.readFile("config.json")
 	if err != nil {
 		return nil, fmt.Errorf("encoder: read BERT config: %w", err)
 	}
@@ -118,7 +168,7 @@ func loadBERT(dir string, native bool) (*BERT, error) {
 		c.LNEps = 1e-12
 	}
 
-	st, err := embed.OpenSafetensorsMmap(filepath.Join(dir, "model.safetensors"))
+	st, err := files.safetensors("model.safetensors")
 	if err != nil {
 		return nil, fmt.Errorf("encoder: open BERT safetensors: %w", err)
 	}
@@ -179,7 +229,7 @@ func loadBERT(dir string, native bool) (*BERT, error) {
 	// token at index i reads posEmb[i+posOff].
 	usablePos := c.MaxPos - b.posOff
 	b.maxSeq = usablePos
-	if sb, e := os.ReadFile(filepath.Join(dir, "sentence_bert_config.json")); e == nil {
+	if sb, e := files.readFile("sentence_bert_config.json"); e == nil {
 		var v struct {
 			MaxSeqLength int `json:"max_seq_length"`
 		}
@@ -195,13 +245,13 @@ func loadBERT(dir string, native bool) (*BERT, error) {
 	// (XLM-R family), but a model with some other tokenizer.json can still run the
 	// forward on PRE-TOKENIZED ids via Embed. Encode(text), which needs the
 	// tokenizer, errors when it's absent.
-	if tok, terr := embed.LoadTokenizer(filepath.Join(dir, "tokenizer.json")); terr == nil {
+	if tok, terr := files.tokenizer("tokenizer.json"); terr == nil {
 		b.tok = tok
 	}
 	// Pooling is a declared per-model property (sentence-transformers
 	// 1_Pooling/config.json), not assumed: MiniLM pools mean, BGE pools CLS.
 	// Absent file → mean, the sentence-transformers BERT default.
-	if b.pool, err = poolingFromConfig(dir, poolMean); err != nil {
+	if b.pool, err = poolingFromFiles(files, poolMean); err != nil {
 		_ = st.Close()
 		return nil, err
 	}
@@ -216,6 +266,11 @@ func (b *BERT) Close() error {
 	}
 	return b.st.Close()
 }
+
+// Tokenizer returns the tokenizer the model loaded from its tokenizer.json, or nil when that file was absent or of a
+// kind aikit does not parse. A caller that cuts and wraps ids itself before Embed uses it instead of loading the file a
+// second time.
+func (b *BERT) Tokenizer() *embed.Tokenizer { return b.tok }
 
 // Encode tokenizes text (WordPiece, wrapped [CLS]…[SEP], right-truncated to the
 // model's max sequence length) and returns the mean-pooled, L2-normalized sentence
