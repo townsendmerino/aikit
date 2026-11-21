@@ -44,7 +44,7 @@ var hardPkgs = []string{"topk", "ann", "bm25", "fuse", "embed", "encoder", "chun
 // experimentalSyms: symbols documented Experimental that LIVE INSIDE a Hard-tier package —
 // their leading symbol name is the whole match, so an apidiff line led by one is exempt.
 var experimentalSyms = map[string][]string{
-	"encoder": {"Backend", "RegisterBackend", "NewBackend", "LoadQ8", "ModelQ8", "WeightsQ8", "LayerWeightsQ8", "LoadBERT", "BERT", "LoadSPLADE", "SPLADE", "LoadCrossEncoder", "CrossEncoder"},
+	"encoder": {"Backend", "RegisterBackend", "NewBackend", "LoadQ8", "ModelQ8", "WeightsQ8", "LayerWeightsQ8", "LoadBERT", "LoadBERTFromFS", "BERT", "LoadSPLADE", "SPLADE", "LoadCrossEncoder", "CrossEncoder"},
 	"ann":     {"FlatBinary", "NewFlatBinary", "NewFlatBinaryOverquery", "DefaultOverquery"},
 	"embed":   {"LoadMmap"},
 }
