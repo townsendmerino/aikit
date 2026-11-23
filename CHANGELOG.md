@@ -9,6 +9,14 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Changed
+
+- **The amd64 acc64 QK kernel runs sixteen keys at a time** (`linalg/attn_acc64_amd64.s`, `qkAcc64AVX16`): four 4-key blocks as
+  four accumulators in one pass over d, where the 4-key kernel kept one accumulator chain per block and waited out the FMA latency
+  every dim. Each key is still one f64 lane folded over ascending d, so `MatmulQKAcc64`'s scores are bit-identical
+  (`TestQkAcc64AVX16_matchesAVX4AndGo`); the 4-key kernel takes the last N%16 keys. On a Ryzen 7 3700X at Phi-3-mini's layer shape
+  (3,900 keys, 32 heads of 96) the 4-key kernel read the cache at 16.0 GB/s against `MatmulAVAcc64`'s 29.9 GB/s on the same bytes.
+
 ## [1.78.0] — 2026-11-20
 
 `perfgate` VERDICT: PASS — no regression vs v1.77.0 above each shape's floor — 9/47 shapes resolve the 5.0% class
