@@ -25,6 +25,12 @@ func avAcc64AVX32(scores *float32, vals *float32, nKeys int, rowStrideBytes int,
 //go:noescape
 func qkAcc64AVX4(q *float32, rows *float32, rowStrideBytes int, k4 int, nBlocks int, dst *float32)
 
+// qkAcc64AVX16 is qkAcc64AVX4 over n16 groups of sixteen keys with four accumulators in flight; the same sums, bit for bit
+// (attn_acc64_amd64.s). Only safe when hasAVX2.
+//
+//go:noescape
+func qkAcc64AVX16(q *float32, rows *float32, rowStrideBytes int, k4 int, n16 int, dst *float32)
+
 // avAcc64Blocks runs one query row's scores·V through the AVX2 32-dim kernel
 // for as many whole 32-dim blocks as hd holds and returns the first dim it did
 // NOT compute; the caller finishes from there with the Go 16-block and tail
@@ -42,7 +48,7 @@ func avAcc64Blocks(srow, vals, drow []float32, nKeys, hd, headOff, rowStride int
 	return d0
 }
 
-// qkAcc64Keys runs one query row's q·Kᵀ through the AVX2 4-key kernel for as
+// qkAcc64Keys runs one query row's q·Kᵀ through the AVX2 16-key kernel, then the 4-key kernel, for as
 // many whole 4-key blocks as N holds and returns the number of keys it wrote;
 // the caller finishes the N%4 tail with the Go 8-chain loop. The kernel walks d
 // one at a time but requires K%4==0 for parity with the arm64 sibling's
@@ -52,10 +58,25 @@ func qkAcc64Keys(arow, bMat, drow []float32, K, N, bOff, rowStride int) int {
 	if !hasAVX2 || K == 0 || K%4 != 0 {
 		return 0
 	}
-	nBlocks := N / 4
+	j := qkAcc64Keys16(arow, bMat, drow, K, N, bOff, rowStride)
+	nBlocks := (N - j) / 4
 	if nBlocks == 0 {
+		return j
+	}
+	qkAcc64AVX4(&arow[0], &bMat[bOff+j*rowStride], rowStride*4, K/4, nBlocks, &drow[j])
+	return j + nBlocks*4
+}
+
+// qkAcc64Keys16 runs whole sixteen-key groups through qkAcc64AVX16 and returns the keys it wrote (a multiple of 16; 0 where the
+// kernel declines). qkAcc64Keys finishes the rest four keys at a time.
+func qkAcc64Keys16(arow, bMat, drow []float32, K, N, bOff, rowStride int) int {
+	if !hasAVX2 || K == 0 || K%4 != 0 {
 		return 0
 	}
-	qkAcc64AVX4(&arow[0], &bMat[bOff], rowStride*4, K/4, nBlocks, &drow[0])
-	return nBlocks * 4
+	n16 := N / 16
+	if n16 == 0 {
+		return 0
+	}
+	qkAcc64AVX16(&arow[0], &bMat[bOff], rowStride*4, K/4, n16, &drow[0])
+	return n16 * 16
 }

@@ -180,3 +180,102 @@ qkstore:
 qkdone:
 	VZEROUPPER
 	RET
+
+// func qkAcc64AVX16(q *float32, rows *float32, rowStrideBytes int, k4 int, n16 int, dst *float32)
+//
+// qkAcc64AVX4 four blocks at a time: n16×16 keys' dots against q, one key per f64 lane, and FOUR accumulators (Y0–Y3, keys 0–3,
+// 4–7, 8–11, 12–15 of the group) fed in the same d step. Each lane is still one key's chain over ascending d, the same adds in the
+// same order as the 4-key kernel and the Go loop, so the sums are bit-identical; what changes is that four independent FMA chains
+// are in flight, where the 4-key kernel's one chain waits out the FMA latency every d. Keys g·4 .. g·4+3 of a group are read through
+// base register R11/R13/R14/R15 plus 0, S, 2S and 3S (R8 = S, R12 = 3S).
+TEXT ·qkAcc64AVX16(SB), NOSPLIT, $0-48
+	MOVQ q+0(FP), SI
+	MOVQ rows+8(FP), DI
+	MOVQ rowStrideBytes+16(FP), R8
+	MOVQ k4+24(FP), R9
+	MOVQ n16+32(FP), R10
+	MOVQ dst+40(FP), DX
+	LEAQ (R8)(R8*2), R12 // 3S
+	TESTQ R10, R10
+	JZ    q16done
+
+q16group:
+	VXORPD Y0, Y0, Y0
+	VXORPD Y1, Y1, Y1
+	VXORPD Y2, Y2, Y2
+	VXORPD Y3, Y3, Y3
+	// Base cursors for keys 0, 4, 8 and 12 of this group: DI + g·4S.
+	MOVQ DI, R11
+	MOVQ R8, BX
+	SHLQ $2, BX // 4S
+	LEAQ (R11)(BX*1), R13
+	LEAQ (R13)(BX*1), R14
+	LEAQ (R14)(BX*1), R15
+	MOVQ SI, AX // q cursor
+	MOVQ R9, CX
+	SHLQ $2, CX // K = 4·k4 dims
+	TESTQ CX, CX
+	JZ    q16store
+
+q16dim:
+	VBROADCASTSS (AX), X4
+	VCVTPS2PD    X4, Y4
+
+	VMOVSS    (R11), X5
+	VINSERTPS $0x10, (R11)(R8*1), X5, X5
+	VINSERTPS $0x20, (R11)(R8*2), X5, X5
+	VINSERTPS $0x30, (R11)(R12*1), X5, X5
+	VCVTPS2PD X5, Y5
+	VFMADD231PD Y5, Y4, Y0
+
+	VMOVSS    (R13), X6
+	VINSERTPS $0x10, (R13)(R8*1), X6, X6
+	VINSERTPS $0x20, (R13)(R8*2), X6, X6
+	VINSERTPS $0x30, (R13)(R12*1), X6, X6
+	VCVTPS2PD X6, Y6
+	VFMADD231PD Y6, Y4, Y1
+
+	VMOVSS    (R14), X7
+	VINSERTPS $0x10, (R14)(R8*1), X7, X7
+	VINSERTPS $0x20, (R14)(R8*2), X7, X7
+	VINSERTPS $0x30, (R14)(R12*1), X7, X7
+	VCVTPS2PD X7, Y7
+	VFMADD231PD Y7, Y4, Y2
+
+	VMOVSS    (R15), X8
+	VINSERTPS $0x10, (R15)(R8*1), X8, X8
+	VINSERTPS $0x20, (R15)(R8*2), X8, X8
+	VINSERTPS $0x30, (R15)(R12*1), X8, X8
+	VCVTPS2PD X8, Y8
+	VFMADD231PD Y8, Y4, Y3
+
+	ADDQ $4, AX
+	ADDQ $4, R11
+	ADDQ $4, R13
+	ADDQ $4, R14
+	ADDQ $4, R15
+	DECQ CX
+	JNZ  q16dim
+
+q16store:
+	VCVTPD2PSY Y0, X9
+	VMOVUPS   X9, 0(DX)
+	VCVTPD2PSY Y1, X9
+	VMOVUPS   X9, 16(DX)
+	VCVTPD2PSY Y2, X9
+	VMOVUPS   X9, 32(DX)
+	VCVTPD2PSY Y3, X9
+	VMOVUPS   X9, 48(DX)
+	ADDQ      $64, DX
+
+	// Advance to the next group of sixteen keys: DI += 16S.
+	MOVQ R8, BX
+	SHLQ $4, BX
+	ADDQ BX, DI
+
+	DECQ R10
+	JNZ  q16group
+
+q16done:
+	VZEROUPPER
+	RET
