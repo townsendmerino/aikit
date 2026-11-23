@@ -5,6 +5,7 @@ package linalg
 import (
 	"math"
 	"math/rand"
+	randv2 "math/rand/v2"
 	"testing"
 )
 
@@ -178,5 +179,20 @@ func TestAttnAcc64_publicKernelsMixedShapes(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestAcc64F16NEON_isLoadBearing checks the NEON f16 kernels RUN: a declining dispatcher would leave the f16 tests passing against the
+// Go loops while proving nothing about the assembly.
+func TestAcc64F16NEON_isLoadBearing(t *testing.T) {
+	rng := randv2.New(randv2.NewPCG(53, 59))
+	const K, N, stride = 96, 16*3 + 5, 96 * 2
+	h, _ := f16Cache(rng, (N-1)*stride+K)
+	q := make([]float32, K)
+	if got := qkAcc64KeysF16(q, h, make([]float32, N), K, N, 0, stride); got != 48 {
+		t.Errorf("qkAcc64KeysF16 wrote %d keys, want 48: the f16 QK kernel did not engage", got)
+	}
+	if got := avAcc64BlocksF16(make([]float32, N), h, make([]float32, K), N, K, 0, stride); got != 96 {
+		t.Errorf("avAcc64BlocksF16 covered %d dims, want 96: the f16 AV kernel did not engage", got)
 	}
 }

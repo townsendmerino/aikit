@@ -306,3 +306,282 @@ qkquad:
 	SUBS $1, R24, R24
 	BNE  qkblock
 	RET
+
+// The f16-source ports (MatmulQKAcc64F16, MatmulAVAcc64F16): the same kernels with each half widened exactly to f32 by
+// FCVTL/FCVTL2 (half to single, sz=0: 0x0E217800 / 0x4E217800) as it is loaded, so every accumulator sees the f32 kernel's adds on
+// the widened cache in the same order. QK loads each key's d-quad as four halves (8 bytes) instead of four floats; AV loads a key's
+// 32 dims as 64 bytes of halves and widens them into eight f32 quads (V20-V27) before the f64 widen and FMLA.
+
+// func qkAcc64NEON16F16(q *float32, rows *uint16, rowStrideBytes int, k4 int, nBlocks int, dst *float32)
+TEXT ·qkAcc64NEON16F16(SB), NOSPLIT, $0-48
+	MOVD q+0(FP), R22
+	MOVD rows+8(FP), R1
+	MOVD rowStrideBytes+16(FP), R2
+	MOVD k4+24(FP), R23
+	MOVD nBlocks+32(FP), R24
+	MOVD dst+40(FP), R4
+
+hqkblock:
+	VEOR V0.B16, V0.B16, V0.B16
+	VEOR V1.B16, V1.B16, V1.B16
+	VEOR V2.B16, V2.B16, V2.B16
+	VEOR V3.B16, V3.B16, V3.B16
+	VEOR V4.B16, V4.B16, V4.B16
+	VEOR V5.B16, V5.B16, V5.B16
+	VEOR V6.B16, V6.B16, V6.B16
+	VEOR V7.B16, V7.B16, V7.B16
+	MOVD R1, R5                 // 16 row pointers, rowStride apart
+	ADD  R2, R5, R6
+	ADD  R2, R6, R7
+	ADD  R2, R7, R8
+	ADD  R2, R8, R9
+	ADD  R2, R9, R10
+	ADD  R2, R10, R11
+	ADD  R2, R11, R12
+	ADD  R2, R12, R13
+	ADD  R2, R13, R14
+	ADD  R2, R14, R15
+	ADD  R2, R15, R16
+	ADD  R2, R16, R17
+	ADD  R2, R17, R19
+	ADD  R2, R19, R20
+	ADD  R2, R20, R21
+	MOVD R22, R0               // q, from the start
+	MOVD R23, R3               // K/4 quads
+
+hqkquad:
+	VLD1.P 16(R0), [V24.S4]    // q[d..d+3]
+	WORD $0x0E617B1C          // FCVTL  V28.2D, V24.2S   [q_d0, q_d1]
+	WORD $0x4E617B1D          // FCVTL2 V29.2D, V24.4S   [q_d2, q_d3]
+	// keys 0,1 → V0
+	VLD1.P 8(R5), [V16.H4]
+	WORD $0x0E217A10          // FCVTL  V16.4S, V16.4H  (halves, exact)
+	VLD1.P 8(R6), [V17.H4]
+	WORD $0x0E217A31          // FCVTL  V17.4S, V17.4H
+	WORD $0x4E913A12          // ZIP1   V18.4S, V16.4S, V17.4S  [k0d0,k1d0,k0d1,k1d1]
+	WORD $0x4E917A13          // ZIP2   V19.4S, V16.4S, V17.4S  [k0d2,k1d2,k0d3,k1d3]
+	WORD $0x0E617A54          // FCVTL  V20.2D, V18.2S
+	WORD $0x4E617A55          // FCVTL2 V21.2D, V18.4S
+	WORD $0x0E617A76          // FCVTL  V22.2D, V19.2S
+	WORD $0x4E617A77          // FCVTL2 V23.2D, V19.4S
+	WORD $0x4FDC1280          // FMLA   V0.2D, V20.2D, V28.D[0]
+	WORD $0x4FDC1AA0          // FMLA   V0.2D, V21.2D, V28.D[1]
+	WORD $0x4FDD12C0          // FMLA   V0.2D, V22.2D, V29.D[0]
+	WORD $0x4FDD1AE0          // FMLA   V0.2D, V23.2D, V29.D[1]
+	// keys 2,3 → V1
+	VLD1.P 8(R7), [V16.H4]
+	WORD $0x0E217A10          // FCVTL  V16.4S, V16.4H  (halves, exact)
+	VLD1.P 8(R8), [V17.H4]
+	WORD $0x0E217A31          // FCVTL  V17.4S, V17.4H
+	WORD $0x4E913A12          // ZIP1   V18.4S, V16.4S, V17.4S  [k0d0,k1d0,k0d1,k1d1]
+	WORD $0x4E917A13          // ZIP2   V19.4S, V16.4S, V17.4S  [k0d2,k1d2,k0d3,k1d3]
+	WORD $0x0E617A54          // FCVTL  V20.2D, V18.2S
+	WORD $0x4E617A55          // FCVTL2 V21.2D, V18.4S
+	WORD $0x0E617A76          // FCVTL  V22.2D, V19.2S
+	WORD $0x4E617A77          // FCVTL2 V23.2D, V19.4S
+	WORD $0x4FDC1281          // FMLA   V1.2D, V20.2D, V28.D[0]
+	WORD $0x4FDC1AA1          // FMLA   V1.2D, V21.2D, V28.D[1]
+	WORD $0x4FDD12C1          // FMLA   V1.2D, V22.2D, V29.D[0]
+	WORD $0x4FDD1AE1          // FMLA   V1.2D, V23.2D, V29.D[1]
+	// keys 4,5 → V2
+	VLD1.P 8(R9), [V16.H4]
+	WORD $0x0E217A10          // FCVTL  V16.4S, V16.4H  (halves, exact)
+	VLD1.P 8(R10), [V17.H4]
+	WORD $0x0E217A31          // FCVTL  V17.4S, V17.4H
+	WORD $0x4E913A12          // ZIP1   V18.4S, V16.4S, V17.4S  [k0d0,k1d0,k0d1,k1d1]
+	WORD $0x4E917A13          // ZIP2   V19.4S, V16.4S, V17.4S  [k0d2,k1d2,k0d3,k1d3]
+	WORD $0x0E617A54          // FCVTL  V20.2D, V18.2S
+	WORD $0x4E617A55          // FCVTL2 V21.2D, V18.4S
+	WORD $0x0E617A76          // FCVTL  V22.2D, V19.2S
+	WORD $0x4E617A77          // FCVTL2 V23.2D, V19.4S
+	WORD $0x4FDC1282          // FMLA   V2.2D, V20.2D, V28.D[0]
+	WORD $0x4FDC1AA2          // FMLA   V2.2D, V21.2D, V28.D[1]
+	WORD $0x4FDD12C2          // FMLA   V2.2D, V22.2D, V29.D[0]
+	WORD $0x4FDD1AE2          // FMLA   V2.2D, V23.2D, V29.D[1]
+	// keys 6,7 → V3
+	VLD1.P 8(R11), [V16.H4]
+	WORD $0x0E217A10          // FCVTL  V16.4S, V16.4H  (halves, exact)
+	VLD1.P 8(R12), [V17.H4]
+	WORD $0x0E217A31          // FCVTL  V17.4S, V17.4H
+	WORD $0x4E913A12          // ZIP1   V18.4S, V16.4S, V17.4S  [k0d0,k1d0,k0d1,k1d1]
+	WORD $0x4E917A13          // ZIP2   V19.4S, V16.4S, V17.4S  [k0d2,k1d2,k0d3,k1d3]
+	WORD $0x0E617A54          // FCVTL  V20.2D, V18.2S
+	WORD $0x4E617A55          // FCVTL2 V21.2D, V18.4S
+	WORD $0x0E617A76          // FCVTL  V22.2D, V19.2S
+	WORD $0x4E617A77          // FCVTL2 V23.2D, V19.4S
+	WORD $0x4FDC1283          // FMLA   V3.2D, V20.2D, V28.D[0]
+	WORD $0x4FDC1AA3          // FMLA   V3.2D, V21.2D, V28.D[1]
+	WORD $0x4FDD12C3          // FMLA   V3.2D, V22.2D, V29.D[0]
+	WORD $0x4FDD1AE3          // FMLA   V3.2D, V23.2D, V29.D[1]
+	// keys 8,9 → V4
+	VLD1.P 8(R13), [V16.H4]
+	WORD $0x0E217A10          // FCVTL  V16.4S, V16.4H  (halves, exact)
+	VLD1.P 8(R14), [V17.H4]
+	WORD $0x0E217A31          // FCVTL  V17.4S, V17.4H
+	WORD $0x4E913A12          // ZIP1   V18.4S, V16.4S, V17.4S  [k0d0,k1d0,k0d1,k1d1]
+	WORD $0x4E917A13          // ZIP2   V19.4S, V16.4S, V17.4S  [k0d2,k1d2,k0d3,k1d3]
+	WORD $0x0E617A54          // FCVTL  V20.2D, V18.2S
+	WORD $0x4E617A55          // FCVTL2 V21.2D, V18.4S
+	WORD $0x0E617A76          // FCVTL  V22.2D, V19.2S
+	WORD $0x4E617A77          // FCVTL2 V23.2D, V19.4S
+	WORD $0x4FDC1284          // FMLA   V4.2D, V20.2D, V28.D[0]
+	WORD $0x4FDC1AA4          // FMLA   V4.2D, V21.2D, V28.D[1]
+	WORD $0x4FDD12C4          // FMLA   V4.2D, V22.2D, V29.D[0]
+	WORD $0x4FDD1AE4          // FMLA   V4.2D, V23.2D, V29.D[1]
+	// keys 10,11 → V5
+	VLD1.P 8(R15), [V16.H4]
+	WORD $0x0E217A10          // FCVTL  V16.4S, V16.4H  (halves, exact)
+	VLD1.P 8(R16), [V17.H4]
+	WORD $0x0E217A31          // FCVTL  V17.4S, V17.4H
+	WORD $0x4E913A12          // ZIP1   V18.4S, V16.4S, V17.4S  [k0d0,k1d0,k0d1,k1d1]
+	WORD $0x4E917A13          // ZIP2   V19.4S, V16.4S, V17.4S  [k0d2,k1d2,k0d3,k1d3]
+	WORD $0x0E617A54          // FCVTL  V20.2D, V18.2S
+	WORD $0x4E617A55          // FCVTL2 V21.2D, V18.4S
+	WORD $0x0E617A76          // FCVTL  V22.2D, V19.2S
+	WORD $0x4E617A77          // FCVTL2 V23.2D, V19.4S
+	WORD $0x4FDC1285          // FMLA   V5.2D, V20.2D, V28.D[0]
+	WORD $0x4FDC1AA5          // FMLA   V5.2D, V21.2D, V28.D[1]
+	WORD $0x4FDD12C5          // FMLA   V5.2D, V22.2D, V29.D[0]
+	WORD $0x4FDD1AE5          // FMLA   V5.2D, V23.2D, V29.D[1]
+	// keys 12,13 → V6
+	VLD1.P 8(R17), [V16.H4]
+	WORD $0x0E217A10          // FCVTL  V16.4S, V16.4H  (halves, exact)
+	VLD1.P 8(R19), [V17.H4]
+	WORD $0x0E217A31          // FCVTL  V17.4S, V17.4H
+	WORD $0x4E913A12          // ZIP1   V18.4S, V16.4S, V17.4S  [k0d0,k1d0,k0d1,k1d1]
+	WORD $0x4E917A13          // ZIP2   V19.4S, V16.4S, V17.4S  [k0d2,k1d2,k0d3,k1d3]
+	WORD $0x0E617A54          // FCVTL  V20.2D, V18.2S
+	WORD $0x4E617A55          // FCVTL2 V21.2D, V18.4S
+	WORD $0x0E617A76          // FCVTL  V22.2D, V19.2S
+	WORD $0x4E617A77          // FCVTL2 V23.2D, V19.4S
+	WORD $0x4FDC1286          // FMLA   V6.2D, V20.2D, V28.D[0]
+	WORD $0x4FDC1AA6          // FMLA   V6.2D, V21.2D, V28.D[1]
+	WORD $0x4FDD12C6          // FMLA   V6.2D, V22.2D, V29.D[0]
+	WORD $0x4FDD1AE6          // FMLA   V6.2D, V23.2D, V29.D[1]
+	// keys 14,15 → V7
+	VLD1.P 8(R20), [V16.H4]
+	WORD $0x0E217A10          // FCVTL  V16.4S, V16.4H  (halves, exact)
+	VLD1.P 8(R21), [V17.H4]
+	WORD $0x0E217A31          // FCVTL  V17.4S, V17.4H
+	WORD $0x4E913A12          // ZIP1   V18.4S, V16.4S, V17.4S  [k0d0,k1d0,k0d1,k1d1]
+	WORD $0x4E917A13          // ZIP2   V19.4S, V16.4S, V17.4S  [k0d2,k1d2,k0d3,k1d3]
+	WORD $0x0E617A54          // FCVTL  V20.2D, V18.2S
+	WORD $0x4E617A55          // FCVTL2 V21.2D, V18.4S
+	WORD $0x0E617A76          // FCVTL  V22.2D, V19.2S
+	WORD $0x4E617A77          // FCVTL2 V23.2D, V19.4S
+	WORD $0x4FDC1287          // FMLA   V7.2D, V20.2D, V28.D[0]
+	WORD $0x4FDC1AA7          // FMLA   V7.2D, V21.2D, V28.D[1]
+	WORD $0x4FDD12C7          // FMLA   V7.2D, V22.2D, V29.D[0]
+	WORD $0x4FDD1AE7          // FMLA   V7.2D, V23.2D, V29.D[1]
+	SUBS $1, R3, R3
+	BNE  hqkquad
+
+	WORD $0x0E616810          // FCVTN  V16.2S, V0.2D          keys 0,1 → f32
+	WORD $0x4E616830          // FCVTN2 V16.4S, V1.2D          keys 2,3
+	WORD $0x0E616851          // FCVTN  V17.2S, V2.2D          keys 4,5 → f32
+	WORD $0x4E616871          // FCVTN2 V17.4S, V3.2D          keys 6,7
+	WORD $0x0E616892          // FCVTN  V18.2S, V4.2D          keys 8,9 → f32
+	WORD $0x4E6168B2          // FCVTN2 V18.4S, V5.2D          keys 10,11
+	WORD $0x0E6168D3          // FCVTN  V19.2S, V6.2D          keys 12,13 → f32
+	WORD $0x4E6168F3          // FCVTN2 V19.4S, V7.2D          keys 14,15
+	VST1.P [V16.S4, V17.S4, V18.S4, V19.S4], 64(R4)
+	ADD  R2<<4, R1, R1         // next block of 16 rows
+	SUBS $1, R24, R24
+	BNE  hqkblock
+	RET
+
+// func avAcc64NEON32F16(scores *float32, vals *uint16, nKeys int, rowStrideBytes int, dst *float32)
+TEXT ·avAcc64NEON32F16(SB), NOSPLIT, $0-40
+	MOVD scores+0(FP), R0
+	MOVD vals+8(FP), R1
+	MOVD nKeys+16(FP), R2
+	MOVD rowStrideBytes+24(FP), R3
+	MOVD dst+32(FP), R4
+
+	VEOR V0.B16, V0.B16, V0.B16
+	VEOR V1.B16, V1.B16, V1.B16
+	VEOR V2.B16, V2.B16, V2.B16
+	VEOR V3.B16, V3.B16, V3.B16
+	VEOR V4.B16, V4.B16, V4.B16
+	VEOR V5.B16, V5.B16, V5.B16
+	VEOR V6.B16, V6.B16, V6.B16
+	VEOR V7.B16, V7.B16, V7.B16
+	VEOR V8.B16, V8.B16, V8.B16
+	VEOR V9.B16, V9.B16, V9.B16
+	VEOR V10.B16, V10.B16, V10.B16
+	VEOR V11.B16, V11.B16, V11.B16
+	VEOR V12.B16, V12.B16, V12.B16
+	VEOR V13.B16, V13.B16, V13.B16
+	VEOR V14.B16, V14.B16, V14.B16
+	VEOR V15.B16, V15.B16, V15.B16
+	CBZ  R2, havstore
+
+havkey:
+	MOVWU.P 4(R0), R7          // score s as f32 bits
+	FMOVS   R7, F30
+	FCVTSD  F30, F31           // V31.D[0] = float64(score)
+	VLD1 (R1), [V16.H8, V17.H8, V18.H8, V19.H8]   // V row dims 0..31 as halves
+	ADD  R3, R1, R1            // next key's row
+	WORD $0x0E217A14          // FCVTL  V20.4S, V16.4H   dims 0..3 → f32
+	WORD $0x4E217A15          // FCVTL2 V21.4S, V16.8H   dims 4..7 → f32
+	WORD $0x0E217A36          // FCVTL  V22.4S, V17.4H   dims 8..11 → f32
+	WORD $0x4E217A37          // FCVTL2 V23.4S, V17.8H   dims 12..15 → f32
+	WORD $0x0E217A58          // FCVTL  V24.4S, V18.4H   dims 16..19 → f32
+	WORD $0x4E217A59          // FCVTL2 V25.4S, V18.8H   dims 20..23 → f32
+	WORD $0x0E217A7A          // FCVTL  V26.4S, V19.4H   dims 24..27 → f32
+	WORD $0x4E217A7B          // FCVTL2 V27.4S, V19.8H   dims 28..31 → f32
+	WORD $0x0E617A9C          // FCVTL  V28.2D, V20.2S
+	WORD $0x4E617A9D          // FCVTL2 V29.2D, V20.4S
+	WORD $0x4FDF1380          // FMLA   V0.2D, V28.2D, V31.D[0]
+	WORD $0x4FDF13A1          // FMLA   V1.2D, V29.2D, V31.D[0]
+	WORD $0x0E617ABC          // FCVTL  V28.2D, V21.2S
+	WORD $0x4E617ABD          // FCVTL2 V29.2D, V21.4S
+	WORD $0x4FDF1382          // FMLA   V2.2D, V28.2D, V31.D[0]
+	WORD $0x4FDF13A3          // FMLA   V3.2D, V29.2D, V31.D[0]
+	WORD $0x0E617ADC          // FCVTL  V28.2D, V22.2S
+	WORD $0x4E617ADD          // FCVTL2 V29.2D, V22.4S
+	WORD $0x4FDF1384          // FMLA   V4.2D, V28.2D, V31.D[0]
+	WORD $0x4FDF13A5          // FMLA   V5.2D, V29.2D, V31.D[0]
+	WORD $0x0E617AFC          // FCVTL  V28.2D, V23.2S
+	WORD $0x4E617AFD          // FCVTL2 V29.2D, V23.4S
+	WORD $0x4FDF1386          // FMLA   V6.2D, V28.2D, V31.D[0]
+	WORD $0x4FDF13A7          // FMLA   V7.2D, V29.2D, V31.D[0]
+	WORD $0x0E617B1C          // FCVTL  V28.2D, V24.2S
+	WORD $0x4E617B1D          // FCVTL2 V29.2D, V24.4S
+	WORD $0x4FDF1388          // FMLA   V8.2D, V28.2D, V31.D[0]
+	WORD $0x4FDF13A9          // FMLA   V9.2D, V29.2D, V31.D[0]
+	WORD $0x0E617B3C          // FCVTL  V28.2D, V25.2S
+	WORD $0x4E617B3D          // FCVTL2 V29.2D, V25.4S
+	WORD $0x4FDF138A          // FMLA   V10.2D, V28.2D, V31.D[0]
+	WORD $0x4FDF13AB          // FMLA   V11.2D, V29.2D, V31.D[0]
+	WORD $0x0E617B5C          // FCVTL  V28.2D, V26.2S
+	WORD $0x4E617B5D          // FCVTL2 V29.2D, V26.4S
+	WORD $0x4FDF138C          // FMLA   V12.2D, V28.2D, V31.D[0]
+	WORD $0x4FDF13AD          // FMLA   V13.2D, V29.2D, V31.D[0]
+	WORD $0x0E617B7C          // FCVTL  V28.2D, V27.2S
+	WORD $0x4E617B7D          // FCVTL2 V29.2D, V27.4S
+	WORD $0x4FDF138E          // FMLA   V14.2D, V28.2D, V31.D[0]
+	WORD $0x4FDF13AF          // FMLA   V15.2D, V29.2D, V31.D[0]
+	SUBS $1, R2, R2
+	BNE  havkey
+
+havstore:
+	WORD $0x0E616810          // FCVTN  V16.2S, V0.2D          dims 0,1 → f32
+	WORD $0x4E616830          // FCVTN2 V16.4S, V1.2D          dims 2,3
+	WORD $0x0E616851          // FCVTN  V17.2S, V2.2D          dims 4,5 → f32
+	WORD $0x4E616871          // FCVTN2 V17.4S, V3.2D          dims 6,7
+	WORD $0x0E616892          // FCVTN  V18.2S, V4.2D          dims 8,9 → f32
+	WORD $0x4E6168B2          // FCVTN2 V18.4S, V5.2D          dims 10,11
+	WORD $0x0E6168D3          // FCVTN  V19.2S, V6.2D          dims 12,13 → f32
+	WORD $0x4E6168F3          // FCVTN2 V19.4S, V7.2D          dims 14,15
+	WORD $0x0E616914          // FCVTN  V20.2S, V8.2D          dims 16,17 → f32
+	WORD $0x4E616934          // FCVTN2 V20.4S, V9.2D          dims 18,19
+	WORD $0x0E616955          // FCVTN  V21.2S, V10.2D          dims 20,21 → f32
+	WORD $0x4E616975          // FCVTN2 V21.4S, V11.2D          dims 22,23
+	WORD $0x0E616996          // FCVTN  V22.2S, V12.2D          dims 24,25 → f32
+	WORD $0x4E6169B6          // FCVTN2 V22.4S, V13.2D          dims 26,27
+	WORD $0x0E6169D7          // FCVTN  V23.2S, V14.2D          dims 28,29 → f32
+	WORD $0x4E6169F7          // FCVTN2 V23.4S, V15.2D          dims 30,31
+	VST1.P [V16.S4, V17.S4, V18.S4, V19.S4], 64(R4)
+	VST1   [V20.S4, V21.S4, V22.S4, V23.S4], (R4)
+	RET
