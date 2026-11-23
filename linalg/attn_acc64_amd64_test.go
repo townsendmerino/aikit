@@ -117,3 +117,77 @@ func TestQkAcc64AVX4_matchesGo(t *testing.T) {
 		}
 	}
 }
+
+// TestQkAcc64AVX16_matchesAVX4AndGo pins the 16-key kernel EXACTLY against the 4-key kernel it takes over from and against the Go
+// reference: four 4-key blocks interleaved as four independent accumulators, each key still one f64 lane with its K dims folded in
+// ascending d, so every key's sum is today's sum bit for bit. Shapes cover K at the production head dims and a key stride wider than
+// K (a head slice of a kvDim-wide row).
+func TestQkAcc64AVX16_matchesAVX4AndGo(t *testing.T) {
+	if !hasAVX2 {
+		t.Skip("no AVX2 on this CPU")
+	}
+	rng := rand.New(rand.NewPCG(19, 23))
+	for _, K := range []int{4, 64, 96, 128, 256} {
+		for _, n16 := range []int{1, 2, 5} {
+			for _, stride := range []int{K, 3*K + 4} {
+				N := n16 * 16
+				q := make([]float32, K)
+				for i := range q {
+					q[i] = float32(rng.NormFloat64())
+				}
+				rows := make([]float32, (N-1)*stride+K)
+				for i := range rows {
+					rows[i] = float32(rng.NormFloat64())
+				}
+				got, ref := make([]float32, N), make([]float32, N)
+				qkAcc64AVX16(&q[0], &rows[0], stride*4, K/4, n16, &got[0])
+				qkAcc64AVX4(&q[0], &rows[0], stride*4, K/4, n16*4, &ref[0])
+				for n := range N {
+					var acc float64
+					for d := range K {
+						acc += float64(q[d]) * float64(rows[n*stride+d])
+					}
+					want := float32(acc)
+					if math.Float32bits(got[n]) != math.Float32bits(want) || math.Float32bits(got[n]) != math.Float32bits(ref[n]) {
+						t.Fatalf("K=%d N=%d stride=%d key=%d: AVX16 %08x, AVX4 %08x, Go %08x", K, N, stride, n,
+							math.Float32bits(got[n]), math.Float32bits(ref[n]), math.Float32bits(want))
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestQkAcc64Keys_takesAVX16 checks the dispatcher's 16-key step engages and the 4-key kernel finishes after it: N = 16·k + 4·j + r keys
+// come back as 16·k + 4·j written, each equal to MatmulQKAcc64's Go loop.
+func TestQkAcc64Keys_takesAVX16(t *testing.T) {
+	if !hasAVX2 {
+		t.Skip("no AVX2 on this CPU")
+	}
+	rng := rand.New(rand.NewPCG(29, 31))
+	const K, N, stride = 96, 16*3 + 4*2 + 3, 96 * 4
+	q := make([]float32, K)
+	for i := range q {
+		q[i] = float32(rng.NormFloat64())
+	}
+	rows := make([]float32, (N-1)*stride+K)
+	for i := range rows {
+		rows[i] = float32(rng.NormFloat64())
+	}
+	if got := qkAcc64Keys16(q, rows, make([]float32, N), K, N, 0, stride); got != 48 {
+		t.Fatalf("qkAcc64Keys16 wrote %d keys, want 48: the 16-key kernel did not engage", got)
+	}
+	out := make([]float32, N)
+	if got := qkAcc64Keys(q, rows, out, K, N, 0, stride); got != N-3 {
+		t.Fatalf("qkAcc64Keys wrote %d keys, want %d", got, N-3)
+	}
+	for n := range N - 3 {
+		var acc float64
+		for d := range K {
+			acc += float64(q[d]) * float64(rows[n*stride+d])
+		}
+		if math.Float32bits(out[n]) != math.Float32bits(float32(acc)) {
+			t.Fatalf("key %d: %08x != Go %08x", n, math.Float32bits(out[n]), math.Float32bits(float32(acc)))
+		}
+	}
+}
