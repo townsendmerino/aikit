@@ -191,3 +191,21 @@ func TestQkAcc64Keys_takesAVX16(t *testing.T) {
 		}
 	}
 }
+
+// TestAcc64F16AVX_isLoadBearing checks the f16 kernels RUN on an AVX2+F16C host: a declining dispatcher would leave the f16 tests
+// passing against the Go loops while proving nothing about the assembly.
+func TestAcc64F16AVX_isLoadBearing(t *testing.T) {
+	if !hasAVX2 || !hasF16C {
+		t.Skip("no AVX2+F16C on this CPU: the kernels decline by design")
+	}
+	rng := rand.New(rand.NewPCG(53, 59))
+	const K, N, stride = 96, 16*3 + 5, 96 * 2
+	h, _ := f16Cache(rng, (N-1)*stride+K)
+	q := make([]float32, K)
+	if got := qkAcc64KeysF16(q, h, make([]float32, N), K, N, 0, stride); got != 48 {
+		t.Errorf("qkAcc64KeysF16 wrote %d keys, want 48: the f16 QK kernel did not engage", got)
+	}
+	if got := avAcc64BlocksF16(make([]float32, N), h, make([]float32, K), N, K, 0, stride); got != 96 {
+		t.Errorf("avAcc64BlocksF16 covered %d dims, want 96: the f16 AV kernel did not engage", got)
+	}
+}
