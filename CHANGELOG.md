@@ -17,6 +17,15 @@ excluded from that promise and may change in any release until it graduates.
   (`TestQkAcc64AVX16_matchesAVX4AndGo`); the 4-key kernel takes the last N%16 keys. On a Ryzen 7 3700X at Phi-3-mini's layer shape
   (3,900 keys, 32 heads of 96) the 4-key kernel read the cache at 16.0 GB/s against `MatmulAVAcc64`'s 29.9 GB/s on the same bytes.
 
+### Added (Experimental tier)
+
+- **`MatmulQKAcc64F16` and `MatmulAVAcc64F16`: the acc64 attention kernels over a cache stored as IEEE binary16**
+  (`linalg/matmul_acc64_f16.go`). Each half is widened exactly as it is read, so the results equal `MatmulQKAcc64` and
+  `MatmulAVAcc64` on the widened cache bit for bit (`TestMatmulQKAcc64F16_matchesF32OnWidened`,
+  `TestMatmulAVAcc64F16_matchesF32OnWidened`), while the cache is read at two bytes an element and never widened into scratch.
+  Kernels: AVX2 + F16C on amd64 (`qkAcc64AVX16F16`, `avAcc64AVX32F16`) and NEON on arm64 (`qkAcc64NEON16F16`,
+  `avAcc64NEON32F16`, FCVTL on load); Go loops elsewhere and for the remainders.
+
 ## [1.78.0] — 2026-11-20
 
 `perfgate` VERDICT: PASS — no regression vs v1.77.0 above each shape's floor — 9/47 shapes resolve the 5.0% class
