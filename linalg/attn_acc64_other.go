@@ -9,3 +9,10 @@ package linalg
 func avAcc64Blocks(srow, vals, drow []float32, nKeys, hd, headOff, rowStride int) int { return 0 }
 
 func qkAcc64Keys(arow, bMat, drow []float32, K, N, bOff, rowStride int) int { return 0 }
+
+func qkAcc64KeysF16(arow []float32, bMat []uint16, drow []float32, K, N, bOff, rowStride int) int {
+	return 0
+}
+func avAcc64BlocksF16(srow []float32, vals []uint16, drow []float32, nKeys, hd, headOff, rowStride int) int {
+	return 0
+}

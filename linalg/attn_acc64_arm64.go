@@ -54,3 +54,11 @@ func qkAcc64Keys(arow, bMat, drow []float32, K, N, bOff, rowStride int) int {
 	qkAcc64NEON16(&arow[0], &bMat[bOff], rowStride*4, K/4, nBlocks, &drow[0])
 	return nBlocks * 16
 }
+
+// No NEON port of the f16-source acc64 kernels yet: MatmulQKAcc64F16 and MatmulAVAcc64F16 run their Go loops on arm64.
+func qkAcc64KeysF16(arow []float32, bMat []uint16, drow []float32, K, N, bOff, rowStride int) int {
+	return 0
+}
+func avAcc64BlocksF16(srow []float32, vals []uint16, drow []float32, nKeys, hd, headOff, rowStride int) int {
+	return 0
+}
