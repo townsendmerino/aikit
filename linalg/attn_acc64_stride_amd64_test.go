@@ -16,7 +16,7 @@ func BenchmarkQkAcc64Stride(b *testing.B) {
 	if !hasAVX2 {
 		b.Skip("no AVX2")
 	}
-	const K, N = 96, 3900
+	const K, N = 96, 3904 // a multiple of 16, so both kernels cover every key
 	for _, stride := range []int{3072, 3072 + 16, 128} {
 		rng := rand.New(rand.NewPCG(3, 5))
 		rows := make([]float32, (N-1)*stride+K)
