@@ -209,3 +209,103 @@ func TestAcc64F16AVX_isLoadBearing(t *testing.T) {
 		t.Errorf("avAcc64BlocksF16 covered %d dims, want 96: the f16 AV kernel did not engage", got)
 	}
 }
+
+// TestQkAcc64Keys16_declinesAtAnAliasingStride checks the 16-key kernel's stride guard: at a key stride that is a multiple of 4 KiB
+// (3,072 floats, 12 KiB) its sixteen live rows share L1 sets and it declines, leaving the 4-key kernel to take the call; one 64 B line
+// off (3,088 floats) it engages. Either way the scores equal the Go loop's.
+func TestQkAcc64Keys16_declinesAtAnAliasingStride(t *testing.T) {
+	if !hasAVX2 {
+		t.Skip("no AVX2 on this CPU")
+	}
+	rng := rand.New(rand.NewPCG(61, 67))
+	const K, N = 96, 48
+	for _, c := range []struct {
+		stride, want16 int
+	}{{3072, 0}, {3088, 48}} {
+		q := make([]float32, K)
+		for i := range q {
+			q[i] = float32(rng.NormFloat64())
+		}
+		rows := make([]float32, (N-1)*c.stride+K)
+		for i := range rows {
+			rows[i] = float32(rng.NormFloat64())
+		}
+		if got := qkAcc64Keys16(q, rows, make([]float32, N), K, N, 0, c.stride); got != c.want16 {
+			t.Errorf("stride %d: the 16-key kernel wrote %d keys, want %d", c.stride, got, c.want16)
+		}
+		out := make([]float32, N)
+		if got := qkAcc64Keys(q, rows, out, K, N, 0, c.stride); got != N {
+			t.Errorf("stride %d: the dispatch wrote %d keys, want %d", c.stride, got, N)
+		}
+		for n := range N {
+			var acc float64
+			for d := range K {
+				acc += float64(q[d]) * float64(rows[n*c.stride+d])
+			}
+			if math.Float32bits(out[n]) != math.Float32bits(float32(acc)) {
+				t.Fatalf("stride %d key %d: %08x != Go %08x", c.stride, n, math.Float32bits(out[n]), math.Float32bits(float32(acc)))
+			}
+		}
+	}
+}
+
+// TestQkAcc64KeysF16_strideGuard checks the f16 QK dispatch: at a key stride that is a multiple of 4 KiB (2,048 halves) the 16-key
+// kernel declines and the 4-key f16 kernel takes the call; one 64 B line off (2,080 halves) the 16-key kernel engages. The scores equal
+// the f32 kernel's on the widened cache either way.
+func TestQkAcc64KeysF16_strideGuard(t *testing.T) {
+	if !hasAVX2 || !hasF16C {
+		t.Skip("no AVX2+F16C on this CPU")
+	}
+	rng := rand.New(rand.NewPCG(71, 73))
+	const K, N = 96, 51
+	for _, c := range []struct {
+		stride, want16, wantAll int
+	}{{2048, 0, 48}, {2080, 48, 48}} {
+		h, w := f16Cache(rng, (N-1)*c.stride+K)
+		q := make([]float32, K)
+		for i := range q {
+			q[i] = float32(rng.NormFloat64())
+		}
+		if got := qkAcc64Keys16F16(q, h, make([]float32, N), K, N, 0, c.stride); got != c.want16 {
+			t.Errorf("stride %d: the 16-key f16 kernel wrote %d keys, want %d", c.stride, got, c.want16)
+		}
+		if got := qkAcc64KeysF16(q, h, make([]float32, N), K, N, 0, c.stride); got != c.wantAll {
+			t.Errorf("stride %d: the f16 dispatch wrote %d keys, want %d", c.stride, got, c.wantAll)
+		}
+		got, want := make([]float32, N), make([]float32, N)
+		MatmulQKAcc64F16(q, h, got, 1, K, N, 0, c.stride)
+		MatmulQKAcc64(q, w, want, 1, K, N, 0, c.stride)
+		for n := range N {
+			if math.Float32bits(got[n]) != math.Float32bits(want[n]) {
+				t.Fatalf("stride %d key %d: %08x != f32 kernel on the widened cache %08x", c.stride, n, math.Float32bits(got[n]), math.Float32bits(want[n]))
+			}
+		}
+	}
+}
+
+// TestQkAcc64AVX4F16_matchesAVX4OnWidened pins the 4-key f16 kernel to the 4-key f32 kernel on the widened cache, bit for bit.
+func TestQkAcc64AVX4F16_matchesAVX4OnWidened(t *testing.T) {
+	if !hasAVX2 || !hasF16C {
+		t.Skip("no AVX2+F16C on this CPU")
+	}
+	rng := rand.New(rand.NewPCG(79, 83))
+	for _, K := range []int{4, 64, 96, 128} {
+		for _, stride := range []int{K, 3*K + 4, 2048} {
+			const nBlocks = 5
+			N := 4 * nBlocks
+			h, w := f16Cache(rng, (N-1)*stride+K)
+			q := make([]float32, K)
+			for i := range q {
+				q[i] = float32(rng.NormFloat64())
+			}
+			got, want := make([]float32, N), make([]float32, N)
+			qkAcc64AVX4F16(&q[0], &h[0], stride*2, K/4, nBlocks, &got[0])
+			qkAcc64AVX4(&q[0], &w[0], stride*4, K/4, nBlocks, &want[0])
+			for n := range N {
+				if math.Float32bits(got[n]) != math.Float32bits(want[n]) {
+					t.Fatalf("K=%d stride=%d key %d: AVX4F16 %08x, AVX4 on the widened cache %08x", K, stride, n, math.Float32bits(got[n]), math.Float32bits(want[n]))
+				}
+			}
+		}
+	}
+}

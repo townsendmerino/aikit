@@ -69,8 +69,15 @@ func qkAcc64Keys(arow, bMat, drow []float32, K, N, bOff, rowStride int) int {
 
 // qkAcc64Keys16 runs whole sixteen-key groups through qkAcc64AVX16 and returns the keys it wrote (a multiple of 16; 0 where the
 // kernel declines). qkAcc64Keys finishes the rest four keys at a time.
+//
+// It declines a key stride that is a multiple of 4 KiB: the sixteen rows it reads at once then fall in one L1 set and it runs slower
+// than the 4-key kernel (measured on a Ryzen 7 3700X, goinfer docs/measurements/cpu-qk-multichain-2026-11-23/README.md). The sums are
+// the same either way.
 func qkAcc64Keys16(arow, bMat, drow []float32, K, N, bOff, rowStride int) int {
 	if !hasAVX2 || K == 0 || K%4 != 0 {
+		return 0
+	}
+	if aliasingStride(rowStride * 4) {
 		return 0
 	}
 	n16 := N / 16
@@ -116,3 +123,6 @@ func avAcc64BlocksF16(srow []float32, vals []uint16, drow []float32, nKeys, hd, 
 	}
 	return d0
 }
+
+// aliasingStride reports whether rows strideBytes apart share L1 sets: a multiple of 4 KiB, the set-index span of a 32 KiB 8-way L1.
+func aliasingStride(strideBytes int) bool { return strideBytes%4096 == 0 }
