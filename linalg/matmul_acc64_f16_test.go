@@ -25,6 +25,16 @@ func f16Cache(rng *rand.Rand, n int, subnormal ...int) ([]uint16, []float32) {
 	return h, w
 }
 
+// mustBeSubnormal fails t unless every index in at widened to a non-zero half below f16's normal range (2^-14).
+func mustBeSubnormal(t *testing.T, w []float32, at ...int) {
+	t.Helper()
+	for _, i := range at {
+		if v := math.Abs(float64(w[i])); v == 0 || v >= 0x1p-14 {
+			t.Fatalf("the half planted at %d widened to %v, not a subnormal", i, w[i])
+		}
+	}
+}
+
 // TestMatmulQKAcc64F16_matchesF32OnWidened pins MatmulQKAcc64F16 to MatmulQKAcc64 over the widened cache: head dims 64, 96 and 128,
 // key counts with and without a 16-key remainder, a key stride wider than the head (a head slice of a kvDim row), and M > 1.
 func TestMatmulQKAcc64F16_matchesF32OnWidened(t *testing.T) {
@@ -35,11 +45,11 @@ func TestMatmulQKAcc64F16_matchesF32OnWidened(t *testing.T) {
 				nKV := 3
 				rowStride := nKV * K
 				bOff := 1 * K
-				// Subnormals in the columns the kernel reads: key 0's first dim, a middle key's second, the last key's last dim.
-				h, w := f16Cache(rng, (N-1)*rowStride+bOff+K, bOff, bOff+(N/2)*rowStride+1, bOff+(N-1)*rowStride+K-1)
-				if b := f16ToF32(h[bOff]); b == 0 || math.Abs(float64(b)) >= 6.1e-5 {
-					t.Fatalf("the planted half at bOff widened to %v, not a subnormal", b)
-				}
+				// Subnormals in the columns the kernel reads: key 0's first dim, a middle key's second, the first key after the 16-key
+				// groups' third (the 4-key kernel's block when N%16 >= 4), and the last key's last dim.
+				plants := []int{bOff, bOff + (N/2)*rowStride + 1, bOff + min(N-1, 16*(N/16))*rowStride + 2, bOff + (N-1)*rowStride + K - 1}
+				h, w := f16Cache(rng, (N-1)*rowStride+bOff+K, plants...)
+				mustBeSubnormal(t, w, plants...)
 				a := make([]float32, M*K)
 				for i := range a {
 					a[i] = float32(rng.NormFloat64())
@@ -66,7 +76,9 @@ func TestMatmulAVAcc64F16_matchesF32OnWidened(t *testing.T) {
 			for _, M := range []int{1, 2} {
 				rowStride := 2*hd + 4
 				headOff := hd + 4
-				h, w := f16Cache(rng, (nKeys-1)*rowStride+headOff+hd, headOff, headOff+(nKeys/2)*rowStride+1, headOff+(nKeys-1)*rowStride+hd-1)
+				plants := []int{headOff, headOff + (nKeys/2)*rowStride + 1, headOff + (nKeys-1)*rowStride + hd - 1}
+				h, w := f16Cache(rng, (nKeys-1)*rowStride+headOff+hd, plants...)
+				mustBeSubnormal(t, w, plants...)
 				scores := make([]float32, M*nKeys)
 				for i := range scores {
 					scores[i] = rng.Float32() / float32(nKeys)

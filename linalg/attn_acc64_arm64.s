@@ -320,6 +320,8 @@ TEXT ·qkAcc64NEON16F16(SB), NOSPLIT, $0-48
 	MOVD k4+24(FP), R23
 	MOVD nBlocks+32(FP), R24
 	MOVD dst+40(FP), R4
+	CBZ  R24, hqkdone          // no 16-key block
+	CBZ  R23, hqkdone          // no dims: the d-quad loop below would never end
 
 hqkblock:
 	VEOR V0.B16, V0.B16, V0.B16
@@ -488,6 +490,7 @@ hqkquad:
 	ADD  R2<<4, R1, R1         // next block of 16 rows
 	SUBS $1, R24, R24
 	BNE  hqkblock
+hqkdone:
 	RET
 
 // func avAcc64NEON32F16(scores *float32, vals *uint16, nKeys int, rowStrideBytes int, dst *float32)
