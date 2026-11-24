@@ -94,5 +94,71 @@ func qkAcc64Keys16(arow, bMat, drow []float32, K, N, bOff, rowStride int) int {
 	return n16 * 16
 }
 
+// qkAcc64AVX16F16 is qkAcc64AVX16 over a key cache of IEEE binary16 bits: each half widened exactly with VCVTPH2PS, then the same
+// four accumulators and d-ascending chains (attn_acc64_amd64.s). Only safe when hasAVX2 && hasF16C.
+//
+//go:noescape
+func qkAcc64AVX16F16(q *float32, rows *uint16, rowStrideBytes int, k4 int, n16 int, dst *float32)
+
+// avAcc64AVX32F16 is avAcc64AVX32 over a value cache of IEEE binary16 bits: four halves a VCVTPH2PS, widened exactly, then the same
+// eight accumulators and key-ascending folds. Only safe when hasAVX2 && hasF16C.
+//
+//go:noescape
+func avAcc64AVX32F16(scores *float32, vals *uint16, nKeys int, rowStrideBytes int, dst *float32)
+
+// qkAcc64AVX4F16 is qkAcc64AVX4 over a key cache of IEEE binary16 bits, the same sums on the widened cache (attn_acc64_amd64.s). Only
+// safe when hasAVX2 && hasF16C.
+//
+//go:noescape
+func qkAcc64AVX4F16(q *float32, rows *uint16, rowStrideBytes int, k4 int, nBlocks int, dst *float32)
+
+// qkAcc64KeysF16 runs one query row's q·Kᵀ over an f16 key cache through the 16-key kernel, then the 4-key kernel, for as many whole
+// 4-key blocks as N holds, and returns the keys it wrote; MatmulQKAcc64F16's Go loop finishes the N%4 tail.
+func qkAcc64KeysF16(arow []float32, bMat []uint16, drow []float32, K, N, bOff, rowStride int) int {
+	n16, n4 := qkAcc64KeysSplitF16(arow, bMat, drow, K, N, bOff, rowStride)
+	return n16 + n4
+}
+
+// qkAcc64KeysSplitF16 is qkAcc64KeysF16's dispatch, returning the keys the 16-key kernel and the 4-key kernel each wrote.
+func qkAcc64KeysSplitF16(arow []float32, bMat []uint16, drow []float32, K, N, bOff, rowStride int) (n16, n4 int) {
+	if !hasAVX2 || !hasF16C || K == 0 || K%4 != 0 {
+		return 0, 0
+	}
+	n16 = qkAcc64Keys16F16(arow, bMat, drow, K, N, bOff, rowStride)
+	nBlocks := (N - n16) / 4
+	if nBlocks == 0 {
+		return n16, 0
+	}
+	qkAcc64AVX4F16(&arow[0], &bMat[bOff+n16*rowStride], rowStride*2, K/4, nBlocks, &drow[n16])
+	return n16, nBlocks * 4
+}
+
+// qkAcc64Keys16F16 runs whole sixteen-key groups of an f16 key cache through qkAcc64AVX16F16 and returns the keys it wrote (a multiple
+// of 16; 0 where it declines). Like qkAcc64Keys16 it declines a 4 KiB-multiple key stride, whose sixteen live rows share an L1 set.
+func qkAcc64Keys16F16(arow []float32, bMat []uint16, drow []float32, K, N, bOff, rowStride int) int {
+	if !hasAVX2 || !hasF16C || K == 0 || K%4 != 0 || N < 16 {
+		return 0
+	}
+	if aliasingStride(rowStride * 2) {
+		return 0
+	}
+	n16 := N / 16
+	qkAcc64AVX16F16(&arow[0], &bMat[bOff], rowStride*2, K/4, n16, &drow[0])
+	return n16 * 16
+}
+
+// avAcc64BlocksF16 runs one query row's scores·V over an f16 value cache through avAcc64AVX32F16 for as many whole 32-dim blocks as hd
+// holds and returns the first dim it did not compute; MatmulAVAcc64F16's Go blocks finish from there.
+func avAcc64BlocksF16(srow []float32, vals []uint16, drow []float32, nKeys, hd, headOff, rowStride int) int {
+	if !hasAVX2 || !hasF16C || nKeys == 0 {
+		return 0
+	}
+	d0 := 0
+	for ; d0+32 <= hd; d0 += 32 {
+		avAcc64AVX32F16(&srow[0], &vals[headOff+d0], nKeys, rowStride*2, &drow[d0])
+	}
+	return d0
+}
+
 // aliasingStride reports whether rows strideBytes apart share L1 sets: a multiple of 4 KiB, the set-index span of a 32 KiB 8-way L1.
 func aliasingStride(strideBytes int) bool { return strideBytes%4096 == 0 }

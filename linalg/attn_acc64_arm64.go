@@ -54,3 +54,38 @@ func qkAcc64Keys(arow, bMat, drow []float32, K, N, bOff, rowStride int) int {
 	qkAcc64NEON16(&arow[0], &bMat[bOff], rowStride*4, K/4, nBlocks, &drow[0])
 	return nBlocks * 16
 }
+
+// qkAcc64NEON16F16 is qkAcc64NEON16 over a key cache of IEEE binary16 bits, each half widened exactly by FCVTL as it is loaded
+// (attn_acc64_arm64.s).
+//
+//go:noescape
+func qkAcc64NEON16F16(q *float32, rows *uint16, rowStrideBytes int, k4 int, nBlocks int, dst *float32)
+
+// avAcc64NEON32F16 is avAcc64NEON32 over a value cache of IEEE binary16 bits, widened exactly by FCVTL/FCVTL2.
+//
+//go:noescape
+func avAcc64NEON32F16(scores *float32, vals *uint16, nKeys int, rowStrideBytes int, dst *float32)
+
+// qkAcc64KeysF16 runs whole 16-key blocks of an f16 key cache through qkAcc64NEON16F16 and returns the keys it wrote;
+// MatmulQKAcc64F16's Go loop finishes the rest.
+func qkAcc64KeysF16(arow []float32, bMat []uint16, drow []float32, K, N, bOff, rowStride int) int {
+	if K == 0 || K%4 != 0 || N < 16 {
+		return 0
+	}
+	nBlocks := N / 16
+	qkAcc64NEON16F16(&arow[0], &bMat[bOff], rowStride*2, K/4, nBlocks, &drow[0])
+	return nBlocks * 16
+}
+
+// avAcc64BlocksF16 runs one query row's scores·V over an f16 value cache through avAcc64NEON32F16 for as many whole 32-dim blocks
+// as hd holds and returns the first dim it did not compute.
+func avAcc64BlocksF16(srow []float32, vals []uint16, drow []float32, nKeys, hd, headOff, rowStride int) int {
+	if nKeys == 0 {
+		return 0
+	}
+	d0 := 0
+	for ; d0+32 <= hd; d0 += 32 {
+		avAcc64NEON32F16(&srow[0], &vals[headOff+d0], nKeys, rowStride*2, &drow[d0])
+	}
+	return d0
+}

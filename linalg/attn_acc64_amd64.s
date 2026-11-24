@@ -279,3 +279,238 @@ q16store:
 q16done:
 	VZEROUPPER
 	RET
+
+// func qkAcc64AVX16F16(q *float32, rows *uint16, rowStrideBytes int, k4 int, n16 int, dst *float32)
+//
+// qkAcc64AVX16 over a key cache of IEEE binary16 bits. Per d and per 4-key block: a zeroing VPXOR (so no chain runs through the
+// register across d), four VPINSRW of the keys' d-th halves, VCVTPH2PS to f32 (exact), VCVTPS2PD to f64 (exact), and the same FMA into
+// the block's accumulator. The products are exact for the same reason as the f32 kernel's, so the sums match it bit for bit on the
+// widened cache.
+TEXT ·qkAcc64AVX16F16(SB), NOSPLIT, $0-48
+	MOVQ q+0(FP), SI
+	MOVQ rows+8(FP), DI
+	MOVQ rowStrideBytes+16(FP), R8
+	MOVQ k4+24(FP), R9
+	MOVQ n16+32(FP), R10
+	MOVQ dst+40(FP), DX
+	LEAQ (R8)(R8*2), R12 // 3S
+	TESTQ R10, R10
+	JZ    h16done
+
+h16group:
+	VXORPD Y0, Y0, Y0
+	VXORPD Y1, Y1, Y1
+	VXORPD Y2, Y2, Y2
+	VXORPD Y3, Y3, Y3
+	MOVQ DI, R11
+	MOVQ R8, BX
+	SHLQ $2, BX // 4S
+	LEAQ (R11)(BX*1), R13
+	LEAQ (R13)(BX*1), R14
+	LEAQ (R14)(BX*1), R15
+	MOVQ SI, AX
+	MOVQ R9, CX
+	SHLQ $2, CX
+	TESTQ CX, CX
+	JZ    h16store
+
+h16dim:
+	VBROADCASTSS (AX), X4
+	VCVTPS2PD    X4, Y4
+
+	VPXOR     X5, X5, X5
+	VPINSRW   $0, (R11), X5, X5
+	VPINSRW   $1, (R11)(R8*1), X5, X5
+	VPINSRW   $2, (R11)(R8*2), X5, X5
+	VPINSRW   $3, (R11)(R12*1), X5, X5
+	VCVTPH2PS X5, X5
+	VCVTPS2PD X5, Y5
+	VFMADD231PD Y5, Y4, Y0
+
+	VPXOR     X6, X6, X6
+	VPINSRW   $0, (R13), X6, X6
+	VPINSRW   $1, (R13)(R8*1), X6, X6
+	VPINSRW   $2, (R13)(R8*2), X6, X6
+	VPINSRW   $3, (R13)(R12*1), X6, X6
+	VCVTPH2PS X6, X6
+	VCVTPS2PD X6, Y6
+	VFMADD231PD Y6, Y4, Y1
+
+	VPXOR     X7, X7, X7
+	VPINSRW   $0, (R14), X7, X7
+	VPINSRW   $1, (R14)(R8*1), X7, X7
+	VPINSRW   $2, (R14)(R8*2), X7, X7
+	VPINSRW   $3, (R14)(R12*1), X7, X7
+	VCVTPH2PS X7, X7
+	VCVTPS2PD X7, Y7
+	VFMADD231PD Y7, Y4, Y2
+
+	VPXOR     X8, X8, X8
+	VPINSRW   $0, (R15), X8, X8
+	VPINSRW   $1, (R15)(R8*1), X8, X8
+	VPINSRW   $2, (R15)(R8*2), X8, X8
+	VPINSRW   $3, (R15)(R12*1), X8, X8
+	VCVTPH2PS X8, X8
+	VCVTPS2PD X8, Y8
+	VFMADD231PD Y8, Y4, Y3
+
+	ADDQ $4, AX
+	ADDQ $2, R11
+	ADDQ $2, R13
+	ADDQ $2, R14
+	ADDQ $2, R15
+	DECQ CX
+	JNZ  h16dim
+
+h16store:
+	VCVTPD2PSY Y0, X9
+	VMOVUPS   X9, 0(DX)
+	VCVTPD2PSY Y1, X9
+	VMOVUPS   X9, 16(DX)
+	VCVTPD2PSY Y2, X9
+	VMOVUPS   X9, 32(DX)
+	VCVTPD2PSY Y3, X9
+	VMOVUPS   X9, 48(DX)
+	ADDQ      $64, DX
+	MOVQ R8, BX
+	SHLQ $4, BX
+	ADDQ BX, DI
+	DECQ R10
+	JNZ  h16group
+
+h16done:
+	VZEROUPPER
+	RET
+
+// func avAcc64AVX32F16(scores *float32, vals *uint16, nKeys int, rowStrideBytes int, dst *float32)
+//
+// avAcc64AVX32 over a value cache of IEEE binary16 bits: per key, the score broadcast and widened once, then eight times four halves
+// through VCVTPH2PS (m64, exact) and VCVTPS2PD (exact) into the same eight accumulators, key-ascending.
+TEXT ·avAcc64AVX32F16(SB), NOSPLIT, $0-40
+	MOVQ scores+0(FP), SI
+	MOVQ vals+8(FP), DI
+	MOVQ nKeys+16(FP), CX
+	MOVQ rowStrideBytes+24(FP), R8
+	MOVQ dst+32(FP), DX
+	VXORPD Y0, Y0, Y0
+	VXORPD Y1, Y1, Y1
+	VXORPD Y2, Y2, Y2
+	VXORPD Y3, Y3, Y3
+	VXORPD Y4, Y4, Y4
+	VXORPD Y5, Y5, Y5
+	VXORPD Y6, Y6, Y6
+	VXORPD Y7, Y7, Y7
+	TESTQ CX, CX
+	JZ    havstore
+
+havloop:
+	VBROADCASTSS (SI), X9
+	VCVTPS2PD    X9, Y8
+	VCVTPH2PS   0(DI), X10
+	VCVTPS2PD   X10, Y10
+	VFMADD231PD Y10, Y8, Y0
+	VCVTPH2PS   8(DI), X11
+	VCVTPS2PD   X11, Y11
+	VFMADD231PD Y11, Y8, Y1
+	VCVTPH2PS   16(DI), X10
+	VCVTPS2PD   X10, Y10
+	VFMADD231PD Y10, Y8, Y2
+	VCVTPH2PS   24(DI), X11
+	VCVTPS2PD   X11, Y11
+	VFMADD231PD Y11, Y8, Y3
+	VCVTPH2PS   32(DI), X10
+	VCVTPS2PD   X10, Y10
+	VFMADD231PD Y10, Y8, Y4
+	VCVTPH2PS   40(DI), X11
+	VCVTPS2PD   X11, Y11
+	VFMADD231PD Y11, Y8, Y5
+	VCVTPH2PS   48(DI), X10
+	VCVTPS2PD   X10, Y10
+	VFMADD231PD Y10, Y8, Y6
+	VCVTPH2PS   56(DI), X11
+	VCVTPS2PD   X11, Y11
+	VFMADD231PD Y11, Y8, Y7
+	ADDQ $4, SI
+	ADDQ R8, DI
+	DECQ CX
+	JNZ  havloop
+
+havstore:
+	VCVTPD2PSY Y0, X9
+	VMOVUPS   X9, 0(DX)
+	VCVTPD2PSY Y1, X9
+	VMOVUPS   X9, 16(DX)
+	VCVTPD2PSY Y2, X9
+	VMOVUPS   X9, 32(DX)
+	VCVTPD2PSY Y3, X9
+	VMOVUPS   X9, 48(DX)
+	VCVTPD2PSY Y4, X9
+	VMOVUPS   X9, 64(DX)
+	VCVTPD2PSY Y5, X9
+	VMOVUPS   X9, 80(DX)
+	VCVTPD2PSY Y6, X9
+	VMOVUPS   X9, 96(DX)
+	VCVTPD2PSY Y7, X9
+	VMOVUPS   X9, 112(DX)
+	VZEROUPPER
+	RET
+
+// func qkAcc64AVX4F16(q *float32, rows *uint16, rowStrideBytes int, k4 int, nBlocks int, dst *float32)
+//
+// qkAcc64AVX4 over a key cache of IEEE binary16 bits: nBlocks×4 keys, one key per f64 lane, d ascending. Per d: a zeroing VPXOR,
+// four VPINSRW of the keys' d-th halves, VCVTPH2PS and VCVTPS2PD (both exact) and the same FMA, so the sums equal qkAcc64AVX4's on the
+// widened cache bit for bit. The f16 dispatch takes it where the 16-key kernel declines an aliasing stride.
+TEXT ·qkAcc64AVX4F16(SB), NOSPLIT, $0-48
+	MOVQ q+0(FP), SI
+	MOVQ rows+8(FP), DI
+	MOVQ rowStrideBytes+16(FP), R8
+	MOVQ k4+24(FP), R9
+	MOVQ nBlocks+32(FP), R10
+	MOVQ dst+40(FP), DX
+	TESTQ R10, R10
+	JZ    h4done
+
+h4block:
+	VXORPD Y0, Y0, Y0
+	MOVQ DI, R11
+	LEAQ (R11)(R8*1), R12
+	LEAQ (R12)(R8*1), R13
+	LEAQ (R13)(R8*1), R14
+	MOVQ SI, R15
+	MOVQ R9, CX
+	SHLQ $2, CX
+	TESTQ CX, CX
+	JZ    h4store
+
+h4dim:
+	VBROADCASTSS (R15), X5
+	VCVTPS2PD    X5, Y1
+	VPXOR        X2, X2, X2
+	VPINSRW      $0, (R11), X2, X2
+	VPINSRW      $1, (R12), X2, X2
+	VPINSRW      $2, (R13), X2, X2
+	VPINSRW      $3, (R14), X2, X2
+	VCVTPH2PS    X2, X2
+	VCVTPS2PD    X2, Y2
+	VFMADD231PD  Y2, Y1, Y0
+	ADDQ $4, R15
+	ADDQ $2, R11
+	ADDQ $2, R12
+	ADDQ $2, R13
+	ADDQ $2, R14
+	DECQ CX
+	JNZ  h4dim
+
+h4store:
+	VCVTPD2PSY Y0, X3
+	VMOVUPS   X3, 0(DX)
+	ADDQ      $16, DX
+	MOVQ R8, R11
+	SHLQ $2, R11
+	ADDQ R11, DI
+	DECQ R10
+	JNZ  h4block
+
+h4done:
+	VZEROUPPER
+	RET

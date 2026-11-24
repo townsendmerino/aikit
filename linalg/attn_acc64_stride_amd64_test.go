@@ -40,3 +40,41 @@ func BenchmarkQkAcc64Stride(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkQkAcc64StrideF16 is BenchmarkQkAcc64Stride for the f16 QK kernels: the 16-key and 4-key f16 kernels, equal work (3,904 keys,
+// a multiple of 16), one thread, at Phi-3-mini's f16 key stride (3,072 halves, 6 KiB: rows alternate between two L1 sets, eight of
+// the sixteen live rows in each) and padded by 32 halves. The sub-benchmarks run k16, k4, k4, k16 so -count repeats an A B B A block.
+func BenchmarkQkAcc64StrideF16(b *testing.B) {
+	if !hasAVX2 || !hasF16C {
+		b.Skip("no AVX2+F16C")
+	}
+	const K, N = 96, 3904
+	for _, stride := range []int{3072, 3072 + 32} {
+		rng := rand.New(rand.NewPCG(3, 5))
+		f := make([]float32, (N-1)*stride+K)
+		for i := range f {
+			f[i] = float32(rng.NormFloat64())
+		}
+		rows := make([]uint16, len(f))
+		F32ToF16Slice(rows, f)
+		q := make([]float32, K)
+		for i := range q {
+			q[i] = float32(rng.NormFloat64())
+		}
+		dst := make([]float32, N)
+		k16 := func(b *testing.B) {
+			for range b.N {
+				qkAcc64AVX16F16(&q[0], &rows[0], stride*2, K/4, N/16, &dst[0])
+			}
+		}
+		k4 := func(b *testing.B) {
+			for range b.N {
+				qkAcc64AVX4F16(&q[0], &rows[0], stride*2, K/4, N/4, &dst[0])
+			}
+		}
+		b.Run(fmt.Sprintf("stride%d/1-k16", stride), k16)
+		b.Run(fmt.Sprintf("stride%d/2-k4", stride), k4)
+		b.Run(fmt.Sprintf("stride%d/3-k4", stride), k4)
+		b.Run(fmt.Sprintf("stride%d/4-k16", stride), k16)
+	}
+}

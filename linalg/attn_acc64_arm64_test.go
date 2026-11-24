@@ -5,6 +5,7 @@ package linalg
 import (
 	"math"
 	"math/rand"
+	randv2 "math/rand/v2"
 	"testing"
 )
 
@@ -177,6 +178,41 @@ func TestAttnAcc64_publicKernelsMixedShapes(t *testing.T) {
 					t.Fatalf("QK %+v kvh=%d idx %d: %08x vs %08x", sh, kvh, i, math.Float32bits(gotQ[i]), math.Float32bits(wantQ[i]))
 				}
 			}
+		}
+	}
+}
+
+// TestAcc64F16NEON_isLoadBearing checks the NEON f16 kernels RUN: a declining dispatcher would leave the f16 tests passing against the
+// Go loops while proving nothing about the assembly.
+func TestAcc64F16NEON_isLoadBearing(t *testing.T) {
+	rng := randv2.New(randv2.NewPCG(53, 59))
+	const K, N, stride = 96, 16*3 + 5, 96 * 2
+	h, w := f16Cache(rng, (N-1)*stride+K)
+	q, scores := make([]float32, K), make([]float32, N)
+	for i := range q {
+		q[i] = float32(rng.NormFloat64())
+	}
+	for i := range scores {
+		scores[i] = rng.Float32() / N
+	}
+	got, want := make([]float32, N), make([]float32, N)
+	if n := qkAcc64KeysF16(q, h, got, K, N, 0, stride); n != 48 {
+		t.Errorf("qkAcc64KeysF16 wrote %d keys, want 48: the f16 QK kernel did not engage", n)
+	}
+	qkAcc64Keys(q, w, want, K, N, 0, stride)
+	for n := range 48 {
+		if got[n] == 0 || math.Float32bits(got[n]) != math.Float32bits(want[n]) {
+			t.Fatalf("QK key %d: f16 kernel %v, f32 kernel on the widened cache %v (want equal and non-zero)", n, got[n], want[n])
+		}
+	}
+	gotV, wantV := make([]float32, K), make([]float32, K)
+	if d := avAcc64BlocksF16(scores, h, gotV, N, K, 0, stride); d != 96 {
+		t.Errorf("avAcc64BlocksF16 covered %d dims, want 96: the f16 AV kernel did not engage", d)
+	}
+	avAcc64Blocks(scores, w, wantV, N, K, 0, stride)
+	for d := range K {
+		if gotV[d] == 0 || math.Float32bits(gotV[d]) != math.Float32bits(wantV[d]) {
+			t.Fatalf("AV dim %d: f16 kernel %v, f32 kernel on the widened cache %v (want equal and non-zero)", d, gotV[d], wantV[d])
 		}
 	}
 }
