@@ -158,7 +158,6 @@ func TestQkAcc64AVX16_matchesAVX4AndGo(t *testing.T) {
 	}
 }
 
-// TestQkAcc64Keys_takesAVX16 checks the dispatcher's 16-key step engages and the 4-key kernel finishes after it: N = 16·k + 4·j + r keys
 // TestQkAcc64Keys_takesAVX16 checks through the dispatcher itself (qkAcc64KeysSplit, whose two counts qkAcc64Keys sums) that the
 // 16-key kernel takes the whole 16-key groups and the 4-key kernel the rest: N = 16·3 + 4·2 + 3 keys come back as 48 + 8 written, at a
 // non-zero head offset, each score equal to the Go loop's, and the N%4 tail left as it was.
