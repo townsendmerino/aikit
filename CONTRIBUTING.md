@@ -137,6 +137,38 @@ Experimental in `experimentalSyms`/`experimentalMembers`
   index](docs/architecture.md#adr-index) for the table of which ADR
   covers what, cited from where.
 
+## Go style and structure
+
+- **Structure over growth.** Don't append unrelated state to a struct,
+  file or package that is already large (`linalg`, `encoder`, `vision`):
+  group related state into a cohesive sub-struct, or split along a clean
+  seam early. A new test seam is an injected option, a struct field or a
+  constructor parameter, not a package-global `*ForTest` hook or a
+  side-effect `init()` registration: globals break `t.Parallel()` and
+  hide coupling. Existing globals stay unless you're touching them.
+- **An interface lives in the package that consumes it** and stays narrow
+  (a handful of methods). Don't add a wide interface mirroring a whole
+  concrete type only so a test can fake it. Existing interfaces stay as
+  they are.
+- **The standard library comes before a hand-rolled helper** (`go.mod`
+  targets Go 1.27): `slices` (`Contains`, `Index`, `Clone`, `Sort`,
+  `SortFunc`, `Sorted`, `Backward`), `maps` (`Clone`, `Copy`, `Keys`),
+  `strings` (`Cut`, `CutPrefix`, `CutSuffix`, `SplitSeq`, `FieldsSeq`),
+  `errors.AsType`, `sync.WaitGroup.Go`, `cmp.Or`, `min`/`max`,
+  `for range n`, `new(expr)` and `math/rand/v2`. Keep `math/rand` v1
+  where a fixed seed must keep producing the same stream:
+  `linalg/selfcheck.go`'s inputs, and seeded test data unless the change
+  re-checks what depends on the draws.
+- **Run `GOWORK=off go fix -diff` on the packages you touch** and review
+  each suggestion before applying it: keep imports grouped, and check
+  nil-map behavior before a hand copy becomes `maps.Clone` (a nil map
+  clones to nil).
+- **One receiver kind per type:** don't mix pointer and value receivers;
+  a type with mutating methods, a lock or a large body takes pointer
+  receivers. Return a modified slice instead of taking a `*[]T`
+  out-parameter; explicit allocation-free scratch reuse (a `dst`
+  argument) and `sync.Pool` buffers are fine.
+
 ## Tests
 
 - **`package foo` (internal) is the default** for a new `_test.go` file —
