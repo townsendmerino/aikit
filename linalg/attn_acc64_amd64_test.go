@@ -191,3 +191,42 @@ func TestQkAcc64Keys_takesAVX16(t *testing.T) {
 		}
 	}
 }
+
+// TestQkAcc64Keys16_declinesAtAnAliasingStride checks the 16-key kernel's stride guard: at a key stride that is a multiple of 4 KiB
+// (3,072 floats, 12 KiB) its sixteen live rows share L1 sets and it declines, leaving the 4-key kernel to take the call; one 64 B line
+// off (3,088 floats) it engages. Either way the scores equal the Go loop's.
+func TestQkAcc64Keys16_declinesAtAnAliasingStride(t *testing.T) {
+	if !hasAVX2 {
+		t.Skip("no AVX2 on this CPU")
+	}
+	rng := rand.New(rand.NewPCG(61, 67))
+	const K, N = 96, 48
+	for _, c := range []struct {
+		stride, want16 int
+	}{{3072, 0}, {3088, 48}} {
+		q := make([]float32, K)
+		for i := range q {
+			q[i] = float32(rng.NormFloat64())
+		}
+		rows := make([]float32, (N-1)*c.stride+K)
+		for i := range rows {
+			rows[i] = float32(rng.NormFloat64())
+		}
+		if got := qkAcc64Keys16(q, rows, make([]float32, N), K, N, 0, c.stride); got != c.want16 {
+			t.Errorf("stride %d: the 16-key kernel wrote %d keys, want %d", c.stride, got, c.want16)
+		}
+		out := make([]float32, N)
+		if got := qkAcc64Keys(q, rows, out, K, N, 0, c.stride); got != N {
+			t.Errorf("stride %d: the dispatch wrote %d keys, want %d", c.stride, got, N)
+		}
+		for n := range N {
+			var acc float64
+			for d := range K {
+				acc += float64(q[d]) * float64(rows[n*c.stride+d])
+			}
+			if math.Float32bits(out[n]) != math.Float32bits(float32(acc)) {
+				t.Fatalf("stride %d key %d: %08x != Go %08x", c.stride, n, math.Float32bits(out[n]), math.Float32bits(float32(acc)))
+			}
+		}
+	}
+}
