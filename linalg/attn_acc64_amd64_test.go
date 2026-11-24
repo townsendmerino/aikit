@@ -159,35 +159,44 @@ func TestQkAcc64AVX16_matchesAVX4AndGo(t *testing.T) {
 }
 
 // TestQkAcc64Keys_takesAVX16 checks the dispatcher's 16-key step engages and the 4-key kernel finishes after it: N = 16·k + 4·j + r keys
-// come back as 16·k + 4·j written, each equal to MatmulQKAcc64's Go loop.
+// TestQkAcc64Keys_takesAVX16 checks through the dispatcher itself (qkAcc64KeysSplit, whose two counts qkAcc64Keys sums) that the
+// 16-key kernel takes the whole 16-key groups and the 4-key kernel the rest: N = 16·3 + 4·2 + 3 keys come back as 48 + 8 written, at a
+// non-zero head offset, each score equal to the Go loop's, and the N%4 tail left as it was.
 func TestQkAcc64Keys_takesAVX16(t *testing.T) {
 	if !hasAVX2 {
 		t.Skip("no AVX2 on this CPU")
 	}
 	rng := rand.New(rand.NewPCG(29, 31))
-	const K, N, stride = 96, 16*3 + 4*2 + 3, 96 * 4
+	const K, N, stride, bOff = 96, 16*3 + 4*2 + 3, 96*4 + 16, 96 + 8
 	q := make([]float32, K)
 	for i := range q {
 		q[i] = float32(rng.NormFloat64())
 	}
-	rows := make([]float32, (N-1)*stride+K)
+	rows := make([]float32, bOff+(N-1)*stride+K)
 	for i := range rows {
 		rows[i] = float32(rng.NormFloat64())
 	}
-	if got := qkAcc64Keys16(q, rows, make([]float32, N), K, N, 0, stride); got != 48 {
-		t.Fatalf("qkAcc64Keys16 wrote %d keys, want 48: the 16-key kernel did not engage", got)
-	}
 	out := make([]float32, N)
-	if got := qkAcc64Keys(q, rows, out, K, N, 0, stride); got != N-3 {
-		t.Fatalf("qkAcc64Keys wrote %d keys, want %d", got, N-3)
+	sentinel := float32(math.NaN())
+	for i := range out {
+		out[i] = sentinel
+	}
+	n16, n4 := qkAcc64KeysSplit(q, rows, out, K, N, bOff, stride)
+	if n16 != 48 || n4 != 8 {
+		t.Fatalf("the dispatch wrote %d keys by the 16-key kernel and %d by the 4-key one, want 48 and 8", n16, n4)
 	}
 	for n := range N - 3 {
 		var acc float64
 		for d := range K {
-			acc += float64(q[d]) * float64(rows[n*stride+d])
+			acc += float64(q[d]) * float64(rows[bOff+n*stride+d])
 		}
 		if math.Float32bits(out[n]) != math.Float32bits(float32(acc)) {
 			t.Fatalf("key %d: %08x != Go %08x", n, math.Float32bits(out[n]), math.Float32bits(float32(acc)))
+		}
+	}
+	for n := N - 3; n < N; n++ {
+		if !math.IsNaN(float64(out[n])) {
+			t.Errorf("tail key %d was written (%v): the kernels must leave the N%%4 tail to the Go loop", n, out[n])
 		}
 	}
 }
