@@ -115,16 +115,22 @@ func qkAcc64AVX4F16(q *float32, rows *uint16, rowStrideBytes int, k4 int, nBlock
 // qkAcc64KeysF16 runs one query row's q·Kᵀ over an f16 key cache through the 16-key kernel, then the 4-key kernel, for as many whole
 // 4-key blocks as N holds, and returns the keys it wrote; MatmulQKAcc64F16's Go loop finishes the N%4 tail.
 func qkAcc64KeysF16(arow []float32, bMat []uint16, drow []float32, K, N, bOff, rowStride int) int {
+	n16, n4 := qkAcc64KeysSplitF16(arow, bMat, drow, K, N, bOff, rowStride)
+	return n16 + n4
+}
+
+// qkAcc64KeysSplitF16 is qkAcc64KeysF16's dispatch, returning the keys the 16-key kernel and the 4-key kernel each wrote.
+func qkAcc64KeysSplitF16(arow []float32, bMat []uint16, drow []float32, K, N, bOff, rowStride int) (n16, n4 int) {
 	if !hasAVX2 || !hasF16C || K == 0 || K%4 != 0 {
-		return 0
+		return 0, 0
 	}
-	j := qkAcc64Keys16F16(arow, bMat, drow, K, N, bOff, rowStride)
-	nBlocks := (N - j) / 4
+	n16 = qkAcc64Keys16F16(arow, bMat, drow, K, N, bOff, rowStride)
+	nBlocks := (N - n16) / 4
 	if nBlocks == 0 {
-		return j
+		return n16, 0
 	}
-	qkAcc64AVX4F16(&arow[0], &bMat[bOff+j*rowStride], rowStride*2, K/4, nBlocks, &drow[j])
-	return j + nBlocks*4
+	qkAcc64AVX4F16(&arow[0], &bMat[bOff+n16*rowStride], rowStride*2, K/4, nBlocks, &drow[n16])
+	return n16, nBlocks * 4
 }
 
 // qkAcc64Keys16F16 runs whole sixteen-key groups of an f16 key cache through qkAcc64AVX16F16 and returns the keys it wrote (a multiple

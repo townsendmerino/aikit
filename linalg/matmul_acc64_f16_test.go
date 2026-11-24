@@ -7,13 +7,17 @@ import (
 )
 
 // f16Cache returns n halves drawn from N(0, 1) and their exact f32 widening: the f16 kernels must equal the f32 kernels run on the
-// widened values, bit for bit, since widening is exact and the kernels then do the same f64 adds in the same order.
-func f16Cache(rng *rand.Rand, n int) ([]uint16, []float32) {
+// widened values, bit for bit, since widening is exact and the kernels then do the same f64 adds in the same order. Every index in
+// subnormal gets a half below f16's normal range, alternating 3e-6 and -6e-8 (near the bottom of it); a caller places them inside the
+// columns its kernel reads.
+func f16Cache(rng *rand.Rand, n int, subnormal ...int) ([]uint16, []float32) {
 	f := make([]float32, n)
 	for i := range f {
 		f[i] = float32(rng.NormFloat64())
 	}
-	f[0], f[n/2] = 3e-6, -6e-8 // a subnormal half and one near the bottom of its range
+	for i, at := range subnormal {
+		f[at] = []float32{3e-6, -6e-8}[i%2]
+	}
 	h := make([]uint16, n)
 	F32ToF16Slice(h, f)
 	w := make([]float32, n)
@@ -31,7 +35,11 @@ func TestMatmulQKAcc64F16_matchesF32OnWidened(t *testing.T) {
 				nKV := 3
 				rowStride := nKV * K
 				bOff := 1 * K
-				h, w := f16Cache(rng, (N-1)*rowStride+bOff+K)
+				// Subnormals in the columns the kernel reads: key 0's first dim, a middle key's second, the last key's last dim.
+				h, w := f16Cache(rng, (N-1)*rowStride+bOff+K, bOff, bOff+(N/2)*rowStride+1, bOff+(N-1)*rowStride+K-1)
+				if b := f16ToF32(h[bOff]); b == 0 || math.Abs(float64(b)) >= 6.1e-5 {
+					t.Fatalf("the planted half at bOff widened to %v, not a subnormal", b)
+				}
 				a := make([]float32, M*K)
 				for i := range a {
 					a[i] = float32(rng.NormFloat64())
@@ -58,7 +66,7 @@ func TestMatmulAVAcc64F16_matchesF32OnWidened(t *testing.T) {
 			for _, M := range []int{1, 2} {
 				rowStride := 2*hd + 4
 				headOff := hd + 4
-				h, w := f16Cache(rng, (nKeys-1)*rowStride+headOff+hd)
+				h, w := f16Cache(rng, (nKeys-1)*rowStride+headOff+hd, headOff, headOff+(nKeys/2)*rowStride+1, headOff+(nKeys-1)*rowStride+hd-1)
 				scores := make([]float32, M*nKeys)
 				for i := range scores {
 					scores[i] = rng.Float32() / float32(nKeys)

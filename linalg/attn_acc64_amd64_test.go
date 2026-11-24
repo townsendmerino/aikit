@@ -209,16 +209,33 @@ func TestAcc64F16AVX_isLoadBearing(t *testing.T) {
 	}
 	rng := rand.New(rand.NewPCG(53, 59))
 	const K, N, stride = 96, 16*3 + 5, 96 * 2
-	h, _ := f16Cache(rng, (N-1)*stride+K)
-	q := make([]float32, K)
-	if got := qkAcc64Keys16F16(q, h, make([]float32, N), K, N, 0, stride); got != 48 {
-		t.Errorf("qkAcc64Keys16F16 wrote %d keys, want 48: the 16-key f16 QK kernel did not engage", got)
+	h, w := f16Cache(rng, (N-1)*stride+K)
+	q, scores := make([]float32, K), make([]float32, N)
+	for i := range q {
+		q[i] = float32(rng.NormFloat64())
 	}
-	if got := qkAcc64KeysF16(q, h, make([]float32, N), K, N, 0, stride); got != 52 {
-		t.Errorf("qkAcc64KeysF16 wrote %d keys, want 52 (48 by the 16-key kernel, 4 by the 4-key one)", got)
+	for i := range scores {
+		scores[i] = rng.Float32() / N
 	}
-	if got := avAcc64BlocksF16(make([]float32, N), h, make([]float32, K), N, K, 0, stride); got != 96 {
-		t.Errorf("avAcc64BlocksF16 covered %d dims, want 96: the f16 AV kernel did not engage", got)
+	got, want := make([]float32, N), make([]float32, N)
+	if n16, n4 := qkAcc64KeysSplitF16(q, h, got, K, N, 0, stride); n16 != 48 || n4 != 4 {
+		t.Errorf("the f16 QK dispatch wrote %d keys by the 16-key kernel and %d by the 4-key one, want 48 and 4", n16, n4)
+	}
+	qkAcc64KeysSplit(q, w, want, K, N, 0, stride)
+	for n := range 52 {
+		if got[n] == 0 || math.Float32bits(got[n]) != math.Float32bits(want[n]) {
+			t.Fatalf("QK key %d: f16 kernel %v, f32 kernel on the widened cache %v (want equal and non-zero)", n, got[n], want[n])
+		}
+	}
+	gotV, wantV := make([]float32, K), make([]float32, K)
+	if d := avAcc64BlocksF16(scores, h, gotV, N, K, 0, stride); d != 96 {
+		t.Errorf("avAcc64BlocksF16 covered %d dims, want 96: the f16 AV kernel did not engage", d)
+	}
+	avAcc64Blocks(scores, w, wantV, N, K, 0, stride)
+	for d := range K {
+		if gotV[d] == 0 || math.Float32bits(gotV[d]) != math.Float32bits(wantV[d]) {
+			t.Fatalf("AV dim %d: f16 kernel %v, f32 kernel on the widened cache %v (want equal and non-zero)", d, gotV[d], wantV[d])
+		}
 	}
 }
 
@@ -278,11 +295,8 @@ func TestQkAcc64KeysF16_strideGuard(t *testing.T) {
 		for i := range q {
 			q[i] = float32(rng.NormFloat64())
 		}
-		if got := qkAcc64Keys16F16(q, h, make([]float32, N), K, N, 0, c.stride); got != c.want16 {
-			t.Errorf("stride %d: the 16-key f16 kernel wrote %d keys, want %d", c.stride, got, c.want16)
-		}
-		if got := qkAcc64KeysF16(q, h, make([]float32, N), K, N, 0, c.stride); got != c.wantAll {
-			t.Errorf("stride %d: the f16 dispatch wrote %d keys, want %d", c.stride, got, c.wantAll)
+		if n16, n4 := qkAcc64KeysSplitF16(q, h, make([]float32, N), K, N, 0, c.stride); n16 != c.want16 || n16+n4 != c.wantAll {
+			t.Errorf("stride %d: the f16 dispatch wrote %d keys by the 16-key kernel and %d in all, want %d and %d", c.stride, n16, n16+n4, c.want16, c.wantAll)
 		}
 		got, want := make([]float32, N), make([]float32, N)
 		MatmulQKAcc64F16(q, h, got, 1, K, N, 0, c.stride)
