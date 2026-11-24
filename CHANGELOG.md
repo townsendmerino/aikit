@@ -16,6 +16,9 @@ excluded from that promise and may change in any release until it graduates.
   every dim. Each key is still one f64 lane folded over ascending d, so `MatmulQKAcc64`'s scores are bit-identical
   (`TestQkAcc64AVX16_matchesAVX4AndGo`); the 4-key kernel takes the last N%16 keys. On a Ryzen 7 3700X at Phi-3-mini's layer shape
   (3,900 keys, 32 heads of 96) the 4-key kernel read the cache at 16.0 GB/s against `MatmulAVAcc64`'s 29.9 GB/s on the same bytes.
+  The 16-key kernel declines a key stride that is a multiple of 4 KiB, where its sixteen live rows share one L1 set and it ran slower
+  than the 4-key kernel (1.6× slower at a 12 KiB stride on that CPU; 1.5× faster padded by 64 B); the 4-key kernel takes those calls.
+  A dispatch guard: the scores are bit-identical either way (`TestQkAcc64Keys16_declinesAtAnAliasingStride`).
 
 ## [1.78.0] — 2026-11-20
 
