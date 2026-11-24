@@ -28,6 +28,8 @@ excluded from that promise and may change in any release until it graduates.
   `TestMatmulAVAcc64F16_matchesF32OnWidened`), while the cache is read at two bytes an element and never widened into scratch.
   Kernels: AVX2 + F16C on amd64 (`qkAcc64AVX16F16`, `avAcc64AVX32F16`) and NEON on arm64 (`qkAcc64NEON16F16`,
   `avAcc64NEON32F16`, FCVTL on load); Go loops elsewhere and for the remainders.
+  On amd64 the f16 QK dispatch has the 16-key kernel's stride guard, falling to a 4-key f16 kernel (`qkAcc64AVX4F16`) at a 4 KiB-multiple
+  key stride (`TestQkAcc64KeysF16_strideGuard`, `TestQkAcc64AVX4F16_matchesAVX4OnWidened`).
 
 ## [1.78.0] — 2026-11-20
 

@@ -454,3 +454,63 @@ havstore:
 	VMOVUPS   X9, 112(DX)
 	VZEROUPPER
 	RET
+
+// func qkAcc64AVX4F16(q *float32, rows *uint16, rowStrideBytes int, k4 int, nBlocks int, dst *float32)
+//
+// qkAcc64AVX4 over a key cache of IEEE binary16 bits: nBlocks×4 keys, one key per f64 lane, d ascending. Per d: a zeroing VPXOR,
+// four VPINSRW of the keys' d-th halves, VCVTPH2PS and VCVTPS2PD (both exact) and the same FMA, so the sums equal qkAcc64AVX4's on the
+// widened cache bit for bit. The f16 dispatch takes it where the 16-key kernel declines an aliasing stride.
+TEXT ·qkAcc64AVX4F16(SB), NOSPLIT, $0-48
+	MOVQ q+0(FP), SI
+	MOVQ rows+8(FP), DI
+	MOVQ rowStrideBytes+16(FP), R8
+	MOVQ k4+24(FP), R9
+	MOVQ nBlocks+32(FP), R10
+	MOVQ dst+40(FP), DX
+	TESTQ R10, R10
+	JZ    h4done
+
+h4block:
+	VXORPD Y0, Y0, Y0
+	MOVQ DI, R11
+	LEAQ (R11)(R8*1), R12
+	LEAQ (R12)(R8*1), R13
+	LEAQ (R13)(R8*1), R14
+	MOVQ SI, R15
+	MOVQ R9, CX
+	SHLQ $2, CX
+	TESTQ CX, CX
+	JZ    h4store
+
+h4dim:
+	VBROADCASTSS (R15), X5
+	VCVTPS2PD    X5, Y1
+	VPXOR        X2, X2, X2
+	VPINSRW      $0, (R11), X2, X2
+	VPINSRW      $1, (R12), X2, X2
+	VPINSRW      $2, (R13), X2, X2
+	VPINSRW      $3, (R14), X2, X2
+	VCVTPH2PS    X2, X2
+	VCVTPS2PD    X2, Y2
+	VFMADD231PD  Y2, Y1, Y0
+	ADDQ $4, R15
+	ADDQ $2, R11
+	ADDQ $2, R12
+	ADDQ $2, R13
+	ADDQ $2, R14
+	DECQ CX
+	JNZ  h4dim
+
+h4store:
+	VCVTPD2PSY Y0, X3
+	VMOVUPS   X3, 0(DX)
+	ADDQ      $16, DX
+	MOVQ R8, R11
+	SHLQ $2, R11
+	ADDQ R11, DI
+	DECQ R10
+	JNZ  h4block
+
+h4done:
+	VZEROUPPER
+	RET

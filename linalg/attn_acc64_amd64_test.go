@@ -202,8 +202,11 @@ func TestAcc64F16AVX_isLoadBearing(t *testing.T) {
 	const K, N, stride = 96, 16*3 + 5, 96 * 2
 	h, _ := f16Cache(rng, (N-1)*stride+K)
 	q := make([]float32, K)
-	if got := qkAcc64KeysF16(q, h, make([]float32, N), K, N, 0, stride); got != 48 {
-		t.Errorf("qkAcc64KeysF16 wrote %d keys, want 48: the f16 QK kernel did not engage", got)
+	if got := qkAcc64Keys16F16(q, h, make([]float32, N), K, N, 0, stride); got != 48 {
+		t.Errorf("qkAcc64Keys16F16 wrote %d keys, want 48: the 16-key f16 QK kernel did not engage", got)
+	}
+	if got := qkAcc64KeysF16(q, h, make([]float32, N), K, N, 0, stride); got != 52 {
+		t.Errorf("qkAcc64KeysF16 wrote %d keys, want 52 (48 by the 16-key kernel, 4 by the 4-key one)", got)
 	}
 	if got := avAcc64BlocksF16(make([]float32, N), h, make([]float32, K), N, K, 0, stride); got != 96 {
 		t.Errorf("avAcc64BlocksF16 covered %d dims, want 96: the f16 AV kernel did not engage", got)
