@@ -101,6 +101,7 @@ func RepackW4A8Row4Scales(scales []float32, N, K, group int) []float32 {
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTW4A8Row4Into(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []float32, dst []float32, M, K, N, group int) {
+	requireRow4DotProd("MatmulBTW4A8Row4Into")
 	checkMatmulW4A8("MatmulBTW4A8Row4", len(a), len(w4Row4), len(wScales4), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTW4A8Row4", len(a), w4Row4, wScales4, len(dst), M, K, N, group)
 	if M != 1 {
