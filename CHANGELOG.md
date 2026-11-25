@@ -56,6 +56,13 @@ excluded from that promise and may change in any release until it graduates.
   (`TestIQDequant_goldenThroughGGUF`), and `TestOutputContract_dequantWritersOverwrite` covers every type the reader admits
   rather than a list.
 
+### Fixed
+
+- **The pre-push hook works from a linked git worktree** (`tools/gpumod`, `RepoRoot`). git exports `GIT_DIR` to a hook run from a
+  linked worktree, and `git rev-parse --show-toplevel` then answers the cwd, so `preflight` took `tools/` for the root and every
+  package failed to load. `RepoRoot` asks git without the inherited `GIT_DIR` and `GIT_WORK_TREE`, and its walk-up fallback also
+  stops at a worktree's `.git` file (`TestRepoRoot_linkedWorktreeUnderHookEnv`, `TestRepoRoot_walkUpStopsAtGitFile`).
+
 ## [1.79.0] — 2026-11-24
 
 `perfgate` VERDICT: FAIL — 3 regression(s) vs v1.78.0 across 47 shapes, confirmed on a second measurement
