@@ -16,3 +16,17 @@ blocks (10 pairs a shape, A = plain, B = padded), under the exclusive lock, afte
 **Rule.** **REPRODUCES** if, at all three shapes, the median pair ratio padded ÷ plain (ns/op) is ≥ 1 + (run-2 Δ − its floor):
 ≥ 1.0420 at np576, ≥ 1.0389 at np1024, ≥ 1.0334 at np2048. **Anything else: DOESN'T**, and the regression is treated as real.
 REPRODUCES: the 1.79.0 section carries a `> **PERFGATE EXCEPTION: …**` blockquote citing run 2 and this test, and the release goes on.
+
+## Result, read 2026-11-24 17:51 PST: **REPRODUCES**
+
+One run, 17:47–17:51 PST under the exclusive lock, start load 0.07 / 0.10 / 0.37 (1/5/15 min; the benchmark's own threads raised the
+1-minute figure to 2.8 by the end, on both arms alike, interleaved). Cells `placement-cells.tsv`, log `placement-run.log`.
+
+| shape | median padded ÷ plain (10 pairs) | range | bar | |
+|---|---|---|---|---|
+| np576 | **1.0676** | 1.028–1.071 | ≥ 1.0420 | meets |
+| np1024 | **1.0656** | 1.057–1.076 | ≥ 1.0389 | meets |
+| np2048 | **1.0700** | 1.061–1.085 | ≥ 1.0334 | meets |
+
+v1.78.0's own source with one 32-byte function added ahead of the contract-exp code is 6.6–7.0% slower on these shapes, the size of
+perfgate run 2's 6.2–7.0%: the "regression" is where the linker places unchanged code, not anything this release changed.
