@@ -45,7 +45,7 @@ func PackedWords(dim int) int { return (dim + 63) / 64 }
 //
 // Output contract: zeroes dst internally; do not pre-zero. PackSignBitsRow clears dst[:(len(v)+63)/64] before OR-ing sign bits in; PackSignBits does
 // this per row.
-func PackSignBits(dst []uint64, src []float32, n, dim int) {
+func packSignBits(dst []uint64, src []float32, n, dim int) {
 	w := PackedWords(dim)
 	for i := range n {
 		PackSignBitsRow(dst[i*w:(i+1)*w], src[i*dim:(i+1)*dim])

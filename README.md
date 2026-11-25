@@ -413,7 +413,9 @@ no such consumer has surfaced yet.
   (7.56× over a `Score` loop at 50 documents, bit-identical scores). Covered by
   `CrossEncoder`'s existing Experimental status; listed here so the batch API is
   not read as a separate promise.
-- `linalg`'s v1.15.0 additions — the elementwise math kernels (now `linalg/elem`: `ExpF32`, `TanhF32`,
+- `linalg`'s v1.15.0 additions (the scalar forms, `ExpF32Into`/`GELUInto`/`SiLUInto`/`SoftmaxRowInto`/`SoftmaxRowScaledInto`,
+  `PackSignBits`, `QuantizeActivationsInto` and `HasFusedQ8Kernel` unexported since, as nothing outside their package called
+  them) — the elementwise math kernels (now `linalg/elem`: `ExpF32`, `TanhF32`,
   `ErfF32`, `GELUF32`, `GELUTanhF32`, `SiLUF32` and their `*Into` forms,
   `SoftmaxRowInto`), the fused Q8 matmul (`MatmulBTQ8Fused{,Into}`,
   `HasFusedQ8Kernel`, `FusedQ8Applies`), W8A8 activation quantization

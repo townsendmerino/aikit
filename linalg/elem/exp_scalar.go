@@ -50,7 +50,7 @@ func siluIntoRaw(dst, src []float32) {
 // GOEXPERIMENT=simd alternative.
 func geluIntoRaw(dst, src []float32) {
 	for i, v := range src {
-		dst[i] = GELUF32(v)
+		dst[i] = geluF32(v)
 	}
 }
 
@@ -60,7 +60,7 @@ func geluIntoRaw(dst, src []float32) {
 // GOEXPERIMENT=simd alternative.
 func tanhIntoRaw(dst, src []float32) {
 	for i, v := range src {
-		dst[i] = TanhF32(v)
+		dst[i] = tanhF32(v)
 	}
 }
 

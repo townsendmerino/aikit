@@ -59,7 +59,7 @@ const (
 //	ExpF32(NaN)  = NaN
 //	x >  88.72   = +Inf   (overflow)
 //	x < -87.34   = 0      (flushed rather than subnormal — see expUnderflowF32)
-func ExpF32(x float32) float32 {
+func expF32(x float32) float32 {
 	// Ordered so the common finite case falls through with one comparison
 	// pair. NaN fails both comparisons below, so it is handled explicitly.
 	if x != x {
@@ -122,12 +122,12 @@ func expF32Core(x float32) float32 {
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
 // not to pre-zero it.
-func ExpF32Into(dst, src []float32) {
+func expF32Into(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: ExpF32Into length mismatch")
 	}
 	for i, v := range src {
-		dst[i] = ExpF32(v)
+		dst[i] = expF32(v)
 	}
 }
 
@@ -151,7 +151,7 @@ func ExpF32Into(dst, src []float32) {
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
 // not to pre-zero it.
-func SoftmaxRowInto(dst, src []float32) {
+func softmaxRowInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: SoftmaxRowInto length mismatch")
 	}
@@ -180,7 +180,7 @@ func SoftmaxRowInto(dst, src []float32) {
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
 // not to pre-zero it.
-func SoftmaxRowScaledInto(dst, src []float32, scale float32) {
+func softmaxRowScaledInto(dst, src []float32, scale float32) {
 	if len(dst) != len(src) {
 		panic("linalg: SoftmaxRowScaledInto length mismatch")
 	}
@@ -213,7 +213,7 @@ func SoftmaxRowScaledInto(dst, src []float32, scale float32) {
 // multi-segment rational in float64 and is the most expensive transcendental in
 // the forward — measured 29.4 ns/element inside GELU on a 3700X, against 15 for
 // math.Exp.
-func ErfF32(x float32) float32 {
+func erfF32(x float32) float32 {
 	sign := float32(1)
 	if x < 0 {
 		sign, x = -1, -x
@@ -266,9 +266,9 @@ func ErfF32(x float32) float32 {
 // (1+erf), which cancels as erf → -1; no erf accurate in the absolute sense can
 // give relative accuracy there, and the vanishing outputs it produces do not
 // matter downstream. Do not "fix" that by tightening a relative bound.
-func GELUF32(x float32) float32 {
+func geluF32(x float32) float32 {
 	const invSqrt2 = 0.7071067811865476
-	return 0.5 * x * (1 + ErfF32(x*invSqrt2))
+	return 0.5 * x * (1 + erfF32(x*invSqrt2))
 }
 
 // GELUInto writes GELUF32(src[i]) into dst[i]. Same length required; may
@@ -278,7 +278,7 @@ func GELUF32(x float32) float32 {
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
 // not to pre-zero it.
-func GELUInto(dst, src []float32) {
+func geluInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: GELUInto length mismatch")
 	}
@@ -299,7 +299,7 @@ func GELUInto(dst, src []float32) {
 // branches here: for x below the exp overflow bound e^−x is +Inf and x/Inf is a
 // signed zero; above it e^−x flushes to 0 and the result is exactly x.
 func SiLUF32(x float32) float32 {
-	return x / (1 + ExpF32(-x))
+	return x / (1 + expF32(-x))
 }
 
 // SiLUInto writes SiLUF32(src[i]) into dst[i]. Same length required; may
@@ -310,7 +310,7 @@ func SiLUF32(x float32) float32 {
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)]; dst may alias src (that is the in-place form), which is one more reason
 // not to pre-zero it.
-func SiLUInto(dst, src []float32) {
+func siluInto(dst, src []float32) {
 	if len(dst) != len(src) {
 		panic("linalg: SiLUInto length mismatch")
 	}
@@ -331,7 +331,7 @@ func SiLUInto(dst, src []float32) {
 // 0.445 from 1 and so is stable.
 //
 // Accuracy: ≤2 ULP relative (TestTanhF32_accuracy over [-20,20]).
-func TanhF32(x float32) float32 {
+func tanhF32(x float32) float32 {
 	sign := float32(1)
 	if x < 0 {
 		sign, x = -1, -x
@@ -348,7 +348,7 @@ func TanhF32(x float32) float32 {
 		p = p*z - 3.33332819422e-1
 		return sign * (p*z*x + x)
 	}
-	return sign * (1 - 2/(ExpF32(2*x)+1))
+	return sign * (1 - 2/(expF32(2*x)+1))
 }
 
 // GELUTanhF32 returns the tanh approximation of GELU:
@@ -365,7 +365,7 @@ func TanhF32(x float32) float32 {
 // there would constrain the wrong thing.
 func GELUTanhF32(x float32) float32 {
 	const c = 0.7978845608028654 // √(2/π)
-	return 0.5 * x * (1 + TanhF32(c*(x+0.044715*x*x*x)))
+	return 0.5 * x * (1 + tanhF32(c*(x+0.044715*x*x*x)))
 }
 
 // GELUTanhInto writes GELUTanhF32(src[i]) into dst[i]. Same length; may

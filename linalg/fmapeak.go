@@ -14,4 +14,4 @@ package linalg
 // ok is false where no probe exists for the architecture, or where the CPU lacks the
 // required ISA. Callers must report GFLOPS alone in that case rather than inventing a
 // fraction.
-func MeasuredFMAPeakGFLOPS() (gflops float64, ok bool) { return measureFMAPeak() }
+func measuredFMAPeakGFLOPS() (gflops float64, ok bool) { return measureFMAPeak() }

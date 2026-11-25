@@ -37,7 +37,7 @@ func TestDotW4A8FoldSDOTv2_matchesOracle(t *testing.T) {
 			}
 			packed, scales := QuantizeGroupsInt4(w, 1, K, group)
 			sumAct := make([]int32, nGroups)
-			SumActGroupsInto(sumAct, act, 1, K, group)
+			sumActGroupsInto(sumAct, act, 1, K, group)
 
 			want := dotW4A8UncenteredScalar(act, packed, scales, sumAct, group, K)
 			got := dotW4A8FoldSDOTv2(&act[0], &packed[0], &scales[0], &sumAct[0], nGroups)

@@ -25,7 +25,7 @@ import (
 //     with a 0.5 FMA-per-load inner loop. Two load ports feeding 2-flop FMAs cap that
 //     shape at ~50% of FMA peak before any other effect; it reaches 77% of THAT cap.
 func BenchmarkGEMMPeakFraction(b *testing.B) {
-	peakReal, ok := MeasuredFMAPeakGFLOPS()
+	peakReal, ok := measuredFMAPeakGFLOPS()
 	if !ok {
 		b.Logf("no FMA-peak probe for this architecture — reporting GFLOPS only, no fraction")
 	} else {

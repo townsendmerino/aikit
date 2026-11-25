@@ -11,6 +11,14 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **Names nothing outside their package called are unexported** (LS2, from the type-checker census in
+  `docs/internal/linalg-census-2026-11.md`, re-run per package after the split): in `linalg/elem` `ErfF32`, `ExpF32`, `GELUF32`,
+  `TanhF32`, `ExpF32Into`, `GELUInto`, `SiLUInto`, `SoftmaxRowInto`, `SoftmaxRowScaledInto`; in `linalg/attn`
+  `FusedAttnScratch.Fits`; in `linalg/bitvec` `PackSignBits`; in `linalg` `Dot4x4`, `HasFusedQ8Kernel`, `Q8K`, `QuantizeActQ8K`,
+  `QuantizeActivationsInto`, `MeasuredFMAPeakGFLOPS`, `SumActGroupsInto`, `Workspace.MatmulBTAcc64` and
+  `Workspace.MatmulBTAcc64Strided`. `Workspace.ActQuantGroup`, which nothing called, is deleted. The quantized family's
+  entry points, constructors and setters change with the `WeightMat` door (LS6), not here.
+
 - **The binary-vector kernels move from `linalg` to `linalg/bitvec`**: `PackSignBits`, `PackSignBitsRow`, `PackedWords` and
   `HammingRows`, unchanged but for the package. `ann` and ken call them; bitvec imports `internal/cpufeat` (amd64) and nothing
   from `linalg`, and carries its own output-contract cases, kernel-registry rows and over-read adapters. The retrieval zone

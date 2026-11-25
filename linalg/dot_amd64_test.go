@@ -100,7 +100,7 @@ func TestAVX2_blockedKernels_oddN4(t *testing.T) {
 		}
 
 		var s4 [16]float32
-		Dot4x4(&a[0], &b[0][0], &b[1][0], &b[2][0], &b[3][0], n4, &s4)
+		dot4x4(&a[0], &b[0][0], &b[1][0], &b[2][0], &b[3][0], n4, &s4)
 		for r := range 4 {
 			want := ref(b[r])
 			if got := s4[r*4]; absF32(got-want) > tol(want) {

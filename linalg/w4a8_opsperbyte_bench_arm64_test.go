@@ -143,7 +143,7 @@ func TestW4A8OpsPerByteARM64(t *testing.T) {
 	t.Logf("streaming tax: W4A8 cold / hot = %.2fx slower than L1-resident compute", coldNs/hotNs)
 	t.Logf("achieved/theoretical: %.1f%% of hot (compute-only) throughput realized cold", 100*coldGMACs/hotGMACs)
 
-	if gflops, ok := MeasuredFMAPeakGFLOPS(); ok {
+	if gflops, ok := measuredFMAPeakGFLOPS(); ok {
 		t.Logf("context: SIMD f32 FMA peak %.1f GFLOPS (int MAC vs f32 FMA -- not directly comparable, logged for scale only)", gflops)
 	}
 }

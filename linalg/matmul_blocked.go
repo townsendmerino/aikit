@@ -191,7 +191,7 @@ func accumRowRange(a, b, dst []float32, i, K, N, k0, k4, kSpan, nStart, nEnd int
 	nEndAligned4 := nStart + ((nEnd-nStart)/4)*4
 	var sums [16]float32
 	for ; n < nEndAligned4; n += 4 {
-		Dot4x4(aRowPtr,
+		dot4x4(aRowPtr,
 			&b[n*K+k0], &b[(n+1)*K+k0], &b[(n+2)*K+k0], &b[(n+3)*K+k0],
 			k4, &sums)
 		s0 := sums[0] + sums[1] + sums[2] + sums[3]

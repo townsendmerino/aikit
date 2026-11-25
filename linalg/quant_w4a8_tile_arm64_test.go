@@ -27,7 +27,7 @@ func w4a8TileFixture(t *testing.T, M, K, N int) (aq []int8, aScales []float32, p
 	}
 	aq = make([]int8, M*K)
 	aScales = make([]float32, M)
-	QuantizeActivationsInto(aq, aScales, a, M, K)
+	quantizeActivationsInto(aq, aScales, a, M, K)
 	return
 }
 

@@ -46,7 +46,7 @@ const (
 // run). The bsums are computed here, during quantization, because Q4_K's min-offset term needs
 // Σq8 per sub-block and recomputing it in the kernel is a wasted second pass. Rows are independent;
 // K must be a multiple of 256.
-type Q8K struct {
+type q8K struct {
 	M, K  int
 	D     []float32 // [M * K/256]  per-block scale
 	Qs    []int8    // [M * K]      quantized values
@@ -56,7 +56,7 @@ type Q8K struct {
 // QuantizeActQ8K quantizes a[M,K] (row-major f32) to Q8_K. Panics if K is not a multiple of 256.
 // Per-block symmetric scale d = maxAbs/127 (matching quantizeRowInt8's rounding), value =
 // round(x/d) clamped to ±127; an all-zero block yields d=0 and zero values.
-func QuantizeActQ8K(a []float32, M, K int) Q8K {
+func quantizeActQ8K(a []float32, M, K int) q8K {
 	if M < 0 || K < 0 {
 		panic(fmt.Sprintf("QuantizeActQ8K: negative dim (M=%d K=%d)", M, K))
 	}
@@ -65,7 +65,7 @@ func QuantizeActQ8K(a []float32, M, K int) Q8K {
 	}
 	shape.RequireExactLen("QuantizeActQ8K", "a", len(a), shape.Mul(M, K))
 	nb := K / qkK
-	q := Q8K{
+	q := q8K{
 		M: M, K: K,
 		D:     make([]float32, shape.Mul(M, nb)),
 		Qs:    make([]int8, shape.Mul(M, K)),
@@ -183,7 +183,7 @@ func q4kScaleMin(j int, q []byte) (scale, min uint8) {
 // with one Q8_K activation row. Per superblock: 16 sub-block int dot products, weighted by the
 // int8 sub-scales in int32, converted to float once. The recentered codes (q−32) fold Q6_K's
 // offset so no bsums term is needed.
-func dotQ6KQ8K(w []byte, q8 *Q8K, row, nb int) float32 {
+func dotQ6KQ8K(w []byte, q8 *q8K, row, nb int) float32 {
 	var out float32
 	var codes [qkK]int8
 	var partials [16]int32
@@ -221,7 +221,7 @@ func dotPartials16Scalar(codes, qs []int8, out []int32) {
 // Per superblock: 8 sub-block int dot products weighted by the 6-bit scales, plus the min-offset
 // term −dmin·Σ_s min[s]·(Σ_32 q8) folded from the bsums (block_q8_K stores bsums per-16, so a
 // 32-wide sub-block sums an adjacent pair). Two float converts per superblock (scale and min terms).
-func dotQ4KQ8K(w []byte, q8 *Q8K, row, nb int) float32 {
+func dotQ4KQ8K(w []byte, q8 *q8K, row, nb int) float32 {
 	var out float32
 	var codes [qkK]int8
 	var partials [16]int32
@@ -259,7 +259,7 @@ func MatmulBTGGUFQ6K(a []float32, w []byte, dst []float32, M, K, N int) {
 	rowBytes := nb * q6kBlockB
 	shape.RequireExactLen("MatmulBTGGUFQ6K", "w", len(w), shape.Mul(N, rowBytes))
 	shape.RequireExactLen("MatmulBTGGUFQ6K", "dst", len(dst), shape.Mul(M, N))
-	q8 := QuantizeActQ8K(a, M, K)
+	q8 := quantizeActQ8K(a, M, K)
 	for m := range M {
 		for n := range N {
 			dst[m*N+n] = dotQ6KQ8K(w[n*rowBytes:(n+1)*rowBytes], &q8, m, nb)
@@ -278,7 +278,7 @@ func MatmulBTGGUFQ4K(a []float32, w []byte, dst []float32, M, K, N int) {
 	rowBytes := nb * q4kBlockB
 	shape.RequireExactLen("MatmulBTGGUFQ4K", "w", len(w), shape.Mul(N, rowBytes))
 	shape.RequireExactLen("MatmulBTGGUFQ4K", "dst", len(dst), shape.Mul(M, N))
-	q8 := QuantizeActQ8K(a, M, K)
+	q8 := quantizeActQ8K(a, M, K)
 	for m := range M {
 		for n := range N {
 			dst[m*N+n] = dotQ4KQ8K(w[n*rowBytes:(n+1)*rowBytes], &q8, m, nb)

@@ -53,9 +53,6 @@ func (w *Workspace) SetActQuantGroup(g int) {
 	w.actGroup = g
 }
 
-// ActQuantGroup reports this workspace's own activation group size (0 = defer to the process-wide one).
-func (w *Workspace) ActQuantGroup() int { return w.actGroup }
-
 // actGroupFor is the activation group size a matmul through ws uses: the workspace's own when set,
 // else the process-wide one.
 func actGroupFor(ws *Workspace) int {

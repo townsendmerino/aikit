@@ -215,7 +215,7 @@ func TestQuantizeRowInt8_publicEntriesDispatch(t *testing.T) {
 	aq := make([]int8, 3*len(row))
 	scales := make([]float32, 3)
 	a := append(append(append([]float32{}, row...), row...), row...)
-	QuantizeActivationsInto(aq, scales, a, 3, len(row))
+	quantizeActivationsInto(aq, scales, a, 3, len(row))
 	for r := range 3 {
 		if scales[r] != ws {
 			t.Fatalf("QuantizeActivationsInto row %d scale %v, scalar %v", r, scales[r], ws)

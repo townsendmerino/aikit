@@ -186,7 +186,7 @@ func TestQuantizeActQ8K(t *testing.T) {
 	for i := range qkK {
 		a[qkK:][i] = 0 // row 0, block 1
 	}
-	q := QuantizeActQ8K(a, M, K)
+	q := quantizeActQ8K(a, M, K)
 	nb := K / qkK
 	if len(q.D) != M*nb || len(q.Qs) != M*K || len(q.Bsums) != M*K/16 {
 		t.Fatalf("shape: D=%d Qs=%d Bsums=%d", len(q.D), len(q.Qs), len(q.Bsums))
@@ -224,7 +224,7 @@ func TestQuantizeActQ8K(t *testing.T) {
 
 // oracleDot dequants a weight row and the quantized activation row to f32 and dots them — the
 // dequant-then-f32-dot reference the integer kernel must match.
-func oracleDotQ6K(w []byte, q8 *Q8K, row, nb int) float64 {
+func oracleDotQ6K(w []byte, q8 *q8K, row, nb int) float64 {
 	var wf [qkK]float32
 	var sum float64
 	for sb := range nb {
@@ -238,7 +238,7 @@ func oracleDotQ6K(w []byte, q8 *Q8K, row, nb int) float64 {
 	return sum
 }
 
-func oracleDotQ4K(w []byte, q8 *Q8K, row, nb int) float64 {
+func oracleDotQ4K(w []byte, q8 *q8K, row, nb int) float64 {
 	var wf [qkK]float32
 	var sum float64
 	for sb := range nb {
@@ -263,7 +263,7 @@ func TestKQuantDot_vsOracle(t *testing.T) {
 		for i := range a {
 			a[i] = float32(rng.NormFloat64())
 		}
-		q8 := QuantizeActQ8K(a, 1, K)
+		q8 := quantizeActQ8K(a, 1, K)
 
 		w6 := randQ6KRow(rng, nb)
 		got6 := float64(dotQ6KQ8K(w6, &q8, 0, nb))
@@ -286,10 +286,10 @@ func TestKQuantDot_vsOracle(t *testing.T) {
 func TestKQuant_edgeCases(t *testing.T) {
 	const K = 256
 	nb := 1
-	mk := func(seedVals func(a []float32)) Q8K {
+	mk := func(seedVals func(a []float32)) q8K {
 		a := make([]float32, K)
 		seedVals(a)
-		return QuantizeActQ8K(a, 1, K)
+		return quantizeActQ8K(a, 1, K)
 	}
 	rng := rand.New(rand.NewSource(4))
 
@@ -348,7 +348,7 @@ func TestKQuantMatmulBT(t *testing.T) {
 	for i := range a {
 		a[i] = float32(rng.NormFloat64())
 	}
-	q8 := QuantizeActQ8K(a, M, K)
+	q8 := quantizeActQ8K(a, M, K)
 
 	w6 := randQ6KRow(rng, N*nb)
 	dst6 := make([]float32, M*N)
