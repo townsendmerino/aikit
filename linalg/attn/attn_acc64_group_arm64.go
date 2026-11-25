@@ -1,6 +1,6 @@
 //go:build arm64
 
-package linalg
+package attn
 
 // avAcc64NEON8G6 folds nKeys keys of one 8-dim block of V into 24 f64
 // lane-pair accumulators (G=6 queries × 4 dim-pairs), key-ascending, and

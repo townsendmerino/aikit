@@ -1,4 +1,4 @@
-package linalg
+package attn
 
 import "github.com/townsendmerino/aikit/internal/half"
 

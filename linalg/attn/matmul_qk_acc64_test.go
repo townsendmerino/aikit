@@ -1,8 +1,10 @@
-package linalg
+package attn
 
 import (
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/linalg"
 )
 
 // TestMatmulQKAcc64_exactMatchesStrided proves MatmulQKAcc64 (8-wide
@@ -39,7 +41,7 @@ func TestMatmulQKAcc64_exactMatchesStrided(t *testing.T) {
 				keys := randVec(rng, s.nKeys*kvDim)
 
 				want := make([]float32, s.M*s.nKeys)
-				MatmulBTAcc64Strided(q, keys, want, s.M, s.hd, s.nKeys, kvh*s.hd, kvDim, 1)
+				linalg.MatmulBTAcc64Strided(q, keys, want, s.M, s.hd, s.nKeys, kvh*s.hd, kvDim, 1)
 
 				got := make([]float32, s.M*s.nKeys)
 				MatmulQKAcc64(q, keys, got, s.M, s.hd, s.nKeys, kvh*s.hd, kvDim)

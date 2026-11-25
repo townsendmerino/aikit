@@ -1,9 +1,11 @@
-package linalg
+package attn
 
 import (
 	"fmt"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/linalg"
 )
 
 // Audit M-09: AttendTileFused's f64 math.Exp against the contract-exp variant,
@@ -39,10 +41,10 @@ func BenchmarkAttendTileFused_expKind(b *testing.B) {
 			fn   func() bool
 		}{
 			{"f64math", func() bool {
-				return AttendTileFused(MatmulBT, qh, kh, vBlk, ch, sc, np, hd, np, scale, lo, hi)
+				return AttendTileFused(linalg.MatmulBT, qh, kh, vBlk, ch, sc, np, hd, np, scale, lo, hi)
 			}},
 			{"contract", func() bool {
-				return AttendTileFusedContractExp(MatmulBT, qh, kh, vBlk, ch, sc, np, hd, np, scale, lo, hi)
+				return AttendTileFusedContractExp(linalg.MatmulBT, qh, kh, vBlk, ch, sc, np, hd, np, scale, lo, hi)
 			}},
 		} {
 			b.Run(fmt.Sprintf("np%d/%s", np, tc.name), func(b *testing.B) {

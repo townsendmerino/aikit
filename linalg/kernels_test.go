@@ -14,7 +14,6 @@ import (
 var kernelRows = slices.Concat(
 	dotRows,
 	kquantRows,
-	attnRows,
 	widenRows,
 	f16scaleRows,
 	hammingKernelRows,
@@ -80,5 +79,21 @@ func seqU8(n, seed int) []uint8 {
 	for i := range x {
 		x[i] = uint8((i*53 + seed*29) % 256)
 	}
+	return x
+}
+
+// shapeIndices is 0..n-1: an adapter's Lengths when n indexes a list of shapes.
+func shapeIndices(n int) []int {
+	out := make([]int, n)
+	for i := range out {
+		out[i] = i
+	}
+	return out
+}
+
+// seqF16 is seqF32's values as binary16 bits.
+func seqF16(n, seed int) []uint16 {
+	x := make([]uint16, n)
+	F32ToF16Slice(x, seqF32(n, seed))
 	return x
 }

@@ -1,6 +1,6 @@
 //go:build !arm64
 
-package linalg
+package attn
 
 // No vector port of the grouped acc64 attention kernels outside arm64: the Go
 // kernels (matmul_av_acc64_group.go, matmul_qk_acc64_group.go) run every dim,

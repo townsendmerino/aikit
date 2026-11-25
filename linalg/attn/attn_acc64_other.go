@@ -1,6 +1,6 @@
 //go:build !arm64 && !amd64
 
-package linalg
+package attn
 
 // No vector port of the acc64 attention kernels on this arch: the Go kernels
 // run every dim and every key. arm64 has the NEON ports (attn_acc64_arm64.s)
