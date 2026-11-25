@@ -111,7 +111,7 @@ func TestExpF32Vec_matchesScalarULP(t *testing.T) {
 	var maxULP uint32
 	var argMax float32
 	for i, x := range src {
-		want := ExpF32(x)
+		want := expF32(x)
 		if x != x { // NaN: no ULP distance is meaningful
 			if got[i] == got[i] {
 				t.Fatalf("x=NaN: expF32Vec = %v, want NaN", got[i])
@@ -219,7 +219,7 @@ func TestErfVec_matchesScalar(t *testing.T) {
 	var worstAbs float64
 	var argMax float32
 	for i, x := range src {
-		want := ErfF32(x)
+		want := erfF32(x)
 		if d := math.Abs(float64(got[i]) - float64(want)); d > worstAbs {
 			worstAbs, argMax = d, x
 		}
@@ -249,7 +249,7 @@ func TestGELUIntoRaw_matchesScalar(t *testing.T) {
 	var worstAbs float64
 	var argMax float32
 	for i, x := range src {
-		want := GELUF32(x)
+		want := geluF32(x)
 		if d := math.Abs(float64(got[i]) - float64(want)); d > worstAbs {
 			worstAbs, argMax = d, x
 		}
@@ -274,7 +274,7 @@ func TestGELUIntoRaw_tail(t *testing.T) {
 		got := make([]float32, n)
 		geluIntoRaw(got, src)
 		for i := range src {
-			want := GELUF32(src[i])
+			want := geluF32(src[i])
 			if d := math.Abs(float64(got[i]) - float64(want)); d > 1e-6 {
 				t.Fatalf("n=%d i=%d: got %g want %g (diff %.3g)", n, i, got[i], want, d)
 			}
@@ -311,7 +311,7 @@ func TestTanhVec_matchesScalar(t *testing.T) {
 	var maxULP uint32
 	var argMax float32
 	for i, x := range src {
-		want := TanhF32(x)
+		want := tanhF32(x)
 		if d := ulpDiff32(got[i], want); d > maxULP {
 			maxULP, argMax = d, x
 		}
@@ -366,7 +366,7 @@ func TestTanhIntoRaw_tail(t *testing.T) {
 		got := make([]float32, n)
 		tanhIntoRaw(got, src)
 		for i := range src {
-			want := TanhF32(src[i])
+			want := tanhF32(src[i])
 			if d := ulpDiff32(got[i], want); d > 4 {
 				t.Fatalf("n=%d i=%d: got %g want %g (%d ULP)", n, i, got[i], want, d)
 			}
