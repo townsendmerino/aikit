@@ -61,6 +61,12 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+- **Under `GOEXPERIMENT=simd`, the element-wise and softmax kernels no longer read past a short tail** (`linalg`: `ExpF32Into`,
+  `SiLUInto`, `GELUInto`, `GELUTanhInto`, `TanhInto` and the `SoftmaxRow*Into` family, with their `Contract` forms; `encoder`'s
+  log1p pooling). Their last partial vector went through `simd.LoadFloat32sPart` and `StorePart`, which on amd64 read a whole vector,
+  past the end of the slice: a fault when the input ends at a mapping, and a read of the next bytes otherwise. The tails now stage
+  through a zeroed stack buffer (`loadF32Part`, `storeF32Part`); outputs are bit-identical. The default build is unaffected
+  (`TestElementwise_noReadPastShortTail`, `TestLog1pPoolInto_noReadPastShortTail`, which place each input against a guard page).
 - **`embed` refused a legitimate tensor of a type denser than 0.25 bytes per element when it filled the data section.**
   `RowDequantizer` bounds an untrusted tensor's element count by the data section's size before multiplying its dims; the
   bound assumed at most 4 elements a byte, and IQ1_S stores 5.12 (TQ1_0 4.7, IQ1_M 4.6). It is now 6.
