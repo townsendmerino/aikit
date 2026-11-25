@@ -2,7 +2,11 @@
 
 package linalg
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+)
 
 // BenchmarkDotI8_AVX512VNNIvsAVX2 compares the two SIMD tiers directly (not
 // through dotI8's dispatch, which would just pick the faster one) at a
@@ -20,7 +24,7 @@ func BenchmarkDotI8_AVX512VNNIvsAVX2(b *testing.B) {
 	}
 
 	b.Run("AVX2/dotI8AVX2", func(b *testing.B) {
-		if !hasAVX2 {
+		if !cpufeat.HasAVX2 {
 			b.Skip("no AVX2")
 		}
 		var acc int32
@@ -33,7 +37,7 @@ func BenchmarkDotI8_AVX512VNNIvsAVX2(b *testing.B) {
 	})
 
 	b.Run("AVX512VNNI/dotI8AVX512VNNI", func(b *testing.B) {
-		if !hasAVX512VNNI {
+		if !cpufeat.HasAVX512VNNI {
 			b.Skip("no AVX-512 VNNI")
 		}
 		var acc int32
@@ -59,7 +63,7 @@ func BenchmarkDotI8_AVX512VNNIvsAVX2_K3072(b *testing.B) {
 	}
 
 	b.Run("AVX2/dotI8AVX2", func(b *testing.B) {
-		if !hasAVX2 {
+		if !cpufeat.HasAVX2 {
 			b.Skip("no AVX2")
 		}
 		var acc int32
@@ -72,7 +76,7 @@ func BenchmarkDotI8_AVX512VNNIvsAVX2_K3072(b *testing.B) {
 	})
 
 	b.Run("AVX512VNNI/dotI8AVX512VNNI", func(b *testing.B) {
-		if !hasAVX512VNNI {
+		if !cpufeat.HasAVX512VNNI {
 			b.Skip("no AVX-512 VNNI")
 		}
 		var acc int32

@@ -17,7 +17,7 @@
 //
 // group is fixed at 32 (16 packed bytes / 32 activations per iteration); the Go
 // caller routes other group sizes and any ragged tail (K % 32) to the scalar
-// reference. nGroups = K/32. AVX2 baseline (no VNNI); only called when hasAVX2.
+// reference. nGroups = K/32. AVX2 baseline (no VNNI); only called when cpufeat.HasAVX2.
 
 #include "textflag.h"
 

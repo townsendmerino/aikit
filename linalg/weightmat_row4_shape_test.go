@@ -5,6 +5,8 @@ package linalg
 import (
 	"strings"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestWrapInt4Row4_rejectsBadShapeAtWrap covers task-simd-audit.md S-10's hardening
@@ -17,7 +19,7 @@ import (
 // message identifies WrapInt4Row4 and reports the offending dimensions — a test that
 // only caught "it panics" would pass against the old behaviour too.
 func TestWrapInt4Row4_rejectsBadShapeAtWrap(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required: the row4 layout declines without it (WrapInt4Row4Only reports false, WrapInt4Row4 returns the plain int4 matrix)")
 	}
 	const group = 32

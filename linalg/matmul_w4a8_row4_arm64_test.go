@@ -5,6 +5,8 @@ package linalg
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestMatmulBTW4A8Row4Into_bitIdenticalToMatmulBTW4A8Into is the production
@@ -17,7 +19,7 @@ import (
 // including N not a multiple of the parallel-fanout width so the serial and
 // parallel code paths both get exercised.
 func TestMatmulBTW4A8Row4Into_bitIdenticalToMatmulBTW4A8Into(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	const group = 32
@@ -62,7 +64,7 @@ func TestMatmulBTW4A8Row4Into_bitIdenticalToMatmulBTW4A8Into(t *testing.T) {
 // a genuinely different code path from MatmulBTW4A8Into's own
 // column-partitioned parallel branch and needs its own proof.
 func TestMatmulBTW4A8Row4Into_parallelMatchesSerial(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	const (

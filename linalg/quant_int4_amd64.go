@@ -2,6 +2,8 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 // int4QuantBlock is the AVX2 kernel's block: 8 weights in, 4 packed bytes out.
 const int4QuantBlock = 8
 
@@ -16,7 +18,7 @@ func quantizeInt4F32AVX2(row *float32, packed *byte, n int, inv float32)
 // int4GroupHasKernel reports whether a group of n weights starting at weight ks goes through the kernel: the CPU must
 // have AVX2, and the group must start on a byte boundary and be a whole number of blocks.
 func int4GroupHasKernel(ks, n int) bool {
-	return hasAVX2 && ks&1 == 0 && n >= int4QuantBlock && n%int4QuantBlock == 0
+	return cpufeat.HasAVX2 && ks&1 == 0 && n >= int4QuantBlock && n%int4QuantBlock == 0
 }
 
 // quantizeInt4Block is the kernel behind QuantizeGroupInt4Row's vector path. len(row) must be a positive multiple of

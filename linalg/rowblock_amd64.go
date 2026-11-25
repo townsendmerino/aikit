@@ -2,6 +2,8 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 // blockRows3x4 sweeps whole GROUPS OF THREE rows through the 12-accumulator kernel
 // and returns the first row index it did not consume, so the caller finishes the
 // 1–2 row remainder on its single-row path.
@@ -11,7 +13,7 @@ package linalg
 // (12) inside AVX2's 16 registers — see dot3x4_amd64.s. Columns advance in 4s, which
 // divides the caller's 8-column tiling, so the column tail logic is unchanged.
 func blockRows3x4(a, b, dst []float32, i, iEnd, K, N, k0, k4, kSpan, nStart, nEnd int) int {
-	if !hasAVX2 || iEnd-i < 3 {
+	if !cpufeat.HasAVX2 || iEnd-i < 3 {
 		return i
 	}
 	nEndAligned4 := nStart + ((nEnd-nStart)/4)*4

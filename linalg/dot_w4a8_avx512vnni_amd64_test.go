@@ -6,17 +6,19 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestAVX512VNNIVL_detection sanity-checks the AVX512VL probe runs without
 // faulting — mirrors TestAVX512VNNI_detection. Doesn't assert VL presence
 // (host-dependent), only that CPUID leaf 7 itself is being read correctly.
 func TestAVX512VNNIVL_detection(t *testing.T) {
-	maxLeaf, _, _, _ := cpuid(0, 0)
+	maxLeaf, _, _, _ := cpufeat.CPUID(0, 0)
 	if maxLeaf < 1 {
 		t.Fatalf("CPUID leaf 0 reported maxLeaf=%d; probe is broken", maxLeaf)
 	}
-	t.Logf("hasAVX512VNNIVL=%v hasAVX512VNNI=%v hasAVX2=%v", hasAVX512VNNIVL, hasAVX512VNNI, hasAVX2)
+	t.Logf("cpufeat.HasAVX512VNNIVL=%v cpufeat.HasAVX512VNNI=%v cpufeat.HasAVX2=%v", cpufeat.HasAVX512VNNIVL, cpufeat.HasAVX512VNNI, cpufeat.HasAVX2)
 }
 
 // TestAVX512VNNI_dotW4A8FoldAVX512VNNI_matchesScalar directly exercises the
@@ -30,7 +32,7 @@ func TestAVX512VNNIVL_detection(t *testing.T) {
 // uncentered-nibble correction (Σnib·act - 8·Σact) would first show up.
 // Skips when the host lacks AVX-512 VNNI+VL (the asm would SIGILL).
 func TestAVX512VNNI_dotW4A8FoldAVX512VNNI_matchesScalar(t *testing.T) {
-	if !hasAVX512VNNIVL {
+	if !cpufeat.HasAVX512VNNIVL {
 		t.Skip("CPU lacks AVX-512 VNNI+VL; dotW4A8FoldAVX512VNNI asm path not exercised")
 	}
 	const group = 32
@@ -101,7 +103,7 @@ func TestAVX512VNNI_dotW4A8FoldAVX512VNNI_matchesScalar(t *testing.T) {
 // dotW4A8 dispatcher (not the raw kernel) at K values straddling the VNNI
 // and AVX2 group-count boundary and the ragged-K%32 tail, so a mismatch
 // between tiers (not just within one kernel) would show up. Runs regardless
-// of hasAVX512VNNIVL/hasAVX2: on lesser hardware it exercises whichever
+// of cpufeat.HasAVX512VNNIVL/cpufeat.HasAVX2: on lesser hardware it exercises whichever
 // tiers are present.
 func TestAVX512VNNI_dotW4A8_dispatchesThroughEveryTier(t *testing.T) {
 	const group = 32
@@ -148,10 +150,10 @@ func TestAVX512VNNI_dotW4A8_dispatchesThroughEveryTier(t *testing.T) {
 // Skips when the host lacks AVX-512 VNNI+VL (the asm would SIGILL) — i.e. on both project boxes; it is
 // meant to run on CI's AVX-512 runners, and its Logf says when it did.
 func TestAVX512VNNI_dotW4A8FoldAVX512VNNI_centersInInt32(t *testing.T) {
-	if !hasAVX512VNNIVL {
+	if !cpufeat.HasAVX512VNNIVL {
 		t.Skip("CPU lacks AVX-512 VNNI+VL; dotW4A8FoldAVX512VNNI asm path not exercised")
 	}
-	t.Logf("running on an AVX-512 VNNI+VL host (hasAVX2=%v)", hasAVX2)
+	t.Logf("running on an AVX-512 VNNI+VL host (cpufeat.HasAVX2=%v)", cpufeat.HasAVX2)
 	checkDotW4A8FoldCentering(t, func(act []int8, packed []byte, scales []float32, nGroups int) float32 {
 		return dotW4A8FoldAVX512VNNI(&act[0], &packed[0], &scales[0], nGroups)
 	})

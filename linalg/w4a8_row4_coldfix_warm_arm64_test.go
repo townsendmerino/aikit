@@ -5,6 +5,8 @@ package linalg
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestW4A8Row4ColdFix_warmIntact is the cold-fix harness pass's warm-side
@@ -22,7 +24,7 @@ import (
 // only.
 func TestW4A8Row4ColdFix_warmIntact(t *testing.T) {
 	harnessOnly(t)
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	const (

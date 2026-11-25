@@ -6,6 +6,8 @@ import (
 	"math/rand"
 	"slices"
 	"time"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // Runtime self-check of the CPU kernels the dispatcher selected (goinfer's hardware-coverage H2, CPU-ISA part).
@@ -66,7 +68,7 @@ func SelfCheck(repair bool) SelfCheckReport {
 		if len(ms) == 0 || !repair {
 			break
 		}
-		name := disableTopTier()
+		name := cpufeat.DisableTopTier()
 		if name == "" {
 			break
 		}
@@ -262,7 +264,7 @@ type Kernels struct {
 
 // ActiveKernels reports the ISA tiers detected and in use ("avx2", "f16c", "avx512vnni", "avx512vnni+vl", "popcnt" on amd64; "dotprod" on arm64).
 func ActiveKernels() Kernels {
-	arch, detected, active := archKernels()
+	arch, detected, active := cpufeat.Kernels()
 	slices.Sort(detected)
 	slices.Sort(active)
 	return Kernels{Arch: arch, Detected: detected, Active: active, Forced: ForcedFallbacks()}

@@ -5,6 +5,8 @@ package linalg
 import (
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // vnniDeclineCheck asserts (rather than merely skips past) that split-half
@@ -13,13 +15,13 @@ import (
 // split-half only exists at AVX2, so a repack that stopped declining would
 // be a real regression, not a harmless one a bare Skip would hide. Returns
 // true if the test should proceed (AVX2, no VNNI), having already Skipped
-// otherwise (including plain !hasAVX2).
+// otherwise (including plain !cpufeat.HasAVX2).
 func vnniDeclineCheck(t *testing.T) bool {
 	t.Helper()
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("AVX2 required")
 	}
-	if hasAVX512VNNIVL {
+	if cpufeat.HasAVX512VNNIVL {
 		if Int4SplitHalfUsable(32, 32) {
 			t.Fatal("VNNI host: Int4SplitHalfUsable(32,32) = true, but canonical dispatches to the VNNI tier here")
 		}

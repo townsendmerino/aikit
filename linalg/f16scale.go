@@ -46,7 +46,7 @@ func F16ToF32(h uint16) float32 { return f16ToF32(h) }
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:len(src)].
 func F32ToF16Slice(dst []uint16, src []float32) {
-	_ = dst[len(src)-1:]
+	dst = dst[:len(src)]
 	for i, f := range src {
 		dst[i] = F32ToF16(f)
 	}

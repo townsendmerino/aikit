@@ -2,7 +2,11 @@
 
 package linalg
 
-import "time"
+import (
+	"time"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+)
 
 // fmaPeakAMD64 runs a register-saturating f32 AVX2 FMA loop (no memory traffic) to
 // measure the core's achievable FMA throughput — the amd64 twin of fmaPeakARM64, and
@@ -10,7 +14,7 @@ import "time"
 // grounded in a measured ceiling rather than a spec sheet.
 //
 // Each iteration retires fmaPeakFlopsPerIter flops. Requires AVX2+FMA; callers must
-// check hasAVX2 first (TestFMAPeakAMD64_empirical skips without it).
+// check cpufeat.HasAVX2 first (TestFMAPeakAMD64_empirical skips without it).
 //
 //go:noescape
 func fmaPeakAMD64(iters int64)
@@ -31,7 +35,7 @@ const fmaPeakFlopsPerIter = 14 * 8 * 2
 // is neither idle nor at boost — a 2.2× swing in a number whose whole purpose is to be
 // a stable denominator.
 func measureFMAPeak() (float64, bool) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		return 0, false
 	}
 	const (

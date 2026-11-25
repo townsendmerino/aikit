@@ -2,7 +2,11 @@
 
 package linalg
 
-import "math"
+import (
+	"math"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+)
 
 //go:noescape
 func cvtBF16ToF32x8AVX2(dst *float32, src *uint16, n8 int)
@@ -12,7 +16,7 @@ func cvtBF16ToF32x8AVX2(dst *float32, src *uint16, n8 int)
 func widenBF16(dst []float32, src []uint16) {
 	n := len(src)
 	dst = dst[:n]
-	if n < 8 || !hasAVX2 {
+	if n < 8 || !cpufeat.HasAVX2 {
 		for i, u := range src {
 			dst[i] = math.Float32frombits(uint32(u) << 16)
 		}

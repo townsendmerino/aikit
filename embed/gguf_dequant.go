@@ -43,8 +43,12 @@ func dequantRange(typ uint32, raw []byte, start int, dst []float32, blockElems i
 				dequantQ8_0Block(raw, first+k, out)
 			case ggmlTypeQ4_0:
 				dequantQ4_0Block(raw, first+k, out)
+			case ggmlTypeQ4_1:
+				dequantQ4_1Block(raw, first+k, out)
 			case ggmlTypeQ5_0:
 				dequantQ5_0Block(raw, first+k, out)
+			case ggmlTypeQ5_1:
+				dequantQ5_1Block(raw, first+k, out)
 			case ggmlTypeQ2_K:
 				dequantQ2KBlock(raw, first+k, out)
 			case ggmlTypeQ3_K:
@@ -63,6 +67,14 @@ func dequantRange(typ uint32, raw []byte, start int, dst []float32, blockElems i
 				dequantNVFP4Block(raw, first+k, out)
 			case ggmlTypeIQ4XS:
 				dequantIQ4XSBlock(raw, first+k, out)
+			case ggmlTypeIQ1S:
+				dequantIQ1SBlock(raw, first+k, out)
+			case ggmlTypeIQ1M:
+				dequantIQ1MBlock(raw, first+k, out)
+			case ggmlTypeTQ1_0:
+				dequantTQ1_0Block(raw, first+k, out)
+			case ggmlTypeTQ2_0:
+				dequantTQ2_0Block(raw, first+k, out)
 			case ggmlTypeIQ2XXS:
 				dequantIQ2XXSBlock(raw, first+k, out)
 			case ggmlTypeIQ2XS:
@@ -194,6 +206,38 @@ func dequantQ6KBlockScalar(raw []byte, sb int, out []float32) {
 	}
 }
 
+// dequantQ4_1Block dequantizes one 32-element Q4_1 block (b) into out[:32]: a f16 scale d, a f16 min m,
+// then 16 bytes whose low nibble is element j and high nibble element j+16; value = q·d + m.
+func dequantQ4_1Block(raw []byte, blk int, out []float32) {
+	base := blk * 20
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	m := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))
+	qs := raw[base+4 : base+20]
+	out = out[:32:32]
+	for j := range 16 {
+		out[j] = float32(qs[j]&0x0F)*d + m
+		out[j+16] = float32(qs[j]>>4)*d + m
+	}
+}
+
+// dequantQ5_1Block dequantizes one 32-element Q5_1 block (b) into out[:32]: a f16 scale d, a f16 min m,
+// a little-endian u32 qh whose bit i is element i's fifth bit, then 16 bytes of low nibbles as in Q4_1;
+// value = q·d + m.
+func dequantQ5_1Block(raw []byte, blk int, out []float32) {
+	base := blk * 24
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	m := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))
+	qh := binary.LittleEndian.Uint32(raw[base+4:])
+	qs := raw[base+8 : base+24]
+	out = out[:32:32]
+	for j := range 16 {
+		x0 := qs[j]&0x0F | byte(qh>>j&1)<<4
+		x1 := qs[j]>>4 | byte(qh>>(j+16)&1)<<4
+		out[j] = float32(x0)*d + m
+		out[j+16] = float32(x1)*d + m
+	}
+}
+
 // dequantIQ4NLBlock dequantizes one 32-element IQ4_NL block (b) into out[:32].
 // Layout (18 bytes, same size as Q4_0): a f16 scale d then 16 packed bytes; the
 // low nibble of byte j indexes element j and the high nibble element j+16 — each
@@ -310,6 +354,125 @@ func dequantIQ4XSBlock(raw []byte, sb int, out []float32) {
 		for j := range 16 {
 			out[base2+j] = dl * float32(kvaluesIQ4NL[q[j]&0x0F])
 			out[base2+j+16] = dl * float32(kvaluesIQ4NL[q[j]>>4])
+		}
+	}
+}
+
+// iq1Delta is ggml's IQ1S_DELTA (and IQ1M_DELTA): the offset added to every IQ1 grid value, its sign
+// chosen per group.
+const iq1Delta = 0.125
+
+// dequantIQ1SBlock dequantizes one 256-element IQ1_S super-block (sb) into out[:256]. Layout (50 bytes):
+// d (f16), qs[32] (low 8 bits of each iq1sGrid index, 8 elements each), then one little-endian u16 per
+// 32-element sub-block: bits 0..11 the high 3 bits of its four indices, bits 12..14 a 3-bit scale
+// (dl = d·(2s+1)), bit 15 the sign of the delta. value = dl·(grid ± iq1Delta). Mirrors ggml's
+// dequantize_row_iq1_s.
+func dequantIQ1SBlock(raw []byte, sb int, out []float32) {
+	base := sb * 50
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	qs := raw[base+2 : base+34]
+	out = out[:256:256]
+	for ib := range 8 {
+		qh := binary.LittleEndian.Uint16(raw[base+34+2*ib:])
+		dl := d * float32(2*((qh>>12)&7)+1)
+		delta := float32(iq1Delta)
+		if qh&0x8000 != 0 {
+			delta = -iq1Delta
+		}
+		for l := range 4 {
+			idx := int(qs[4*ib+l]) | int((qh>>(3*l))&7)<<8
+			g := iq1sGrid[idx*8 : idx*8+8]
+			o := out[32*ib+8*l : 32*ib+8*l+8]
+			for j := range 8 {
+				o[j] = dl * (float32(g[j]) + delta)
+			}
+		}
+	}
+}
+
+// dequantIQ1MBlock dequantizes one 256-element IQ1_M super-block (sb) into out[:256]. Layout (56 bytes):
+// qs[32] (low 8 bits of each iq1sGrid index), qh[16] (per 8-element group, a nibble: the index's high 3
+// bits and the delta's sign in bit 3; low nibble first), scales[8] as four little-endian u16s. Their top
+// nibbles, first u16 lowest, assemble the f16 super-scale d; below that, each u16 holds four 3-bit
+// scales, two per 32-element sub-block (one per 16 elements): dl = d·(2s+1). value = dl·(grid ±
+// iq1Delta). Mirrors ggml's dequantize_row_iq1_m.
+func dequantIQ1MBlock(raw []byte, sb int, out []float32) {
+	base := sb * 56
+	qs := raw[base : base+32]
+	qh := raw[base+32 : base+48]
+	var sc [4]uint16
+	for i := range 4 {
+		sc[i] = binary.LittleEndian.Uint16(raw[base+48+2*i:])
+	}
+	d := halfBitsToF32(sc[0]>>12 | (sc[1]>>8)&0x00F0 | (sc[2]>>4)&0x0F00 | sc[3]&0xF000)
+	out = out[:256:256]
+	for ib := range 8 {
+		shift := 6 * (ib % 2)
+		dl := [2]float32{
+			d * float32(2*((sc[ib/2]>>shift)&7)+1),
+			d * float32(2*((sc[ib/2]>>(shift+3))&7)+1),
+		}
+		for l := range 4 {
+			nib := qh[2*ib+l/2] >> (4 * (l % 2))
+			idx := int(qs[4*ib+l]) | int(nib&7)<<8
+			delta := float32(iq1Delta)
+			if nib&8 != 0 {
+				delta = -iq1Delta
+			}
+			g := iq1sGrid[idx*8 : idx*8+8]
+			o := out[32*ib+8*l : 32*ib+8*l+8]
+			for j := range 8 {
+				o[j] = dl[l/2] * (float32(g[j]) + delta)
+			}
+		}
+	}
+}
+
+// tritAt returns trit n (0 for the first) of a TQ1_0 byte, as -1, 0 or 1. The byte stores its trits as a
+// fixed-point fraction of 243: multiplying by 3^n modulo 256 shifts trit n to the top, and ·3>>8 reads it.
+func tritAt(b byte, n int) float32 {
+	q := b * [5]byte{1, 3, 9, 27, 81}[n]
+	return float32(int(uint16(q)*3>>8) - 1)
+}
+
+// dequantTQ1_0Block dequantizes one 256-element TQ1_0 super-block (sb) into out[:256]. Layout (54 bytes):
+// qs[48] (5 trits a byte), qh[4] (4 trits a byte), d (f16) last. Elements run trit-major within each
+// group: qs[0:32] give elements 32n+m (trit n of byte m), qs[32:48] give 160+16n+m, and qh gives 240+4n+j.
+// value = trit·d. Mirrors ggml's dequantize_row_tq1_0.
+func dequantTQ1_0Block(raw []byte, sb int, out []float32) {
+	base := sb * 54
+	qs := raw[base : base+48]
+	qh := raw[base+48 : base+52]
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+52:]))
+	out = out[:256:256]
+	for n := range 5 {
+		for m := range 32 {
+			out[32*n+m] = tritAt(qs[m], n) * d
+		}
+		for m := range 16 {
+			out[160+16*n+m] = tritAt(qs[32+m], n) * d
+		}
+	}
+	for n := range 4 {
+		for j := range 4 {
+			out[240+4*n+j] = tritAt(qh[j], n) * d
+		}
+	}
+}
+
+// dequantTQ2_0Block dequantizes one 256-element TQ2_0 super-block (sb) into out[:256]. Layout (66 bytes):
+// qs[64] (four 2-bit codes a byte), d (f16) last. In each 32-byte half, bits 2l..2l+1 of byte m are
+// element 128h+32l+m; value = (code−1)·d. Mirrors ggml's dequantize_row_tq2_0.
+func dequantTQ2_0Block(raw []byte, sb int, out []float32) {
+	base := sb * 66
+	qs := raw[base : base+64]
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+64:]))
+	out = out[:256:256]
+	for h := range 2 {
+		for l := range 4 {
+			for m := range 32 {
+				out[128*h+32*l+m] = float32(int(qs[32*h+m]>>(2*l)&3)-1) * d
+			}
 		}
 	}
 }

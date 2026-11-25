@@ -17,14 +17,16 @@ Four rules generate most of the structure:
    [`internal/importrules`](../internal/importrules/importrules_test.go) holds
    the exact list of aikit and external packages each core package imports,
    and fails, naming the edge, when the tree and the list disagree
-   (§ Package DAG). Six packages import nothing but the stdlib and
+   (§ Package DAG). Seven packages import nothing but the stdlib and
    `golang.org/x`; the longest chain in the library is three imports
-   (`hybrid` → `ann` → `linalg` → `mmap`). Two Go-internal packages
-   (invisible to importers) cut duplication between otherwise-independent
-   packages that had drifted apart: `bm25` and `sparse` share
-   `internal/accum` (a pooled scoring accumulator), and `ann`, `bm25` and
-   `embed` share `internal/cursor` (the bounds-checked little-endian reader
-   behind the HNSW/FlatI8 and BM25 blob formats and GGUF's container format).
+   (`hybrid` → `ann` → `linalg` → `mmap`). Three Go-internal packages
+   (invisible to importers) hold what several packages must share: `bm25` and
+   `sparse` share `internal/accum` (a pooled scoring accumulator); `ann`, `bm25`
+   and `embed` share `internal/cursor` (the bounds-checked little-endian reader
+   behind the HNSW/FlatI8 and BM25 blob formats and GGUF's container format);
+   and `linalg` reads its CPU-feature flags from `internal/cpufeat`, one copy
+   that `SelfCheck`'s repair and the `aikit_no*` tags write, so every kernel
+   package dispatches on the same answer.
 3. **Numerics are parity-pinned.** Every model-touching path (`embed`,
    `encoder`, the `linalg` quant kernels) is tested against golden fixtures
    produced by Python references in [`scripts/`](../scripts/) — see
@@ -72,6 +74,7 @@ graph TD
             mmap["mmap<br/><i>read-only file mapping, SpanCache</i>"]
             accum["internal/accum<br/><i>pooled scoring accumulator</i>"]
             cursor["internal/cursor<br/><i>bounds-checked LE reader</i>"]
+            cpufeat["internal/cpufeat<br/><i>CPU-feature flags + forced fallbacks</i>"]
         end
         chunkers["chunk/regex, chunk/markdown<br/><i>chunkers</i>"]
         linalg["linalg<br/><i>SIMD f32/int8/int4 kernels</i>"]
@@ -87,6 +90,7 @@ graph TD
 
         chunkers --> chunk
         linalg --> mmap
+        linalg --> cpufeat
         embed --> mmap
         embed --> cursor
         bm25 --> topk
@@ -123,18 +127,20 @@ graph TD
 
 Not drawn, but in the table: the four `examples/*` programs and
 `bench/cmd/benchreport`, which sit on top and which nothing imports,
-`internal/importrules` itself, and `internal/guardmem` (the over-read gate's
-guard-page harness, a stdlib-only leaf that only tests import). Test-only imports are not in the table either
+`internal/importrules` itself, and the over-read gate's two test helpers, which
+only tests import: `internal/guardmem` (the guard-page harness, a stdlib-only
+leaf) and `internal/kernreg` (the registry of assembly entry points, which
+imports it). Test-only imports are not in the table either
 (`ann`'s tests import `embed` and `fuse`, for one); the rule is about what an
 importer's build pulls in.
 
-**Leaves.** `topk`, `fuse`, `chunk`, `mmap`, `internal/accum` and
-`internal/cursor` import no aikit package. `mmap` is the newest of them and
+**Leaves.** `topk`, `fuse`, `chunk`, `mmap`, `internal/accum`,
+`internal/cursor` and `internal/cpufeat` import no aikit package. `mmap` is the newest of them and
 the one most of the tree now rests on: it is the read-only file mapping under
 every loader that maps a blob from disk instead of copying it.
 
-**One step up.** `linalg` imports `mmap` and nothing else, so it is no longer
-a leaf. `embed` imports `mmap` and `internal/cursor`. `sparse` imports `topk`
+**One step up.** `linalg` imports `mmap` and `internal/cpufeat` and nothing
+else, so it is no longer a leaf. `embed` imports `mmap` and `internal/cursor`. `sparse` imports `topk`
 and `internal/accum`. `bm25` imports `topk`, `internal/accum`,
 `internal/cursor` and `mmap`: its postings arena maps from disk and its blob
 format is read through the shared cursor. `chunk/regex` and `chunk/markdown`

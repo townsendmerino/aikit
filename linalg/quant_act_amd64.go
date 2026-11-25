@@ -2,6 +2,8 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 // AVX2 activation quantizer (task-simd-audit.md S-03's "open" amd64 half — the NEON form shipped
 // 2026-09-03; this is its amd64 twin).
 //
@@ -48,7 +50,7 @@ package linalg
 // quant_act_test.go's corner cases (posinf-in-body, both-inf, nan-is-largest-slot, …) exercise
 // them through the real quantizeRowInt8Core entry point.
 
-// The AVX2 forms run only where hasAVX2 holds (CPUID plus XGETBV, detectAVX2 in dot_amd64.go); on any other amd64 CPU, or an OS that does not
+// The AVX2 forms run only where cpufeat.HasAVX2 holds (CPUID plus XGETBV, cpufeat.DetectAVX2); on any other amd64 CPU, or an OS that does not
 // save YMM state, both passes take the scalar loops, which are the oracle the kernels are held to. The one caller of each is
 // quantizeRowInt8Core, so the check is a single predictable branch per row.
 
@@ -67,7 +69,7 @@ func quantizeF32AVX2(row *float32, q *int8, n int, inv float32)
 // maxAbsF32 is the abs/max pass: the 8-aligned prefix in AVX2, the tail in the scalar loop
 // continuing from the vector result (max is exact, so the split is invisible in the value).
 func maxAbsF32(row []float32) float32 {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		return maxAbsF32Scalar(row, 0)
 	}
 	n := len(row) &^ 7
@@ -88,7 +90,7 @@ func quantizeRowScaled(row []float32, q []int8, inv float32) {
 		return
 	}
 	_ = q[len(row)-1]
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		quantizeRowScaledScalar(row, q, inv)
 		return
 	}
