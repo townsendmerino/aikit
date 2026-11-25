@@ -160,7 +160,7 @@ of `linalg`) imports `linalg/elem` (its fused tile's contract exp), `internal/ha
 `linalg/internal/shape` and, on amd64, `internal/cpufeat`, and nothing from `linalg`.
 `linalg/bitvec` (sign-bit packing and Hamming, split out of `linalg`) imports
 `internal/cpufeat` on amd64 and nothing else. `linalg` imports `mmap`, `internal/cpufeat`, `internal/half` and `linalg/internal/shape`
-(the length checks its kernel packages share), so it is no longer a leaf. `embed` imports `mmap` and `internal/cursor`. `sparse` imports `topk`
+(the length checks its kernel packages share), so it is no longer a leaf. `embed` imports `mmap`, `internal/cursor` and `internal/half`. `sparse` imports `topk`
 and `internal/accum`. `bm25` imports `topk`, `internal/accum`,
 `internal/cursor` and `mmap`: its postings arena maps from disk and its blob
 format is read through the shared cursor. `chunk/regex` and `chunk/markdown`

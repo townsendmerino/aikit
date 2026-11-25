@@ -59,10 +59,10 @@ var rules = map[string]rule{
 	"internal/accum":                 {},
 	"internal/cursor":                {},
 	"internal/cpufeat":               {},
-	"linalg/internal/outputcontract": {},
 	"internal/guardmem":              {},
 	"internal/importrules":           {},
 	"internal/half":                  {},
+	"linalg/internal/outputcontract": {},
 	"linalg/internal/shape":          {},
 	"internal/kernreg":               {aikit: []string{"internal/guardmem"}},
 
