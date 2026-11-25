@@ -67,6 +67,9 @@ excluded from that promise and may change in any release until it graduates.
   past the end of the slice: a fault when the input ends at a mapping, and a read of the next bytes otherwise. The tails now stage
   through a zeroed stack buffer (`loadF32Part`, `storeF32Part`); outputs are bit-identical. The default build is unaffected
   (`TestElementwise_noReadPastShortTail`, `TestLog1pPoolInto_noReadPastShortTail`, which place each input against a guard page).
+- **`MatmulBTW4A8Row4Into` (arm64) refuses a K that is not a positive multiple of 32 with a workspace activation group set**, as it
+  already did without one. That path skipped the check and indexed past the 4-row weights, whose layout stores 16 bytes per 32-wide
+  group (`slice bounds out of range [:16] with capacity 8` at K=1; `TestMatmulBTW4A8Row4Into_raggedKRefusedWithActGroup`).
 - **`embed` refused a legitimate tensor of a type denser than 0.25 bytes per element when it filled the data section.**
   `RowDequantizer` bounds an untrusted tensor's element count by the data section's size before multiplying its dims; the
   bound assumed at most 4 elements a byte, and IQ1_S stores 5.12 (TQ1_0 4.7, IQ1_M 4.6). It is now 6.
