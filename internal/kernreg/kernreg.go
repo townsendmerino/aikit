@@ -30,6 +30,9 @@ type Row struct {
 	Arch     string // "amd64" or "arm64", the .s file's suffix
 	Dispatch string // a non-test function of the package that calls Symbol
 	Oracle   string // a Test function that holds Symbol, or Dispatch, equal to its reference
+	// Undispatched, when set in place of Dispatch, says why no production function calls
+	// the kernel (a measurement arm the tests alone call); Complete checks that none does.
+	Undispatched string
 	// NoSlices, when set, says why the entry point has no adapter (it takes no slice:
 	// a CPU probe, a peak probe). A row with it set is not swept.
 	NoSlices string
@@ -49,6 +52,16 @@ type Adapter struct {
 	// each one (and each output it reads or writes) with Put, calls the kernel, and
 	// returns what it wrote. The result is compared bit for bit.
 	Call func(p *Placer, n int) any
+	// Label, when set, names size n in failure messages (an adapter whose n indexes a
+	// list of shapes returns the shape); nil prints n.
+	Label func(n int) string
+}
+
+func (ad Adapter) label(n int) string {
+	if ad.Label != nil {
+		return ad.Label(n)
+	}
+	return fmt.Sprintf("n=%d", n)
 }
 
 // side is where a Placer puts inputs.
@@ -110,7 +123,7 @@ func Sweep(t *testing.T, adapters []Adapter) {
 				for _, s := range []side{atEnd, atStart} {
 					got := call(t, a, ad, s, n)
 					if !sameBits(got, want) {
-						t.Errorf("%s n=%d, inputs at the %s: result differs from the heap call\n got %v\nwant %v", ad.Symbol, n, s, got, want)
+						t.Errorf("%s %s, inputs at the %s: result differs from the heap call\n got %v\nwant %v", ad.Symbol, ad.label(n), s, got, want)
 					}
 				}
 			}
@@ -122,7 +135,7 @@ func call(t *testing.T, a *guardmem.Arena, ad Adapter, s side, n int) any {
 	t.Helper()
 	p := &Placer{a: a, side: s}
 	var out any
-	label := fmt.Sprintf("%s n=%d (inputs at the %s)", ad.Symbol, n, s)
+	label := fmt.Sprintf("%s %s (inputs at the %s)", ad.Symbol, ad.label(n), s)
 	var f *guardmem.Fault
 	if r := panicOf(func() { f = a.RunWithin(label, Deadline, func() { out = ad.Call(p, n) }) }); r != nil {
 		t.Fatalf("%s: panicked: %v", label, r)

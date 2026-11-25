@@ -116,8 +116,11 @@ func readDecls(dir, arch string) (goDecls, error) {
 			}
 			ast.Inspect(fn.Body, func(n ast.Node) bool {
 				if c, ok := n.(*ast.CallExpr); ok {
-					if id, ok := c.Fun.(*ast.Ident); ok {
-						set[id.Name] = true
+					switch f := c.Fun.(type) {
+					case *ast.Ident:
+						set[f.Name] = true
+					case *ast.SelectorExpr:
+						set[f.Sel.Name] = true // a method, matched by name
 					}
 				}
 				return true
@@ -143,6 +146,41 @@ func recvName(fl *ast.FieldList) string {
 
 var wordRE = regexp.MustCompile(`\w+`)
 
+// oracleHops is how far up the package's call graph from a kernel an oracle may start:
+// a test of the exported wrapper over the dispatcher over the kernel counts.
+const oracleHops = 4
+
+// callers returns sym and every non-test function that reaches it in at most hops calls,
+// by name (a method by its method name).
+func (d goDecls) callers(sym string, hops int) []string {
+	reach := map[string]bool{sym: true}
+	frontier := []string{sym}
+	for range hops {
+		var next []string
+		for fn, calls := range d.calls {
+			name := dispatchFunc(fn)
+			if reach[name] {
+				continue
+			}
+			for _, f := range frontier {
+				if calls[f] {
+					reach[name] = true
+					next = append(next, name)
+					break
+				}
+			}
+		}
+		frontier = next
+	}
+	return slices.Collect(func(yield func(string) bool) {
+		for k := range reach {
+			if !yield(k) {
+				return
+			}
+		}
+	})
+}
+
 // reaches reports whether src names one of targets, or names a test-file helper function
 // or variable whose source does: one level of indirection, for an oracle that calls
 // through a table or a shared helper.
@@ -165,7 +203,8 @@ func (d goDecls) reaches(src string, targets ...string) bool {
 // host architecture's rows:
 //   - every TEXT symbol has exactly one row, and every row names a TEXT symbol;
 //   - a row's Dispatch is a non-test function that calls Symbol, and its Oracle is a Test
-//     function whose body names Symbol or Dispatch, both in files that build for the row's
+//     function that names Symbol or a function within oracleHops calls of it (directly, or
+//     through a test helper or table it names), both in files that build for the row's
 //     architecture (rows with NoSlices need neither);
 //   - on the host architecture, every row without NoSlices has exactly one adapter and
 //     every adapter has a row.
@@ -212,9 +251,18 @@ func Problems(dir, arch string, rows []Row, adapters []Adapter) ([]string, error
 			continue
 		}
 		decls := declsByArch[r.Arch]
-		if r.Dispatch == "" {
-			errorf("%s: no Dispatch", key)
-		} else if !decls.calls[r.Dispatch][r.Symbol] {
+		switch {
+		case r.Dispatch != "" && r.Undispatched != "":
+			errorf("%s: both a Dispatch and an Undispatched reason", key)
+		case r.Undispatched != "":
+			for fn, calls := range decls.calls {
+				if calls[r.Symbol] {
+					errorf("%s: listed Undispatched, but %s calls it", key, fn)
+				}
+			}
+		case r.Dispatch == "":
+			errorf("%s: no Dispatch and no Undispatched reason", key)
+		case !decls.calls[r.Dispatch][r.Symbol]:
 			errorf("%s: Dispatch %s is not a non-test function of %s that calls %s", key, r.Dispatch, dir, r.Symbol)
 		}
 		body, ok := decls.tests[r.Oracle]
@@ -224,8 +272,8 @@ func Problems(dir, arch string, rows []Row, adapters []Adapter) ([]string, error
 		case !ok:
 			errorf("%s: Oracle %s is not a Test function in %s", key, r.Oracle, dir)
 		default:
-			if !decls.reaches(body, r.Symbol, dispatchFunc(r.Dispatch)) {
-				errorf("%s: Oracle %s names neither %s nor %s, directly or through a test helper or table it names", key, r.Oracle, r.Symbol, r.Dispatch)
+			if !decls.reaches(body, decls.callers(r.Symbol, oracleHops)...) {
+				errorf("%s: Oracle %s reaches %s neither directly nor through a function within %d calls of it, nor through a test helper or table it names", key, r.Oracle, r.Symbol, oracleHops)
 			}
 		}
 	}
@@ -262,7 +310,7 @@ func Problems(dir, arch string, rows []Row, adapters []Adapter) ([]string, error
 	for sym := range have {
 		errorf("%s/%s: an adapter with no row", arch, sym)
 	}
-	slices.Sort(probs[len(probs)-len(have):])
+	slices.Sort(probs)
 	return probs, nil
 }
 

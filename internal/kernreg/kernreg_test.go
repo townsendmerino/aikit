@@ -13,13 +13,14 @@ var goodRows = []Row{
 	{Symbol: "sumK", Arch: "amd64", Dispatch: "Sum", Oracle: "TestSum"},
 	{Symbol: "probe", Arch: "amd64", NoSlices: "a CPU probe"},
 	{Symbol: "sumK", Arch: "arm64", Dispatch: "Sum", Oracle: "TestSum"},
+	{Symbol: "armK", Arch: "amd64", Undispatched: "a measurement arm", Oracle: "TestArm"},
 }
 
-var goodAdapters = []Adapter{{Symbol: "sumK"}}
+var goodAdapters = []Adapter{{Symbol: "sumK"}, {Symbol: "armK"}}
 
 func TestProblems_cleanRegistry(t *testing.T) {
-	for _, arch := range []string{"amd64", "arm64"} {
-		probs, err := Problems("testdata/pkg", arch, goodRows, goodAdapters)
+	for arch, adapters := range map[string][]Adapter{"amd64": goodAdapters, "arm64": goodAdapters[:1]} {
+		probs, err := Problems("testdata/pkg", arch, goodRows, adapters)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -42,11 +43,13 @@ func TestProblems_reportsEachDrift(t *testing.T) {
 		{"duplicate row", append(slices.Clone(goodRows), goodRows[0]), goodAdapters, "amd64/sumK: two rows"},
 		{"wrong dispatcher", replace(goodRows, 0, Row{Symbol: "sumK", Arch: "amd64", Dispatch: "Other", Oracle: "TestSum"}), goodAdapters, "Dispatch Other is not a non-test function"},
 		{"missing oracle", replace(goodRows, 0, Row{Symbol: "sumK", Arch: "amd64", Dispatch: "Sum", Oracle: "TestNope"}), goodAdapters, "Oracle TestNope is not a Test function"},
-		{"unrelated oracle", replace(goodRows, 0, Row{Symbol: "sumK", Arch: "amd64", Dispatch: "Sum", Oracle: "TestUnrelated"}), goodAdapters, "Oracle TestUnrelated names neither sumK nor Sum"},
+		{"unrelated oracle", replace(goodRows, 0, Row{Symbol: "sumK", Arch: "amd64", Dispatch: "Sum", Oracle: "TestUnrelated"}), goodAdapters, "Oracle TestUnrelated reaches sumK neither directly"},
 		{"no adapter", goodRows, nil, "amd64/sumK: no adapter"},
-		{"two adapters", goodRows, []Adapter{{Symbol: "sumK"}, {Symbol: "sumK"}}, "amd64/sumK: 2 adapters"},
-		{"adapter without row", goodRows, []Adapter{{Symbol: "sumK"}, {Symbol: "extra"}}, "amd64/extra: an adapter with no row"},
-		{"adapter for a NoSlices row", goodRows, []Adapter{{Symbol: "sumK"}, {Symbol: "probe"}}, "amd64/probe: has an adapter and a NoSlices reason"},
+		{"two adapters", goodRows, append(slices.Clone(goodAdapters), Adapter{Symbol: "sumK"}), "amd64/sumK: 2 adapters"},
+		{"adapter without row", goodRows, append(slices.Clone(goodAdapters), Adapter{Symbol: "extra"}), "amd64/extra: an adapter with no row"},
+		{"adapter for a NoSlices row", goodRows, append(slices.Clone(goodAdapters), Adapter{Symbol: "probe"}), "amd64/probe: has an adapter and a NoSlices reason"},
+		{"no dispatch", replace(goodRows, 0, Row{Symbol: "sumK", Arch: "amd64", Oracle: "TestSum"}), goodAdapters, "amd64/sumK: no Dispatch and no Undispatched reason"},
+		{"undispatched but called", replace(goodRows, 0, Row{Symbol: "sumK", Arch: "amd64", Undispatched: "x", Oracle: "TestSum"}), goodAdapters, "amd64/sumK: listed Undispatched, but"},
 	}
 	for _, c := range cases {
 		probs, err := Problems("testdata/pkg", "amd64", c.rows, c.adapters)
@@ -183,7 +186,7 @@ func TestExported(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"Config", "Mat.Rows", "Sum", "SumAMD64"}; !slices.Equal(got, want) {
+	if want := []string{"Config", "Mat.Rows", "Sum", "SumAMD64", "Wrapper"}; !slices.Equal(got, want) {
 		t.Fatalf("Exported = %q, want %q", got, want)
 	}
 }
@@ -191,7 +194,7 @@ func TestExported(t *testing.T) {
 // Break-it-first: an uncovered, doubly covered or stale name is reported.
 func TestExportedProblems(t *testing.T) {
 	ok := map[string]string{"Config": "no shape"}
-	swept := []string{"Mat.Rows", "Sum", "SumAMD64"}
+	swept := []string{"Mat.Rows", "Sum", "SumAMD64", "Wrapper"}
 	if probs, err := ExportedProblems("testdata/pkg", swept, ok); err != nil || len(probs) != 0 {
 		t.Fatalf("clean coverage: %q, %v", probs, err)
 	}
@@ -234,7 +237,7 @@ func TestRefused(t *testing.T) {
 
 // An oracle may reach its dispatcher through a test table or helper it names.
 func TestProblems_oracleThroughHelperOrTable(t *testing.T) {
-	for _, oracle := range []string{"TestViaTable", "TestViaHelper"} {
+	for _, oracle := range []string{"TestViaTable", "TestViaHelper", "TestViaWrapper"} {
 		rows := replace(goodRows, 0, Row{Symbol: "sumK", Arch: "amd64", Dispatch: "Sum", Oracle: oracle})
 		probs, err := Problems("testdata/pkg", "amd64", rows, goodAdapters)
 		if err != nil {

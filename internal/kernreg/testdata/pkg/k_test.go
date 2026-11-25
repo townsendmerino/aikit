@@ -17,3 +17,7 @@ func TestViaTable(t *testing.T) {
 func viaHelper() { _ = Sum(nil) }
 
 func TestViaHelper(t *testing.T) { viaHelper() }
+
+func TestViaWrapper(t *testing.T) { _ = Wrapper([]float32{1}) }
+
+func TestArm(t *testing.T) { x := []float32{1}; _ = armK(&x[0], 1) }

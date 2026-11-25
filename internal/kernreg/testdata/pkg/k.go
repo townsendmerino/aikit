@@ -15,3 +15,5 @@ type inner struct{}
 func (inner) Hidden() {}
 
 func Config() int { return 1 }
+
+func Wrapper(x []float32) float32 { return Sum(x) }
