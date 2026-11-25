@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""pin_iq_dequant.py — parity-gate the Go IQ4_NL / IQ4_XS dequant against the
-canonical llama.cpp `gguf` Python reference.
+"""pin_iq_dequant.py — parity-gate the Go codebook and FP4 GGUF dequant (IQ4_NL,
+IQ4_XS, IQ2_S, IQ3_S, NVFP4) against the canonical llama.cpp `gguf` Python reference.
 
 The IQ* GGUF quants are codebook-based (a 4-bit code indexes a fixed non-linear
 level table), so unlike the Q*_K block quants there is no widely-hosted small
@@ -66,6 +66,23 @@ def build_grid_blocks(rng: np.random.Generator, nblocks: int, type_size: int) ->
     return bytes(out)
 
 
+def build_nvfp4(rng: np.random.Generator, nrandom: int) -> bytes:
+    # NVFP4 (64 elems, 36 bytes: 4 ue4m3 sub-block scales, then 8 nibble bytes per
+    # sub-block). The first 64 blocks are exhaustive: their 256 scale bytes are
+    # 0x00..0xFF in order (0x7F, 0x80 and 0xFF included), and every sub-block's
+    # bytes are k | (k+8)<<4 for k = 0..7, so each of the 16 e2m1 codes meets each
+    # scale byte once, and the low and high nibbles land in different halves of the
+    # sub-block. Then `nrandom` fully random blocks.
+    out = bytearray()
+    sub = bytes(k | ((k + 8) << 4) for k in range(8))
+    for b in range(64):
+        out += bytes(range(4 * b, 4 * b + 4))
+        out += sub * 4
+    for _ in range(nrandom):
+        out += bytes(rng.integers(0, 256, 36, dtype=np.uint8).tolist())
+    return bytes(out)
+
+
 def main() -> int:
     rng = np.random.default_rng(42)
     specs = [
@@ -73,6 +90,7 @@ def main() -> int:
         ("IQ4_XS", Q.IQ4_XS, 136, 256, build_iq4xs(rng, 3)),
         ("IQ2_S", Q.IQ2_S, 82, 256, build_grid_blocks(rng, 3, 82)),
         ("IQ3_S", Q.IQ3_S, 110, 256, build_grid_blocks(rng, 3, 110)),
+        ("NVFP4", Q.NVFP4, 36, 64, build_nvfp4(rng, 4)),
     ]
     cases = []
     for name, qtype, blk, nper, raw in specs:
@@ -92,9 +110,10 @@ def main() -> int:
     out_path = REPO_ROOT / "testdata" / "iq_dequant_golden.json"
     payload = {
         "note": (
-            "IQ4_NL / IQ4_XS dequant oracle from llama.cpp's gguf Python reference "
+            "IQ4_NL / IQ4_XS / IQ2_S / IQ3_S / NVFP4 dequant oracle from llama.cpp's gguf Python reference "
             "(gguf.quants.dequantize). Deterministic raw super-blocks (fixed clean "
-            "f16 scale, randomized codes/sub-scales); the Go dequantRange must "
+            "f16 scale, randomized codes/sub-scales; NVFP4 also every ue4m3 scale byte "
+            "against every e2m1 code); the Go dequantRange must "
             "reproduce `expected` from `raw_hex`."
         ),
         "cases": cases,
