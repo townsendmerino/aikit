@@ -69,10 +69,10 @@ func softmaxRowIntoRaw(dst, src []float32) {
 		expF32CoreVec(simd.LoadFloat32s(src[i:i+L]).Sub(bcMax), &c).Store(dst[i : i+L])
 	}
 	if i < n {
-		// Part-load fills the tail lanes with zero — in-domain (e^0=1) —
-		// and StorePart writes back only the real elements.
-		v, _ := simd.LoadFloat32sPart(src[i:])
-		expF32CoreVec(v.Sub(bcMax), &c).StorePart(dst[i:])
+		// The part load fills the tail lanes with zero — in-domain (e^0=1) —
+		// and the part store writes back only the real elements.
+		v := loadF32Part(src[i:])
+		storeF32Part(expF32CoreVec(v.Sub(bcMax), &c), dst[i:])
 	}
 
 	// Pass 3: f64 sum — scalar on purpose, same tree as the non-SIMD kernel.
@@ -95,8 +95,8 @@ func softmaxRowIntoRaw(dst, src []float32) {
 		simd.LoadFloat32s(dst[i : i+L]).Mul(inv).Store(dst[i : i+L])
 	}
 	if i < n {
-		v, _ := simd.LoadFloat32sPart(dst[i:])
-		v.Mul(inv).StorePart(dst[i:])
+		v := loadF32Part(dst[i:])
+		storeF32Part(v.Mul(inv), dst[i:])
 	}
 }
 
@@ -152,9 +152,9 @@ func softmaxRowScaledIntoRaw(dst, src []float32, scale float32) {
 		expF32CoreVec(v, &c).Store(dst[i : i+L])
 	}
 	if i < n {
-		v, _ := simd.LoadFloat32sPart(src[i:])
+		v := loadF32Part(src[i:])
 		vv := v.Mul(bcScale).Sub(bcMax)
-		expF32CoreVec(vv, &c).StorePart(dst[i:])
+		storeF32Part(expF32CoreVec(vv, &c), dst[i:])
 	}
 
 	// Pass 3: f64 sum — unchanged.
@@ -177,8 +177,8 @@ func softmaxRowScaledIntoRaw(dst, src []float32, scale float32) {
 		simd.LoadFloat32s(dst[i : i+L]).Mul(inv).Store(dst[i : i+L])
 	}
 	if i < n {
-		v, _ := simd.LoadFloat32sPart(dst[i:])
-		v.Mul(inv).StorePart(dst[i:])
+		v := loadF32Part(dst[i:])
+		storeF32Part(v.Mul(inv), dst[i:])
 	}
 }
 
@@ -289,9 +289,9 @@ func siluIntoRaw(dst, src []float32) {
 		x.Div(c.one.Add(e)).Store(dst[i : i+L])
 	}
 	if i < n {
-		x, _ := simd.LoadFloat32sPart(src[i:])
+		x := loadF32Part(src[i:])
 		e := expF32Vec(x.Neg(), &c)
-		x.Div(c.one.Add(e)).StorePart(dst[i:])
+		storeF32Part(x.Div(c.one.Add(e)), dst[i:])
 	}
 }
 
@@ -397,9 +397,9 @@ func geluIntoRaw(dst, src []float32) {
 		ec.half.Mul(x).Mul(ec.one.Add(erf)).Store(dst[i : i+L])
 	}
 	if i < n {
-		x, _ := simd.LoadFloat32sPart(src[i:])
+		x := loadF32Part(src[i:])
 		erf := erfVec(x.Mul(ec.invSqrt2), &ec, &xc)
-		ec.half.Mul(x).Mul(ec.one.Add(erf)).StorePart(dst[i:])
+		storeF32Part(ec.half.Mul(x).Mul(ec.one.Add(erf)), dst[i:])
 	}
 }
 
@@ -468,8 +468,8 @@ func tanhIntoRaw(dst, src []float32) {
 		tanhVec(x, &tc, &xc).Store(dst[i : i+L])
 	}
 	if i < n {
-		x, _ := simd.LoadFloat32sPart(src[i:])
-		tanhVec(x, &tc, &xc).StorePart(dst[i:])
+		x := loadF32Part(src[i:])
+		storeF32Part(tanhVec(x, &tc, &xc), dst[i:])
 	}
 }
 
@@ -497,10 +497,10 @@ func geluTanhIntoRaw(dst, src []float32) {
 		half.Mul(x).Mul(one.Add(th)).Store(dst[i : i+L])
 	}
 	if i < n {
-		x, _ := simd.LoadFloat32sPart(src[i:])
+		x := loadF32Part(src[i:])
 		x3 := x.Mul(x).Mul(x)
 		arg := c.Mul(x.Add(x3.Mul(a)))
 		th := tanhVec(arg, &tc, &xc)
-		half.Mul(x).Mul(one.Add(th)).StorePart(dst[i:])
+		storeF32Part(half.Mul(x).Mul(one.Add(th)), dst[i:])
 	}
 }

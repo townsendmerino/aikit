@@ -57,12 +57,21 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed
 
+- **`perfgate` judges seventeen benchmark families, finds each by name in a list of packages, and fails on a listed family it
+  cannot find** (`tools/perfgate/families.go`). New: the K-quant kinds (`BenchmarkQ56KvsInt8`, `BenchmarkQ4KvsSplitHalf`), the f16
+  acc64 attention kernels (`BenchmarkMatmulQKAcc64F16`, `BenchmarkMatmulAVAcc64F16`, added beside their f32 twins) and amd64's
+  contract transcendentals (`BenchmarkExpF32KernelsAMD64`, `BenchmarkSiLUAMD64`). Each family names the arches whose build defines
+  it: the old list ran `BenchmarkSoftmaxRowKernels` and `BenchmarkSiLUKernels`, which exist on arm64 only, on amd64 too, and
+  `BenchmarkMatmulBTW4A8SplitHalfTile`, amd64 only, on arm64, where nothing defined them and nothing said so.
+  `TestDefaultFamilies_resolveInSource` holds the table to the source on linux and darwin arm64 and linux and windows amd64.
+  A family is matched across the tag boundary by benchmark name, so one that moves package is still compared; a listed family
+  no package of the working tree defines fails the gate before anything is measured (exit 6). `--pkg` takes a comma-separated
+  package list and `--bench` a comma-separated list of benchmark names (it took a regex).
 - **`linalg` is Experimental as a whole from 2026-11-24 until its surface rework lands** (README § "Stability tiers"): the rework
   removes and moves exported names, so `linalg.Dot`, `linalg.MatmulBT` and the int8/int4 quant kernels leave the Hard tier meanwhile;
   the names that survive return to it as an explicit list in the release gate. The gate now checks what the README calls Hard:
   `mmap` and `vision` join its apidiff packages, and `encoder.Backend`, `RegisterBackend` and `NewBackend` leave its exemption list
   (`tools/releasegate`, `TestReadmeTiers_matchGate` holds the README's Hard list and the gate's lists equal).
-
 - **`linalg`'s CPU-feature flags, their detection and the `aikit_no*` fallback tags live in one internal package,
   `internal/cpufeat`** (from `linalg`'s `has*`/`detect*` variables, its `cpuid`/`xgetbv` probes and its `force_no*` files). Every
   dispatcher reads the one copy, so `SelfCheck`'s repair and each forced fallback keep governing a kernel package split out of
@@ -71,12 +80,17 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Added
 
+- **`tools/roofline`: a per-kernel roofline census.** It covers each kernel perfgate or goinfer's kernelprint names (`linalg`'s
+  `BenchmarkRooflineCensus`, 27 kernels), single-threaded, at a 128 KiB and a 128 MiB operand. Each row reports operand GB/s,
+  GMAC/s and its fraction of this box's roof. The roofs are measured by `BenchmarkRooflineRoofs`: the f32 FMA peak, the SDOT
+  issue probe on arm64, and a streaming-read probe with a resident cross-check. An amd64 int8 roof is cited with
+  `--int8-roof`. It writes the table under `docs/bench-records/` with the CPU and the commit. Its arithmetic is tested on planted
+  timings. The readings follow `docs/bench-records/roofline-registration.md`.
 - **`tools/linalgcensus`: who reaches each exported name of `linalg`, by the type checker** (`go run -C tools ./linalgcensus
   --goinfer <dir> --ken <dir> --tack <dir>`). It compiles every consumer against this tree through a generated go.work, checks
   every Go file of each checkout on at least one configuration (GOOS/GOARCH, tags, GOEXPERIMENT) chosen to cover them all, and
   splits each name's reach into linalg, its tests, aikit's other packages, goinfer, ken and tack, production and tests. It ends in
   one VERDICT line. The table at aikit and its consumers' heads on 2026-11-24 is `docs/internal/linalg-census-2026-11.md`.
-
 - **`embed` reads GGUF type 40, NVFP4** (`dequantNVFP4Block`): 64-element blocks of four 16-element sub-blocks, each with an
   unsigned e4m3 scale and 8 bytes of e2m1 nibbles, low nibble to element `j` and high to `j+8`, as ggml's `dequantize_row_nvfp4`
   reads them. The scale decodes as ggml's `ggml_ue4m3_to_fp32` does: the top bit is ignored and `0x00` and `0x7F` are zero. The
@@ -98,6 +112,15 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+- **Under `GOEXPERIMENT=simd`, the element-wise and softmax kernels no longer read past a short tail** (`linalg`: `ExpF32Into`,
+  `SiLUInto`, `GELUInto`, `GELUTanhInto`, `TanhInto` and the `SoftmaxRow*Into` family, with their `Contract` forms; `encoder`'s
+  log1p pooling). Their last partial vector went through `simd.LoadFloat32sPart` and `StorePart`, which on amd64 read a whole vector,
+  past the end of the slice: a fault when the input ends at a mapping, and a read of the next bytes otherwise. The tails now stage
+  through a zeroed stack buffer (`loadF32Part`, `storeF32Part`); outputs are bit-identical. The default build is unaffected
+  (`TestElementwise_noReadPastShortTail`, `TestLog1pPoolInto_noReadPastShortTail`, which place each input against a guard page).
+- **`MatmulBTW4A8Row4Into` (arm64) refuses a K that is not a positive multiple of 32 with a workspace activation group set**, as it
+  already did without one. That path skipped the check and indexed past the 4-row weights, whose layout stores 16 bytes per 32-wide
+  group (`slice bounds out of range [:16] with capacity 8` at K=1; `TestMatmulBTW4A8Row4Into_raggedKRefusedWithActGroup`).
 - **`embed` refused a legitimate tensor of a type denser than 0.25 bytes per element when it filled the data section.**
   `RowDequantizer` bounds an untrusted tensor's element count by the data section's size before multiplying its dims; the
   bound assumed at most 4 elements a byte, and IQ1_S stores 5.12 (TQ1_0 4.7, IQ1_M 4.6). It is now 6.
