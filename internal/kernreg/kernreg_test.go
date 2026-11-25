@@ -177,3 +177,57 @@ func TestProblems_dispatcherOnTheRowsArch(t *testing.T) {
 		t.Fatalf("an amd64 dispatcher on an amd64 row was rejected: %q", probs)
 	}
 }
+
+func TestExported(t *testing.T) {
+	got, err := Exported("testdata/pkg")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"Config", "Mat.Rows", "Sum", "SumAMD64"}; !slices.Equal(got, want) {
+		t.Fatalf("Exported = %q, want %q", got, want)
+	}
+}
+
+// Break-it-first: an uncovered, doubly covered or stale name is reported.
+func TestExportedProblems(t *testing.T) {
+	ok := map[string]string{"Config": "no shape"}
+	swept := []string{"Mat.Rows", "Sum", "SumAMD64"}
+	if probs, err := ExportedProblems("testdata/pkg", swept, ok); err != nil || len(probs) != 0 {
+		t.Fatalf("clean coverage: %q, %v", probs, err)
+	}
+	for name, c := range map[string]struct {
+		swept  []string
+		exempt map[string]string
+		want   string
+	}{
+		"uncovered": {swept[1:], ok, "Mat.Rows: an exported entry point with no tiny-shape adapter"},
+		"both":      {append(slices.Clone(swept), "Config"), ok, "Config: has an adapter and a listed reason"},
+		"twice":     {append(slices.Clone(swept), "Sum"), ok, "Sum: 2 adapters"},
+		"stale":     {append(slices.Clone(swept), "Gone"), ok, "Gone: listed but not an exported name"},
+	} {
+		probs, err := ExportedProblems("testdata/pkg", c.swept, c.exempt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !slices.ContainsFunc(probs, func(p string) bool { return strings.Contains(p, c.want) }) {
+			t.Errorf("%s: problems %q do not include %q", name, probs, c.want)
+		}
+	}
+}
+
+func TestRefused(t *testing.T) {
+	if msg := Refused(func() {}); msg != "" {
+		t.Fatalf("a call that returned reads as refused: %q", msg)
+	}
+	if msg := Refused(func() { panic("linalg: K must be a multiple of 4") }); msg != "refused: linalg: K must be a multiple of 4" {
+		t.Fatalf("an explicit panic reads %q", msg)
+	}
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("a runtime error was swallowed as a refusal")
+		}
+	}()
+	var x []int
+	i := 3
+	Refused(func() { _ = x[i] })
+}

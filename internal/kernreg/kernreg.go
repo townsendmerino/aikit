@@ -123,10 +123,39 @@ func call(t *testing.T, a *guardmem.Arena, ad Adapter, s side, n int) any {
 	p := &Placer{a: a, side: s}
 	var out any
 	label := fmt.Sprintf("%s n=%d (inputs at the %s)", ad.Symbol, n, s)
-	if f := a.RunWithin(label, Deadline, func() { out = ad.Call(p, n) }); f != nil {
+	var f *guardmem.Fault
+	if r := panicOf(func() { f = a.RunWithin(label, Deadline, func() { out = ad.Call(p, n) }) }); r != nil {
+		t.Fatalf("%s: panicked: %v", label, r)
+	}
+	if f != nil {
 		t.FailNow()
 	}
 	return out
+}
+
+func panicOf(fn func()) (r any) {
+	defer func() { r = recover() }()
+	fn()
+	return nil
+}
+
+// Refused calls fn and returns "" if it returned, or the text of the panic if it refused
+// its arguments with one: an explicit panic, not a runtime error. A runtime error (an
+// index out of range, a nil dereference, a division by zero) is a crash, not a refusal,
+// and is re-raised, so the sweep fails naming the call.
+func Refused(fn func()) (msg string) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			return
+		}
+		if _, ok := r.(runtime.Error); ok {
+			panic(r)
+		}
+		msg = fmt.Sprint("refused: ", r)
+	}()
+	fn()
+	return ""
 }
 
 // sameBits is reflect.DeepEqual with floats compared by their bits, so a NaN equals the
