@@ -75,7 +75,6 @@ var rules = map[string]rule{
 
 	// Model towers.
 	"encoder": {aikit: []string{"embed", "linalg", "sparse"}},
-	"vision":  {aikit: []string{"embed", "linalg"}},
 
 	// Harness and programs.
 	"bench":                 {aikit: []string{"ann"}},
@@ -83,7 +82,6 @@ var rules = map[string]rule{
 	"examples/colbert":      {aikit: []string{"ann", "bm25", "chunk", "chunk/regex", "embed", "encoder", "fuse", "late"}},
 	"examples/rag":          {aikit: []string{"ann", "bm25", "chunk", "chunk/regex", "embed", "encoder", "fuse", "topk"}},
 	"examples/splade":       {aikit: []string{"chunk", "chunk/regex", "encoder", "sparse"}},
-	"examples/vision":       {aikit: []string{"ann", "bm25", "chunk", "chunk/regex", "embed", "fuse", "vision"}},
 }
 
 // quarantined are the nested modules the core must never reach, directly or through

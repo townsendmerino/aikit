@@ -9,6 +9,13 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Removed
+
+- **`vision` and `examples/vision`, the one removal from the Hard tier** (decided 2026-11-24). The SigLIP/ViT towers moved into
+  goinfer on 2026-10-26, the package has been frozen since v1.76.0, and nothing imports it: no file in goinfer, ken or tack, and in
+  aikit only `examples/vision`. Its fixtures under `testdata/` and its five oracle scripts go with it. A build that imports
+  `aikit/vision` keeps working on the tags before this release.
+
 ### Changed
 
 - **`linalg`'s CPU-feature flags, their detection and the `aikit_no*` fallback tags live in one internal package,

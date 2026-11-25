@@ -26,15 +26,16 @@ large embedded-grammar payload) — is quarantined in the separate
 >
 > | aikit path | frozen at | continues in goinfer as |
 > |---|---|---|
-> | `vision` | `v1.75.0` | `internal/vision` |
+> | `vision` | `v1.75.0`; **removed from aikit with the `linalg` surface rework** | `internal/vision` |
 > | `audio` | `v1.75.0`; **removed from aikit in v1.77.0** | `internal/audio` |
 > | `gpu` (the device module) | `gpu/v0.35.0` | `cuda/internal/gpudev` and `metal/internal/gpudev`; aikit's stays, below |
 > | `gpu/qwencuda`, `gpu/visioncuda` | `gpu/v0.35.0` | the `cuda` module |
 > | `gpu/qwenmetal`, `gpu/visionmetal` | `gpu/v0.35.0` | the `metal` module |
 > | `gpu/webgpu` | `gpu/v0.35.0` | retired, not carried over (owner, 2026-10-26: nothing imported it, and goinfer's `gpu` module has its own WGSL shaders) |
 >
-> `vision` carries a `Deprecated:` notice. It is in the Hard tier, so it stays, frozen, and is removed only
-> at a v2. `audio` was Experimental: it carried its notice in v1.76.0 and is removed in the next minor,
+> `vision` was in the Hard tier and is removed anyway (decided 2026-11-24): it moved into goinfer, was frozen
+> since v1.76.0, and nothing imports it; a build that still imports `aikit/vision` keeps working on the tags
+> before its removal. `audio` was Experimental: it carried its notice in v1.76.0 and is removed in the next minor,
 > v1.77.0. A build that still imports `aikit/audio` keeps working on v1.76.x and earlier. The four tower
 > backends and `gpu/webgpu` are retired, get no further tags, and were deleted from the tree on 2026-11-10.
 > Their existing tags keep resolving, so a build pinned to one is unaffected.
@@ -59,7 +60,6 @@ large embedded-grammar payload) — is quarantined in the separate
 | `mmap` | read-only file mapping + `madvise` residency hints + a demand-signal-agnostic `SpanCache` (LRU spans under a byte budget) — the substrate the `ann`, `bm25`, `embed` and `linalg` mmap loaders sit on; cgo-free, `!unix` heap fallback | `golang.org/x/sys` *(darwin only)* |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `mmap`, `golang.org/x/text`, `golang.org/x/sys` *(amd64 only)* |
 | `encoder` | BERT/RoBERTa/XLM-R/GTE/nomic-bert(+MoE) embedder family (12 certified models, `docs/embedder-coverage.md`, incl. CodeRankEmbed) + SPLADE expansion + cross-encoder reranker — transformer inference scored by cosine / sparse dot / relevance logit; pluggable matmul `Backend` | `embed`, `linalg`, `sparse` |
-| `vision` *(Deprecated: moved to goinfer)* | SigLIP / ViT image encoder — decode → preprocess → pure-Go transformer forward → image embeddings (f32 or int8 W8A8), parity-pinned to HF `SiglipVisionModel`; stdlib image codecs, no cgo | `embed`, `linalg` |
 | `chunk` | language-aware chunker registry + `regex`, `markdown`, `line` chunkers | — |
 | `gpu` *(Experimental, darwin+linux; separate modules)* | cgo-free native-GPU device substrate — `Device`/`Buffer`/`Queue`/`Pipeline`/`Encoder` over Metal (darwin, runtime MSL compiler) or CUDA (linux, embedded PTX); the GPU analogue of `linalg`'s CPU role. Frozen on `gpu/v0.35.x`, fixes only. 4 one-backend-per-module leaves plug into 2 seams: `anncuda`/`annmetal` → `FlatI8.EnableGPU`; `enccuda`/`encmetal` → `encoder.RegisterBackend("cuda"/"metal", …)`. The tower backends (`qwencuda`/`qwenmetal`, `visioncuda`/`visionmetal`) moved to goinfer and were deleted here; their tags still resolve. Device tests are hand-run (no GPU CI); the default aikit build never imports any of them and stays pure-Go. See [`examples/gpu-ann`](examples/gpu-ann) for the `FlatI8.EnableGPU` seam end to end. | `github.com/ebitengine/purego` *(darwin)*, `github.com/eitamring/gocudrv` *(linux)* |
 | `chunk/treesitter` *(submodule)* | tree-sitter-backed syntactic chunker | `gotreesitter`, `…/aikit` |
@@ -106,15 +106,6 @@ index → query → top-K) — the in-process, no-Python pipeline behind the
 "learned-sparse" column in the capability matrix below. It composes into a
 fused hybrid search the same way `examples/rag`'s dense and lexical signals
 do, via `fuse.Keys(sparseHits, func(h sparse.Hit) int { return h.Index })`.
-
-For the "only cgo-free image embedder" claim below,
-[`examples/vision/`](examples/vision) indexes a corpus that mixes code chunks
-and images: each image's caption joins the fused dense+lexical search as just
-another chunk (image-as-document indexing), and landing on an image hit pivots
-into "visually similar images" via its own SigLIP embedding index
-(image→image similarity) — the two capabilities the vision package actually
-provides, deliberately not a cross-modal text→image search (aikit has no
-joint text/image embedding space).
 
 [`examples/colbert/`](examples/colbert) swaps `examples/rag`'s final rerank
 stage for ColBERT-style late interaction: the same fused dense+lexical
@@ -203,7 +194,7 @@ correct distance, full k, finds the right region) — see the
 
 | | cgo-free | model inference | image embed | exact | ANN graph | int8 | persistence | lexical + hybrid | learned-sparse | static binary |
 |---|---|---|---|---|---|---|---|---|---|---|
-| **aikit** | ✅ | ✅ Model2Vec + CodeRankEmbed | ✅ SigLIP/ViT | ✅ Flat | ✅ HNSW (Alg-4) | ✅ FlatI8 | ✅ HNSW | ✅ BM25 + RRF/RSF | ✅ sparse | ✅ **1.8 MB** |
+| **aikit** | ✅ | ✅ Model2Vec + CodeRankEmbed | — (moved to goinfer) | ✅ Flat | ✅ HNSW (Alg-4) | ✅ FlatI8 | ✅ HNSW | ✅ BM25 + RRF/RSF | ✅ sparse | ✅ **1.8 MB** |
 | coder/hnsw | ✅ | — | — | — | ✅ | — | ✅ | — | — | ✅ |
 | chromem-go | ✅ | via external API | — | ✅ | — | — | ✅ | — | — | ✅ |
 | Bleve v2 | dense needs cgo (faiss) | — | — | — | ✅ vector | — | ✅ | ✅ full-text | — | dense: ✗ |
@@ -212,11 +203,8 @@ correct distance, full k, finds the right region) — see the
 aikit is the only one of these that ships the **whole pipeline** — local model
 inference *and* dense + lexical + sparse retrieval *and* fusion — in a single
 **1.8 MB pure-Go static binary** (`CGO_ENABLED=0`, the full `ann`+`bm25`+`fuse`+
-`embed` surface). It's also the only **cgo-free image embedder** here: the `vision`
-SigLIP/ViT tower runs the whole forward in pure Go, so image→image similarity and
-image-as-document indexing need no ONNX runtime or sidecar (hugot can embed images
-but only via the ONNX Runtime native library). hugot otherwise covers inference but
-needs that cgo backend; the vector DBs cover indexing but not inference. The
+`embed` surface). hugot covers inference but needs a cgo backend (the ONNX Runtime
+native library); the vector DBs cover indexing but not inference. The
 `//go:embed`-a-corpus, zero-deploy story is the lane no Python or ONNX stack reaches.
 
 ### Retrieval quality on a standard benchmark
@@ -286,11 +274,6 @@ No breaking change before a v2.0. This is the API to build on.
   (`gpu/backend.go`) and serving path (`internal/serveapp/{embeddings,
   openai,main}.go`) register and dispatch through it in production.
   **Graduated 2026-08-18.**
-- `vision` — the whole package (SigLIP/ViT image encoder). In aikit since
-  v1.7.0 (14 minors survived); goinfer's serving path (`vision_serve.go`),
-  GPU backend registration (`gpu/vision_*.go`), and demo agent all depend on
-  it directly. **Graduated 2026-08-18.** **Deprecated 2026-10:** the towers moved into goinfer; the package
-  stays, frozen at v1.75.0's code, and is removed only at a v2.
 - `mmap` — the whole package. In aikit since v1.9.0 (12 minors survived);
   goinfer imports it in 4 non-test files. **Graduated 2026-08-18.**
 
