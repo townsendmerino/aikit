@@ -9,6 +9,14 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A group size of 0 is refused by name instead of dividing by zero**: `DequantizeRowInt4`, `QuantizeGroupInt4Row`,
+  `QuantizeActivationsGroupedInto` and `SumActGroupsInto` panic with "group must be > 0, got 0", as `QuantizeGroupsInt4` already did,
+  where they crashed with an integer divide by zero (or, at a negative group, an index out of range). **An empty source converts to
+  nothing**: `F32ToF16Slice` with an empty `src`, and `QuantizeF16` at rows×cols = 0, returned a slice-bounds panic
+  (`TestGroupZero_refusedByName`, `TestF16_emptySource`). Found by the tiny-shape sweep of linalg's exported entry points.
+
 ### Added
 
 - **`embed` reads GGUF type 40, NVFP4** (`dequantNVFP4Block`): 64-element blocks of four 16-element sub-blocks, each with an
