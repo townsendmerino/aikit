@@ -2,12 +2,16 @@
 
 package linalg
 
-import "time"
+import (
+	"time"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+)
 
 // int8PeakGMACs is the SDOT issue probe as an int8 MAC rate (one SDOT is 16 MACs), the best of
 // five passes. ok is false on a core without DotProd.
 func int8PeakGMACs() (gmacs float64, ok bool) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		return 0, false
 	}
 	const iters = 4_000_000

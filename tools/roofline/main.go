@@ -183,7 +183,7 @@ func runBench(bin, pattern, benchtime string, onRow func(name string, ns float64
 		return "", err
 	}
 	done := make(chan error, 1)
-	go func() { done <- cmd.Wait(); pw.Close() }()
+	go func() { done <- cmd.Wait(); pw.Close() }() //nolint:errcheck // closing the pipe's write end only ends the reader; PipeWriter.Close returns nil
 	var all strings.Builder
 	sc := bufio.NewScanner(pr)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
