@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -23,10 +24,13 @@ func nowUTC() string { return time.Now().UTC().Format("2006-01-02T15:04:05Z") }
 const GolangciLint = "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0"
 
 // RepoRoot finds the checkout root regardless of the caller's cwd (the tools run as
-// `go run -C tools ./gpugate`, whose cwd is tools/). git is the authority; a walk up to a
-// .git directory is the fallback for a detached tree.
+// `go run -C tools ./gpugate`, whose cwd is tools/). git is the authority, asked without
+// the GIT_DIR a hook inherits (withoutGitLocation); a walk up to a .git directory, or a
+// linked worktree's .git file, is the fallback for a detached tree.
 func RepoRoot() (string, error) {
-	if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Env = withoutGitLocation(os.Environ())
+	if out, err := cmd.Output(); err == nil {
 		if p := strings.TrimSpace(string(out)); p != "" {
 			return p, nil
 		}
@@ -36,7 +40,7 @@ func RepoRoot() (string, error) {
 		return "", err
 	}
 	for {
-		if fi, err := os.Stat(filepath.Join(dir, ".git")); err == nil && fi.IsDir() {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 			return dir, nil
 		}
 		parent := filepath.Dir(dir)
@@ -159,4 +163,13 @@ func exitCode(err error) int {
 		return ee.ExitCode()
 	}
 	return -1
+}
+
+// withoutGitLocation drops GIT_DIR and GIT_WORK_TREE from env. git exports GIT_DIR to a
+// hook it runs from a linked worktree, and with it set and no GIT_WORK_TREE,
+// `git rev-parse --show-toplevel` answers the cwd rather than the worktree's root.
+func withoutGitLocation(env []string) []string {
+	return slices.DeleteFunc(slices.Clone(env), func(e string) bool {
+		return strings.HasPrefix(e, "GIT_DIR=") || strings.HasPrefix(e, "GIT_WORK_TREE=")
+	})
 }

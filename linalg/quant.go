@@ -357,6 +357,7 @@ func QuantizeActivationsInto(aq []int8, scales []float32, a []float32, M, K int)
 //
 // Output contract: overwrites sumAct; do not pre-zero. Every group sum is recomputed from aq.
 func SumActGroupsInto(sumAct []int32, aq []int8, M, K, group int) {
+	requirePositiveGroup("SumActGroupsInto", group)
 	nGroups := (K + group - 1) / group
 	if len(sumAct) < M*nGroups || len(aq) < M*K {
 		panic("linalg: SumActGroupsInto short buffer")
@@ -579,6 +580,14 @@ func w8a8BatchSpan(aq []int8, aScales []float32, ops []W8A8Op, M, K, g0, g1 int)
 // laptop RAM. The matmul (MatmulBTQ4) dequantizes per group inside the inner
 // loop; activations stay f32.
 
+// requirePositiveGroup refuses a group size below 1 by name, before any ⌈K/group⌉ divides
+// by it.
+func requirePositiveGroup(fn string, group int) {
+	if group <= 0 {
+		panic(fmt.Sprintf("linalg: %s: group must be > 0, got %d", fn, group))
+	}
+}
+
 // groupsFor returns the number of groups a K-wide row splits into (the final
 // group is ragged when group does not divide K) and the packed bytes per row.
 func groupsFor(cols, group int) (nGroups, bytesPerRow int) {
@@ -592,9 +601,7 @@ func QuantizeGroupsInt4(w []float32, rows, cols, group int) (packed []byte, scal
 	if rows < 0 || cols < 0 {
 		panic(fmt.Sprintf("linalg: QuantizeGroupsInt4 negative dim (rows=%d cols=%d)", rows, cols))
 	}
-	if group <= 0 {
-		panic(fmt.Sprintf("linalg: QuantizeGroupsInt4 group must be > 0, got %d", group))
-	}
+	requirePositiveGroup("QuantizeGroupsInt4", group)
 	requireExactLen("QuantizeGroupsInt4", "w", len(w), mul(rows, cols))
 	nGroups, bpr := groupsFor(cols, group)
 	packed = make([]byte, rows*bpr)
@@ -619,6 +626,7 @@ func QuantizeGroupsInt4(w []float32, rows, cols, group int) (packed []byte, scal
 // hash of packed. Nothing reads the pad nibble. Pinned by
 // TestOutputContract_quantizeGroupInt4RowPadNibble.
 func QuantizeGroupInt4Row(row []float32, cols, group int, packed []byte, scales []float32) {
+	requirePositiveGroup("QuantizeGroupInt4Row", group)
 	if cols <= 0 {
 		return
 	}
@@ -739,6 +747,7 @@ func quantizeInt4GroupScalar(row []float32, ks, ke int, packed []byte) float32 {
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:cols].
 func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []float32) {
+	requirePositiveGroup("DequantizeRowInt4", group)
 	checkDequantInt4(packed, scales, group, cols, dst)
 	if cols <= 0 {
 		return

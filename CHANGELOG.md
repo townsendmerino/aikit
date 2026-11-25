@@ -11,6 +11,12 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed
 
+- **`linalg` is Experimental as a whole from 2026-11-24 until its surface rework lands** (README § "Stability tiers"): the rework
+  removes and moves exported names, so `linalg.Dot`, `linalg.MatmulBT` and the int8/int4 quant kernels leave the Hard tier meanwhile;
+  the names that survive return to it as an explicit list in the release gate. The gate now checks what the README calls Hard:
+  `mmap` and `vision` join its apidiff packages, and `encoder.Backend`, `RegisterBackend` and `NewBackend` leave its exemption list
+  (`tools/releasegate`, `TestReadmeTiers_matchGate` holds the README's Hard list and the gate's lists equal).
+
 - **`linalg`'s CPU-feature flags, their detection and the `aikit_no*` fallback tags live in one internal package,
   `internal/cpufeat`** (from `linalg`'s `has*`/`detect*` variables, its `cpuid`/`xgetbv` probes and its `force_no*` files). Every
   dispatcher reads the one copy, so `SelfCheck`'s repair and each forced fallback keep governing a kernel package split out of
@@ -18,6 +24,12 @@ excluded from that promise and may change in any release until it graduates.
   (compared on linux/amd64 for the untagged build and each amd64 tag), and the forced-fallback tests pass under each tag.
 
 ### Added
+
+- **`tools/linalgcensus`: who reaches each exported name of `linalg`, by the type checker** (`go run -C tools ./linalgcensus
+  --goinfer <dir> --ken <dir> --tack <dir>`). It compiles every consumer against this tree through a generated go.work, checks
+  every Go file of each checkout on at least one configuration (GOOS/GOARCH, tags, GOEXPERIMENT) chosen to cover them all, and
+  splits each name's reach into linalg, its tests, aikit's other packages, goinfer, ken and tack, production and tests. It ends in
+  one VERDICT line. The table at aikit and its consumers' heads on 2026-11-24 is `docs/internal/linalg-census-2026-11.md`.
 
 - **`embed` reads GGUF type 40, NVFP4** (`dequantNVFP4Block`): 64-element blocks of four 16-element sub-blocks, each with an
   unsigned e4m3 scale and 8 bytes of e2m1 nibbles, low nibble to element `j` and high to `j+8`, as ggml's `dequantize_row_nvfp4`
@@ -31,10 +43,34 @@ excluded from that promise and may change in any release until it graduates.
   table byte-equal to `ggml-common.h`'s. The golden uses every grid entry and sign index of each type, bit-exact against
   gguf-py; one wrong grid magnitude, one wrong sign-table entry, or a misread field order turns it red
   (`TestIQXXSDequant_goldenCatchesPlants`).
+- **`embed` reads GGUF types 3, 7, 19, 29, 34 and 35: Q4_1, Q5_1, IQ1_S, IQ1_M, TQ1_0 and TQ2_0**, as ggml's
+  `dequantize_row_*` read them. IQ1_S and IQ1_M share `iq1s_grid` (2048 × 8 values in {-1, 0, 1}, plus a ±0.125 delta per
+  group), dumped from gguf-py and proven byte-equal to `ggml-common.h`'s. IQ1_M's f16 super-scale is assembled from the top
+  nibbles of its four scale words. TQ1_0 packs five trits a byte as a fraction of 243. All six types are bit-exact against
+  gguf-py, IQ1_S on every grid entry. A misread field order or (for IQ1) one wrong grid value turns the golden red
+  (`TestLowBitDequant_goldenCatchesPlants`).
+
+### Fixed
+
+- **`embed` refused a legitimate tensor of a type denser than 0.25 bytes per element when it filled the data section.**
+  `RowDequantizer` bounds an untrusted tensor's element count by the data section's size before multiplying its dims; the
+  bound assumed at most 4 elements a byte, and IQ1_S stores 5.12 (TQ1_0 4.7, IQ1_M 4.6). It is now 6.
+  `TestIQDequant_goldenThroughGGUF` reads a section-filling tensor of every type the reader admits.
+
 - **The dequant golden is compared bit for bit**, where it allowed a relative 1e-4: every type in it already matched exactly. Each
   case is also read through a one-tensor GGUF, so each type's byte size is checked with its kernel
   (`TestIQDequant_goldenThroughGGUF`), and `TestOutputContract_dequantWritersOverwrite` covers every type the reader admits
   rather than a list.
+
+- **The pre-push hook works from a linked git worktree** (`tools/gpumod`, `RepoRoot`). git exports `GIT_DIR` to a hook run from a
+  linked worktree, and `git rev-parse --show-toplevel` then answers the cwd, so `preflight` took `tools/` for the root and every
+  package failed to load. `RepoRoot` asks git without the inherited `GIT_DIR` and `GIT_WORK_TREE`, and its walk-up fallback also
+  stops at a worktree's `.git` file (`TestRepoRoot_linkedWorktreeUnderHookEnv`, `TestRepoRoot_walkUpStopsAtGitFile`).
+- **A group size of 0 is refused by name instead of dividing by zero**: `DequantizeRowInt4`, `QuantizeGroupInt4Row`,
+  `QuantizeActivationsGroupedInto` and `SumActGroupsInto` panic with "group must be > 0, got 0", as `QuantizeGroupsInt4` already did,
+  where they crashed with an integer divide by zero (or, at a negative group, an index out of range). **An empty source converts to
+  nothing**: `F32ToF16Slice` with an empty `src`, and `QuantizeF16` at rows×cols = 0, returned a slice-bounds panic
+  (`TestGroupZero_refusedByName`, `TestF16_emptySource`). Found by the tiny-shape sweep of linalg's exported entry points.
 
 ## [1.79.0] — 2026-11-24
 
