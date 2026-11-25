@@ -32,6 +32,13 @@ excluded from that promise and may change in any release until it graduates.
   On amd64 the f16 QK dispatch has the 16-key kernel's stride guard, falling to a 4-key f16 kernel (`qkAcc64AVX4F16`) at a 4 KiB-multiple
   key stride (`TestQkAcc64KeysF16_strideGuard`, `TestQkAcc64AVX4F16_matchesAVX4OnWidened`).
 
+### Fixed
+
+- **The pre-push hook works from a linked git worktree** (`tools/gpumod`, `RepoRoot`). git exports `GIT_DIR` to a hook run from a
+  linked worktree, and `git rev-parse --show-toplevel` then answers the cwd, so `preflight` took `tools/` for the root and every
+  package failed to load. `RepoRoot` asks git without the inherited `GIT_DIR` and `GIT_WORK_TREE`, and its walk-up fallback also
+  stops at a worktree's `.git` file (`TestRepoRoot_linkedWorktreeUnderHookEnv`, `TestRepoRoot_walkUpStopsAtGitFile`).
+
 ## [1.78.0] — 2026-11-20
 
 `perfgate` VERDICT: PASS — no regression vs v1.77.0 above each shape's floor — 9/47 shapes resolve the 5.0% class

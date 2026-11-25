@@ -360,3 +360,71 @@ func TestGoSep_separatesStdoutAndStderr(t *testing.T) {
 		t.Errorf("stderr = %q, want a note about missing packages", stderr)
 	}
 }
+
+// RepoRoot under a pre-push hook in a linked worktree: git exports GIT_DIR (the worktree's
+// own git directory) to the hook, and `git rev-parse --show-toplevel` with GIT_DIR set and no
+// GIT_WORK_TREE answers the cwd, which for `go run -C tools ./preflight` is tools/.
+func TestRepoRoot_linkedWorktreeUnderHookEnv(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git on PATH")
+	}
+	base := t.TempDir()
+	main, wt := filepath.Join(base, "main"), filepath.Join(base, "wt")
+	git := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		// This test may itself run under a hook: the fixture's git must not inherit its GIT_DIR.
+		cmd.Env = append(withoutGitLocation(os.Environ()), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if err := os.MkdirAll(main, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	git(main, "init", "-q")
+	git(main, "commit", "-q", "--allow-empty", "-m", "root")
+	git(main, "worktree", "add", "-q", wt)
+	if err := os.MkdirAll(filepath.Join(wt, "tools"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitDir := git(wt, "rev-parse", "--absolute-git-dir")
+	wantRoot, err := filepath.EvalSymlinks(wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chdir(t, filepath.Join(wt, "tools"))
+	t.Setenv("GIT_DIR", gitDir)
+	got, err := RepoRoot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ = filepath.EvalSymlinks(got); got != wantRoot {
+		t.Fatalf("RepoRoot() with the hook's GIT_DIR = %s, want the worktree root %s", got, wantRoot)
+	}
+}
+
+// The walk-up fallback stops at a linked worktree's .git, which is a file, not a directory.
+func TestRepoRoot_walkUpStopsAtGitFile(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, ".git"), []byte("gitdir: /nonexistent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(base, "tools")
+	if err := os.Mkdir(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, nested)
+	got, err := RepoRoot()
+	if err != nil {
+		t.Fatalf("RepoRoot() error = %v", err)
+	}
+	want, _ := filepath.EvalSymlinks(base)
+	if got, _ = filepath.EvalSymlinks(got); got != want {
+		t.Fatalf("RepoRoot() = %s, want %s", got, want)
+	}
+}
