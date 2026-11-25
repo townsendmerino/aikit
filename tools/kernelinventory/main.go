@@ -63,8 +63,9 @@ func main() {
 			os.Exit(2)
 		}
 		fmt.Printf("wrote %s: %d entry points\n", InventoryPath, len(rows))
-	} else {
-		os.Stdout.Write(out)
+	} else if _, err := os.Stdout.Write(out); err != nil {
+		fmt.Println("VERDICT: FAIL —", err)
+		os.Exit(2)
 	}
 	fmt.Printf("VERDICT: PASS — %d entry points in %d packages\n", len(rows), len(packages))
 }
