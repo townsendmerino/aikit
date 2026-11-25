@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestW4A8Item3ParallelAggregate is the item-3 harness's remaining GO
@@ -25,7 +27,7 @@ import (
 // point polishing single-call variants that don't survive fan-out.
 func TestW4A8Item3ParallelAggregate(t *testing.T) {
 	harnessOnly(t)
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	const (

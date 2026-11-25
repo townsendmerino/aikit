@@ -2,12 +2,14 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 // dotW4A8FoldSDOT returns the per-group-scaled f32 dot Σ_g scale[g]·(act·w)_g of
 // one int4 weight row against the int8 activation row, via the fused NEON+SDOT
 // kernel in dot_w4a8_arm64.s. The f32 weight scales are folded IN-REGISTER (SCVTF
 // + FMLA into a 4-lane accumulator, one FADDP reduce at the end) — no per-group
 // int32 scratch and no Go-side fold loop. Only safe on DotProd-capable cores
-// (gated by hasDotProd, like dotI8SDOT). group is fixed at 32; nGroups = K/32.
+// (gated by cpufeat.HasDotProd, like dotI8SDOT). group is fixed at 32; nGroups = K/32.
 // Validated on M1 Pro (quant_w4a8_test.go + BenchmarkQ4vsQ8).
 //
 //go:noescape
@@ -111,7 +113,7 @@ func dotW4A8SplitHalf4RowDeshared(act *int8, packed0, packed1, packed2, packed3 
 // dot directly; only a ragged final group (K % 32 ≠ 0) is mopped up in Go.
 // Everything off the fast path falls back to the reference.
 func dotW4A8(act []int8, packed []byte, scales []float32, group, K int) float32 {
-	if hasDotProd && group == 32 && K >= 32 {
+	if cpufeat.HasDotProd && group == 32 && K >= 32 {
 		nFull := K / 32
 		total := dotW4A8FoldSDOT(&act[0], &packed[0], &scales[0], nFull)
 		if done := nFull * 32; done < K {

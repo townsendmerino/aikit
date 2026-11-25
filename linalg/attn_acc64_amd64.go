@@ -2,6 +2,8 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 // AVX2 f64 lane-per-output ports of the acc64 attention kernels (audit M-11,
 // docs/task-simd-audit.md S-04's open amd64 half). The identity argument — and
 // in particular why FMA is bit-identical to the Go reference's separate
@@ -13,20 +15,20 @@ package linalg
 // avAcc64AVX32 folds nKeys keys of one 32-dim block of V into 8 YMM f64
 // accumulators (4 lanes each), key-ascending, and stores the 32 sums narrowed
 // to f32 at dst. vals points at the block's first dim of key 0; rows are
-// rowStrideBytes apart. Only safe when hasAVX2.
+// rowStrideBytes apart. Only safe when cpufeat.HasAVX2.
 //
 //go:noescape
 func avAcc64AVX32(scores *float32, vals *float32, nKeys int, rowStrideBytes int, dst *float32)
 
 // qkAcc64AVX4 computes nBlocks×4 keys' dots against q (K = 4·k4 dims, ascending
 // d), one key per f64 lane, and stores them narrowed to f32 at dst. rows points
-// at key 0's first dim; rows are rowStrideBytes apart. Only safe when hasAVX2.
+// at key 0's first dim; rows are rowStrideBytes apart. Only safe when cpufeat.HasAVX2.
 //
 //go:noescape
 func qkAcc64AVX4(q *float32, rows *float32, rowStrideBytes int, k4 int, nBlocks int, dst *float32)
 
 // qkAcc64AVX16 is qkAcc64AVX4 over n16 groups of sixteen keys with four accumulators in flight; the same sums, bit for bit
-// (attn_acc64_amd64.s). Only safe when hasAVX2.
+// (attn_acc64_amd64.s). Only safe when cpufeat.HasAVX2.
 //
 //go:noescape
 func qkAcc64AVX16(q *float32, rows *float32, rowStrideBytes int, k4 int, n16 int, dst *float32)
@@ -38,7 +40,7 @@ func qkAcc64AVX16(q *float32, rows *float32, rowStrideBytes int, k4 int, n16 int
 // nothing to point the kernel at (vals may be empty), so the Go path writes the
 // zeros — the same shape the arm64 sibling takes.
 func avAcc64Blocks(srow, vals, drow []float32, nKeys, hd, headOff, rowStride int) int {
-	if !hasAVX2 || nKeys == 0 {
+	if !cpufeat.HasAVX2 || nKeys == 0 {
 		return 0
 	}
 	d0 := 0
@@ -61,7 +63,7 @@ func qkAcc64Keys(arow, bMat, drow []float32, K, N, bOff, rowStride int) int {
 
 // qkAcc64KeysSplit is qkAcc64Keys's dispatch, returning the keys the 16-key kernel and the 4-key kernel each wrote.
 func qkAcc64KeysSplit(arow, bMat, drow []float32, K, N, bOff, rowStride int) (n16, n4 int) {
-	if !hasAVX2 || K == 0 || K%4 != 0 {
+	if !cpufeat.HasAVX2 || K == 0 || K%4 != 0 {
 		return 0, 0
 	}
 	n16 = qkAcc64Keys16(arow, bMat, drow, K, N, bOff, rowStride)
@@ -80,7 +82,7 @@ func qkAcc64KeysSplit(arow, bMat, drow []float32, K, N, bOff, rowStride int) (n1
 // than the 4-key kernel (measured on a Ryzen 7 3700X, goinfer docs/measurements/cpu-qk-multichain-2026-11-23/README.md). The sums are
 // the same either way.
 func qkAcc64Keys16(arow, bMat, drow []float32, K, N, bOff, rowStride int) int {
-	if !hasAVX2 || K == 0 || K%4 != 0 {
+	if !cpufeat.HasAVX2 || K == 0 || K%4 != 0 {
 		return 0
 	}
 	if aliasingStride(rowStride * 4) {
@@ -95,19 +97,19 @@ func qkAcc64Keys16(arow, bMat, drow []float32, K, N, bOff, rowStride int) int {
 }
 
 // qkAcc64AVX16F16 is qkAcc64AVX16 over a key cache of IEEE binary16 bits: each half widened exactly with VCVTPH2PS, then the same
-// four accumulators and d-ascending chains (attn_acc64_amd64.s). Only safe when hasAVX2 && hasF16C.
+// four accumulators and d-ascending chains (attn_acc64_amd64.s). Only safe when cpufeat.HasAVX2 && cpufeat.HasF16C.
 //
 //go:noescape
 func qkAcc64AVX16F16(q *float32, rows *uint16, rowStrideBytes int, k4 int, n16 int, dst *float32)
 
 // avAcc64AVX32F16 is avAcc64AVX32 over a value cache of IEEE binary16 bits: four halves a VCVTPH2PS, widened exactly, then the same
-// eight accumulators and key-ascending folds. Only safe when hasAVX2 && hasF16C.
+// eight accumulators and key-ascending folds. Only safe when cpufeat.HasAVX2 && cpufeat.HasF16C.
 //
 //go:noescape
 func avAcc64AVX32F16(scores *float32, vals *uint16, nKeys int, rowStrideBytes int, dst *float32)
 
 // qkAcc64AVX4F16 is qkAcc64AVX4 over a key cache of IEEE binary16 bits, the same sums on the widened cache (attn_acc64_amd64.s). Only
-// safe when hasAVX2 && hasF16C.
+// safe when cpufeat.HasAVX2 && cpufeat.HasF16C.
 //
 //go:noescape
 func qkAcc64AVX4F16(q *float32, rows *uint16, rowStrideBytes int, k4 int, nBlocks int, dst *float32)
@@ -121,7 +123,7 @@ func qkAcc64KeysF16(arow []float32, bMat []uint16, drow []float32, K, N, bOff, r
 
 // qkAcc64KeysSplitF16 is qkAcc64KeysF16's dispatch, returning the keys the 16-key kernel and the 4-key kernel each wrote.
 func qkAcc64KeysSplitF16(arow []float32, bMat []uint16, drow []float32, K, N, bOff, rowStride int) (n16, n4 int) {
-	if !hasAVX2 || !hasF16C || K == 0 || K%4 != 0 {
+	if !cpufeat.HasAVX2 || !cpufeat.HasF16C || K == 0 || K%4 != 0 {
 		return 0, 0
 	}
 	n16 = qkAcc64Keys16F16(arow, bMat, drow, K, N, bOff, rowStride)
@@ -136,7 +138,7 @@ func qkAcc64KeysSplitF16(arow []float32, bMat []uint16, drow []float32, K, N, bO
 // qkAcc64Keys16F16 runs whole sixteen-key groups of an f16 key cache through qkAcc64AVX16F16 and returns the keys it wrote (a multiple
 // of 16; 0 where it declines). Like qkAcc64Keys16 it declines a 4 KiB-multiple key stride, whose sixteen live rows share an L1 set.
 func qkAcc64Keys16F16(arow []float32, bMat []uint16, drow []float32, K, N, bOff, rowStride int) int {
-	if !hasAVX2 || !hasF16C || K == 0 || K%4 != 0 || N < 16 {
+	if !cpufeat.HasAVX2 || !cpufeat.HasF16C || K == 0 || K%4 != 0 || N < 16 {
 		return 0
 	}
 	if aliasingStride(rowStride * 2) {
@@ -150,7 +152,7 @@ func qkAcc64Keys16F16(arow []float32, bMat []uint16, drow []float32, K, N, bOff,
 // avAcc64BlocksF16 runs one query row's scores·V over an f16 value cache through avAcc64AVX32F16 for as many whole 32-dim blocks as hd
 // holds and returns the first dim it did not compute; MatmulAVAcc64F16's Go blocks finish from there.
 func avAcc64BlocksF16(srow []float32, vals []uint16, drow []float32, nKeys, hd, headOff, rowStride int) int {
-	if !hasAVX2 || !hasF16C || nKeys == 0 {
+	if !cpufeat.HasAVX2 || !cpufeat.HasF16C || nKeys == 0 {
 		return 0
 	}
 	d0 := 0

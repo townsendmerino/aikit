@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // w4a8TileFixture builds a canonical-layout W4A8 problem: M activation rows,
@@ -35,7 +37,7 @@ func w4a8TileFixture(t *testing.T, M, K, N int) (aq []int8, aScales []float32, p
 // leave every other test in this file passing against the old scalar span while
 // proving nothing about the assembly.
 func TestW4A8Tile4RowSDOT_isLoadBearing(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("no FEAT_DotProd on this CPU — the tile declines by design")
 	}
 	const M, K, N = 8, 128, 16
@@ -67,7 +69,7 @@ func TestW4A8Tile4RowSDOT_isLoadBearing(t *testing.T) {
 // 144 and 100 leave a ragged final group) so the scalar mop-up path is covered
 // too.
 func TestW4A8Tile4RowSDOT_bitIdenticalToFoldSDOT(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("no FEAT_DotProd on this CPU")
 	}
 	for _, K := range []int{32, 64, 100, 128, 144, 160} {
@@ -93,7 +95,7 @@ func TestW4A8Tile4RowSDOT_bitIdenticalToFoldSDOT(t *testing.T) {
 // TestW4A8Tile4RowSDOT_zeroActivationRow pins the aScale==0 shortcut the span
 // has always had: a row that quantized to all zeros stores a literal 0.
 func TestW4A8Tile4RowSDOT_zeroActivationRow(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("no FEAT_DotProd on this CPU")
 	}
 	const M, K, N = 4, 64, 3

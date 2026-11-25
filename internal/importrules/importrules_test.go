@@ -45,13 +45,14 @@ var rules = map[string]rule{
 	"chunk":                {},
 	"internal/accum":       {},
 	"internal/cursor":      {},
+	"internal/cpufeat":     {},
 	"internal/importrules": {},
 
 	// mmap is a leaf among aikit packages. Its one external import is madvise on darwin.
 	"mmap": {ext: []ext{{path: "golang.org/x/sys/unix", goos: "darwin"}}},
 
 	// Kernels and loaders.
-	"linalg": {aikit: []string{"mmap"}},
+	"linalg": {aikit: []string{"internal/cpufeat", "mmap"}},
 	"embed": {
 		aikit: []string{"internal/cursor", "mmap"},
 		ext: []ext{

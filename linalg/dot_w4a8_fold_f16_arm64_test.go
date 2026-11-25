@@ -5,6 +5,8 @@ package linalg
 import (
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestDotW4A8SplitHalf4RowFoldF16_matchesF32 is gate 2 of the L1 arm64 fix for the fused kernel (goinfer
@@ -20,7 +22,7 @@ import (
 //
 // The per-path one-ulp mutation of the pre-registration is TestW4A8F16_everyPathMatchesF32's.
 func TestDotW4A8SplitHalf4RowFoldF16_matchesF32(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	rng := rand.New(rand.NewPCG(28, 9))

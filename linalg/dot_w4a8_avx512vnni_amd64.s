@@ -5,7 +5,7 @@
 // applied in INT32, before the f32 fold.
 //
 // One 32-byte quant group per loop iteration (256-bit VPDPBUSD, AVX512VL —
-// see hasAVX512VNNIVL): unpack 16 packed bytes to 32 unsigned nibble bytes
+// see cpufeat.HasAVX512VNNIVL): unpack 16 packed bytes to 32 unsigned nibble bytes
 // (same VPAND/VPSRLW/VPUNPCKLBW/VPUNPCKHBW prologue as dotW4A8FoldAVX2, minus
 // its two VPSUBB's), VPDPBUSD against the group's 32 activations for the raw
 // nib·act partials, VPDPBUSD against an all-ones vector for the Σact
@@ -28,7 +28,7 @@
 //
 // group fixed at 32 (16 packed bytes / 32 activations per iteration); the Go
 // caller (dotW4A8 in quant_w4a8_amd64.go) routes nGroups=K/32 and mops up any
-// K%32 remainder in scalar. Only called when hasAVX512VNNIVL.
+// K%32 remainder in scalar. Only called when cpufeat.HasAVX512VNNIVL.
 
 #include "textflag.h"
 

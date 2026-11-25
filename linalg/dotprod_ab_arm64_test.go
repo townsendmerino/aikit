@@ -10,16 +10,18 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // DotProd versus the base SMULL/SADALP kernels, interleaved in ONE process, on the production decode and prefill projections of Qwen2.5 0.5B / 1.5B / 7B
 // (goinfer's hardware-coverage task; the pre-registration and the verdict rule are docs/measurements/dotprod-windows-arm-2026-10-04.md in goinfer, and the rule's code is dotprod_ab_stats_test.go).
 //
-// Why in one process: hasDotProd is a package flag read at call time by the dot kernels and the tiles, so one process can flip it between runs. Each cell runs the arms back to back, round after round,
+// Why in one process: cpufeat.HasDotProd is a package flag read at call time by the dot kernels and the tiles, so one process can flip it between runs. Each cell runs the arms back to back, round after round,
 // alternating which arm goes first, so slow drift on a shared machine hits both and an arm that only wins going second shows up as an order effect. The arms:
 //
-//	base       canonical int4 / int8 weights, hasDotProd=false: the SMULL/SADALP kernels a core without DotProd (or aikit before v1.56.0 on Windows ARM) runs
-//	dot        the PRODUCTION DotProd path: int4 as the repacked-only row4 layout (what goinfer's loaders build on arm64), int8 unchanged, hasDotProd=true
+//	base       canonical int4 / int8 weights, cpufeat.HasDotProd=false: the SMULL/SADALP kernels a core without DotProd (or aikit before v1.56.0 on Windows ARM) runs
+//	dot        the PRODUCTION DotProd path: int4 as the repacked-only row4 layout (what goinfer's loaders build on arm64), int8 unchanged, cpufeat.HasDotProd=true
 //	dot-canon  (int4 only) canonical layout with SDOT kernels: attribution of the layout versus the instruction
 //
 // The headline per cell is base/dot. A kernel-level result gives DIRECTION, not size: the repo's own finding is that a kernel microbenchmark's served effect ranged 0.05-1.72x of it. It is enabled by
@@ -97,7 +99,7 @@ func abClockTick() int64 {
 
 type abArm struct {
 	name string
-	dot  bool // hasDotProd while this arm runs
+	dot  bool // cpufeat.HasDotProd while this arm runs
 	w    *WeightMat
 }
 
@@ -105,11 +107,11 @@ func TestDotProdVsBase_AB(t *testing.T) {
 	if os.Getenv("AIKIT_DOTPROD_AB") == "" {
 		t.Skip("AIKIT_DOTPROD_AB unset: this is a measurement, run on purpose")
 	}
-	if !detectDotProd() {
+	if !cpufeat.DetectDotProd() {
 		t.Skip("this core has no DotProd: nothing to compare")
 	}
-	orig := hasDotProd
-	t.Cleanup(func() { hasDotProd = orig })
+	orig := cpufeat.HasDotProd
+	t.Cleanup(func() { cpufeat.HasDotProd = orig })
 	rounds := abEnvInt("AIKIT_DOTPROD_AB_ROUNDS", 21)
 	blockNs := float64(abEnvInt("AIKIT_DOTPROD_AB_BLOCK_MS", 20)) * 1e6
 	t.Logf("DotProd A/B: arch %s/%s, %d logical CPUs, GOMAXPROCS %d, %d rounds per cell (alternating arm order), >=%.0f ms per timed block", runtime.GOOS, runtime.GOARCH, runtime.NumCPU(), runtime.GOMAXPROCS(0), rounds, blockNs/1e6)
@@ -144,7 +146,7 @@ func TestDotProdVsBase_AB(t *testing.T) {
 						run := func(i int) { arms[i].w.MatmulBTInto(ws, a, dst[i], M) }
 						// Both arms must compute the same thing, or the timings compare different work.
 						for i := range arms {
-							hasDotProd = arms[i].dot
+							cpufeat.HasDotProd = arms[i].dot
 							run(i)
 						}
 						if d := abRelDiff(dst[0], dst[1]); d > 1e-4 {
@@ -154,7 +156,7 @@ func TestDotProdVsBase_AB(t *testing.T) {
 						ns := make([]float64, len(arms))
 						n := make([]int, len(arms))
 						for i := range arms {
-							hasDotProd = arms[i].dot
+							cpufeat.HasDotProd = arms[i].dot
 							run(i)
 							n[i] = abCalibrate(func() { run(i) }, 1.5*blockNs) // a margin: the rounds can run faster than the calibration saw, and a block under spec is refused
 						}
@@ -174,7 +176,7 @@ func TestDotProdVsBase_AB(t *testing.T) {
 								}
 							}
 							for _, i := range order {
-								hasDotProd = arms[i].dot
+								cpufeat.HasDotProd = arms[i].dot
 								run(i) // warm this arm after the switch
 								for attempt := 0; ; attempt++ {
 									ns[i] = abTime(n[i], func() { run(i) })
@@ -235,10 +237,10 @@ func abBuildArms(t *testing.T, quant string, src []float32, p abProj) []abArm {
 	t.Helper()
 	switch quant {
 	case "int4":
-		hasDotProd = false
+		cpufeat.HasDotProd = false
 		canon := QuantizeInt4(src, p.N, p.K, 32)
 		base := canon // an independent copy of the struct; the byte slices are shared and never written
-		hasDotProd = true
+		cpufeat.HasDotProd = true
 		q4, s16, _, okView := canon.Int4F16()
 		if !okView {
 			t.Fatalf("int4 weight has no canonical view")
@@ -252,7 +254,7 @@ func abBuildArms(t *testing.T, quant string, src []float32, p abProj) []abArm {
 		dc := canon
 		return []abArm{{"base", false, &base}, {"dot", true, &row4}, {"dot-canon", true, &dc}}
 	default:
-		hasDotProd = true
+		cpufeat.HasDotProd = true
 		w := QuantizeInt8(src, p.N, p.K, true)
 		w2 := w
 		return []abArm{{"base", false, &w}, {"dot", true, &w2}}

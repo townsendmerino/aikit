@@ -5,10 +5,12 @@ package linalg
 import (
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 func TestDotI8Scaled32x2_matchesGo(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2")
 	}
 	r := rand.New(rand.NewPCG(41, 42))

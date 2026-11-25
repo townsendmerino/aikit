@@ -6,13 +6,15 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // BenchmarkExpF32KernelsAMD64 is the amd64 half of the S-06 step-2 speed row.
 // The f64_mathExp arm is what goinfer calls today, so it is the comparison that
 // decides what the swap is worth on this architecture.
 func BenchmarkExpF32KernelsAMD64(b *testing.B) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		b.Skip("no AVX2+FMA3")
 	}
 	const n = 8960
