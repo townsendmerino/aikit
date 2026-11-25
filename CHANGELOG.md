@@ -61,6 +61,9 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+- **`MatmulBTW4A8Row4Into` (arm64) refuses a K that is not a positive multiple of 32 with a workspace activation group set**, as it
+  already did without one. That path skipped the check and indexed past the 4-row weights, whose layout stores 16 bytes per 32-wide
+  group (`slice bounds out of range [:16] with capacity 8` at K=1; `TestMatmulBTW4A8Row4Into_raggedKRefusedWithActGroup`).
 - **`embed` refused a legitimate tensor of a type denser than 0.25 bytes per element when it filled the data section.**
   `RowDequantizer` bounds an untrusted tensor's element count by the data section's size before multiplying its dims; the
   bound assumed at most 4 elements a byte, and IQ1_S stores 5.12 (TQ1_0 4.7, IQ1_M 4.6). It is now 6.

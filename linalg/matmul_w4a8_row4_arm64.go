@@ -112,21 +112,21 @@ func MatmulBTW4A8Row4Into(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []
 	if N%4 != 0 {
 		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires N a multiple of 4, got %d", N))
 	}
+	// The 4-row layout stores 16 bytes per 32-wide group, so a ragged K has no valid
+	// layout on either path below; K=0 passes K%group and then indexes an empty block.
+	if K%group != 0 {
+		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires K a multiple of group=%d, got %d", group, K))
+	}
+	if K < group {
+		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires K >= group=%d, got %d", group, K))
+	}
 	if g := actGroupFor(ws); g > 0 {
-		if g == 32 && K%32 == 0 && K >= 32 {
+		if g == 32 {
 			matmulBTW4A8Row4GroupedInto(ws, a, w4Row4, wScales4, dst, K, N)
 			return
 		}
 		matmulW4A8Grouped(ws, g, a, int4Layout{r4: w4Row4, r4S: wScales4, group: group, K: K}, dst, M, N) // actgroup.go
 		return
-	}
-	if K%group != 0 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires K a multiple of group=%d, got %d", group, K))
-	}
-	// Same K=0 hole as MatmulBTW4A8Row4TileInto: K%group==0 admits it, and the
-	// span then indexes an empty block.
-	if K < group {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires K >= group=%d, got %d", group, K))
 	}
 	nGroups, bpr := groupsFor(K, group)
 	aq := ws.int8Buf(K)
