@@ -142,7 +142,7 @@ func MatmulBTW4A8Row4Into(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []
 	// accumulators' initial value. corr is the activation's per-lane sums × -8,
 	// computed ONCE per call here (K/32 groups, two SDOTs each) and shared by every
 	// quad; the row kernel then skips both per-row VSUBs. nil corr selects the
-	// pre-S-05 kernel — bit-identical, kept for the in-process A/B (SetW4A8RowFold).
+	// pre-S-05 kernel — bit-identical, kept for the in-process A/B (SetW4A8RowFoldForTest).
 	var corr []int32
 	if w4a8RowFold {
 		corr = ws.int32Buf(4 * nGroups)

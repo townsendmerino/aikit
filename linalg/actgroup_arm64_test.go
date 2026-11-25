@@ -60,11 +60,11 @@ func TestActGroup_row4KernelMatchesReference(t *testing.T) {
 	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, 1, N)
 	r4, r4s := RepackW4A8Row4(q4, N, K, 32), RepackW4A8Row4Scales(s4, N, K, 32)
 	for _, fold := range []bool{true, false} {
-		prev := W4A8RowFold()
-		SetW4A8RowFold(fold)
+		prev := W4A8RowFoldForTest()
+		SetW4A8RowFoldForTest(fold)
 		got := make([]float32, N)
 		MatmulBTW4A8Row4Into(new(Workspace), a, r4, r4s, got, 1, K, N, 32)
-		SetW4A8RowFold(prev)
+		SetW4A8RowFoldForTest(prev)
 		if e := agRelErr(got, ref); e > 1e-6 {
 			t.Errorf("fold=%v: row4 grouped kernel vs reference: rel err %.3g", fold, e)
 		}
