@@ -1,6 +1,6 @@
 //go:build amd64
 
-package linalg
+package attn
 
 import (
 	"fmt"
@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/townsendmerino/aikit/internal/cpufeat"
+
+	"github.com/townsendmerino/aikit/linalg"
 )
 
 // BenchmarkQkAcc64Stride times the 4-key and 16-key acc64 QK kernels on one thread over one head of a cache whose key rows are
@@ -58,7 +60,7 @@ func BenchmarkQkAcc64StrideF16(b *testing.B) {
 			f[i] = float32(rng.NormFloat64())
 		}
 		rows := make([]uint16, len(f))
-		F32ToF16Slice(rows, f)
+		linalg.F32ToF16Slice(rows, f)
 		q := make([]float32, K)
 		for i := range q {
 			q[i] = float32(rng.NormFloat64())

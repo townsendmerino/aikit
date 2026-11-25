@@ -56,7 +56,8 @@ large embedded-grammar payload) — is quarantined in the separate
 | `sparse` | learned-sparse (SPLADE) retrieval — inverted index + sparse-dot scoring over vectors from `encoder.SPLADE` (in-process) or precomputed | `topk` |
 | `late` *(Experimental)* | ColBERT-style late-interaction (MaxSim) reranking over pre-computed per-token vectors (`encoder.Model.EncodeTokens`) — a shortlist reranker, not a corpus-scale index | `linalg`, `topk` |
 | `bench` | reproducible recall + latency harness for the dense indexes (Flat / HNSW / FlatI8) — Experimental tooling | `ann` |
-| `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | `linalg/elem`, `mmap` |
+| `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | `mmap` |
+| `linalg/attn` | attention kernels: the f64-accumulating QK and AV matmuls (f32 and binary16 caches, per head and grouped) and the fused attention tile | `linalg/elem` |
 | `linalg/elem` | elementwise kernels: exp, tanh, erf, SiLU, GELU and softmax, scalar and in-place forms, and the contract forms (every multiply-add fused, the same bits on every architecture) | — |
 | `mmap` | read-only file mapping + `madvise` residency hints + a demand-signal-agnostic `SpanCache` (LRU spans under a byte budget) — the substrate the `ann`, `bm25`, `embed` and `linalg` mmap loaders sit on; cgo-free, `!unix` heap fallback | `golang.org/x/sys` *(darwin only)* |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `mmap`, `golang.org/x/text`, `golang.org/x/sys` *(amd64 only)* |
@@ -418,7 +419,7 @@ no such consumer has surfaced yet.
   (`QuantizeActivations{,Into}`, `MatmulBTW8A8Pre`, `DequantizeRowsInt8Into`) and
   the Hamming/SimHash primitives (`PackSignBits{,Row}`, `PackedWords`,
   `HammingRows`) — new surface.
-- `linalg`'s fused attention (v1.35.0) — `AttendTileFused`, `FusedAttnScratch`,
+- `linalg`'s fused attention (v1.35.0; now `linalg/attn`) — `AttendTileFused`, `FusedAttnScratch`,
   `NewFusedAttnScratch`, `FusedAttnKeyBlock`, `GatherVBlockMajor`. A
   FlashAttention-style single-tile schedule that keeps the score block resident
   rather than materializing `kt × nKeys`. **Deliberately NOT bit-identical to a
@@ -431,7 +432,7 @@ no such consumer has surfaced yet.
   package.
 - The concrete chunker structs (`regex.Chunker`, `markdown.Chunker`,
   `treesitter.Chunker`) and their `New()` — prefer `chunk.Get("regex")`.
-- `linalg.MatmulQKAcc64Group` / `linalg.MatmulAVAcc64Group` (v1.46.0) — grouped
+- `linalg.MatmulQKAcc64Group` / `linalg.MatmulAVAcc64Group` (v1.46.0; now `linalg/attn`) — grouped
   float64-accumulating QK/AV attention kernels that share one KV head's K/V load
   across all `G` query heads instead of reloading it per head (the `Acc64`
   reassociation-error motivation is the same as `MatmulBTAcc64`, above, applied

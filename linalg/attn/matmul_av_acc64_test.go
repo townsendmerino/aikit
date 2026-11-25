@@ -1,8 +1,10 @@
-package linalg
+package attn
 
 import (
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/linalg"
 )
 
 // TestMatmulAVAcc64_exactMatchesStrided proves MatmulAVAcc64 (keys-outer/
@@ -37,7 +39,7 @@ func TestMatmulAVAcc64_exactMatchesStrided(t *testing.T) {
 				vals := randVec(rng, s.nKeys*kvDim)
 
 				want := make([]float32, s.M*s.hd)
-				MatmulBTAcc64Strided(scores, vals, want, s.M, s.nKeys, s.hd, kvh*s.hd, 1, kvDim)
+				linalg.MatmulBTAcc64Strided(scores, vals, want, s.M, s.nKeys, s.hd, kvh*s.hd, 1, kvDim)
 
 				got := make([]float32, s.M*s.hd)
 				acc := make([]float64, s.hd)

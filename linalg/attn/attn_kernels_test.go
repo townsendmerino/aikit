@@ -1,9 +1,11 @@
-package linalg
+package attn
 
 import (
 	"fmt"
 
 	"github.com/townsendmerino/aikit/internal/kernreg"
+
+	"github.com/townsendmerino/aikit/linalg"
 )
 
 var attnRows = []kernreg.Row{
@@ -67,7 +69,7 @@ func shapeIndices(n int) []int {
 // seqF16 is seqF32's values as binary16 bits.
 func seqF16(n, seed int) []uint16 {
 	x := make([]uint16, n)
-	F32ToF16Slice(x, seqF32(n, seed))
+	linalg.F32ToF16Slice(x, seqF32(n, seed))
 	return x
 }
 

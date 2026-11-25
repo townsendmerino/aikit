@@ -1,12 +1,14 @@
 //go:build arm64
 
-package linalg
+package attn
 
 import (
 	"math"
 	"math/rand"
 	randv2 "math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/linalg"
 )
 
 // The NEON kernels against the Go kernels they replace, called directly so no
@@ -158,7 +160,7 @@ func TestAttnAcc64_publicKernelsMixedShapes(t *testing.T) {
 			scores := adversarialF32(rng, sh.M*sh.nKeys)
 			vals := adversarialF32(rng, sh.nKeys*kvDim)
 			want := make([]float32, sh.M*sh.hd)
-			MatmulBTAcc64Strided(scores, vals, want, sh.M, sh.nKeys, sh.hd, kvh*sh.hd, 1, kvDim)
+			linalg.MatmulBTAcc64Strided(scores, vals, want, sh.M, sh.nKeys, sh.hd, kvh*sh.hd, 1, kvDim)
 			got := make([]float32, sh.M*sh.hd)
 			MatmulAVAcc64(scores, vals, got, make([]float64, sh.hd), sh.M, sh.nKeys, sh.hd, kvh*sh.hd, kvDim)
 			for i := range want {
@@ -170,7 +172,7 @@ func TestAttnAcc64_publicKernelsMixedShapes(t *testing.T) {
 			q := adversarialF32(rng, sh.M*sh.hd)
 			keys := adversarialF32(rng, sh.nKeys*kvDim)
 			wantQ := make([]float32, sh.M*sh.nKeys)
-			MatmulBTAcc64Strided(q, keys, wantQ, sh.M, sh.hd, sh.nKeys, kvh*sh.hd, kvDim, 1)
+			linalg.MatmulBTAcc64Strided(q, keys, wantQ, sh.M, sh.hd, sh.nKeys, kvh*sh.hd, kvDim, 1)
 			gotQ := make([]float32, sh.M*sh.nKeys)
 			MatmulQKAcc64(q, keys, gotQ, sh.M, sh.hd, sh.nKeys, kvh*sh.hd, kvDim)
 			for i := range wantQ {

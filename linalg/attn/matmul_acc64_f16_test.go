@@ -1,9 +1,11 @@
-package linalg
+package attn
 
 import (
 	"math"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/linalg"
 )
 
 // f16Cache returns n halves drawn from N(0, 1) and their exact f32 widening: the f16 kernels must equal the f32 kernels run on the
@@ -19,9 +21,9 @@ func f16Cache(rng *rand.Rand, n int, subnormal ...int) ([]uint16, []float32) {
 		f[at] = []float32{3e-6, -6e-8}[i%2]
 	}
 	h := make([]uint16, n)
-	F32ToF16Slice(h, f)
+	linalg.F32ToF16Slice(h, f)
 	w := make([]float32, n)
-	F16ToF32Slice(w, h)
+	linalg.F16ToF32Slice(w, h)
 	return h, w
 }
 

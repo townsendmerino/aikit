@@ -1,6 +1,6 @@
 //go:build arm64
 
-package linalg
+package attn
 
 // NEON f64 lane-per-output ports of the acc64 attention kernels
 // (task-simd-audit.md S-04, step 2). The identity argument and the instruction

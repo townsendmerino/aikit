@@ -1,9 +1,11 @@
-package linalg
+package attn
 
 import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/linalg"
 )
 
 // refAttendTileFused is goinfer's decoder/fusedattn.go body, FROZEN at the move (M1). It is the
@@ -211,12 +213,12 @@ func TestAttendTileFused_bitIdenticalToGoinferRef(t *testing.T) {
 
 		chA := make([]float32, c.kt*c.hd)
 		chB := make([]float32, c.kt*c.hd)
-		refAttendTileFused(MatmulBT, qh, khA, vBlkA, chA,
+		refAttendTileFused(linalg.MatmulBT, qh, khA, vBlkA, chA,
 			make([]float32, c.kt*512), make([]float32, c.kt*c.hd), make([]float32, c.kt*c.hd),
 			make([]float32, c.kt), make([]float32, c.kt),
 			c.kt, c.hd, c.nKeys, c.scale, lo, hi)
 		sc := NewFusedAttnScratch(c.kt, c.hd)
-		if !AttendTileFused(MatmulBT, qh, khB, vBlkB, chB, sc, c.kt, c.hd, c.nKeys, c.scale, lo, hi) {
+		if !AttendTileFused(linalg.MatmulBT, qh, khB, vBlkB, chB, sc, c.kt, c.hd, c.nKeys, c.scale, lo, hi) {
 			t.Fatalf("%s hd=%d nKeys=%d: AttendTileFused declined a shape the reference accepted",
 				c.name, c.hd, c.nKeys)
 		}
@@ -259,7 +261,7 @@ func TestAttendTileFused_matchesAcc64WithinCosine(t *testing.T) {
 	GatherVBlockMajor(kh, vBlk, keys, vals, kvh, hd, kvDim, nKeys)
 	got := make([]float32, kt*hd)
 	sc := NewFusedAttnScratch(kt, hd)
-	if !AttendTileFused(MatmulBT, qh, kh, vBlk, got, sc, kt, hd, nKeys, scale, lo, hi) {
+	if !AttendTileFused(linalg.MatmulBT, qh, kh, vBlk, got, sc, kt, hd, nKeys, scale, lo, hi) {
 		t.Fatal("declined")
 	}
 

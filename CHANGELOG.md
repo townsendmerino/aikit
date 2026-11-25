@@ -11,6 +11,12 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **The attention kernels move from `linalg` to `linalg/attn`**: `MatmulQKAcc64`, `MatmulAVAcc64`, their `Group` and `F16`
+  forms, `AttendTileFused`, `AttendTileFusedContractExp`, `FusedAttnScratch`, `NewFusedAttnScratch`, `FusedAttnKeyBlock` and
+  `GatherVBlockMajor`: 12 names, unchanged but for the package. attn imports `linalg/elem` and nothing from `linalg`; its tests
+  compare against `linalg`'s `MatmulBT` and `MatmulBTAcc64Strided`. It carries its own output-contract cases, kernel-registry
+  rows and over-read adapters.
+
 - **The elementwise kernels move from `linalg` to `linalg/elem`**: `ExpF32`, `TanhF32`, `ErfF32`, `GELUF32`, `GELUTanhF32`,
   `SiLUF32` and their `*Into` forms, the contract forms (`ExpContractInto`, `GELUContractInto`, `GELUTanhContractInto`,
   `SiLUContractInto`, `SoftmaxRowContractInto`, `SoftmaxRowScaledContractInto`) and `SoftmaxRowInto`/`SoftmaxRowScaledInto`:

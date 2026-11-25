@@ -61,16 +61,17 @@ var rules = map[string]rule{
 	"internal/cpufeat":               {},
 	"internal/guardmem":              {},
 	"internal/importrules":           {},
-	"linalg/internal/shape":          {},
-	"internal/kernreg":               {aikit: []string{"internal/guardmem"}},
 	"internal/half":                  {},
 	"linalg/internal/outputcontract": {},
+	"linalg/internal/shape":          {},
+	"internal/kernreg":               {aikit: []string{"internal/guardmem"}},
 
 	// mmap is a leaf among aikit packages. Its one external import is madvise on darwin.
 	"mmap": {ext: []ext{{path: "golang.org/x/sys/unix", goos: "darwin"}}},
 
 	// Kernels and loaders.
-	"linalg":      {aikit: []string{"internal/cpufeat", "internal/half", "linalg/elem", "linalg/internal/shape", "mmap"}},
+	"linalg":      {aikit: []string{"internal/cpufeat", "internal/half", "linalg/internal/shape", "mmap"}},
+	"linalg/attn": {aikit: []string{"internal/half", "linalg/elem", "linalg/internal/shape"}, aikitOn: []ext{{path: "internal/cpufeat", goarch: "amd64"}}},
 	"linalg/elem": {aikitOn: []ext{{path: "internal/cpufeat", goarch: "amd64"}}},
 	"embed": {
 		aikit: []string{"internal/cursor", "internal/half", "mmap"},
