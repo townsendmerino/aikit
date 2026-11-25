@@ -123,6 +123,16 @@ func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) 
 // the only way q4Row4 got populated was RepackInt4Row4 itself.
 func row4Usable() bool { return cpufeat.HasDotProd }
 
+// requireRow4DotProd refuses, by name, a call to one of the exported 4-row W4A8 matmuls
+// on a CPU without DotProd: their kernels are SDOT throughout, and without the
+// instruction they would die with SIGILL. Callers check row4Usable (WeightMat does) or
+// use MatmulBTW4A8Into with the canonical layout.
+func requireRow4DotProd(fn string) {
+	if !row4Usable() {
+		panic("linalg: " + fn + " requires DotProd (SDOT); use MatmulBTW4A8Into with the canonical layout")
+	}
+}
+
 // w4a8BatchRow4Span is w4a8Row4Span reached from the portable batch span. It
 // exists only so MatmulBTW4A8Batch can name the row4 kernel from quant.go,
 // which is compiled on every architecture; the non-arm64 twin is unreachable

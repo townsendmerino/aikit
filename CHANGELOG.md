@@ -66,6 +66,11 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+- **The exported 4-row W4A8 matmuls refuse a CPU without DotProd by name instead of dying with SIGILL** (arm64:
+  `MatmulBTW4A8Row4Into`, `MatmulBTW4A8Row4TileInto`, `MatmulBTW4A8Row4PrefetchInto`, `MatmulBTW4A8Row4DesharedInto`). Their
+  kernels are SDOT throughout, and only `WeightMat`'s path checked for the instruction; a caller of the exported functions on a
+  core without it (a Cortex-A72, or under `aikit_nodotprod`) now gets "requires DotProd (SDOT); use MatmulBTW4A8Into"
+  (`TestRow4Matmuls_refuseWithoutDotProd`).
 - **Under `GOEXPERIMENT=simd`, the element-wise and softmax kernels no longer read past a short tail** (`linalg`: `ExpF32Into`,
   `SiLUInto`, `GELUInto`, `GELUTanhInto`, `TanhInto` and the `SoftmaxRow*Into` family, with their `Contract` forms; `encoder`'s
   log1p pooling). Their last partial vector went through `simd.LoadFloat32sPart` and `StorePart`, which on amd64 read a whole vector,
