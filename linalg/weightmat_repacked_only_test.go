@@ -58,7 +58,7 @@ func TestWeightMatInt4_truthTable(t *testing.T) {
 
 	check := func(t *testing.T, w *WeightMat, wantKind string, wantIsInt4 bool, wantInt4OK bool, wantLayout string) {
 		t.Helper()
-		if k := w.Kind(); k != wantKind {
+		if k := w.Kind().String(); k != wantKind {
 			t.Errorf("Kind() = %q, want %q", k, wantKind)
 		}
 		if got := w.IsInt4(); got != wantIsInt4 {

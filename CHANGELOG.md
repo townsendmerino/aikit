@@ -11,6 +11,11 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **`WeightMat.Kind` returns a typed `linalg.Kind`** (LS6, step 1): a string type with constants `KindF32`, `KindF16`,
+  `KindBF16`, `KindInt8`, `KindInt4`, `KindQ4K`, `KindQ5K`, `KindQ6K` and `KindNone`, whose `String()` returns today's
+  names byte for byte (`TestKind_stringsAreStable`). A comparison with a string constant compiles unchanged; a use as a
+  plain string adds `.String()`.
+
 - **Names nothing outside their package called are unexported** (LS2, from the type-checker census in
   `docs/internal/linalg-census-2026-11.md`, re-run per package after the split): in `linalg/elem` `ErfF32`, `ExpF32`, `GELUF32`,
   `TanhF32`, `ExpF32Into`, `GELUInto`, `SiLUInto`, `SoftmaxRowInto`, `SoftmaxRowScaledInto`; in `linalg/attn`

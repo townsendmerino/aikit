@@ -94,14 +94,14 @@ func (w *WeightMat) kquantRaw(k uint8) ([]byte, bool) {
 }
 
 // kquantKind is Kind's label for the K-quant kinds.
-func (w *WeightMat) kquantKind() string {
+func (w *WeightMat) kquantKind() Kind {
 	switch w.kqKind {
 	case kqQ5K:
-		return "q5k"
+		return KindQ5K
 	case kqQ6K:
-		return "q6k"
+		return KindQ6K
 	}
-	return "q4k"
+	return KindQ4K
 }
 
 // matmulKQuant is MatmulBT / MatmulBTInto for the K-quant kinds; ws may be nil.

@@ -492,26 +492,45 @@ func (w *WeightMat) Row(i int, dst []float32) {
 func (w *WeightMat) Rows() int { return w.rows }
 func (w *WeightMat) Cols() int { return w.cols }
 
-// Kind reports the stored precision: "q4k", "q5k", "q6k", "int4", "int8", "bf16", "f16", "f32", or "" (empty/zero value).
-// Reports "int4" for a repacked-only WeightMat too (audit M-22) — Kind is a
-// precision label, not a "canonical bytes present" check; use Int4() for that.
-func (w *WeightMat) Kind() string {
+// Kind is how a WeightMat stores its weights. Its strings are stable, byte for byte: consumers compare them (goinfer's
+// .giw writer and fit planner among them), so a new kind adds a value and never renames one.
+type Kind string
+
+// The kinds a WeightMat can hold. KindNone is the zero WeightMat's.
+const (
+	KindNone Kind = ""
+	KindF32  Kind = "f32"
+	KindF16  Kind = "f16"
+	KindBF16 Kind = "bf16"
+	KindInt8 Kind = "int8"
+	KindInt4 Kind = "int4"
+	KindQ4K  Kind = "q4k"
+	KindQ5K  Kind = "q5k"
+	KindQ6K  Kind = "q6k"
+)
+
+// String returns k's stable name ("int4", "q4k", ...).
+func (k Kind) String() string { return string(k) }
+
+// Kind reports the stored precision. It is KindInt4 for a repacked-only WeightMat too: Kind is a precision label, not a
+// "canonical bytes present" check (use Int4F16 for that).
+func (w *WeightMat) Kind() Kind {
 	switch {
 	case w.kq != nil:
 		return w.kquantKind()
 	case w.q4 != nil, w.q4Row4 != nil, w.q4SplitHalf != nil:
-		return "int4"
+		return KindInt4
 	case w.q8 != nil:
-		return "int8"
+		return KindInt8
 	case w.h16 != nil:
 		if w.h16Kind == half16BF16 {
-			return "bf16"
+			return KindBF16
 		}
-		return "f16"
+		return KindF16
 	case w.f32 != nil:
-		return "f32"
+		return KindF32
 	default:
-		return ""
+		return KindNone
 	}
 }
 
