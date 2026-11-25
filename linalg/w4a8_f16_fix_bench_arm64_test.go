@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/townsendmerino/aikit/internal/cpufeat"
+
+	"github.com/townsendmerino/aikit/internal/half"
 )
 
 // BenchmarkW4A8Row4F16Fix is the L1 arm64 fix's pre-registered A-or-B instrument (goinfer
@@ -17,7 +19,7 @@ import (
 // matmul over a cold, DRAM-streamed bank, through the parallel workspace, on four model shapes. Four arms see
 // identical weights:
 //   - f32: the f32-scale kernel (the pre-v1.50.0 decode);
-//   - scalar: binary16 scales widened per quad by the scalar f16ToF32 loop (v1.50.0's arm64 path, reproduced
+//   - scalar: binary16 scales widened per quad by the scalar half.ToF32 loop (v1.50.0's arm64 path, reproduced
 //     here, since widenF16 is now NEON);
 //   - neon: binary16 scales widened per quad by the NEON widenF16, then the f32 kernel (candidate A);
 //   - fused: dotW4A8SplitHalf4RowFoldF16, widening in-kernel (candidate B).
@@ -94,7 +96,7 @@ func f16FixBank(K, N, n int) []f16FixMat {
 		s16 := RepackW4A8Row4ScalesF16(F32ToF16Scales(s), N, K, 32)
 		s32 := make([]float32, len(s16))
 		for j, h := range s16 {
-			s32[j] = f16ToF32(h)
+			s32[j] = half.ToF32(h)
 		}
 		bk[i] = f16FixMat{row4: RepackW4A8Row4(p, N, K, 32), s16: s16, s32: s32}
 	}
@@ -103,7 +105,7 @@ func f16FixBank(K, N, n int) []f16FixMat {
 }
 
 // matmulRow4F16ScalarWiden is matmulBTW4A8Row4F16Into's folded M=1 path as aikit v1.50.0 ran it on arm64:
-// each quad's scales widened by the scalar f16ToF32 into a buffer, then the f32 kernel.
+// each quad's scales widened by the scalar half.ToF32 into a buffer, then the f32 kernel.
 func matmulRow4F16ScalarWiden(ws *Workspace, a []float32, w4Row4 []byte, s4 []uint16, dst []float32, K, N int) {
 	nGroups, bpr := groupsFor(K, 32)
 	aq := ws.int8Buf(K)
@@ -116,7 +118,7 @@ func matmulRow4F16ScalarWiden(ws *Workspace, a []float32, w4Row4 []byte, s4 []ui
 		for q := q0; q < q1; q++ {
 			blk := w4Row4[q*4*bpr : q*4*bpr+4*bpr]
 			for i, h := range s4[q*4*nGroups : q*4*nGroups+4*nGroups] {
-				sblk[i] = f16ToF32(h)
+				sblk[i] = half.ToF32(h)
 			}
 			dotW4A8SplitHalf4RowFold(&aq[0], &corr[0], &blk[0], &sblk[0], &out[0], nGroups)
 			dst[q*4] = out[0] * aScale
