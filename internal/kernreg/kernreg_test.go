@@ -79,6 +79,17 @@ func TestSameBits(t *testing.T) {
 	if sameBits([]float32{0}, []float32{negZero}) {
 		t.Error("+0 and -0 compared equal")
 	}
+	type hidden struct {
+		n int
+		f []float32
+		m map[string]int
+	}
+	if !sameBits(hidden{3, []float32{1}, map[string]int{"a": 1, "b": 2}}, hidden{3, []float32{1}, map[string]int{"b": 2, "a": 1}}) {
+		t.Error("equal structs with unexported fields compared unequal")
+	}
+	if sameBits(hidden{n: 3}, hidden{n: 4}) {
+		t.Error("structs differing in an unexported field compared equal")
+	}
 	if sameBits([]int8{1, 2}, []int8{1, 2, 0}) || sameBits([]int32{1}, []int32{2}) {
 		t.Error("different results compared equal")
 	}

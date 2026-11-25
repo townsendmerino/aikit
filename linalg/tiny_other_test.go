@@ -84,19 +84,6 @@ func toQK() []toShape {
 	return out
 }
 
-// toWithout drops the shapes skip reports: the shapes of a FINDING, so the rest still run.
-func toWithout(shapes []toShape, skip func(toShape) bool) []toShape {
-	return slices.DeleteFunc(slices.Clone(shapes), skip)
-}
-
-// toEmptyN is a one-length shape of length 0, toEmptyRC a matrix shape with no
-// elements, and toNoGroup a shape whose group size is 0.
-func toEmptyN(s toShape) bool { return s.C == 0 }
-
-func toEmptyRC(s toShape) bool { return s.R*s.C == 0 }
-
-func toNoGroup(s toShape) bool { return s.G == 0 }
-
 // toCeil is ⌈a/b⌉, and 0 for b ≤ 0 (no group size, so no groups to size a buffer for).
 func toCeil(a, b int) int {
 	if b <= 0 {
@@ -207,8 +194,7 @@ func tinyOtherAdapters() []kernreg.Adapter {
 			F16ToF32Slice(dst, kernreg.Put(p, "src", F32ToF16Scales(seqF32(s.C, 1))))
 			return []any{dst}
 		}),
-		// FINDING: F32ToF16Slice panics (slice bounds out of range [-1:]) on an empty src.
-		toAd("F32ToF16Slice", toWithout(toN(), toEmptyN), func(p *kernreg.Placer, s toShape) []any {
+		toAd("F32ToF16Slice", toN(), func(p *kernreg.Placer, s toShape) []any {
 			dst := kernreg.Put(p, "dst", make([]uint16, s.C))
 			F32ToF16Slice(dst, kernreg.Put(p, "src", seqF32(s.C, 1)))
 			return []any{dst}
@@ -226,8 +212,7 @@ func tinyOtherAdapters() []kernreg.Adapter {
 			DequantizeRowsInt8Into(dst, kernreg.Put(p, "q", seqI8(s.R*s.C, 1)), kernreg.Put(p, "scales", seqF32(s.R, 2)), s.R, s.C)
 			return []any{dst}
 		}),
-		// FINDING: DequantizeRowInt4 divides by zero at group 0 instead of refusing it.
-		toAd("DequantizeRowInt4", toWithout(toRCG(), toNoGroup), func(p *kernreg.Placer, s toShape) []any {
+		toAd("DequantizeRowInt4", toRCG(), func(p *kernreg.Placer, s toShape) []any {
 			dst := kernreg.Put(p, "dst", make([]float32, s.C))
 			DequantizeRowInt4(kernreg.Put(p, "packed", seqU8((s.C+1)/2, 1)), kernreg.Put(p, "scales", seqF32(toCeil(s.C, s.G), 2)), s.G, s.C, dst)
 			return []any{dst}
@@ -247,15 +232,13 @@ func tinyOtherAdapters() []kernreg.Adapter {
 			QuantizeActivationsInto(aq, sc, kernreg.Put(p, "a", seqF32(s.R*s.C, 1)), s.R, s.C)
 			return []any{aq, sc}
 		}),
-		// FINDING: QuantizeActivationsGroupedInto divides by zero at group 0 instead of refusing it.
-		toAd("QuantizeActivationsGroupedInto", toWithout(toRCG(), toNoGroup), func(p *kernreg.Placer, s toShape) []any {
+		toAd("QuantizeActivationsGroupedInto", toRCG(), func(p *kernreg.Placer, s toShape) []any {
 			aq := kernreg.Put(p, "aq", make([]int8, s.R*s.C))
 			sc := kernreg.Put(p, "scales", make([]float32, s.R*toCeil(s.C, s.G)))
 			QuantizeActivationsGroupedInto(aq, sc, kernreg.Put(p, "a", seqF32(s.R*s.C, 1)), s.R, s.C, s.G)
 			return []any{aq, sc}
 		}),
-		// FINDING: SumActGroupsInto divides by zero at group 0 instead of refusing it.
-		toAd("SumActGroupsInto", toWithout(toRCG(), toNoGroup), func(p *kernreg.Placer, s toShape) []any {
+		toAd("SumActGroupsInto", toRCG(), func(p *kernreg.Placer, s toShape) []any {
 			sum := kernreg.Put(p, "sumAct", make([]int32, s.R*toCeil(s.C, s.G)))
 			SumActGroupsInto(sum, kernreg.Put(p, "aq", seqI8(s.R*s.C, 1)), s.R, s.C, s.G)
 			return []any{sum}
@@ -269,8 +252,7 @@ func tinyOtherAdapters() []kernreg.Adapter {
 			q := QuantizeActQ8K(kernreg.Put(p, "a", seqF32(s.R*s.C, 1)), s.R, s.C)
 			return []any{q}
 		}),
-		// FINDING: QuantizeGroupInt4Row divides by zero at group 0, where QuantizeGroupsInt4 refuses it.
-		toAd("QuantizeGroupInt4Row", toWithout(toRCG(), toNoGroup), func(p *kernreg.Placer, s toShape) []any {
+		toAd("QuantizeGroupInt4Row", toRCG(), func(p *kernreg.Placer, s toShape) []any {
 			packed := kernreg.Put(p, "packed", make([]byte, (s.C+1)/2))
 			sc := kernreg.Put(p, "scales", make([]float32, toCeil(s.C, s.G)))
 			QuantizeGroupInt4Row(kernreg.Put(p, "row", seqF32(s.C, 1)), s.C, s.G, packed, sc)
@@ -291,8 +273,7 @@ func tinyOtherAdapters() []kernreg.Adapter {
 		toAd("QuantizeBF16", toRC(), func(p *kernreg.Placer, s toShape) []any {
 			return toWM(QuantizeBF16(kernreg.Put(p, "w", seqF32(s.R*s.C, 1)), s.R, s.C))
 		}),
-		// FINDING: QuantizeF16 panics (slice bounds out of range [-1:], in F32ToF16Slice) on rows*cols == 0.
-		toAd("QuantizeF16", toWithout(toRC(), toEmptyRC), func(p *kernreg.Placer, s toShape) []any {
+		toAd("QuantizeF16", toRC(), func(p *kernreg.Placer, s toShape) []any {
 			return toWM(QuantizeF16(kernreg.Put(p, "w", seqF32(s.R*s.C, 1)), s.R, s.C))
 		}),
 		toAd("RepackInt4SplitHalfRow", toN(), func(p *kernreg.Placer, s toShape) []any {
