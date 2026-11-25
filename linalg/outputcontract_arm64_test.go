@@ -1,6 +1,10 @@
 package linalg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+)
 
 // archContractCases: the arm64-only writers (the 4-row-interleaved W4A8 family). The matmul kernels need DotProd; the repack helpers are plain Go and always run.
 // This file is the reason R-11's brief says the arm64 assembly paths need a run on arm64 hardware: on amd64 none of it is compiled.
@@ -31,7 +35,7 @@ func archContractCases() []contractCase {
 		})
 	}
 
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		return cs
 	}
 	// matmul kernels: M=1 for the decode kernels, M>1 for the tile.

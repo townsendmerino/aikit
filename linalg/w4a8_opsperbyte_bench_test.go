@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestW4A8OpsPerByte measures dotW4A8FoldAVX2's achieved throughput, hot
@@ -33,7 +35,7 @@ import (
 // (different kernel: dot_w4a8_arm64.s, different memory subsystem).
 func TestW4A8OpsPerByte(t *testing.T) {
 	harnessOnly(t)
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("AVX2 required")
 	}
 	const (
@@ -131,7 +133,7 @@ func TestW4A8OpsPerByte(t *testing.T) {
 // stalls rather than showing up as decode-time speedup)?
 func TestW4A8IssueWidthProbe(t *testing.T) {
 	harnessOnly(t)
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("AVX2 required")
 	}
 	const (

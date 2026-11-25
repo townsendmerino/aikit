@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestDot3x4_matchesDotFMA8 is the same bit-identity contract for the 12-accumulator
@@ -13,7 +15,7 @@ import (
 // exactly. Same odd-n4 sweep, for the same reason — that is where the 4-element tail
 // runs, and where the 1x8 kernel's historical VEX-zeroing bug lived.
 func TestDot3x4_matchesDotFMA8(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2+FMA on this CPU")
 	}
 	rng := rand.New(rand.NewPCG(13, 17))

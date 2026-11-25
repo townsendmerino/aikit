@@ -9,6 +9,14 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Changed
+
+- **`linalg`'s CPU-feature flags, their detection and the `aikit_no*` fallback tags live in one internal package,
+  `internal/cpufeat`** (from `linalg`'s `has*`/`detect*` variables, its `cpuid`/`xgetbv` probes and its `force_no*` files). Every
+  dispatcher reads the one copy, so `SelfCheck`'s repair and each forced fallback keep governing a kernel package split out of
+  `linalg` later. No exported name changes: `ActiveKernels` and `ForcedFallbacks` report the same strings under each tag
+  (compared on linux/amd64 for the untagged build and each amd64 tag), and the forced-fallback tests pass under each tag.
+
 ### Added
 
 - **`embed` reads GGUF type 40, NVFP4** (`dequantNVFP4Block`): 64-element blocks of four 16-element sub-blocks, each with an

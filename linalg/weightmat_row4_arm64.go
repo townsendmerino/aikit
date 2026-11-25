@@ -2,7 +2,11 @@
 
 package linalg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+)
 
 // RepackInt4Row4 attempts to populate w's optional split-half +
 // 4-row-interleaved layout (RepackW4A8Row4/RepackW4A8Row4Scales) from its
@@ -21,7 +25,7 @@ import "fmt"
 // shape or this core doesn't qualify, and MatmulBTW4A8Into below will keep
 // using the canonical path transparently.
 func (w *WeightMat) RepackInt4Row4() bool {
-	if w.q4 == nil || !hasDotProd {
+	if w.q4 == nil || !cpufeat.HasDotProd {
 		return false
 	}
 	if w.group != 32 || w.rows%4 != 0 || w.cols%w.group != 0 {
@@ -111,13 +115,13 @@ func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) 
 }
 
 // row4Usable reports whether this CPU can safely dispatch the split-half +
-// 4-row-interleaved kernel — the same hasDotProd gate RepackInt4Row4 already
+// 4-row-interleaved kernel — the same cpufeat.HasDotProd gate RepackInt4Row4 already
 // applies before ever setting q4Row4. WrapInt4Row4 (weightmat.go, portable)
 // calls this to apply the identical gate to EXTERNALLY-supplied bytes (a
 // .giw kind-4 load reading an already-repacked layout off disk) — a case
 // RepackInt4Row4's own gate never covered, since before WrapInt4Row4 existed
 // the only way q4Row4 got populated was RepackInt4Row4 itself.
-func row4Usable() bool { return hasDotProd }
+func row4Usable() bool { return cpufeat.HasDotProd }
 
 // w4a8BatchRow4Span is w4a8Row4Span reached from the portable batch span. It
 // exists only so MatmulBTW4A8Batch can name the row4 kernel from quant.go,

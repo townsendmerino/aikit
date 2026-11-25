@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestW8A8TileVsSpanAB is docs/task-simd-audit.md S-01b's decision-rule harness:
@@ -27,7 +29,7 @@ import (
 // on the resident ones.
 func TestW8A8TileVsSpanAB(t *testing.T) {
 	harnessOnly(t)
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("no FEAT_DotProd on this core; the tile does not dispatch")
 	}
 	shapes := []struct {

@@ -18,7 +18,7 @@
 // SDOT has no Go assembler mnemonic, so it is emitted as a raw WORD (same as
 // dot_i8dp): SDOT Vd.4S,Vn.16B,Vm.16B = 0x4E809400 | (Rm<<16) | (Rn<<5) | Rd.
 // Here V16 += V6·V3 → 0x4E8394D0 and V16 += V7·V4 → 0x4E8494F0. Only called
-// after detectDotProd() (HWCAP_ASIMDDP), so SDOT never traps.
+// after cpufeat.DetectDotProd() (HWCAP_ASIMDDP), so SDOT never traps.
 
 #include "textflag.h"
 

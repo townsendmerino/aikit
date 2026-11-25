@@ -6,13 +6,15 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // The raw AVX2 kernels against the scalar passes, so a dispatch mistake in the wrapper cannot hide
 // a kernel defect behind a scalar fallback (and vice versa) — the amd64 twin of
 // TestQuantActNEONKernels_matchScalar (quant_act_arm64_test.go).
 func TestQuantActAVX2Kernels_matchScalar(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2 on this CPU (or none usable by the OS): the raw kernels would be an illegal instruction here, which is what the wrappers' check exists to prevent")
 	}
 	rng := rand.New(rand.NewSource(0x5104))
@@ -51,7 +53,7 @@ func TestQuantActAVX2Kernels_matchScalar(t *testing.T) {
 // exercising the pre-truncate float clamp quant_act_amd64.go's doc comment names — belt and
 // suspenders for a building block wider callers than today's one may eventually use directly.
 func TestQuantActAVX2Kernels_adversarialInfDoesNotFlipSign(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2 on this CPU (or none usable by the OS)")
 	}
 	posInf := float32(math.Inf(1))
@@ -77,17 +79,17 @@ func TestQuantActAVX2Kernels_adversarialInfDoesNotFlipSign(t *testing.T) {
 	}
 }
 
-// TestQuantizeRowInt8_withoutAVX2 holds the activation quantizer's entry points to the scalar oracle with hasAVX2 false: quantizeRowInt8Core, maxAbsF32 and
+// TestQuantizeRowInt8_withoutAVX2 holds the activation quantizer's entry points to the scalar oracle with cpufeat.HasAVX2 false: quantizeRowInt8Core, maxAbsF32 and
 // quantizeRowScaled return the scalar passes' bytes and scale on rows whose lengths are and are not multiples of 8, NaN, +-Inf and -0 included.
 //
-// WHAT IT DOES NOT SHOW. On an AVX2 CPU the kernel and the scalar give the same bytes, so this test passes with the hasAVX2 check removed from maxAbsF32 and
+// WHAT IT DOES NOT SHOW. On an AVX2 CPU the kernel and the scalar give the same bytes, so this test passes with the cpufeat.HasAVX2 check removed from maxAbsF32 and
 // quantizeRowScaled: it cannot tell whether the kernel was called. The check is proved on a CPU model that lacks AVX, by running this package's test
 // binary under Intel SDE (`sde64 -nhm -- ./linalg.test`), where calling the kernel is an illegal instruction (the procedure is in the v1.67.1 CHANGELOG entry). This test is the bytes-equal half; the
 // emulated run is the was-it-called half.
 func TestQuantizeRowInt8_withoutAVX2(t *testing.T) {
-	saved := hasAVX2
-	hasAVX2 = false
-	defer func() { hasAVX2 = saved }()
+	saved := cpufeat.HasAVX2
+	cpufeat.HasAVX2 = false
+	defer func() { cpufeat.HasAVX2 = saved }()
 
 	rng := rand.New(rand.NewSource(0x5105))
 	nan, inf := float32(math.NaN()), float32(math.Inf(1))

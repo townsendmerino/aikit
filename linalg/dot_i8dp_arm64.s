@@ -10,7 +10,7 @@
 // SDOT has no Go arm64 assembler mnemonic, so it is emitted as a raw WORD
 // (verified bit-exact vs the scalar reference under qemu-aarch64 with a
 // DotProd-capable CPU — see TestDotI8SDOT_matchesScalar). dotI8 only calls this
-// when detectDotProd() found HWCAP_ASIMDDP, so the SDOT opcode never reaches a
+// when cpufeat.DetectDotProd() found HWCAP_ASIMDDP, so the SDOT opcode never reaches a
 // core that would trap on it.
 //
 // SDOT Vd.4S, Vn.16B, Vm.16B encodes as 0x4E809400 | (Rm<<16) | (Rn<<5) | Rd.

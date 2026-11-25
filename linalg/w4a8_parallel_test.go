@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestW4A8_parallelScaling checks how much the REAL parallel MatmulBTW4A8Into
@@ -20,7 +22,7 @@ import (
 // measuring cache-resident reuse of one matrix.
 func TestW4A8_parallelScaling(t *testing.T) {
 	harnessOnly(t)
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	const (

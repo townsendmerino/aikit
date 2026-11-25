@@ -5,18 +5,20 @@ package linalg
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
-// TestQuantizeGroupInt4Row_withoutAVX2 holds the amd64 path to the CPU check: with hasAVX2 false no group is offered
+// TestQuantizeGroupInt4Row_withoutAVX2 holds the amd64 path to the CPU check: with cpufeat.HasAVX2 false no group is offered
 // to the AVX2 kernel, and a row quantizes to the scalar oracle's bytes and scales.
 func TestQuantizeGroupInt4Row_withoutAVX2(t *testing.T) {
-	saved := hasAVX2
-	hasAVX2 = false
-	defer func() { hasAVX2 = saved }()
+	saved := cpufeat.HasAVX2
+	cpufeat.HasAVX2 = false
+	defer func() { cpufeat.HasAVX2 = saved }()
 
 	for _, n := range []int{8, 32, 64} {
 		if int4GroupHasKernel(0, n) {
-			t.Fatalf("int4GroupHasKernel(0, %d) is true with hasAVX2 false: the AVX2 kernel would run on a CPU without it", n)
+			t.Fatalf("int4GroupHasKernel(0, %d) is true with cpufeat.HasAVX2 false: the AVX2 kernel would run on a CPU without it", n)
 		}
 	}
 	const cols, group = 256, 32
