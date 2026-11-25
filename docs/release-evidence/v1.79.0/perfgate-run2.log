@@ -1,0 +1,65 @@
+perfgate start 17:04 expected end ~17:19
+load at start: 0.05 1.19 2.14
+perfgate: the tree is dirty only in CHANGELOG.md or in paths the go tool ignores (the release section is written before this step): measured as release evidence
+aikit perf gate — 54dad97 +dirty vs v1.78.0 — Linux/x86_64 — 2026-11-25T01:05:51Z
+instrument: ./linalg ^(BenchmarkW8A8SpanShapes|BenchmarkGEMV_W8A8_baseline|BenchmarkMatmulBTW8A8Batch_prefill|BenchmarkW4A8_CanonicalVsSplitHalf|BenchmarkMatmulBTW4A8SplitHalfTile|BenchmarkMatmulQKAcc64|BenchmarkMatmulAVAcc64|BenchmarkAttendTileFused_expKind|BenchmarkSoftmaxRowKernels|BenchmarkSiLUKernels|BenchmarkQuantizeRowInt8)$   visits: 6   benchtime: 200ms   floor: max(2.0%, 3.0·σ)   targets: 5.0% regressions
+
+characterizing instrument noise (current vs current)…
+measuring working tree vs v1.78.0 (interleaved)…
+
+  BenchmarkAttendTileFused_expKind/np1024/contract cur=11.3ms  prev=10.6ms  Δ=+6.87%  floor=±2.98%  covers=5%✓  branch=REGRESSION
+  BenchmarkAttendTileFused_expKind/np1024/f64math cur=36ms  prev=35.4ms  Δ=+1.60%  floor=±5.23%  covers=>5% BLIND  branch=flat
+  BenchmarkAttendTileFused_expKind/np196/contract cur=0.478ms  prev=0.466ms  Δ=+2.60%  floor=±15.28%  covers=>5% BLIND  branch=flat
+  BenchmarkAttendTileFused_expKind/np196/f64math cur=0.932ms  prev=0.923ms  Δ=+0.99%  floor=±22.81%  covers=>5% BLIND  branch=flat
+  BenchmarkAttendTileFused_expKind/np2048/contract cur=44.1ms  prev=41.3ms  Δ=+6.95%  floor=±3.61%  covers=5%✓  branch=REGRESSION
+  BenchmarkAttendTileFused_expKind/np2048/f64math cur=143ms  prev=140ms  Δ=+1.70%  floor=±5.06%  covers=>5% BLIND  branch=flat
+  BenchmarkAttendTileFused_expKind/np576/contract cur=4.38ms  prev=4.12ms  Δ=+6.20%  floor=±2.00%  covers=5%✓  branch=REGRESSION
+  BenchmarkAttendTileFused_expKind/np576/f64math cur=12.1ms  prev=11.8ms  Δ=+2.03%  floor=±9.12%  covers=>5% BLIND  branch=flat
+  BenchmarkGEMV_W8A8_baseline/K2048_N2048  cur=0.12ms  prev=0.12ms  Δ=+0.08%  floor=±13.41%  covers=>5% BLIND  branch=flat
+  BenchmarkGEMV_W8A8_baseline/K3584_N18944 cur=4.01ms  prev=4.09ms  Δ=-1.98%  floor=±12.49%  covers=>5% BLIND  branch=flat
+  BenchmarkGEMV_W8A8_baseline/K4096_N4096  cur=0.681ms  prev=0.671ms  Δ=+1.48%  floor=±10.53%  covers=>5% BLIND  branch=flat
+  BenchmarkGEMV_W8A8_baseline/K768_N200000 cur=10.6ms  prev=10.7ms  Δ=-0.51%  floor=±11.18%  covers=>5% BLIND  branch=flat
+  BenchmarkMatmulAVAcc64/depth130          cur=0.00163ms  prev=0.00163ms  Δ=+0.37%  floor=±19.52%  covers=>5% BLIND  branch=flat
+  BenchmarkMatmulAVAcc64/depth2048         cur=0.0258ms  prev=0.0259ms  Δ=-0.53%  floor=±20.07%  covers=>5% BLIND  branch=flat
+  BenchmarkMatmulAVAcc64/depth8192         cur=0.103ms  prev=0.115ms  Δ=-10.79%  floor=±16.81%  covers=>5% BLIND  branch=flat
+  BenchmarkMatmulBTW4A8SplitHalfTile/M1    cur=0.187ms  prev=0.191ms  Δ=-2.00%  floor=±20.42%  covers=>5% BLIND  branch=flat
+  BenchmarkMatmulBTW4A8SplitHalfTile/M128  cur=1.94ms  prev=1.94ms  Δ=+0.37%  floor=±2.00%  covers=5%✓  branch=flat
+  BenchmarkMatmulBTW4A8SplitHalfTile/M32   cur=0.552ms  prev=0.552ms  Δ=-0.01%  floor=±2.00%  covers=5%✓  branch=flat
+  BenchmarkMatmulBTW4A8SplitHalfTile/M4    cur=0.509ms  prev=0.447ms  Δ=+13.85%  floor=±20.02%  covers=>5% BLIND  branch=flat
+  BenchmarkMatmulBTW4A8SplitHalfTile/M8    cur=0.205ms  prev=0.218ms  Δ=-5.88%  floor=±14.73%  covers=>5% BLIND  branch=flat
+  BenchmarkMatmulBTW8A8Batch_prefill/gateup/M1 cur=0.76ms  prev=0.764ms  Δ=-0.60%  floor=±6.83%  covers=>5% BLIND  branch=flat
+  BenchmarkMatmulBTW8A8Batch_prefill/gateup/M128 cur=9.8ms  prev=9.85ms  Δ=-0.53%  floor=±2.99%  covers=5%✓  branch=flat
+  BenchmarkMatmulBTW8A8Batch_prefill/gateup/M32 cur=2.54ms  prev=2.55ms  Δ=-0.32%  floor=±3.69%  covers=5%✓  branch=flat
+  BenchmarkMatmulBTW8A8Batch_prefill/gateup/M4 cur=0.793ms  prev=0.792ms  Δ=+0.22%  floor=±3.90%  covers=5%✓  branch=flat
+  BenchmarkMatmulBTW8A8Batch_prefill/gateup/M8 cur=0.877ms  prev=0.879ms  Δ=-0.22%  floor=±4.39%  covers=5%✓  branch=flat
+  BenchmarkMatmulBTW8A8Batch_prefill/qkv/M1 cur=0.087ms  prev=0.0862ms  Δ=+0.90%  floor=±2.83%  covers=5%✓  branch=flat
+  BenchmarkMatmulBTW8A8Batch_prefill/qkv/M128 cur=1.23ms  prev=1.23ms  Δ=+0.23%  floor=±2.71%  covers=5%✓  branch=flat
+  BenchmarkMatmulBTW8A8Batch_prefill/qkv/M32 cur=0.412ms  prev=0.409ms  Δ=+0.84%  floor=±12.60%  covers=>5% BLIND  branch=flat
+  BenchmarkMatmulBTW8A8Batch_prefill/qkv/M4 cur=0.269ms  prev=0.271ms  Δ=-0.60%  floor=±10.66%  covers=>5% BLIND  branch=flat
+  BenchmarkMatmulBTW8A8Batch_prefill/qkv/M8 cur=0.159ms  prev=0.16ms  Δ=-1.05%  floor=±10.35%  covers=>5% BLIND  branch=flat
+  BenchmarkMatmulQKAcc64/depth130          cur=0.003ms  prev=0.00588ms  Δ=-49.09%  floor=±21.04%  covers=>5% BLIND  branch=faster (scoped, not published)
+  BenchmarkMatmulQKAcc64/depth2048         cur=0.0486ms  prev=0.0933ms  Δ=-47.87%  floor=±17.69%  covers=>5% BLIND  branch=faster (scoped, not published)
+  BenchmarkMatmulQKAcc64/depth8192         cur=0.181ms  prev=0.326ms  Δ=-44.63%  floor=±17.91%  covers=>5% BLIND  branch=faster (scoped, not published)
+  BenchmarkQuantizeRowInt8/dispatched/K1536 cur=0.000502ms  prev=0.000501ms  Δ=+0.30%  floor=±23.76%  covers=>5% BLIND  branch=flat
+  BenchmarkQuantizeRowInt8/dispatched/K8960 cur=0.00216ms  prev=0.00227ms  Δ=-4.84%  floor=±22.45%  covers=>5% BLIND  branch=flat
+  BenchmarkQuantizeRowInt8/scalar/K1536    cur=0.00544ms  prev=0.00539ms  Δ=+0.93%  floor=±20.28%  covers=>5% BLIND  branch=flat
+  BenchmarkQuantizeRowInt8/scalar/K8960    cur=0.048ms  prev=0.0613ms  Δ=-21.66%  floor=±18.38%  covers=>5% BLIND  branch=faster (scoped, not published)
+  BenchmarkW4A8_CanonicalVsSplitHalf/canonical/dotW4A8FoldAVX2 cur=0.000299ms  prev=0.0003ms  Δ=-0.27%  floor=±2.10%  covers=5%✓  branch=flat
+  BenchmarkW4A8_CanonicalVsSplitHalf/cold-canonical/dotW4A8FoldAVX2 cur=0.000345ms  prev=0.000332ms  Δ=+3.82%  floor=±20.80%  covers=>5% BLIND  branch=flat
+  BenchmarkW4A8_CanonicalVsSplitHalf/cold-splithalf/dotW4A8SplitHalfAVX2 cur=0.00028ms  prev=0.000306ms  Δ=-8.31%  floor=±20.13%  covers=>5% BLIND  branch=flat
+  BenchmarkW4A8_CanonicalVsSplitHalf/splithalf/dotW4A8SplitHalfAVX2 cur=0.000268ms  prev=0.000295ms  Δ=-9.08%  floor=±18.75%  covers=>5% BLIND  branch=flat
+  BenchmarkW8A8SpanShapes/K1536_N8960      cur=0.386ms  prev=0.438ms  Δ=-11.90%  floor=±18.75%  covers=>5% BLIND  branch=flat
+  BenchmarkW8A8SpanShapes/K2048_N2048      cur=0.108ms  prev=0.108ms  Δ=-0.17%  floor=±13.38%  covers=>5% BLIND  branch=flat
+  BenchmarkW8A8SpanShapes/K3584_N18944     cur=3.97ms  prev=3.93ms  Δ=+1.18%  floor=±9.58%  covers=>5% BLIND  branch=flat
+  BenchmarkW8A8SpanShapes/K3584_N4096      cur=0.416ms  prev=0.434ms  Δ=-4.10%  floor=±19.52%  covers=>5% BLIND  branch=flat
+  BenchmarkW8A8SpanShapes/K768_N200000     cur=10.7ms  prev=10.5ms  Δ=+1.23%  floor=±9.02%  covers=>5% BLIND  branch=flat
+  BenchmarkW8A8SpanShapes/K768_N8192       cur=0.213ms  prev=0.211ms  Δ=+0.69%  floor=±3.25%  covers=5%✓  branch=flat
+
+sensitivity: 13/47 shapes have a floor ≤ 5.0% (the class this gate targets)
+  BLIND to the 5.0% class on 34 shape(s): f64math(±5.2%) contract(±15.3%) f64math(±22.8%) f64math(±5.1%) f64math(±9.1%) K2048_N2048(±13.4%) K3584_N18944(±12.5%) K4096_N4096(±10.5%) K768_N200000(±11.2%) depth130(±19.5%) depth2048(±20.1%) depth8192(±16.8%) M1(±20.4%) M4(±20.0%) M8(±14.7%) M1(±6.8%) M32(±12.6%) M4(±10.7%) M8(±10.3%) depth130(±21.0%) depth2048(±17.7%) depth8192(±17.9%) K1536(±23.8%) K8960(±22.5%) K1536(±20.3%) K8960(±18.4%) dotW4A8FoldAVX2(±20.8%) dotW4A8SplitHalfAVX2(±20.1%) dotW4A8SplitHalfAVX2(±18.8%) K1536_N8960(±18.7%) K2048_N2048(±13.4%) K3584_N18944(±9.6%) K3584_N4096(±19.5%) K768_N200000(±9.0%) — a green there is only evidence against a larger regression.
+
+confirming 3 regression(s) with a second measurement…
+  reproduced: contract contract contract
+`perfgate` VERDICT: FAIL — 3 regression(s) vs v1.78.0 across 47 shapes, confirmed on a second measurement
+exit status 1
+perfgate rc=1 17:17:55
