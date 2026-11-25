@@ -18,6 +18,7 @@ import (
 	"reflect"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -83,7 +84,8 @@ func (s side) String() string {
 	return "heap"
 }
 
-// Placer puts an adapter's inputs on the heap or against a guard page.
+// Placer puts an adapter's inputs on the heap or against a guard page. The zero Placer
+// puts them on the heap, so a test can call an adapter's Call outside Sweep.
 type Placer struct {
 	a    *guardmem.Arena
 	side side
@@ -206,8 +208,38 @@ func bitsOf(w *bytes.Buffer, v reflect.Value) {
 			return
 		}
 		bitsOf(w, v.Elem())
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		fmt.Fprintf(w, "i%d,", v.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		fmt.Fprintf(w, "u%d,", v.Uint())
+	case reflect.Bool:
+		fmt.Fprintf(w, "b%t,", v.Bool())
+	case reflect.String:
+		fmt.Fprintf(w, "s%q,", v.String())
+	case reflect.Map:
+		// Keys in sorted textual order, so equal maps print equally.
+		keys := v.MapKeys()
+		var kb []string
+		for _, k := range keys {
+			var b bytes.Buffer
+			bitsOf(&b, k)
+			kb = append(kb, b.String())
+		}
+		order := make([]int, len(keys))
+		for i := range order {
+			order[i] = i
+		}
+		slices.SortFunc(order, func(i, j int) int { return strings.Compare(kb[i], kb[j]) })
+		w.WriteString("map{")
+		for _, i := range order {
+			w.WriteString(kb[i])
+			bitsOf(w, v.MapIndex(keys[i]))
+		}
+		w.WriteString("}")
 	default:
-		fmt.Fprintf(w, "%v,", v.Interface())
+		// Funcs, channels and unsafe pointers: compared by kind only; an adapter
+		// returns what a kernel wrote, not these.
+		fmt.Fprintf(w, "%s,", v.Kind())
 	}
 }
 

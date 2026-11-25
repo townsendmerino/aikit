@@ -29,6 +29,7 @@ import "fmt"
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTW4A8Row4TileInto(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []float32, dst []float32, M, K, N, group int) {
+	requireRow4DotProd("MatmulBTW4A8Row4TileInto")
 	checkMatmulW4A8("MatmulBTW4A8Row4Tile", len(a), len(w4Row4), len(wScales4), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTW4A8Row4Tile", len(a), w4Row4, wScales4, len(dst), M, K, N, group)
 	if group != 32 {
