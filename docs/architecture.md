@@ -84,7 +84,6 @@ graph TD
         ann["ann<br/><i>flat / FlatI8 / HNSW cosine ANN</i>"]
         late["late<br/><i>MaxSim late-interaction reranker</i>"]
         encoder["encoder<br/><i>BERT-family embedders +<br/>SPLADE expansion + cross-encoder reranker</i>"]
-        vision["vision<br/><i>SigLIP/ViT image encoder (deprecated)</i>"]
         hybrid["hybrid<br/><i>dense + lexical + fuse.RRF wrapper</i>"]
         bench["bench<br/><i>recall + latency harness</i>"]
 
@@ -108,8 +107,6 @@ graph TD
         encoder --> embed
         encoder --> linalg
         encoder --> sparse
-        vision --> embed
-        vision --> linalg
         hybrid --> ann
         hybrid --> bm25
         hybrid --> fuse
@@ -125,7 +122,7 @@ graph TD
     mmap -->|darwin only| xsys
 ```
 
-Not drawn, but in the table: the four `examples/*` programs and
+Not drawn, but in the table: the three `examples/*` programs and
 `bench/cmd/benchreport`, which sit on top and which nothing imports,
 `internal/importrules` itself, and the over-read gate's two test helpers, which
 only tests import: `internal/guardmem` (the guard-page harness, a stdlib-only
@@ -149,12 +146,11 @@ import `chunk`; the line chunker is a file in `chunk`, not a package.
 **Two steps up.** `ann` selects through `topk`, scores through `linalg`'s SIMD
 dot kernels, reads its blobs through `internal/cursor` and maps them through
 `mmap`. `late` (ColBERT-style MaxSim reranking) imports `linalg` and `topk`.
-`encoder` and `vision` are the model towers, each on `embed` +
-`linalg`. `encoder` also imports `sparse`: `encoder.SPLADE.Expand` produces
+`encoder` is the model tower, on `embed` + `linalg`. It also imports `sparse`: `encoder.SPLADE.Expand` produces
 the `sparse.SparseVec` values the `sparse` package indexes, so the SPLADE loop
 (BERT + masked-LM head → sparse vector → inverted index) runs end-to-end
-in-process. `vision` is deprecated and frozen at v1.75.0; it moved to goinfer, as did
-`audio`, which has been removed (see the README).
+in-process. The `vision` and `audio` towers moved to goinfer and have been removed
+(see the README).
 
 **Three steps up.** `hybrid` composes `ann`, `bm25` and `fuse`; `bench`
 imports `ann`. Nothing in the library is deeper.
@@ -164,15 +160,12 @@ imports `ann`. Nothing in the library is deeper.
 every platform and `golang.org/x/sys/cpu` on amd64 (feature detection for the
 Q4_K dequant kernel); `mmap` imports `golang.org/x/sys/unix` on darwin only
 (`madvise`). No other package imports anything outside the stdlib and aikit.
-`vision` adds none: its image decode uses only stdlib codecs (`image/jpeg`,
-`image/png`).
 
 **The dotted edges are registry-based, not imports**, and the same test
 asserts that no core package reaches `gpu/` or `chunk/treesitter`, directly or
 through a dependency. `chunk/treesitter` registers itself via `chunk.Register`
 on import, and each `gpu/*` backend registers itself via the matching seam
-(`FlatI8.EnableGPU`, `encoder.RegisterBackend`) on import. Like `encoder`, `vision` exposes an import-free GPU-export seam
-(`GPUWeights`) plus the `RegisterResident` inversion, so a WebGPU backend
+(`FlatI8.EnableGPU`, `encoder.RegisterBackend`) on import, so a backend
 (e.g. goinfer's) plugs in without the core importing it. See § Quarantines and
 [`docs/task-native-gpu.md`](task-native-gpu.md) for the backend-by-backend
 detail (device substrate, per-seam kernels, parity gates).
@@ -220,7 +213,7 @@ so much of `linalg` is in: it uses the quantized matmuls, not only the dot
 kernels. `go run -C tools ./retrievalmark --files` prints the current split
 with the reason for each file.
 
-**Outside the zone.** `vision`, `bench`, the examples, every test
+**Outside the zone.** `bench`, the examples, every test
 file and fixture, the docs, and every nested module. `chunk/treesitter` is on
 ken's search path, but it is a separate module with its own tags, so a root
 release cannot change it.
@@ -298,10 +291,9 @@ external one (`goinfer/gpu`, registers `"webgpu"`) and aikit's own native
 ones (`gpu/enccuda`/`gpu/encmetal`, in this repo, register `"cuda"`/`"metal"`
 — see § Quarantines). `NewBackend(name)` on a build that never imported a
 registering package degrades to CPU with an explanatory error rather than
-failing. `ann` and `vision` have analogous inversions of their own
-(`FlatI8.EnableGPU`, `vision.RegisterResident`) that aikit's `gpu/anncuda`
-family also plugs into — same pattern, different interface, because `ann`'s
-and `vision`'s hot paths aren't a single matmul the way `encoder`'s is.
+failing. `ann` has an analogous inversion of its own (`FlatI8.EnableGPU`)
+that aikit's `gpu/anncuda` family also plugs into — same pattern, different
+interface, because `ann`'s hot path isn't a single matmul the way `encoder`'s is.
 
 Why only matmul for `encoder`: it's the hot path by a wide margin, and
 keeping everything else on CPU avoids a host↔device round-trip per layer.
