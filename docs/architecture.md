@@ -75,6 +75,7 @@ graph TD
             accum["internal/accum<br/><i>pooled scoring accumulator</i>"]
             cursor["internal/cursor<br/><i>bounds-checked LE reader</i>"]
             cpufeat["internal/cpufeat<br/><i>CPU-feature flags + forced fallbacks</i>"]
+            shape["linalg/internal/shape<br/><i>overflow-safe length checks</i>"]
         end
         chunkers["chunk/regex, chunk/markdown<br/><i>chunkers</i>"]
         linalg["linalg<br/><i>SIMD f32/int8/int4 kernels</i>"]
@@ -91,6 +92,7 @@ graph TD
         chunkers --> chunk
         linalg --> mmap
         linalg --> cpufeat
+        linalg --> shape
         embed --> mmap
         embed --> cursor
         bm25 --> topk
@@ -139,7 +141,8 @@ importer's build pulls in.
 the one most of the tree now rests on: it is the read-only file mapping under
 every loader that maps a blob from disk instead of copying it.
 
-**One step up.** `linalg` imports `mmap` and `internal/cpufeat` and nothing
+**One step up.** `linalg` imports `mmap`, `internal/cpufeat` and
+`linalg/internal/shape` (the length checks its kernel packages share) and nothing
 else, so it is no longer a leaf. `embed` imports `mmap` and `internal/cursor`. `sparse` imports `topk`
 and `internal/accum`. `bm25` imports `topk`, `internal/accum`,
 `internal/cursor` and `mmap`: its postings arena maps from disk and its blob
