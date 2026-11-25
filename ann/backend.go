@@ -390,7 +390,7 @@ func (f *FlatI8) scoreShardCPU(queries [][]float32, k int) ([][]Hit, bool) {
 	// Same measured threshold Query uses (audit M-19): the pooled Workspace is a
 	// zero value and would otherwise inherit goinfer's decode-tuned parThreshold.
 	sc.ws.SetThreshold(flatParallelThreshold)
-	scoreW8A8(&sc.ws, qbuf, f.bq[f.gpuShardRows*f.dim:], f.scales[f.gpuShardRows:], dst, M, f.dim, shardN)
+	scoreW8A8(&sc.wm, &sc.ws, qbuf, f.bq[f.gpuShardRows*f.dim:], f.scales[f.gpuShardRows:], dst, M, f.dim, shardN)
 	hits := make([][]Hit, M)
 	for m := range queries {
 		h := f.topHits(dst[m*shardN:(m+1)*shardN], k, nil)
@@ -408,6 +408,7 @@ func (f *FlatI8) scoreShardCPU(queries [][]float32, k int) ([][]Hit, bool) {
 // (M·dim + M·shardN) from either of those.
 type shardCPUScratch struct {
 	ws   linalg.Workspace
+	wm   linalg.WeightMat // scoreW8A8's view of the CPU shard
 	qbuf []float32
 	dst  []float32
 }
