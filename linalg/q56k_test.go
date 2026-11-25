@@ -227,7 +227,7 @@ func TestQ56K_rowAndKind(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if wm.Kind() != c.kind {
+		if wm.Kind().String() != c.kind {
 			t.Errorf("%s: Kind = %q", c.name, wm.Kind())
 		}
 		if got, ok := c.rawOf(&wm); !ok || &got[0] != &raw[0] {
