@@ -231,3 +231,17 @@ func TestRefused(t *testing.T) {
 	i := 3
 	Refused(func() { _ = x[i] })
 }
+
+// An oracle may reach its dispatcher through a test table or helper it names.
+func TestProblems_oracleThroughHelperOrTable(t *testing.T) {
+	for _, oracle := range []string{"TestViaTable", "TestViaHelper"} {
+		rows := replace(goodRows, 0, Row{Symbol: "sumK", Arch: "amd64", Dispatch: "Sum", Oracle: oracle})
+		probs, err := Problems("testdata/pkg", "amd64", rows, goodAdapters)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(probs) != 0 {
+			t.Errorf("%s: %q", oracle, probs)
+		}
+	}
+}

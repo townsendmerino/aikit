@@ -52,6 +52,7 @@ func Symbols(dir string) (map[string]string, error) {
 type goDecls struct {
 	calls map[string]map[string]bool // non-test function -> names it calls
 	tests map[string]string          // Test function -> its body's source
+	helps map[string]string          // other top-level test-file func or var -> its source
 }
 
 func readDecls(dir, arch string) (goDecls, error) {
@@ -62,7 +63,7 @@ func readDecls(dir, arch string) (goDecls, error) {
 	}
 	ctx := build.Default
 	ctx.GOOS, ctx.GOARCH, ctx.BuildTags = "linux", arch, nil
-	d := goDecls{calls: map[string]map[string]bool{}, tests: map[string]string{}}
+	d := goDecls{calls: map[string]map[string]bool{}, tests: map[string]string{}, helps: map[string]string{}}
 	for _, path := range files {
 		ok, err := ctx.MatchFile(dir, filepath.Base(path))
 		if err != nil {
@@ -80,7 +81,18 @@ func readDecls(dir, arch string) (goDecls, error) {
 			return goDecls{}, err
 		}
 		isTest := strings.HasSuffix(path, "_test.go")
+		srcOf := func(n ast.Node) string {
+			return string(src[fset.Position(n.Pos()).Offset:fset.Position(n.End()).Offset])
+		}
 		for _, decl := range f.Decls {
+			if gd, ok := decl.(*ast.GenDecl); ok && isTest && gd.Tok == token.VAR {
+				for _, spec := range gd.Specs {
+					for _, id := range spec.(*ast.ValueSpec).Names {
+						d.helps[id.Name] += srcOf(spec)
+					}
+				}
+				continue
+			}
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
 				continue
@@ -88,7 +100,9 @@ func readDecls(dir, arch string) (goDecls, error) {
 			name := fn.Name.Name
 			if isTest {
 				if strings.HasPrefix(name, "Test") && fn.Recv == nil {
-					d.tests[name] += string(src[fset.Position(fn.Body.Pos()).Offset:fset.Position(fn.Body.End()).Offset])
+					d.tests[name] += srcOf(fn.Body)
+				} else if fn.Recv == nil {
+					d.helps[name] += srcOf(fn.Body)
 				}
 				continue
 			}
@@ -128,6 +142,24 @@ func recvName(fl *ast.FieldList) string {
 }
 
 var wordRE = regexp.MustCompile(`\w+`)
+
+// reaches reports whether src names one of targets, or names a test-file helper function
+// or variable whose source does: one level of indirection, for an oracle that calls
+// through a table or a shared helper.
+func (d goDecls) reaches(src string, targets ...string) bool {
+	words := wordRE.FindAllString(src, -1)
+	for _, w := range words {
+		if slices.Contains(targets, w) {
+			return true
+		}
+	}
+	for _, w := range words {
+		if h, ok := d.helps[w]; ok && slices.ContainsFunc(wordRE.FindAllString(h, -1), func(x string) bool { return slices.Contains(targets, x) }) {
+			return true
+		}
+	}
+	return false
+}
 
 // Complete checks rows against dir's assembly and Go source, and adapters against the
 // host architecture's rows:
@@ -192,9 +224,8 @@ func Problems(dir, arch string, rows []Row, adapters []Adapter) ([]string, error
 		case !ok:
 			errorf("%s: Oracle %s is not a Test function in %s", key, r.Oracle, dir)
 		default:
-			words := wordRE.FindAllString(body, -1)
-			if !slices.Contains(words, r.Symbol) && !slices.Contains(words, dispatchFunc(r.Dispatch)) {
-				errorf("%s: Oracle %s names neither %s nor %s", key, r.Oracle, r.Symbol, r.Dispatch)
+			if !decls.reaches(body, r.Symbol, dispatchFunc(r.Dispatch)) {
+				errorf("%s: Oracle %s names neither %s nor %s, directly or through a test helper or table it names", key, r.Oracle, r.Symbol, r.Dispatch)
 			}
 		}
 	}
