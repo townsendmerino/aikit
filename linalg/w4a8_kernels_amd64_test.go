@@ -1,9 +1,12 @@
 package linalg
 
-import "github.com/townsendmerino/aikit/internal/kernreg"
+import (
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+	"github.com/townsendmerino/aikit/internal/kernreg"
+)
 
 func w4a8Adapters() []kernreg.Adapter {
-	avx2 := func() bool { return hasAVX2 }
+	avx2 := func() bool { return cpufeat.HasAVX2 }
 	// row is the adapter of a single-row kernel taking (act, packed, scales, nGroups).
 	row := func(sym string, needs func() bool, groups []int, k func(act *int8, packed *byte, scales *float32, nGroups int) float32) kernreg.Adapter {
 		return kernreg.Adapter{
@@ -38,7 +41,7 @@ func w4a8Adapters() []kernreg.Adapter {
 		row("dotW4A8Fold2AccAVX2", avx2, w4a8Groups(2, 2), dotW4A8Fold2AccAVX2),
 		row("dotW4A8SplitHalfAVX2", avx2, w4a8Groups(1, 1), dotW4A8SplitHalfAVX2),
 		// Tests nGroups for zero itself.
-		row("dotW4A8FoldAVX512VNNI", func() bool { return hasAVX512VNNIVL }, w4a8Groups(0, 1), dotW4A8FoldAVX512VNNI),
+		row("dotW4A8FoldAVX512VNNI", func() bool { return cpufeat.HasAVX512VNNIVL }, w4a8Groups(0, 1), dotW4A8FoldAVX512VNNI),
 		{
 			// Two groups per pass, then a one-group tail; zero is handled.
 			Symbol: "dotW4A8SplitHalfScaledAVX2", Needs: avx2, Lengths: w4a8Groups(0, 1),
@@ -50,7 +53,7 @@ func w4a8Adapters() []kernreg.Adapter {
 		},
 		{
 			// n8 blocks of eight halves; zero is handled.
-			Symbol: "cvtF16ToF32x8F16C", Needs: func() bool { return hasF16C }, Lengths: upTo(1, 40, 127, 128, 129),
+			Symbol: "cvtF16ToF32x8F16C", Needs: func() bool { return cpufeat.HasF16C }, Lengths: upTo(1, 40, 127, 128, 129),
 			Call: func(p *kernreg.Placer, n8 int) any {
 				src := kernreg.Put(p, "src", w4a8SeqU16(8*n8, 1))
 				dst := kernreg.Put(p, "dst", make([]float32, 8*n8))
@@ -61,7 +64,7 @@ func w4a8Adapters() []kernreg.Adapter {
 		{
 			// Widens the nGroups scales into buf eight at a time, the last block
 			// overlapping, so nGroups >= 8 (dotW4A8F16Row's guard); buf holds nGroups.
-			Symbol: "dotW4A8FoldF16RowAVX2", Needs: func() bool { return hasAVX2 && hasF16C }, Lengths: w4a8Groups(8, 1),
+			Symbol: "dotW4A8FoldF16RowAVX2", Needs: func() bool { return cpufeat.HasAVX2 && cpufeat.HasF16C }, Lengths: w4a8Groups(8, 1),
 			Call: func(p *kernreg.Placer, g int) any {
 				act, packed := kernreg.Put(p, "act", seqI8(32*g, 1)), kernreg.Put(p, "packed", seqU8(16*g, 2))
 				scales := kernreg.Put(p, "scales", w4a8SeqU16(g, 3))

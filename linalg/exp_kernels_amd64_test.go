@@ -1,9 +1,12 @@
 package linalg
 
-import "github.com/townsendmerino/aikit/internal/kernreg"
+import (
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+	"github.com/townsendmerino/aikit/internal/kernreg"
+)
 
 func expAdapters() []kernreg.Adapter {
-	avx2 := func() bool { return hasAVX2 }
+	avx2 := func() bool { return cpufeat.HasAVX2 }
 	// n a multiple of 8.
 	return []kernreg.Adapter{
 		unaryF32("expF32ContractAVX2", avx2, 8, expF32ContractAVX2),

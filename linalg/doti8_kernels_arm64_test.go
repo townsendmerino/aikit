@@ -1,9 +1,12 @@
 package linalg
 
-import "github.com/townsendmerino/aikit/internal/kernreg"
+import (
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+	"github.com/townsendmerino/aikit/internal/kernreg"
+)
 
 func doti8Adapters() []kernreg.Adapter {
-	dotProd := func() bool { return hasDotProd }
+	dotProd := func() bool { return cpufeat.HasDotProd }
 	tiles := i8TileShapes()
 	return []kernreg.Adapter{
 		{

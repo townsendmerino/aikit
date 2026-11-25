@@ -1,6 +1,9 @@
 package linalg
 
-import "github.com/townsendmerino/aikit/internal/kernreg"
+import (
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+	"github.com/townsendmerino/aikit/internal/kernreg"
+)
 
 // w4a8Quad places the interleaved inputs of the row4 kernels for g groups: per group
 // the four weight rows' 16 bytes back to back (64), and their four scales.
@@ -9,7 +12,7 @@ func w4a8Quad(p *kernreg.Placer, g int) (packed4 []byte, scales4 []float32) {
 }
 
 func w4a8Adapters() []kernreg.Adapter {
-	dp := func() bool { return hasDotProd }
+	dp := func() bool { return cpufeat.HasDotProd }
 	// row is the adapter of a single-row kernel taking (act, packed, scales, nGroups).
 	row := func(sym string, groups []int, k func(act *int8, packed *byte, scales *float32, nGroups int) float32) kernreg.Adapter {
 		return kernreg.Adapter{

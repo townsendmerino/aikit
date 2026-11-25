@@ -1,10 +1,13 @@
 package linalg
 
-import "github.com/townsendmerino/aikit/internal/kernreg"
+import (
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+	"github.com/townsendmerino/aikit/internal/kernreg"
+)
 
 func attnAdapters() []kernreg.Adapter {
-	avx2 := func() bool { return hasAVX2 }
-	f16 := func() bool { return hasAVX2 && hasF16C }
+	avx2 := func() bool { return cpufeat.HasAVX2 }
+	f16 := func() bool { return cpufeat.HasAVX2 && cpufeat.HasF16C }
 	av := avShapes(32)
 	qk4 := qkShapes(5)
 	qk16 := qkShapes(3)

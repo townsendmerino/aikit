@@ -1,10 +1,13 @@
 package linalg
 
-import "github.com/townsendmerino/aikit/internal/kernreg"
+import (
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+	"github.com/townsendmerino/aikit/internal/kernreg"
+)
 
 func quantint4Adapters() []kernreg.Adapter {
 	return []kernreg.Adapter{{
-		Symbol: "quantizeInt4F32AVX2", Needs: func() bool { return hasAVX2 },
+		Symbol: "quantizeInt4F32AVX2", Needs: func() bool { return cpufeat.HasAVX2 },
 		// n a positive multiple of 8 (int4QuantBlock); the loop runs at least once.
 		Lengths: upTo(8, 104, 1016, 1024, 1032)[1:],
 		Call: func(p *kernreg.Placer, n int) any {
