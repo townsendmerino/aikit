@@ -10,10 +10,9 @@ func kquantAdapters() []kernreg.Adapter {
 	// in is one row of nSB super-blocks of blockB bytes and its per-32 activations: 256
 	// int8 codes, eight scales and (for the kinds with a minimum) eight scale·sum terms each.
 	type in struct {
-		row          []byte
-		aq           []int8
-		aS, asumf    []float32
-		withMinimums bool
+		row       []byte
+		aq        []int8
+		aS, asumf []float32
 	}
 	place := func(p *kernreg.Placer, nSB, blockB int, withMin bool, dOffs ...int) in {
 		x := in{
