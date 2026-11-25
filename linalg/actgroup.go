@@ -69,9 +69,10 @@ func actGroupFor(ws *Workspace) int {
 //
 // Output contract: overwrites aq and scales; do not pre-zero. Cover aq[:M*K] and scales[:M*nG] (nG = ceil(K/group)).
 func QuantizeActivationsGroupedInto(aq []int8, scales []float32, a []float32, M, K, group int) {
+	requirePositiveGroup("QuantizeActivationsGroupedInto", group)
 	nG := (K + group - 1) / group
-	if group <= 0 || len(aq) < M*K || len(scales) < M*nG || len(a) < M*K {
-		panic("linalg: QuantizeActivationsGroupedInto: bad group or short buffer")
+	if len(aq) < M*K || len(scales) < M*nG || len(a) < M*K {
+		panic("linalg: QuantizeActivationsGroupedInto: short buffer")
 	}
 	for m := range M {
 		for g := range nG {

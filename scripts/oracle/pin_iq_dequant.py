@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """pin_iq_dequant.py — parity-gate the Go codebook and FP4 GGUF dequant (IQ4_NL,
-IQ4_XS, IQ2_S, IQ3_S, NVFP4, IQ2_XXS, IQ2_XS, IQ3_XXS) against the canonical llama.cpp `gguf` Python reference.
+IQ4_XS, IQ2_S, IQ3_S, NVFP4, IQ2_XXS, IQ2_XS, IQ3_XXS, Q4_1, Q5_1, IQ1_S, IQ1_M, TQ1_0, TQ2_0) against the canonical llama.cpp `gguf` Python reference.
 
 The IQ* GGUF quants are codebook-based (a 4-bit code indexes a fixed non-linear
 level table), so unlike the Q*_K block quants there is no widely-hosted small
@@ -132,6 +132,80 @@ def build_iq3xxs(rng: np.random.Generator, nrandom: int) -> bytes:
     return bytes(out)
 
 
+def rand_f16(rng: np.random.Generator, n: int) -> bytes:
+    # n finite f16 values drawn from [-2, 2): inexact products, so a fused
+    # multiply-add where the reference rounds twice would show.
+    return b"".join(f16le(float(x)) for x in rng.uniform(-2.0, 2.0, n))
+
+
+def build_q4_1(rng: np.random.Generator, nblocks: int) -> bytes:
+    # Q4_1 (20 bytes): d, m (f16), qs[16]. Block 0's bytes are j | (15-j)<<4, so
+    # every code sits in both halves; the rest are random.
+    out = bytearray()
+    for b in range(nblocks):
+        out += rand_f16(rng, 2)
+        out += bytes(j | (15 - j) << 4 for j in range(16)) if b == 0 else bytes(rng.integers(0, 256, 16, dtype=np.uint8).tolist())
+    return bytes(out)
+
+
+def build_q5_1(rng: np.random.Generator, nblocks: int) -> bytes:
+    # Q5_1 (24 bytes): d, m (f16), qh (u32, element i's fifth bit), qs[16].
+    # Block 0 has qh = 0x0000FFFF against qs = j | (15-j)<<4; the rest are random.
+    out = bytearray()
+    for b in range(nblocks):
+        out += rand_f16(rng, 2)
+        if b == 0:
+            out += u32le(0x0000FFFF) + bytes(j | (15 - j) << 4 for j in range(16))
+        else:
+            out += bytes(rng.integers(0, 256, 20, dtype=np.uint8).tolist())
+    return bytes(out)
+
+
+def build_iq1s(rng: np.random.Generator, nrandom: int) -> bytes:
+    # IQ1_S (50 bytes): d, qs[32], qh[8] u16 (3 high index bits per group of 8,
+    # a 3-bit scale in bits 12..14, the delta sign in bit 15). The first 64 blocks
+    # use grid entry k = 0..2047 once each, every scale and both delta signs.
+    out = bytearray()
+    for b in range(64):
+        out += f16le(CLEAN_D[b % len(CLEAN_D)])
+        ks = [32 * b + i for i in range(32)]
+        out += bytes(k & 0xFF for k in ks)
+        for ib in range(8):
+            qh = sum((ks[4 * ib + l] >> 8) << (3 * l) for l in range(4))
+            qh |= ((8 * b + ib) % 8) << 12 | ((b + ib) & 1) << 15
+            out += qh.to_bytes(2, "little")
+    out += build_grid_blocks(rng, nrandom, 50)
+    return bytes(out)
+
+
+def build_iq1m(rng: np.random.Generator, nblocks: int) -> bytes:
+    # IQ1_M (56 bytes): qs[32], qh[16], scales[8] as four u16s whose top nibbles
+    # carry a clean f16 super-scale; everything else random.
+    out = bytearray()
+    for b in range(nblocks):
+        out += bytes(rng.integers(0, 256, 48, dtype=np.uint8).tolist())
+        dbits = int(np.float16(CLEAN_D[b % len(CLEAN_D)]).view(np.uint16))
+        for i in range(4):
+            low = int(rng.integers(0, 1 << 12))
+            out += (low | ((dbits >> (4 * i)) & 0xF) << 12).to_bytes(2, "little")
+    return bytes(out)
+
+
+def build_tq(rng: np.random.Generator, nblocks: int, payload: int) -> bytes:
+    # TQ1_0 (payload 52) / TQ2_0 (payload 64): the code bytes, then d (f16) last.
+    # The payload bytes run through 0..255 in order across blocks, then random.
+    out = bytearray()
+    k = 0
+    for b in range(nblocks):
+        if k < 256:
+            body = bytes((k + i) % 256 for i in range(payload))
+            k += payload
+        else:
+            body = bytes(rng.integers(0, 256, payload, dtype=np.uint8).tolist())
+        out += body + f16le(CLEAN_D[b % len(CLEAN_D)])
+    return bytes(out)
+
+
 def main() -> int:
     rng = np.random.default_rng(42)
     specs = [
@@ -143,6 +217,12 @@ def main() -> int:
         ("IQ2_XXS", Q.IQ2_XXS, 66, 256, build_iq2xxs(rng, 2)),
         ("IQ2_XS", Q.IQ2_XS, 74, 256, build_iq2xs(rng, 2)),
         ("IQ3_XXS", Q.IQ3_XXS, 98, 256, build_iq3xxs(rng, 2)),
+        ("Q4_1", Q.Q4_1, 20, 32, build_q4_1(rng, 8)),
+        ("Q5_1", Q.Q5_1, 24, 32, build_q5_1(rng, 8)),
+        ("IQ1_S", Q.IQ1_S, 50, 256, build_iq1s(rng, 2)),
+        ("IQ1_M", Q.IQ1_M, 56, 256, build_iq1m(rng, 8)),
+        ("TQ1_0", Q.TQ1_0, 54, 256, build_tq(rng, 7, 52)),
+        ("TQ2_0", Q.TQ2_0, 66, 256, build_tq(rng, 6, 64)),
     ]
     cases = []
     for name, qtype, blk, nper, raw in specs:
@@ -162,7 +242,7 @@ def main() -> int:
     out_path = REPO_ROOT / "testdata" / "iq_dequant_golden.json"
     payload = {
         "note": (
-            "IQ4_NL / IQ4_XS / IQ2_S / IQ3_S / NVFP4 / IQ2_XXS / IQ2_XS / IQ3_XXS dequant oracle from llama.cpp's gguf Python reference "
+            "IQ4_NL / IQ4_XS / IQ2_S / IQ3_S / NVFP4 / IQ2_XXS / IQ2_XS / IQ3_XXS / Q4_1 / Q5_1 / IQ1_S / IQ1_M / TQ1_0 / TQ2_0 dequant oracle from llama.cpp's gguf Python reference "
             "(gguf.quants.dequantize). Deterministic raw super-blocks (fixed clean "
             "f16 scale, randomized codes/sub-scales; NVFP4 also every ue4m3 scale byte "
             "against every e2m1 code; the IQ*_XXS / IQ2_XS cases every grid entry and sign index); the Go dequantRange must "

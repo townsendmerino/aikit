@@ -124,8 +124,10 @@ graph TD
 
 Not drawn, but in the table: the three `examples/*` programs and
 `bench/cmd/benchreport`, which sit on top and which nothing imports,
-`internal/importrules` itself, and `internal/guardmem` (the over-read gate's
-guard-page harness, a stdlib-only leaf that only tests import). Test-only imports are not in the table either
+`internal/importrules` itself, and the over-read gate's two test helpers, which
+only tests import: `internal/guardmem` (the guard-page harness, a stdlib-only
+leaf) and `internal/kernreg` (the registry of assembly entry points, which
+imports it). Test-only imports are not in the table either
 (`ann`'s tests import `embed` and `fuse`, for one); the rule is about what an
 importer's build pulls in.
 

@@ -264,11 +264,6 @@ No breaking change before a v2.0. This is the API to build on.
 - `encoder.Load`, `encoder.LoadFromFS`, `encoder.Model`, `encoder.Encoder` interface
 - `chunk.Chunker` interface; `chunk.{Chunk, Register, Get, Names, ChunkFile, Language}`
 - Concrete chunker names registered under `regex`, `markdown`, `treesitter`
-- `linalg.Dot`, `linalg.MatmulBT`, and the int8/int4 quant kernels — public
-  since v0.4.0, and the busiest Experimental surface by a wide margin: 36
-  non-test files in goinfer route through it. **Graduated 2026-08-18** (this
-  tier re-curation) on that organically-found production evidence, per
-  `docs/internal/roadmap.md` §2.7's trigger.
 - `encoder.Backend`, `encoder.RegisterBackend`, `encoder.NewBackend` — the
   matmul-provider seam, public since v0.4.0. goinfer's WebGPU backend
   (`gpu/backend.go`) and serving path (`internal/serveapp/{embeddings,
@@ -289,6 +284,13 @@ fixed schedule. Age alone doesn't graduate a surface: several entries below
 have shipped since v0.4.0/v1.x with no reported break, but stay here because
 no such consumer has surfaced yet.
 
+- `linalg` — **the whole package, from 2026-11-24 until its surface rework
+  lands.** Its exported surface is being cut down and split into sub-packages,
+  which removes and moves names, so no part of it is promised meanwhile;
+  `linalg.Dot`, `linalg.MatmulBT` and the int8/int4 quant kernels were Hard from
+  2026-08-18 to 2026-11-24. The names that survive the rework return to the Hard
+  tier as an explicit list in `tools/releasegate`. The `linalg` entries below
+  record when each group was added.
 - `ann.HNSW` / `ann.NewHNSW` / `ann.BuildHNSW` / `ann.Config` — the `Hit`/`Query`
   surface is stable, but graph internals and `Config` defaults may tune. Neighbor
   selection defaults to the diversity heuristic (Algorithm 4) for high recall on
@@ -354,7 +356,8 @@ no such consumer has surfaced yet.
   package end-to-end. Stays Experimental — new surface, settling.
   `sparse.Index.QueryBatch` (batch query API, mirroring `bm25.Index.TopKBatch`
   above) is covered by the same status.
-- `encoder.LoadQ8` / `encoder.ModelQ8` (int8 quant) — alternate precision path.
+- `encoder.LoadQ8` / `encoder.ModelQ8` / `encoder.WeightsQ8` /
+  `encoder.LayerWeightsQ8` (int8 quant) — alternate precision path.
 - `encoder.LoadBERT` / `encoder.BERT` / `BERT.Encode` — MiniLM-class BERT encoder
   (learned positions + GELU FFN + mean pooling), cgo-free, parity-pinned to
   all-MiniLM-L6-v2 (cosine 1.0). New surface, settling.
@@ -413,9 +416,7 @@ no such consumer has surfaced yet.
   `HasFusedQ8Kernel`, `FusedQ8Applies`), W8A8 activation quantization
   (`QuantizeActivations{,Into}`, `MatmulBTW8A8Pre`, `DequantizeRowsInt8Into`) and
   the Hamming/SimHash primitives (`PackSignBits{,Row}`, `PackedWords`,
-  `HammingRows`) — new surface, distinct from `Dot`/`MatmulBT`/the int8/int4
-  quant kernels (Hard tier, above): `linalg` is now a mixed-tier package, not
-  wholly Experimental.
+  `HammingRows`) — new surface.
 - `linalg`'s fused attention (v1.35.0) — `AttendTileFused`, `FusedAttnScratch`,
   `NewFusedAttnScratch`, `FusedAttnKeyBlock`, `GatherVBlockMajor`. A
   FlashAttention-style single-tile schedule that keeps the score block resident
