@@ -15,7 +15,7 @@ import (
 // TestW4A8TileVsCanonicalAB is docs/task-simd-audit.md S-01's decision-rule
 // harness: the canonical M>1 path (MatmulBTW4A8Into — a GEMV per activation
 // row per weight row) against the register-blocked tile
-// (MatmulBTW4A8Row4TileInto) at the production projection shape, over the batch
+// (matmulBTW4A8Row4TileInto) at the production projection shape, over the batch
 // sizes prefill and speculative verify actually run at.
 //
 // PAIRED AND INTERLEAVED, three passes, per the campaign rules: the two arms are
@@ -88,7 +88,7 @@ func TestW4A8TileVsCanonicalAB(t *testing.T) {
 			// Warm both workspaces' scratch so neither arm pays a first-call
 			// allocation inside the timed region.
 			MatmulBTW4A8Into(wsA, a, q4, q4s, dstA, M, K, N, group)
-			MatmulBTW4A8Row4TileInto(wsB, a, row4, row4s, dstB, M, K, N, group)
+			matmulBTW4A8Row4TileInto(wsB, a, row4, row4s, dstB, M, K, N, group)
 			for i := range dstA {
 				if dstA[i] != dstB[i] {
 					t.Fatalf("M=%d idx=%d: tile %v != canonical %v — the A/B arms disagree, "+
@@ -103,7 +103,7 @@ func TestW4A8TileVsCanonicalAB(t *testing.T) {
 			}).NsPerOp())
 			tile := float64(testing.Benchmark(func(b *testing.B) {
 				for b.Loop() {
-					MatmulBTW4A8Row4TileInto(wsB, a, row4, row4s, dstB, M, K, N, group)
+					matmulBTW4A8Row4TileInto(wsB, a, row4, row4s, dstB, M, K, N, group)
 				}
 			}).NsPerOp())
 			results[M] = append(results[M], cell{M: M, canon: canon, tile: tile, ratio: canon / tile})

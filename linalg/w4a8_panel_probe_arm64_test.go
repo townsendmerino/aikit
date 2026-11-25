@@ -73,12 +73,12 @@ func TestW4A8TilePanelTraffic(t *testing.T) {
 				} else {
 					ws.SetThreshold(0)
 				}
-				MatmulBTW4A8Row4TileInto(ws, a, row4, row4s, dst, M, K, N, group)
+				matmulBTW4A8Row4TileInto(ws, a, row4, row4s, dst, M, K, N, group)
 				best := 0.0
 				for range 3 {
 					r := testing.Benchmark(func(b *testing.B) {
 						for b.Loop() {
-							MatmulBTW4A8Row4TileInto(ws, a, row4, row4s, dst, M, K, N, group)
+							matmulBTW4A8Row4TileInto(ws, a, row4, row4s, dst, M, K, N, group)
 						}
 					})
 					ns := float64(r.NsPerOp())

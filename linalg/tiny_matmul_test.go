@@ -233,12 +233,12 @@ func tmInt4Adapters() []kernreg.Adapter {
 		return kernreg.Put(p, "wScales16", F32ToF16Scales(tmScales(s.N*ng, 3)))
 	}
 	return []kernreg.Adapter{
-		plain("MatmulBTQ4", func(_ *Workspace, a []float32, w4 []byte, wS, dst []float32, M, K, N, g int) {
-			MatmulBTQ4(a, w4, wS, dst, M, K, N, g)
+		plain("matmulBTQ4", func(_ *Workspace, a []float32, w4 []byte, wS, dst []float32, M, K, N, g int) {
+			matmulBTQ4(a, w4, wS, dst, M, K, N, g)
 		}),
-		plain("MatmulBTQ4Into", MatmulBTQ4Into),
-		plain("MatmulBTW4A8", func(_ *Workspace, a []float32, w4 []byte, wS, dst []float32, M, K, N, g int) {
-			MatmulBTW4A8(a, w4, wS, dst, M, K, N, g)
+		plain("matmulBTQ4Into", matmulBTQ4Into),
+		plain("matmulBTW4A8", func(_ *Workspace, a []float32, w4 []byte, wS, dst []float32, M, K, N, g int) {
+			matmulBTW4A8(a, w4, wS, dst, M, K, N, g)
 		}),
 		plain("MatmulBTW4A8Into", MatmulBTW4A8Into),
 		tmGroupAdapter("MatmulBTW4A8F16Into", shapes, func(p *kernreg.Placer, s tmG) any {
@@ -320,7 +320,7 @@ func tmGGUFAdapters() []kernreg.Adapter {
 		})
 	}
 	return []kernreg.Adapter{
-		gguf("MatmulBTGGUFQ4K", 144, []int{0, 2}, MatmulBTGGUFQ4K),
-		gguf("MatmulBTGGUFQ6K", 210, []int{208}, MatmulBTGGUFQ6K),
+		gguf("matmulBTGGUFQ4K", 144, []int{0, 2}, matmulBTGGUFQ4K),
+		gguf("matmulBTGGUFQ6K", 210, []int{208}, matmulBTGGUFQ6K),
 	}
 }

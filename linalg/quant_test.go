@@ -98,7 +98,7 @@ func TestMatmulBTQ4_matchesDequant(t *testing.T) {
 		MatmulBT(a, bDeq, want, s.M, s.K, s.N)
 
 		got := make([]float32, s.M*s.N)
-		MatmulBTQ4(a, packed, scales, got, s.M, s.K, s.N, group)
+		matmulBTQ4(a, packed, scales, got, s.M, s.K, s.N, group)
 		if e := relL2(got, want); e > 1e-5 {
 			t.Fatalf("shape %+v: MatmulBTQ4 vs dequant matmul relL2 = %.2e, want ≤ 1e-5", s, e)
 		}
@@ -136,7 +136,7 @@ func matmulBTQ4Scalar(a []float32, bPacked []byte, bScales []float32, dst []floa
 }
 
 // BenchmarkMatmulBTQ4 / _Scalar: the SIMD kernel vs the fused-scalar reference on
-// a decode-step shape (M=1). Run: go test ./linalg -bench MatmulBTQ4 -benchmem
+// a decode-step shape (M=1). Run: go test ./linalg -bench matmulBTQ4 -benchmem
 func benchInt4(b *testing.B, simd bool) {
 	const M, K, N, group = 1, 2048, 2048, 32
 	rng := rand.New(rand.NewSource(7))
@@ -153,7 +153,7 @@ func benchInt4(b *testing.B, simd bool) {
 	b.ResetTimer()
 	for range b.N {
 		if simd {
-			MatmulBTQ4(a, packed, scales, dst, M, K, N, group)
+			matmulBTQ4(a, packed, scales, dst, M, K, N, group)
 		} else {
 			matmulBTQ4Scalar(a, packed, scales, dst, M, K, N, group)
 		}

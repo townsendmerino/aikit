@@ -21,7 +21,7 @@ func layoutRefF32(ws *Workspace, a []float32, wm *WeightMat, q4 []byte, s32 []fl
 	if M == 1 {
 		MatmulBTW4A8Row4Into(ws, a, wm.q4Row4, s4, out, M, K, N, 32)
 	} else {
-		MatmulBTW4A8Row4TileInto(ws, a, wm.q4Row4, s4, out, M, K, N, 32)
+		matmulBTW4A8Row4TileInto(ws, a, wm.q4Row4, s4, out, M, K, N, 32)
 	}
 	return out
 }

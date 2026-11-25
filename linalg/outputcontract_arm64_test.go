@@ -60,7 +60,7 @@ func archContractCases() []outputcontract.Case {
 			w, sc := q4()
 			dst, o := outputcontract.MkOut[float32]("dst", s.M*s.N)
 			aa := rf32(27, s.M*s.K)
-			return func() { MatmulBTW4A8Row4PrefetchInto(&Workspace{}, aa, w, sc, dst, s.M, s.K, s.N, 32, 4) }, []*outputcontract.OutBuf{o}
+			return func() { matmulBTW4A8Row4PrefetchInto(&Workspace{}, aa, w, sc, dst, s.M, s.K, s.N, 32, 4) }, []*outputcontract.OutBuf{o}
 		})
 		add("MatmulBTW4A8Row4DesharedInto/"+nm, func() (func(), []*outputcontract.OutBuf) {
 			pk, sc := QuantizeGroupsInt4(rf32(26, s.N*s.K), s.N, s.K, 32)
@@ -69,7 +69,7 @@ func archContractCases() []outputcontract.Case {
 			dst, o := outputcontract.MkOut[float32]("dst", s.M*s.N)
 			aa := rf32(27, s.M*s.K)
 			return func() {
-				MatmulBTW4A8Row4DesharedInto(&Workspace{}, aa, b0, b1, b2, b3, s0, s1, s2, s3, dst, s.M, s.K, s.N, 32)
+				matmulBTW4A8Row4DesharedInto(&Workspace{}, aa, b0, b1, b2, b3, s0, s1, s2, s3, dst, s.M, s.K, s.N, 32)
 			}, []*outputcontract.OutBuf{o}
 		})
 	}
@@ -80,7 +80,7 @@ func archContractCases() []outputcontract.Case {
 			w, ss := RepackW4A8Row4(pk, s.N, s.K, 32), RepackW4A8Row4Scales(sc, s.N, s.K, 32)
 			dst, o := outputcontract.MkOut[float32]("dst", s.M*s.N)
 			aa := rf32(27, s.M*s.K)
-			return func() { MatmulBTW4A8Row4TileInto(&Workspace{}, aa, w, ss, dst, s.M, s.K, s.N, 32) }, []*outputcontract.OutBuf{o}
+			return func() { matmulBTW4A8Row4TileInto(&Workspace{}, aa, w, ss, dst, s.M, s.K, s.N, 32) }, []*outputcontract.OutBuf{o}
 		})
 	}
 	// the WeightMat dispatch over both row4 branches (M=1 decode kernel, M>1 tile)

@@ -579,7 +579,7 @@ func w8a8BatchSpan(aq []int8, aScales []float32, ops []w8a8Op, M, K, g0, g1 int)
 // (even k = low nibble, odd k = high). At group 32 this is ~0.625 byte/element
 // (4-bit code + the per-group scale amortized), ≈ 6.4× smaller than f32 and
 // ~1.6× smaller than per-row int8 — the footprint that fits a 7B-class model in
-// laptop RAM. The matmul (MatmulBTQ4) dequantizes per group inside the inner
+// laptop RAM. The matmul (matmulBTQ4) dequantizes per group inside the inner
 // loop; activations stay f32.
 
 // requirePositiveGroup refuses a group size below 1 by name, before any ⌈K/group⌉ divides
@@ -772,7 +772,7 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 	// is exactly backwards. `group` must be a runtime variable, and the callee must
 	// not inline into the benchmark, or this optimisation appears to be a regression.
 	//
-	// Not a cold path: q4Span calls it once per weight row (MatmulBTQ4 pays it N×K
+	// Not a cold path: q4Span calls it once per weight row (matmulBTQ4 pays it N×K
 	// times — the CHANGELOG attributes ~72% of int4 decode to the f32 dequant), and it
 	// is WeightMat.Row's int4 path, i.e. the tied-embedding lookup on every token.
 	//
@@ -821,9 +821,9 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 	}
 }
 
-// MatmulBTW4A8 computes dst[M,N] = a[M,K] · bᵀ as int4 WEIGHTS × int8
+// matmulBTW4A8 computes dst[M,N] = a[M,K] · bᵀ as int4 WEIGHTS × int8
 // ACTIVATIONS — the int4 analogue of MatmulBTW8A8, and the fast M=1 (decode)
-// path that MatmulBTQ4 can't be. b is group-wise int4 (w4 nibbles + wScales per
+// path that matmulBTQ4 can't be. b is group-wise int4 (w4 nibbles + wScales per
 // group, QuantizeGroupsInt4 layout); the f32 activations are dynamically
 // quantized to int8 per row (per-row scale, like MatmulBTW8A8).
 //
@@ -831,24 +831,24 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 // integer domain — unpack each int4 group to int8 (nibble−8), int8×int8 SDOT
 // into int32, fold in the group's weight scale — with NO per-weight f32 dequant
 // and NO per-group Go↔asm transition (the arm64 kernel loops groups internally).
-// That is what keeps it fast at M=1: MatmulBTQ4 spends ~72% of decode in the f32
+// That is what keeps it fast at M=1: matmulBTQ4 spends ~72% of decode in the f32
 // dequant, which the column-outer M-reuse can only amortize at M>1; W4A8 removes
-// the dequant outright. Lossier than MatmulBTQ4 (activations are int8, not f32)
+// the dequant outright. Lossier than matmulBTQ4 (activations are int8, not f32)
 // — the W8A8 tradeoff — so it's the explicit-opt-in kernel for RAM-constrained
 // int4 CPU decode, not a drop-in for the f32-activation path.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTW4A8(a []float32, w4 []byte, wScales []float32, dst []float32, M, K, N, group int) {
+func matmulBTW4A8(a []float32, w4 []byte, wScales []float32, dst []float32, M, K, N, group int) {
 	var ws Workspace
 	MatmulBTW4A8Into(&ws, a, w4, wScales, dst, M, K, N, group)
 }
 
-// MatmulBTW4A8Into is MatmulBTW4A8 with caller-supplied scratch (a Workspace), so
+// MatmulBTW4A8Into is matmulBTW4A8 with caller-supplied scratch (a Workspace), so
 // a steady-state int4 decode loop allocates nothing: the activation is quantized
 // once into the Workspace's reusable int8/f32 buffers instead of a fresh
 // make([]int8, M*K) + make([]float32, M) per call — the same alloc MatmulBTW8A8
 // was re-engineered to remove, now available for the RAM-constrained int4 path.
-// Output is bit-identical to MatmulBTW4A8.
+// Output is bit-identical to matmulBTW4A8.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func MatmulBTW4A8Into(ws *Workspace, a []float32, w4 []byte, wScales []float32, dst []float32, M, K, N, group int) {
@@ -1146,7 +1146,7 @@ func w4a8BatchOp(aq []int8, aScales []float32, op w4a8Op, M, K, group, nGroups, 
 	canonical(q1*4, j1)
 }
 
-// MatmulBTQ4 computes dst[M,N] = a[M,K] · bᵀ where b is the [N,K] matrix stored
+// matmulBTQ4 computes dst[M,N] = a[M,K] · bᵀ where b is the [N,K] matrix stored
 // as group-wise int4 (bPacked nibbles + bScales per group; see
 // QuantizeGroupsInt4). Each weight row is dequantized ONCE into a full K-wide
 // f32 scratch (4-bit code − 8, times its group scale — the same per-element
@@ -1165,20 +1165,20 @@ func w4a8BatchOp(aq []int8, aScales []float32, op w4a8Op, M, K, group, nGroups, 
 // tolerance, so this is also slightly MORE faithful, not less.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
+func matmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
 	var ws Workspace
-	MatmulBTQ4Into(&ws, a, bPacked, bScales, dst, M, K, N, group)
+	matmulBTQ4Into(&ws, a, bPacked, bScales, dst, M, K, N, group)
 }
 
-// MatmulBTQ4Into is MatmulBTQ4 through a Workspace — same win as MatmulBTQ8Into:
+// matmulBTQ4Into is matmulBTQ4 through a Workspace — same win as MatmulBTQ8Into:
 // the serial path takes its dequantized-weight-row scratch from ws.deqBuf(K)
 // (zero alloc after warm-up), the parallel path keeps a per-worker scratch. Output
 // is byte-identical (audit #14).
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTQ4Into(ws *Workspace, a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
+func matmulBTQ4Into(ws *Workspace, a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
 	// Always-on entry guard (M2); checkGroupMatmul below is a no-op without
-	// -tags aikit_checks. Same group-int4 shape contract as MatmulBTW4A8.
+	// -tags aikit_checks. Same group-int4 shape contract as matmulBTW4A8.
 	checkMatmulW4A8("MatmulBTQ4", len(a), len(bPacked), len(bScales), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTQ4", len(a), bPacked, bScales, len(dst), M, K, N, group)
 	nGroups, bpr := groupsFor(K, group)

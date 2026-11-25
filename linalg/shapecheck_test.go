@@ -52,7 +52,7 @@ func TestMatmulShapeChecks_recoverableAcrossFanout(t *testing.T) {
 		{"MatmulBTW8A8 short dst", func() { MatmulBTW8A8(a, bQ, scales, short, M, K, N) }},
 		{"MatmulBTQ8 short scales", func() { MatmulBTQ8(a, bQ, scales[:N-1], good, M, K, N) }},
 		{"MatmulBTW4A8 group 0", func() {
-			MatmulBTW4A8(a, make([]byte, N*((K+1)/2)), make([]float32, N), good, M, K, N, 0)
+			matmulBTW4A8(a, make([]byte, N*((K+1)/2)), make([]float32, N), good, M, K, N, 0)
 		}},
 		// §2.2: the f64-accumulate twin was missing the guard.
 		{"MatmulBTAcc64 short dst", func() { MatmulBTAcc64(a, bF, short, M, K, N) }},

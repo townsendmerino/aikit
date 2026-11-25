@@ -45,7 +45,7 @@ func (w *WeightMat) RepackInt4Row4() bool {
 //
 // TWO row4 kernels, split at M=1. M=1 takes dotW4A8SplitHalf4Row, the decode
 // kernel: one activation row against a quad's four weight rows. M>1 takes the
-// register-blocked tile (MatmulBTW4A8Row4TileInto, docs/task-simd-audit.md
+// register-blocked tile (matmulBTW4A8Row4TileInto, docs/task-simd-audit.md
 // S-01), which reduces FOUR activation rows against those same four weight rows
 // per call so the nibble unpack and scale broadcast are paid once per weight row
 // per group instead of once per activation row. Measured 2.88x over the

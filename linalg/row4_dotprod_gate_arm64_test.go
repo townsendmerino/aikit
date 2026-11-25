@@ -23,12 +23,12 @@ func TestRow4Matmuls_refuseWithoutDotProd(t *testing.T) {
 	ws := new(Workspace)
 	calls := map[string]func(){
 		"MatmulBTW4A8Row4Into":     func() { MatmulBTW4A8Row4Into(ws, a, w4, wS, dst, 1, K, N, group) },
-		"MatmulBTW4A8Row4TileInto": func() { MatmulBTW4A8Row4TileInto(ws, a, w4, wS, dst, 1, K, N, group) },
+		"MatmulBTW4A8Row4TileInto": func() { matmulBTW4A8Row4TileInto(ws, a, w4, wS, dst, 1, K, N, group) },
 		"MatmulBTW4A8Row4PrefetchInto": func() {
-			MatmulBTW4A8Row4PrefetchInto(ws, a, w4, wS, dst, 1, K, N, group, 256)
+			matmulBTW4A8Row4PrefetchInto(ws, a, w4, wS, dst, 1, K, N, group, 256)
 		},
 		"MatmulBTW4A8Row4DesharedInto": func() {
-			MatmulBTW4A8Row4DesharedInto(ws, a, q4, q4, q4, q4, qS, qS, qS, qS, dst, 1, K, N, group)
+			matmulBTW4A8Row4DesharedInto(ws, a, q4, q4, q4, q4, qS, qS, qS, qS, dst, 1, K, N, group)
 		},
 	}
 	for name, call := range calls {

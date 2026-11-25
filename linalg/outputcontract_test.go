@@ -275,19 +275,19 @@ func outputContractCases() []outputcontract.Case {
 				pk, sc := q4w()
 				dst, o := outputcontract.MkOut[float32]("dst", s.M*s.N)
 				aa := a()
-				return func() { MatmulBTQ4(aa, pk, sc, dst, s.M, s.K, s.N, g) }, []*outputcontract.OutBuf{o}
+				return func() { matmulBTQ4(aa, pk, sc, dst, s.M, s.K, s.N, g) }, []*outputcontract.OutBuf{o}
 			})
 			add(fmt.Sprintf("MatmulBTQ4Into/%s,group=%d", nm, g), func() (func(), []*outputcontract.OutBuf) {
 				pk, sc := q4w()
 				dst, o := outputcontract.MkOut[float32]("dst", s.M*s.N)
 				aa := a()
-				return func() { MatmulBTQ4Into(&Workspace{}, aa, pk, sc, dst, s.M, s.K, s.N, g) }, []*outputcontract.OutBuf{o}
+				return func() { matmulBTQ4Into(&Workspace{}, aa, pk, sc, dst, s.M, s.K, s.N, g) }, []*outputcontract.OutBuf{o}
 			})
 			add(fmt.Sprintf("MatmulBTW4A8/%s,group=%d", nm, g), func() (func(), []*outputcontract.OutBuf) {
 				pk, sc := q4w()
 				dst, o := outputcontract.MkOut[float32]("dst", s.M*s.N)
 				aa := a()
-				return func() { MatmulBTW4A8(aa, pk, sc, dst, s.M, s.K, s.N, g) }, []*outputcontract.OutBuf{o}
+				return func() { matmulBTW4A8(aa, pk, sc, dst, s.M, s.K, s.N, g) }, []*outputcontract.OutBuf{o}
 			})
 			add(fmt.Sprintf("MatmulBTW4A8Into/%s,group=%d", nm, g), func() (func(), []*outputcontract.OutBuf) {
 				pk, sc := q4w()
@@ -339,10 +339,10 @@ func outputContractCases() []outputcontract.Case {
 			dst, o := outputcontract.MkOut[float32]("dst", M*N)
 			if q == "Q4K" {
 				w := randQ4KRow(rng, N*nb)
-				return func() { MatmulBTGGUFQ4K(a, w, dst, M, K, N) }, []*outputcontract.OutBuf{o}
+				return func() { matmulBTGGUFQ4K(a, w, dst, M, K, N) }, []*outputcontract.OutBuf{o}
 			}
 			w := randQ6KRow(rng, N*nb)
-			return func() { MatmulBTGGUFQ6K(a, w, dst, M, K, N) }, []*outputcontract.OutBuf{o}
+			return func() { matmulBTGGUFQ6K(a, w, dst, M, K, N) }, []*outputcontract.OutBuf{o}
 		})
 	}
 

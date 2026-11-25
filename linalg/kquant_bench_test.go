@@ -36,7 +36,7 @@ func BenchmarkGEMV_Q6K_native(b *testing.B) {
 		b.Run(shapeName(s.K, s.N), func(b *testing.B) {
 			b.SetBytes(int64(s.N * nb * q6kBlockB))
 			for i := 0; i < b.N; i++ {
-				MatmulBTGGUFQ6K(a, w, dst, 1, s.K, s.N)
+				matmulBTGGUFQ6K(a, w, dst, 1, s.K, s.N)
 			}
 		})
 	}

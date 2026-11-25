@@ -177,7 +177,7 @@ func matmulBTW4A8Row4GroupedF16Q(ws *Workspace, aq []int8, aS []float32, w4Row4 
 	ws.parallel(nQuads, span)
 }
 
-// matmulBTW4A8Row4TileF16Q is MatmulBTW4A8Row4TileInto (M>1) over binary16 scales, on an activation already
+// matmulBTW4A8Row4TileF16Q is matmulBTW4A8Row4TileInto (M>1) over binary16 scales, on an activation already
 // quantized per row (R-13): a quad range's scales are widened once, then the f32 tile span runs on quad-shifted views.
 func matmulBTW4A8Row4TileF16Q(ws *Workspace, q *ActQ, w4Row4 []byte, s4 []uint16, dst []float32, M, K, N, group int) {
 	nGroups, bpr := groupsFor(K, group)
