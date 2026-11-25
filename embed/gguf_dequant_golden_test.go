@@ -200,3 +200,84 @@ func TestNVFP4Dequant_goldenCatchesPlants(t *testing.T) {
 	}
 	requirePlantCaught(t, c, "ue4m3 sign bit honored", signed)
 }
+
+// dequantRaw dequantizes raw (the case's bytes, possibly rearranged) as the case's type.
+func (c dequantGoldenCase) dequantRaw(raw []byte) []float32 {
+	bs, _ := ggmlBlockElems(c.GGMLType)
+	got := make([]float32, c.Elems)
+	dequantRange(c.GGMLType, raw, 0, got, bs)
+	return got
+}
+
+func (c dequantGoldenCase) raw(t *testing.T) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(c.RawHex)
+	if err != nil {
+		t.Fatalf("decode raw_hex: %v", err)
+	}
+	return b
+}
+
+// otherMagnitude returns a grid magnitude other than g from the same grid.
+func otherMagnitude(grid []int8, g int8) int8 {
+	for _, v := range grid {
+		if v != g {
+			return v
+		}
+	}
+	panic("grid holds one value")
+}
+
+// TestIQXXSDequant_goldenCatchesPlants: for IQ2_XXS, IQ2_XS and IQ3_XXS, one wrong grid magnitude (an entry
+// in the middle of the codebook), one wrong sign-table entry, and a misread field order each turn the
+// golden red. A field order is planted by rearranging the raw bytes and decoding them with the real kernel,
+// which equals decoding the original bytes in that order.
+func TestIQXXSDequant_goldenCatchesPlants(t *testing.T) {
+	grids := map[string][]int8{"IQ2_XXS": iq2xxsGrid, "IQ2_XS": iq2xsGrid, "IQ3_XXS": iq3xxsGrid}
+	for typ, grid := range grids {
+		c := dequantGoldenCaseOf(t, typ)
+		e := &grid[len(grid)/2+3]
+		var got []float32
+		plantTableEntry(e, otherMagnitude(grid, *e), func() { got = c.dequant(t) })
+		requirePlantCaught(t, c, "one grid magnitude", got)
+
+		plantTableEntry(&ksignsIQ2XS[77], ksignsIQ2XS[77]^1, func() { got = c.dequant(t) })
+		requirePlantCaught(t, c, "one sign-table entry", got)
+	}
+
+	// IQ2_XS: the two 4-bit scales of a sub-block read high nibble first.
+	c := dequantGoldenCaseOf(t, "IQ2_XS")
+	raw := c.raw(t)
+	for blk := range len(raw) / 74 {
+		for i := 66; i < 74; i++ {
+			b := raw[blk*74+i]
+			raw[blk*74+i] = b<<4 | b>>4
+		}
+	}
+	requirePlantCaught(t, c, "scale nibbles swapped", c.dequantRaw(raw))
+
+	// IQ2_XXS: the grid word and the sign-and-scale word of a sub-block read in the other order.
+	c = dequantGoldenCaseOf(t, "IQ2_XXS")
+	raw = c.raw(t)
+	for blk := range len(raw) / 66 {
+		for ib := range 8 {
+			w := raw[blk*66+2+8*ib:][:8]
+			var tmp [4]byte
+			copy(tmp[:], w[:4])
+			copy(w[:4], w[4:])
+			copy(w[4:], tmp[:])
+		}
+	}
+	requirePlantCaught(t, c, "grid and sign words swapped", c.dequantRaw(raw))
+
+	// IQ3_XXS: the two grid indices that share a sign byte read in the other order.
+	c = dequantGoldenCaseOf(t, "IQ3_XXS")
+	raw = c.raw(t)
+	for blk := range len(raw) / 98 {
+		for k := 0; k < 64; k += 2 {
+			q := raw[blk*98+2+k:][:2]
+			q[0], q[1] = q[1], q[0]
+		}
+	}
+	requirePlantCaught(t, c, "grid index pair swapped", c.dequantRaw(raw))
+}
