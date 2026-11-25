@@ -109,7 +109,10 @@ func TestX(t *testing.T) { _ = la.TestOnly() }
 	if err != nil {
 		t.Fatal(err)
 	}
-	devnull, _ := os.Open(os.DevNull)
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer devnull.Close()
 	t.Setenv("GOPROXY", "off")
 	res, err := censusOf([]*repo{libRepo, appRepo}, libRepo.root, "la", [][2]string{{"linux", "amd64"}, {"linux", "arm64"}}, devnull)
@@ -226,7 +229,10 @@ func TestCensus_uncleanImporterIsInconclusive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	devnull, _ := os.Open(os.DevNull)
+	devnull, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer devnull.Close()
 	t.Setenv("GOPROXY", "off")
 	res, err := censusOf([]*repo{libRepo, appRepo}, libRepo.root, "la", [][2]string{{"linux", "amd64"}, {"linux", "arm64"}}, devnull)

@@ -57,7 +57,9 @@ type repo struct {
 	commit  string
 }
 
-const defaultPlatforms = "linux/amd64,linux/arm64,darwin/arm64,darwin/amd64,windows/amd64,windows/arm64"
+// defaultPlatforms are the platforms internal/importrules checks the core on, plus linux/riscv64 and freebsd/arm64, where
+// the portable fallbacks (the !amd64 && !arm64 files, and arm64 off linux, darwin and windows) are the ones built.
+const defaultPlatforms = "linux/amd64,linux/arm64,darwin/arm64,darwin/amd64,windows/amd64,windows/arm64,linux/riscv64,freebsd/arm64"
 
 func main() { os.Exit(run(os.Args[1:])) }
 
@@ -133,8 +135,11 @@ func run(args []string) int {
 		}
 	}
 	if *jsonOut != "" {
-		b, _ := json.MarshalIndent(res.jsonUses(), "", " ")
-		if err := os.WriteFile(*jsonOut, b, 0o644); err != nil {
+		b, err := json.MarshalIndent(res.jsonUses(), "", " ")
+		if err == nil {
+			err = os.WriteFile(*jsonOut, b, 0o644)
+		}
+		if err != nil {
 			fmt.Fprintln(os.Stderr, "linalgcensus:", err)
 			return 2
 		}
@@ -274,7 +279,7 @@ func censusOf(repos []*repo, aikitRoot, pkgRel string, plats [][2]string, log *o
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(work)
+	defer os.RemoveAll(work) //nolint:errcheck // a scratch go.work under the OS temp dir: nothing to report
 	var gw strings.Builder
 	var mods, patterns []string
 	for _, r := range repos {

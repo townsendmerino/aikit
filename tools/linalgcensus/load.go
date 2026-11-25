@@ -132,7 +132,9 @@ func (w *world) checkAll() {
 		if l.isTestMain() || !w.ours(l.Dir) {
 			continue
 		}
-		w.check(id)
+		if _, err := w.check(id); err != nil {
+			continue // kept on the package (l.err) and reported from there
+		}
 	}
 }
 
@@ -187,8 +189,13 @@ func (w *world) check(id string) (*types.Package, error) {
 		l.info = &types.Info{Uses: map[*ast.Ident]types.Object{}, Defs: map[*ast.Ident]types.Object{}, Types: map[ast.Expr]types.TypeAndValue{}}
 	}
 	// The package path is the plain one, so a test variant's objects key the same as its plain package's.
-	pkg, _ := conf.Check(plainPath(l.ImportPath), w.fset, l.files, l.info)
+	pkg, err := conf.Check(plainPath(l.ImportPath), w.fset, l.files, l.info)
 	l.pkg = pkg
+	if pkg == nil {
+		l.err = err
+		return nil, err
+	}
+	// A package with type errors (collected by conf.Error) is still usable: its declarations are there.
 	return pkg, nil
 }
 
