@@ -133,7 +133,7 @@ func (f *FlatBinaryI8) rerank(sc *binScratchI8, q []float32, ids []int32, k int)
 	sc.gatherCodes, sc.gatherScales = codes, scales
 
 	dst := ensure(sc.dst, len(ids))
-	scoreW8A8(&sc.ws, q, codes, scales, dst, 1, dim, len(ids))
+	scoreW8A8(&sc.wm, &sc.ws, q, codes, scales, dst, 1, dim, len(ids))
 	sc.dst = dst
 
 	sel := topk.New[int](k)
@@ -161,6 +161,7 @@ type binScratchI8 struct {
 	gatherCodes  []int8
 	gatherScales []float32
 	ws           linalg.Workspace
+	wm           linalg.WeightMat // scoreW8A8's view of the gathered rows
 	dst          []float32
 }
 

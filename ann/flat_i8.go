@@ -213,10 +213,10 @@ func (f *FlatI8) query(q []float32, k int, keep func(int) bool) []Hit {
 			}
 		}
 		if err := f.gpu.Score(q, dst); err != nil {
-			scoreW8A8(&sc.ws, q, f.bq, f.scales, dst, 1, f.dim, f.n)
+			scoreW8A8(&sc.wm, &sc.ws, q, f.bq, f.scales, dst, 1, f.dim, f.n)
 		}
 	case f.pager == nil:
-		scoreW8A8(&sc.ws, q, f.bq, f.scales, dst, 1, f.dim, f.n)
+		scoreW8A8(&sc.wm, &sc.ws, q, f.bq, f.scales, dst, 1, f.dim, f.n)
 	default:
 		f.scorePaged(q, dst)
 	}
@@ -284,7 +284,7 @@ func (f *FlatI8) queryGathered(sc *flatI8Scratch, q []float32, k int) []Hit {
 			sc.dst = make([]float32, m)
 		}
 		dst := sc.dst[:m]
-		scoreW8A8(&sc.ws, q, f.bq[lo*dim:(lo+m)*dim], f.scales[lo:lo+m], dst, 1, dim, m)
+		scoreW8A8(&sc.wm, &sc.ws, q, f.bq[lo*dim:(lo+m)*dim], f.scales[lo:lo+m], dst, 1, dim, m)
 		hits := f.topHits(dst, k, nil)
 		for i := range hits {
 			hits[i].Index += lo
@@ -325,7 +325,7 @@ func (f *FlatI8) queryGathered(sc *flatI8Scratch, q []float32, k int) []Hit {
 		sc.dst = make([]float32, m)
 	}
 	dst := sc.dst[:m]
-	scoreW8A8(&sc.ws, q, codes, scales, dst, 1, dim, m)
+	scoreW8A8(&sc.wm, &sc.ws, q, codes, scales, dst, 1, dim, m)
 	hits := f.topHits(dst, k, nil)
 	for i := range hits {
 		hits[i].Index = int(sc.ids[hits[i].Index])
@@ -378,6 +378,7 @@ func (f *FlatI8) topHits(dst []float32, k int, keep func(int) bool) []Hit {
 // see the note in query (item 4).
 type flatI8Scratch struct {
 	ws  linalg.Workspace
+	wm  linalg.WeightMat // scoreW8A8's view of the rows it scores, kept here so building it allocates nothing
 	dst []float32
 	// Filtered-scan gather buffers (queryGathered).
 	ids          []int32
@@ -389,8 +390,12 @@ var flatI8ScratchPool = sync.Pool{New: func() any { return new(flatI8Scratch) }}
 
 // scoreW8A8 scores M queries q[M, dim] against n int8 rows (codes [n, dim] with per-row
 // scales) into dst[M, n], through a WeightMat that aliases codes and scales: WrapInt8 copies
-// nothing and MatmulBTInto runs the same W8A8 kernel through ws as the raw call did.
-func scoreW8A8(ws *linalg.Workspace, q []float32, codes []int8, scales []float32, dst []float32, M, dim, n int) {
-	w := linalg.WrapInt8(codes, scales, n, dim, true)
-	w.MatmulBTInto(ws, q, dst, M)
+// nothing and MatmulBTInto runs the same W8A8 kernel through ws as the raw call did. The
+// WeightMat is built in the caller's scratch wm, not a local: a local escapes through the
+// pointer method and would cost the query an allocation. It is cleared after the call, so
+// the pooled scratch holds no index's rows.
+func scoreW8A8(wm *linalg.WeightMat, ws *linalg.Workspace, q []float32, codes []int8, scales []float32, dst []float32, M, dim, n int) {
+	*wm = linalg.WrapInt8(codes, scales, n, dim, true)
+	wm.MatmulBTInto(ws, q, dst, M)
+	*wm = linalg.WeightMat{}
 }
