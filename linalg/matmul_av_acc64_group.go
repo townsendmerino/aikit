@@ -1,5 +1,7 @@
 package linalg
 
+import "github.com/townsendmerino/aikit/linalg/internal/shape"
+
 // MatmulAVAcc64Group computes dst[G,hd] = scores[G,nKeys] · V_head[nKeys,hd], f64-accumulated —
 // G query heads sharing ONE kv head's V data (headOff/rowStride select the shared kv head), each
 // with its own score row in scores. G separate MatmulAVAcc64 calls against the identical
@@ -67,8 +69,8 @@ func checkMatmulAVAcc64Group(scoresLen, valsLen, dstLen, accLen, G, nKeys, hd, h
 	if G < 0 || nKeys < 0 || hd < 0 || headOff < 0 || rowStride < hd {
 		panic("linalg: MatmulAVAcc64Group invalid shape")
 	}
-	requireExactLen("MatmulAVAcc64Group", "scores", scoresLen, mul(G, nKeys))
-	requireExactLen("MatmulAVAcc64Group", "dst", dstLen, mul(G, hd))
+	shape.RequireExactLen("MatmulAVAcc64Group", "scores", scoresLen, shape.Mul(G, nKeys))
+	shape.RequireExactLen("MatmulAVAcc64Group", "dst", dstLen, shape.Mul(G, hd))
 	if accLen < G*hd {
 		panic("linalg: MatmulAVAcc64Group acc scratch shorter than G*hd")
 	}

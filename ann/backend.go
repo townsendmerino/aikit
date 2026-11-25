@@ -10,8 +10,8 @@ import (
 // Backend is a device accelerator for FlatI8 scoring. It is registered by an
 // aikit/gpu build (native Metal today, CUDA later) via RegisterBackend in an
 // init(); the default pure-Go build registers none, and FlatI8 scores on the CPU
-// (linalg.MatmulBTW8A8). This is the same inversion the encoder/vision packages
-// use for their GPU backends — the core ann package never imports the device
+// (linalg.MatmulBTW8A8). This is the same inversion the encoder package
+// uses for its GPU backend — the core ann package never imports the device
 // package, so the default build stays cgo-free and pure-Go.
 type Backend interface {
 	// NewI8Index makes an int8 index resident on the device: bq is [n*dim]

@@ -1,6 +1,10 @@
 package linalg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
+)
 
 // RepackInt4SplitHalfRow writes ONE row's canonical int4 nibbles (src, bpr =
 // cols/2 bytes) into dst (bpr bytes) in split-half order — byte i holds
@@ -60,8 +64,8 @@ func RepackInt4SplitHalfRow(dst, src []byte, K int) {
 		panic(fmt.Sprintf("linalg: RepackInt4SplitHalfRow requires K a multiple of 32, got %d", K))
 	}
 	bpr := K / 2
-	requireLen("RepackInt4SplitHalfRow", "dst", len(dst), bpr)
-	requireLen("RepackInt4SplitHalfRow", "src", len(src), bpr)
+	shape.RequireLen("RepackInt4SplitHalfRow", "dst", len(dst), bpr)
+	shape.RequireLen("RepackInt4SplitHalfRow", "src", len(src), bpr)
 	nGroups := K / 32
 	for g := range nGroups {
 		ob := g * 16

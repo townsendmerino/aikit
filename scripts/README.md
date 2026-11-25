@@ -91,49 +91,6 @@ snapshot_download('Snowflake/snowflake-arctic-embed-m-v2.0',
 Verify with `go test ./encoder/ -run TestGTE_parity -v` — worst emb cosine
 1.000000 against `testdata/gte_golden.json`.
 
-## Vision fixtures — generated, not downloaded
-
-Both SigLIP fixtures are built locally by scripts already in this repo; neither
-needs network access, and this is worth knowing before declaring vision work
-blocked on a missing checkpoint (it happened — perf-campaign §7.17):
-
-```sh
-.venv/bin/python scripts/oracle/pin_siglip_vision.py   # -> testdata/siglip-tiny/ + golden (parity)
-.venv/bin/python scripts/oracle/pin_qwen25vl_vision.py # -> testdata/qwen25vl-vision-tiny/ + golden
-.venv/bin/python scripts/oracle/gen_siglip_bench.py    # -> testdata/siglip-bench{,-l}/ (throughput)
-```
-
-The `pin_*` pair build TINY random towers (hidden 32, 2 layers) — enough to
-exercise every component for parity, useless for timing. `gen_siglip_bench.py`
-builds the real-sized ones (hidden 512/196 patches and 768/576 patches) that
-`BenchmarkSiglipTower` needs; random weights are correct there because
-throughput does not depend on weight values.
-
-## Fetching `testdata/siglip-model`
-
-`examples/vision` needs a REAL pretrained SigLIP vision tower — the tiny
-fixtures above are random-weight, correct for parity/throughput but useless for
-a similarity demo. `google/siglip-base-patch16-224` (~380 MB f32 safetensors,
-224×224, patch16) is the smallest standard public one; go through
-`SiglipVisionModel`, not a raw file download — the checkpoint on the Hub is the
-full dual-tower `SiglipModel` (`vision_model.*` + `text_model.*` + a logit
-scale/bias), and `vision.LoadEncoder` expects the vision tower's tensors
-UNPREFIXED (same layout `pin_siglip_vision.py` produces for `siglip-tiny`).
-Loading through the class and re-saving just that submodule does the stripping;
-a plain `snapshot_download` of the repo's files would not:
-
-```sh
-.venv/bin/python -c "
-from transformers import SiglipVisionModel
-m = SiglipVisionModel.from_pretrained('google/siglip-base-patch16-224')
-m.save_pretrained('testdata/siglip-model', safe_serialization=True)"
-```
-
-Verify with `go run ./examples/vision --embed-model testdata/model
---vision-model testdata/siglip-model` — the two `red-*.png`/`blue-*.png`
-synthetic images should land nearest each other in the "visually similar"
-pivot, and the checkerboard should be the outlier.
-
 ## Fetching `testdata/crossencoder-model`
 
 `encoder/crossencoder_test.go` needs `cross-encoder/ms-marco-MiniLM-L-6-v2`

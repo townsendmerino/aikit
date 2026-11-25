@@ -40,22 +40,23 @@ type rule struct {
 // the same commit.
 var rules = map[string]rule{
 	// Leaves: stdlib only.
-	"topk":                 {},
-	"fuse":                 {},
-	"chunk":                {},
-	"internal/accum":       {},
-	"internal/cursor":      {},
-	"internal/cpufeat":     {},
-	"internal/half":        {},
-	"internal/guardmem":    {},
-	"internal/importrules": {},
-	"internal/kernreg":     {aikit: []string{"internal/guardmem"}},
+	"topk":                  {},
+	"fuse":                  {},
+	"chunk":                 {},
+	"internal/accum":        {},
+	"internal/cursor":       {},
+	"internal/cpufeat":      {},
+	"internal/guardmem":     {},
+	"internal/importrules":  {},
+	"linalg/internal/shape": {},
+	"internal/kernreg":      {aikit: []string{"internal/guardmem"}},
+	"internal/half":         {},
 
 	// mmap is a leaf among aikit packages. Its one external import is madvise on darwin.
 	"mmap": {ext: []ext{{path: "golang.org/x/sys/unix", goos: "darwin"}}},
 
 	// Kernels and loaders.
-	"linalg": {aikit: []string{"internal/cpufeat", "internal/half", "mmap"}},
+	"linalg": {aikit: []string{"internal/cpufeat", "internal/half", "linalg/internal/shape", "mmap"}},
 	"embed": {
 		aikit: []string{"internal/cursor", "internal/half", "mmap"},
 		ext: []ext{
@@ -77,7 +78,6 @@ var rules = map[string]rule{
 
 	// Model towers.
 	"encoder": {aikit: []string{"embed", "linalg", "sparse"}},
-	"vision":  {aikit: []string{"embed", "linalg"}},
 
 	// Harness and programs.
 	"bench":                 {aikit: []string{"ann"}},
@@ -85,7 +85,6 @@ var rules = map[string]rule{
 	"examples/colbert":      {aikit: []string{"ann", "bm25", "chunk", "chunk/regex", "embed", "encoder", "fuse", "late"}},
 	"examples/rag":          {aikit: []string{"ann", "bm25", "chunk", "chunk/regex", "embed", "encoder", "fuse", "topk"}},
 	"examples/splade":       {aikit: []string{"chunk", "chunk/regex", "encoder", "sparse"}},
-	"examples/vision":       {aikit: []string{"ann", "bm25", "chunk", "chunk/regex", "embed", "fuse", "vision"}},
 }
 
 // quarantined are the nested modules the core must never reach, directly or through
@@ -330,7 +329,7 @@ func TestREADMEPackageTable(t *testing.T) {
 		rows++
 		var want []string
 		for _, a := range r.aikit {
-			if !strings.HasPrefix(a, "internal/") {
+			if !strings.HasPrefix(a, "internal/") && !strings.Contains(a, "/internal/") {
 				want = append(want, a)
 			}
 		}

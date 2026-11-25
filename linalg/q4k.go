@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/townsendmerino/aikit/internal/half"
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
 )
 
 // Q4_K weights, kept in GGUF's own super-block layout (goinfer
@@ -45,7 +46,7 @@ func WrapQ4K(raw []byte, rows, cols int) (WeightMat, error) {
 	if rows <= 0 || cols <= 0 || cols%qkK != 0 {
 		return WeightMat{}, fmt.Errorf("linalg: WrapQ4K: shape %dx%d (cols must be a positive multiple of 256)", rows, cols)
 	}
-	if want := mul(rows, Q4KRowBytes(cols)); len(raw) != want {
+	if want := shape.Mul(rows, Q4KRowBytes(cols)); len(raw) != want {
 		return WeightMat{}, fmt.Errorf("linalg: WrapQ4K: %d bytes for %dx%d, want %d", len(raw), rows, cols, want)
 	}
 	return WeightMat{kq: raw, kqKind: kqQ4K, rows: rows, cols: cols}, nil

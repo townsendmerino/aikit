@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"sync"
+
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
 )
 
 // 16-bit weight storage: a WeightMat holding its [rows, cols] weights as bf16 or IEEE binary16 bit patterns, half the bytes of f32.
@@ -72,13 +74,13 @@ func wrapHalf16(name string, kind uint8, u []uint16, rows, cols int) WeightMat {
 	if rows < 0 || cols < 0 {
 		panic(fmt.Sprintf("linalg: %s negative dim (rows=%d cols=%d)", name, rows, cols))
 	}
-	requireExactLen(name, "u", len(u), mul(rows, cols))
+	shape.RequireExactLen(name, "u", len(u), shape.Mul(rows, cols))
 	return WeightMat{h16: u, h16Kind: kind, rows: rows, cols: cols}
 }
 
 // QuantizeBF16 rounds a [rows, cols] f32 weight to bf16 (nearest-even), not retaining the source. Exact for a weight that came from bf16.
 func QuantizeBF16(w []float32, rows, cols int) WeightMat {
-	requireExactLen("QuantizeBF16", "w", len(w), mul(rows, cols))
+	shape.RequireExactLen("QuantizeBF16", "w", len(w), shape.Mul(rows, cols))
 	u := make([]uint16, len(w))
 	for i, f := range w {
 		u[i] = F32ToBF16(f)
@@ -88,7 +90,7 @@ func QuantizeBF16(w []float32, rows, cols int) WeightMat {
 
 // QuantizeF16 rounds a [rows, cols] f32 weight to binary16 (F32ToF16), not retaining the source.
 func QuantizeF16(w []float32, rows, cols int) WeightMat {
-	requireExactLen("QuantizeF16", "w", len(w), mul(rows, cols))
+	shape.RequireExactLen("QuantizeF16", "w", len(w), shape.Mul(rows, cols))
 	u := make([]uint16, len(w))
 	F32ToF16Slice(u, w)
 	return WeightMat{h16: u, h16Kind: half16F16, rows: rows, cols: cols}
