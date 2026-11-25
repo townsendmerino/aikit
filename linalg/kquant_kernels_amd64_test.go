@@ -1,9 +1,12 @@
 package linalg
 
-import "github.com/townsendmerino/aikit/internal/kernreg"
+import (
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+	"github.com/townsendmerino/aikit/internal/kernreg"
+)
 
 func kquantAdapters() []kernreg.Adapter {
-	q4k := func() bool { return hasQ4KAVX2 }
+	q4k := func() bool { return cpufeat.HasQ4KAVX2 }
 	// n is nSB, the count of 256-weight super-blocks; the dispatchers pass nSB ≥ 1, and each
 	// kernel tests nSB ≤ 0 before its loop.
 	lengths := upTo(1, 9, 16, 17)

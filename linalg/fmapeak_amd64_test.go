@@ -4,6 +4,8 @@ package linalg
 
 import (
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestFMAPeakAMD64_empirical measures this core's achievable f32 AVX2 FMA ceiling —
@@ -32,7 +34,7 @@ import (
 // believable, wrong 63% of peak. The clock check is what separates believable from
 // true.
 func TestFMAPeakAMD64_empirical(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2+FMA on this CPU")
 	}
 	const (

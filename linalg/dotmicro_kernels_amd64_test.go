@@ -1,10 +1,13 @@
 package linalg
 
-import "github.com/townsendmerino/aikit/internal/kernreg"
+import (
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+	"github.com/townsendmerino/aikit/internal/kernreg"
+)
 
 func dotmicroAdapters() []kernreg.Adapter {
 	return []kernreg.Adapter{{
-		Symbol: "dotFMA3x4", Needs: func() bool { return hasAVX2 },
+		Symbol: "dotFMA3x4", Needs: func() bool { return cpufeat.HasAVX2 },
 		// n a multiple of 4: 8 floats per pass, then one 4-float step.
 		Lengths: upTo(4, 72, 1020, 1024, 1028),
 		Call: func(p *kernreg.Placer, n int) any {

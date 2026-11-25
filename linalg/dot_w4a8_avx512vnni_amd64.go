@@ -69,23 +69,3 @@ package linalg
 //
 //go:noescape
 func dotW4A8FoldAVX512VNNI(act *int8, packed *byte, scales *float32, nGroups int) float32
-
-// hasAVX512VNNIVL is hasAVX512VNNI (dot_i8_avx512vnni_amd64.go) plus
-// AVX512VL (CPUID leaf 7, EBX bit 31). dotI8AVX512VNNI only ever touches
-// full ZMM registers, which needs just AVX512F+BW+VNNI; this file's kernel
-// uses the 256-bit (YMM) VPDPBUSD encoding to match one 32-byte quant group
-// per instruction, and that encoding is only legal with VL present. Every
-// shipping VNNI CPU (Cascade Lake onward on Intel, Zen 4 onward on AMD)
-// bundles VL in as part of the same AVX-512 baseline, so this is not
-// expected to ever differ from hasAVX512VNNI in practice — but dispatch
-// shouldn't rely on an unchecked assumption for an instruction that SIGILLs
-// if it's wrong, so it's checked explicitly rather than reusing
-// hasAVX512VNNI directly. Computed once at init, same pattern as
-// hasAVX512VNNI/hasAVX2.
-var hasAVX512VNNIVL = hasAVX512VNNI && detectAVX512VL()
-
-func detectAVX512VL() bool {
-	_, ebx7, _, _ := cpuid(7, 0)
-	const bitAVX512VL = 1 << 31
-	return ebx7&bitAVX512VL != 0
-}

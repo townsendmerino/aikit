@@ -5,6 +5,8 @@ package linalg
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // BenchmarkW4A8_CanonicalVsSplitHalf is the arm64 twin of the amd64 benchmark of the same
@@ -20,7 +22,7 @@ import (
 // bank DRAM-streamed through the real dispatch, serial, the regime decode runs in —
 // docs/internal/measuring-performance.md §1.3). Both layouts see identical logical weights.
 func BenchmarkW4A8_CanonicalVsSplitHalf(b *testing.B) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		b.Skip("DotProd required")
 	}
 	const (

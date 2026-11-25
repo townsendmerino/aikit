@@ -1,9 +1,12 @@
 package linalg
 
-import "github.com/townsendmerino/aikit/internal/kernreg"
+import (
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+	"github.com/townsendmerino/aikit/internal/kernreg"
+)
 
 func dotAdapters() []kernreg.Adapter {
-	avx2 := func() bool { return hasAVX2 }
+	avx2 := func() bool { return cpufeat.HasAVX2 }
 	return []kernreg.Adapter{
 		{
 			Symbol: "dotFMA", Needs: avx2,

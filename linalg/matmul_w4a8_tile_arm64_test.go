@@ -6,6 +6,8 @@ import (
 	"math/rand/v2"
 	"strings"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestMatmulBTW4A8Row4TileInto_bitIdenticalToCanonical is the S-01 tile's own
@@ -19,7 +21,7 @@ import (
 // residue needs a case, and 1..3 are the shapes where the tile body never runs
 // at all.
 func TestMatmulBTW4A8Row4TileInto_bitIdenticalToCanonical(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("no FEAT_DotProd on this core; the row4 kernels do not dispatch")
 	}
 	const group = 32
@@ -66,7 +68,7 @@ func TestMatmulBTW4A8Row4TileInto_bitIdenticalToCanonical(t *testing.T) {
 // holds for the rest of the package: the fan-out splits output quads, never a
 // reduction, so any worker count must give the same bits.
 func TestMatmulBTW4A8Row4TileInto_parallelMatchesSerial(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("no FEAT_DotProd on this core; the row4 kernels do not dispatch")
 	}
 	const group, K, N, M = 32, 512, 256, 7
@@ -108,7 +110,7 @@ func TestMatmulBTW4A8Row4TileInto_parallelMatchesSerial(t *testing.T) {
 // rows alike. The zero row is placed at index 2 so it lands inside the first
 // 4-row tile, and at index 5 for a second shape so it lands in the remainder.
 func TestMatmulBTW4A8Row4TileInto_zeroActivationRow(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("no FEAT_DotProd on this core; the row4 kernels do not dispatch")
 	}
 	const group, K, N = 32, 256, 16
@@ -159,7 +161,7 @@ func TestMatmulBTW4A8Row4TileInto_zeroActivationRow(t *testing.T) {
 // "it panics either way" is exactly the failure mode: what changed is WHICH
 // panic, and only a message check can tell the two apart.
 func TestMatmulBTW4A8Row4_rejectsTooSmallKAtEntry(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("no FEAT_DotProd on this core; the row4 kernels do not dispatch")
 	}
 	const group, N = 32, 4

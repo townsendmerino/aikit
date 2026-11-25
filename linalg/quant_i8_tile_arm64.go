@@ -2,6 +2,8 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 // dotI8Tile4x4 computes 16 int8 dot products in one call — four activation rows
 // (actStride bytes apart) against four weight rows (wStride bytes apart) — into
 // dst[m*4+r] as int32. n must be a multiple of 16; the caller mops up the
@@ -32,7 +34,7 @@ func dotI8Tile4x4(act *int8, actStride int, w *int8, wStride int, dst *int32, n 
 // cache-resident and streamed regimes before it is believed, which is what
 // TestW8A8TileVsSpanAB does.
 func w8a8TileRect(aq []int8, aScales []float32, bQ []int8, bScales, dst []float32, M, K, N, j0, j1 int) (mTiled, jTiled int) {
-	if !hasDotProd || M < 4 || K < 16 {
+	if !cpufeat.HasDotProd || M < 4 || K < 16 {
 		return 0, j0
 	}
 	mFull := M &^ 3

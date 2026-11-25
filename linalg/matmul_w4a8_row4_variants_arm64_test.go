@@ -5,6 +5,8 @@ package linalg
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestMatmulBTW4A8Row4PrefetchInto_bitIdenticalToRow4 proves the PRFM remedy
@@ -16,7 +18,7 @@ import (
 // (every residue this campaign's harness convention checks), not assumed
 // from the assembly alone.
 func TestMatmulBTW4A8Row4PrefetchInto_bitIdenticalToRow4(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	const group = 32
@@ -62,7 +64,7 @@ func TestMatmulBTW4A8Row4PrefetchInto_bitIdenticalToRow4(t *testing.T) {
 // the original row4 layout change was held to:
 // TestDotW4A8SplitHalf4Row_bitIdenticalToCanonical).
 func TestMatmulBTW4A8Row4DesharedInto_bitIdenticalToRow4(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	const group = 32

@@ -1,9 +1,12 @@
 package linalg
 
-import "github.com/townsendmerino/aikit/internal/kernreg"
+import (
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+	"github.com/townsendmerino/aikit/internal/kernreg"
+)
 
 func quantactAdapters() []kernreg.Adapter {
-	avx2 := func() bool { return hasAVX2 }
+	avx2 := func() bool { return cpufeat.HasAVX2 }
 	// n a multiple of 8 and > 0 (the dispatchers call only with n > 0).
 	lengths := upTo(8, 104, 1016, 1024, 1032)[1:]
 	return []kernreg.Adapter{

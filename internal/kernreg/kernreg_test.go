@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"unsafe"
+
+	"github.com/townsendmerino/aikit/internal/guardmem"
 )
 
 var goodRows = []Row{
@@ -158,6 +160,9 @@ func TestSweepChild(t *testing.T) {
 // Break-it-first: a kernel that reads one element past its input, and one whose result
 // depends on where its input sits, each fail the sweep with a message naming the kernel.
 func TestSweep_reportsFaultyKernels(t *testing.T) {
+	if !guardmem.Supported {
+		t.Skip("guard pages are mapped on linux and darwin only: the faulty kernels cannot fault here")
+	}
 	for name, want := range map[string]string{
 		"overread":  "sumPastEnd n=5 (inputs at the end guard): read outside input x: len 5 float32, byte 0 past its end",
 		"placement": "addressDependent n=3, inputs at the end guard: result differs from the heap call",

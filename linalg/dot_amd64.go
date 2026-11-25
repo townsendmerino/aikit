@@ -2,6 +2,8 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 // amd64 kernel path. The three arch-neutral kernel names dispatch at
 // runtime: AVX2+FMA when the CPU supports it (dotFMA in dot_amd64.s),
 // otherwise the scalar kernels in dot_generic.go. Detection is done
@@ -42,72 +44,15 @@ func dotFMA8(a, b0, b1, b2, b3, b4, b5, b6, b7 *float32, n int, out *[8]float32)
 //go:noescape
 func dotI8AVX2(a, b *int8, n int) int32
 
-// cpuid executes CPUID with the given leaf/subleaf. Implemented in
-// dot_amd64.s.
-//
-//go:noescape
-func cpuid(eaxIn, ecxIn uint32) (eax, ebx, ecx, edx uint32)
-
-// xgetbv reads XCR0 (the OS-enabled extended-state mask). Implemented
-// in dot_amd64.s.
-//
-//go:noescape
-func xgetbv() (eax, edx uint32)
-
-// hasAVX2 is true when the CPU and OS both support AVX2 + FMA + YMM
-// state save. Computed once at init; the kernels branch on it.
-var hasAVX2 = detectAVX2()
-
-// osSavesYMM reports whether the OS preserves XMM and YMM state across context switches (CPUID.1:ECX OSXSAVE and AVX set, XCR0 bits 1 and 2): the
-// precondition for executing any VEX-encoded instruction, whatever feature bit the instruction itself needs.
-func osSavesYMM() bool {
-	const bitOSXSAVE, bitAVX = 1 << 27, 1 << 28
-	_, _, ecx1, _ := cpuid(1, 0)
-	if ecx1&(bitOSXSAVE|bitAVX) != bitOSXSAVE|bitAVX {
-		return false
-	}
-	xcr0, _ := xgetbv()
-	return xcr0&(1<<1|1<<2) == 1<<1|1<<2
-}
-
-func detectAVX2() bool {
-	maxLeaf, _, _, _ := cpuid(0, 0)
-	if maxLeaf < 7 {
-		return false
-	}
-	// Leaf 1: ECX feature bits. Need OSXSAVE (27), AVX (28), FMA (12).
-	const (
-		bitFMA     = 1 << 12
-		bitOSXSAVE = 1 << 27
-		bitAVX     = 1 << 28
-	)
-	_, _, ecx1, _ := cpuid(1, 0)
-	if ecx1&(bitFMA|bitOSXSAVE|bitAVX) != (bitFMA | bitOSXSAVE | bitAVX) {
-		return false
-	}
-	// OSXSAVE set ⇒ XGETBV is usable. XCR0 bits 1 (SSE/XMM) and 2 (AVX/
-	// YMM) must both be set for the OS to preserve YMM across context
-	// switches; without that, executing AVX would corrupt state.
-	xcr0, _ := xgetbv()
-	const xcr0YMM = 1<<1 | 1<<2
-	if xcr0&xcr0YMM != xcr0YMM {
-		return false
-	}
-	// Leaf 7, subleaf 0: EBX bit 5 = AVX2.
-	_, ebx7, _, _ := cpuid(7, 0)
-	const bitAVX2 = 1 << 5
-	return ebx7&bitAVX2 != 0
-}
-
 func dotNEON(a *float32, b *float32, n4 int) float32 {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		return dotGeneric(a, b, n4)
 	}
 	return dotFMA(a, b, n4*4)
 }
 
 func dotNEON4x4(a, b0, b1, b2, b3 *float32, n4 int, sums *[16]float32) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		dot4x4Generic(a, b0, b1, b2, b3, n4, sums)
 		return
 	}
@@ -118,7 +63,7 @@ func dotNEON4x4(a, b0, b1, b2, b3 *float32, n4 int, sums *[16]float32) {
 }
 
 func dotNEON8x4(a, b0, b1, b2, b3, b4, b5, b6, b7 *float32, n4 int, sums *[32]float32) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		dot8x4Generic(a, b0, b1, b2, b3, b4, b5, b6, b7, n4, sums)
 		return
 	}

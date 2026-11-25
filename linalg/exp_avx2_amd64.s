@@ -9,7 +9,7 @@
 //
 // S-08 FLAGGED GOAMD64 AS UNPINNED. It does not need pinning for this kernel, and
 // that is a consequence of the contract rather than luck. The dispatch is a RUNTIME
-// check (hasAVX2, which already requires FMA3 and OS YMM state), and the scalar
+// check (cpufeat.HasAVX2, which already requires FMA3 and OS YMM state), and the scalar
 // fallback is bit-identical, so a v1 build and a v3 build produce identical output
 // and differ only in speed. No build flag has to be mandated on consumers.
 //

@@ -1,13 +1,16 @@
 package linalg
 
-import "github.com/townsendmerino/aikit/internal/kernreg"
+import (
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+	"github.com/townsendmerino/aikit/internal/kernreg"
+)
 
 func doti8Adapters() []kernreg.Adapter {
-	avx2 := func() bool { return hasAVX2 }
+	avx2 := func() bool { return cpufeat.HasAVX2 }
 	tiles := i8TileShapes()
 	return []kernreg.Adapter{
 		{
-			Symbol: "dotI8AVX512VNNI", Needs: func() bool { return hasAVX512VNNI },
+			Symbol: "dotI8AVX512VNNI", Needs: func() bool { return cpufeat.HasAVX512VNNI },
 			// n a multiple of 64: 128 per pass, then at most one 64-step.
 			Lengths: upTo(64, 512, 1984, 2048, 2112),
 			Call: func(p *kernreg.Placer, n int) any {

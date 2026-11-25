@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // abShapes is the grid both amd64 tile harnesses sweep. It straddles the 3700X's
@@ -62,7 +64,7 @@ func med3(v []float64) float64 {
 // finding is parked.
 func TestW4A8TileVsSpanAB_amd64(t *testing.T) {
 	harnessOnly(t)
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2 on this core; the W4A8 tile does not dispatch")
 	}
 	const group = 32
@@ -144,7 +146,7 @@ func TestW4A8TileVsSpanAB_amd64(t *testing.T) {
 // the port model is wrong and that is the finding.
 func TestW8A8TileVsSpanAB_amd64(t *testing.T) {
 	harnessOnly(t)
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2 on this core; the W8A8 tile does not dispatch")
 	}
 	start := time.Now()

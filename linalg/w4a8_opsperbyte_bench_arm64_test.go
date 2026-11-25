@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestW4A8OpsPerByteARM64 is the arm64/NEON sibling of TestW4A8OpsPerByte
@@ -85,7 +87,7 @@ func TestW4A8OpsPerByteARM64(t *testing.T) {
 		return float64(r.NsPerOp())
 	}
 	runRef := func() float64 {
-		if !hasDotProd {
+		if !cpufeat.HasDotProd {
 			return 0
 		}
 		r := testing.Benchmark(func(b *testing.B) {

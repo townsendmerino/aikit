@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // BenchmarkMatmulBTW4A8SplitHalfTile is BenchmarkMatmulBTW4A8Canonical's
@@ -19,7 +21,7 @@ import (
 // M=1 is the control, same reason BenchmarkMatmulBTW4A8Canonical's is: the
 // tile declines below M=4 and must not move.
 func BenchmarkMatmulBTW4A8SplitHalfTile(b *testing.B) {
-	if !hasAVX2 || hasAVX512VNNIVL {
+	if !cpufeat.HasAVX2 || cpufeat.HasAVX512VNNIVL {
 		b.Skip("split-half tile requires AVX2 without AVX512VNNIVL on this core")
 	}
 	const K, N = 1536, 2048
@@ -31,7 +33,7 @@ func BenchmarkMatmulBTW4A8SplitHalfTile(b *testing.B) {
 	q4, q4s := QuantizeGroupsInt4(w, N, K, 32)
 	wm, ok := RepackInt4SplitHalfInPlace(q4, q4s, N, K, 32)
 	if !ok {
-		b.Fatal("RepackInt4SplitHalfInPlace: ok=false despite hasAVX2 && !hasAVX512VNNIVL")
+		b.Fatal("RepackInt4SplitHalfInPlace: ok=false despite cpufeat.HasAVX2 && !cpufeat.HasAVX512VNNIVL")
 	}
 	for _, M := range []int{1, 4, 8, 32, 128} {
 		a := make([]float32, M*K)

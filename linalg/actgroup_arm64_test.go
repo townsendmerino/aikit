@@ -3,6 +3,8 @@ package linalg
 import (
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestActGroup_row4LayoutAgrees: the arm64 row4 layout (split-half + 4-row interleave), through
@@ -10,7 +12,7 @@ import (
 // two entry points agree bit-for-bit with each other, and with the canonical layout's Go reference to
 // accumulation order.
 func TestActGroup_row4LayoutAgrees(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required: the row4 layout declines without it (WrapInt4Row4Only reports false, WrapInt4Row4 returns the plain int4 matrix)")
 	}
 	r := rand.New(rand.NewPCG(9, 10))
@@ -44,7 +46,7 @@ func TestActGroup_row4LayoutAgrees(t *testing.T) {
 // scales (fed combined scales), with the S-05 fold on and off, agree with the Go reference to
 // accumulation order.
 func TestActGroup_row4KernelMatchesReference(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required: this calls the row4 SDOT kernel directly; callers go through Int4Row4Usable, which declines without it")
 	}
 	r := rand.New(rand.NewPCG(15, 16))
@@ -72,7 +74,7 @@ func TestActGroup_row4KernelMatchesReference(t *testing.T) {
 // TestActGroup_row4MultiRow: M>1 through a repacked-only row4 WeightMat (the per-row loop over the
 // M=1 row4 kernel) agrees with the reference.
 func TestActGroup_row4MultiRow(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required: the row4 layout declines without it (WrapInt4Row4Only reports false, WrapInt4Row4 returns the plain int4 matrix)")
 	}
 	r := rand.New(rand.NewPCG(19, 20))
