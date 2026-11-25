@@ -126,7 +126,7 @@ func DetectAVX512VL() bool {
 // HasF16C is true when the CPU has F16C and the OS saves YMM state (DetectF16C); the binary16 scale kernels branch on it.
 var HasF16C = DetectF16C()
 
-// HasQ4KAVX2: the AVX2 Q4_K kernel also needs F16C (VCVTPH2PS) for the super-block's d and dmin.
+// HasQ4KAVX2 is HasAVX2 with F16C: the AVX2 Q4_K kernel also needs F16C (VCVTPH2PS) for the super-block's d and dmin.
 var HasQ4KAVX2 = HasAVX2 && DetectF16C()
 
 // DetectF16C reports CPUID.1:ECX bit 29 (every AVX2 CPU ships it; checked rather than assumed) and that the OS saves YMM state: VCVTPH2PS is a VEX
