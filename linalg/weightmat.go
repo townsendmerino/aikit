@@ -5,6 +5,8 @@ import (
 	"unsafe"
 
 	"github.com/townsendmerino/aikit/mmap"
+
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
 )
 
 // WeightMat is a [rows, cols] = [out, in] weight matrix that hides its storage
@@ -100,7 +102,7 @@ func WrapF32(w []float32, rows, cols int) WeightMat {
 	if rows < 0 || cols < 0 {
 		panic(fmt.Sprintf("linalg: WrapF32 negative dim (rows=%d cols=%d)", rows, cols))
 	}
-	requireExactLen("WrapF32", "w", len(w), mul(rows, cols))
+	shape.RequireExactLen("WrapF32", "w", len(w), shape.Mul(rows, cols))
 	return WeightMat{f32: w, rows: rows, cols: cols}
 }
 
@@ -133,8 +135,8 @@ func WrapInt8(q8 []int8, scales []float32, rows, cols int, w8a8 bool) WeightMat 
 	if rows < 0 || cols < 0 {
 		panic(fmt.Sprintf("linalg: WrapInt8 negative dim (rows=%d cols=%d)", rows, cols))
 	}
-	requireExactLen("WrapInt8", "q8", len(q8), mul(rows, cols))
-	requireExactLen("WrapInt8", "scales", len(scales), rows)
+	shape.RequireExactLen("WrapInt8", "q8", len(q8), shape.Mul(rows, cols))
+	shape.RequireExactLen("WrapInt8", "scales", len(scales), rows)
 	return WeightMat{q8: q8, scales: scales, w8a8: w8a8, rows: rows, cols: cols}
 }
 
@@ -168,8 +170,8 @@ func checkWrapInt4(name string, q4 []byte, nScales, rows, cols, group int) {
 		panic(fmt.Sprintf("linalg: %s needs group > 0, got %d", name, group))
 	}
 	nGroups, bpr := groupsFor(cols, group)
-	requireExactLen(name, "q4", len(q4), mul(rows, bpr))
-	requireExactLen(name, "q4s", nScales, mul(rows, nGroups))
+	shape.RequireExactLen(name, "q4", len(q4), shape.Mul(rows, bpr))
+	shape.RequireExactLen(name, "q4s", nScales, shape.Mul(rows, nGroups))
 }
 
 // WrapInt4Row4 is WrapInt4 plus an ALREADY-repacked split-half + 4-row-interleaved
@@ -232,8 +234,8 @@ func WrapInt4Row4F16(q4 []byte, q4s16 []uint16, rows, cols, group int, q4Row4 []
 			"got rows=%d cols=%d group=%d", rows, cols, group))
 	}
 	nGroups, bpr := groupsFor(cols, group)
-	requireExactLen("WrapInt4Row4", "q4Row4", len(q4Row4), mul(rows, bpr))
-	requireExactLen("WrapInt4Row4", "q4Row4Scales", len(q4Row4Scales), mul(rows, nGroups))
+	shape.RequireExactLen("WrapInt4Row4", "q4Row4", len(q4Row4), shape.Mul(rows, bpr))
+	shape.RequireExactLen("WrapInt4Row4", "q4Row4Scales", len(q4Row4Scales), shape.Mul(rows, nGroups))
 	w.q4Row4 = q4Row4
 	w.q4Row4Scales16 = q4Row4Scales
 	return w
@@ -300,8 +302,8 @@ func WrapInt4Row4OnlyF16(q4Row4 []byte, q4Row4Scales []uint16, rows, cols, group
 		return WeightMat{}, false
 	}
 	nGroups, bpr := groupsFor(cols, group)
-	requireExactLen("WrapInt4Row4Only", "q4Row4", len(q4Row4), mul(rows, bpr))
-	requireExactLen("WrapInt4Row4Only", "q4Row4Scales", len(q4Row4Scales), mul(rows, nGroups))
+	shape.RequireExactLen("WrapInt4Row4Only", "q4Row4", len(q4Row4), shape.Mul(rows, bpr))
+	shape.RequireExactLen("WrapInt4Row4Only", "q4Row4Scales", len(q4Row4Scales), shape.Mul(rows, nGroups))
 	return WeightMat{q4Row4: q4Row4, q4Row4Scales16: q4Row4Scales, group: group, rows: rows, cols: cols}, true
 }
 
@@ -333,8 +335,8 @@ func RepackInt4SplitHalfInPlaceF16(q4 []byte, q4s []uint16, rows, cols, group in
 		return WeightMat{}, false
 	}
 	nGroups, bpr := groupsFor(cols, group)
-	requireExactLen("RepackInt4SplitHalfInPlace", "q4", len(q4), mul(rows, bpr))
-	requireExactLen("RepackInt4SplitHalfInPlace", "q4s", len(q4s), mul(rows, nGroups))
+	shape.RequireExactLen("RepackInt4SplitHalfInPlace", "q4", len(q4), shape.Mul(rows, bpr))
+	shape.RequireExactLen("RepackInt4SplitHalfInPlace", "q4s", len(q4s), shape.Mul(rows, nGroups))
 	rowScratch := make([]byte, bpr) // the one allocation, reused every row
 	for r := range rows {
 		row := q4[r*bpr : (r+1)*bpr]
@@ -365,8 +367,8 @@ func WrapInt4SplitHalfOnlyF16(q4SplitHalf []byte, q4s []uint16, rows, cols, grou
 		return WeightMat{}, false
 	}
 	nGroups, bpr := groupsFor(cols, group)
-	requireExactLen("WrapInt4SplitHalfOnly", "q4SplitHalf", len(q4SplitHalf), mul(rows, bpr))
-	requireExactLen("WrapInt4SplitHalfOnly", "q4s", len(q4s), mul(rows, nGroups))
+	shape.RequireExactLen("WrapInt4SplitHalfOnly", "q4SplitHalf", len(q4SplitHalf), shape.Mul(rows, bpr))
+	shape.RequireExactLen("WrapInt4SplitHalfOnly", "q4s", len(q4s), shape.Mul(rows, nGroups))
 	return WeightMat{q4SplitHalf: q4SplitHalf, q4s16: q4s, group: group, rows: rows, cols: cols}, true
 }
 
@@ -465,7 +467,7 @@ func (w *WeightMat) MatmulBTInto(ws *Workspace, a, dst []float32, M int) {
 //
 // len(dst) >= cols is checked in every build, before any layout's kernel runs (the int8 widen writes through &dst[0] unbounded).
 func (w *WeightMat) Row(i int, dst []float32) {
-	requireLen("WeightMat.Row", "dst", len(dst), w.cols)
+	shape.RequireLen("WeightMat.Row", "dst", len(dst), w.cols)
 	switch {
 	case w.kq != nil:
 		w.kquantRow(i, dst)

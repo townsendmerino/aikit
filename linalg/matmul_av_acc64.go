@@ -1,5 +1,7 @@
 package linalg
 
+import "github.com/townsendmerino/aikit/linalg/internal/shape"
+
 // MatmulAVAcc64 computes dst[M,hd] = scores[M,nKeys] · V_head[nKeys,hd], where
 // V_head is one KV head's slice of a row-major [nKeys, rowStride] buffer
 // (rowStride is the full kvDim; headOff selects this head's hd-wide column
@@ -131,8 +133,8 @@ func checkMatmulAVAcc64(scoresLen, valsLen, dstLen, accLen, M, nKeys, hd, headOf
 	if M < 0 || nKeys < 0 || hd < 0 || headOff < 0 || rowStride < hd {
 		panic("linalg: MatmulAVAcc64 invalid shape")
 	}
-	requireExactLen("MatmulAVAcc64", "scores", scoresLen, mul(M, nKeys))
-	requireExactLen("MatmulAVAcc64", "dst", dstLen, mul(M, hd))
+	shape.RequireExactLen("MatmulAVAcc64", "scores", scoresLen, shape.Mul(M, nKeys))
+	shape.RequireExactLen("MatmulAVAcc64", "dst", dstLen, shape.Mul(M, hd))
 	if accLen < hd {
 		panic("linalg: MatmulAVAcc64 acc scratch shorter than hd")
 	}

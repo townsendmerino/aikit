@@ -1,6 +1,11 @@
 package linalg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/internal/half"
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
+)
 
 // Q4_K weights, kept in GGUF's own super-block layout (goinfer
 // docs/tasks/task-int4-weight-quality-2026-09.md). A model file's Q4_K tensor is already 4-bit and
@@ -25,7 +30,7 @@ import "fmt"
 // alone. This kind exists for QUALITY, and it is measured against the symmetric int4 kind, which reads
 // the same bytes. It also differs in activations: per-32 groups here, one scale per 256 (Q8_K) there,
 // because per-32 is what H2's outlier fix and the Phase 0 quality measurement used. It reuses kquant.go's
-// block helpers (f16ToF32, q4kScaleMin, u16le). The scalar unpack there measured 20-45× slower than W8A8,
+// block helpers (half.ToF32, q4kScaleMin, u16le). The scalar unpack there measured 20-45× slower than W8A8,
 // so dotQ4KGo is an oracle, and speed needs the arch kernel.
 
 // q4kGroup is the activation group, and the Q4_K sub-block: 32 weights share one scale and minimum.
@@ -41,7 +46,7 @@ func WrapQ4K(raw []byte, rows, cols int) (WeightMat, error) {
 	if rows <= 0 || cols <= 0 || cols%qkK != 0 {
 		return WeightMat{}, fmt.Errorf("linalg: WrapQ4K: shape %dx%d (cols must be a positive multiple of 256)", rows, cols)
 	}
-	if want := mul(rows, Q4KRowBytes(cols)); len(raw) != want {
+	if want := shape.Mul(rows, Q4KRowBytes(cols)); len(raw) != want {
 		return WeightMat{}, fmt.Errorf("linalg: WrapQ4K: %d bytes for %dx%d, want %d", len(raw), rows, cols, want)
 	}
 	return WeightMat{kq: raw, kqKind: kqQ4K, rows: rows, cols: cols}, nil
@@ -55,8 +60,8 @@ func (w *WeightMat) Q4K() (raw []byte, ok bool) { return w.kquantRaw(kqQ4K) }
 func dequantQ4KRow(row []byte, cols int, dst []float32) {
 	for b := range cols / qkK {
 		blk := row[b*q4kBlockB : (b+1)*q4kBlockB]
-		d := f16ToF32(u16le(blk[0:]))
-		dmin := f16ToF32(u16le(blk[2:]))
+		d := half.ToF32(u16le(blk[0:]))
+		dmin := half.ToF32(u16le(blk[2:]))
 		scales, qs := blk[4:16], blk[16:144]
 		out := dst[b*qkK : (b+1)*qkK]
 		for j := range 4 {
@@ -92,8 +97,8 @@ func dotQ4KGo(row []byte, aq []int8, aS []float32, sums []int32, K int) float32 
 	var acc float32
 	for b := range K / qkK {
 		blk := row[b*q4kBlockB : (b+1)*q4kBlockB]
-		d := f16ToF32(u16le(blk[0:]))
-		dmin := f16ToF32(u16le(blk[2:]))
+		d := half.ToF32(u16le(blk[0:]))
+		dmin := half.ToF32(u16le(blk[2:]))
 		scales, qs := blk[4:16], blk[16:144]
 		for j := range 4 {
 			q := qs[32*j : 32*j+32]

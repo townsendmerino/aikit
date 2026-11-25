@@ -5,13 +5,15 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/half"
 )
 
 // refDequantQ5K and refDequantQ6K are ggml's dequantize_row_q5_K and dequantize_row_q6_K written out per element, the
 // reference the raw blocks are checked against.
 func refDequantQ5K(blk []byte) []float32 {
 	y := make([]float32, 256)
-	d, dm := halfBitsToF32(uint16(blk[0])|uint16(blk[1])<<8), halfBitsToF32(uint16(blk[2])|uint16(blk[3])<<8)
+	d, dm := half.ToF32(uint16(blk[0])|uint16(blk[1])<<8), half.ToF32(uint16(blk[2])|uint16(blk[3])<<8)
 	sm := func(j int) (float32, float32) {
 		q := blk[4:16]
 		if j < 4 {
@@ -40,7 +42,7 @@ func refDequantQ5K(blk []byte) []float32 {
 
 func refDequantQ6K(blk []byte) []float32 {
 	y := make([]float32, 256)
-	d := halfBitsToF32(uint16(blk[208]) | uint16(blk[209])<<8)
+	d := half.ToF32(uint16(blk[208]) | uint16(blk[209])<<8)
 	for n := range 2 {
 		ql, qh, sc := blk[64*n:], blk[128+32*n:], blk[192+8*n:]
 		for l := range 32 {

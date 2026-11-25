@@ -1,6 +1,11 @@
 package linalg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/internal/half"
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
+)
 
 // Q5_K and Q6_K weights, kept in GGUF's own super-block layout: the Q4_K kind's siblings (q4k.go). A
 // Q4_K_M file stores some tensors at these types; widening them to int8 reads more bytes than the
@@ -41,7 +46,7 @@ func wrapKQuant(fn string, raw []byte, rows, cols, rowBytes int) error {
 	if rows <= 0 || cols <= 0 || cols%qkK != 0 {
 		return fmt.Errorf("linalg: %s: shape %dx%d (cols must be a positive multiple of 256)", fn, rows, cols)
 	}
-	if want := mul(rows, rowBytes); len(raw) != want {
+	if want := shape.Mul(rows, rowBytes); len(raw) != want {
 		return fmt.Errorf("linalg: %s: %d bytes for %dx%d, want %d", fn, len(raw), rows, cols, want)
 	}
 	return nil
@@ -156,8 +161,8 @@ func q6kCode(blk []byte, h, c, l int) uint8 {
 func dequantQ5KRow(row []byte, cols int, dst []float32) {
 	for b := range cols / qkK {
 		blk := row[b*q5kBlockB : (b+1)*q5kBlockB]
-		d := f16ToF32(u16le(blk[0:]))
-		dmin := f16ToF32(u16le(blk[2:]))
+		d := half.ToF32(u16le(blk[0:]))
+		dmin := half.ToF32(u16le(blk[2:]))
 		scales, qh, qs := blk[4:16], blk[16:48], blk[48:176]
 		out := dst[b*qkK : (b+1)*qkK]
 		for j := range 4 {
@@ -177,7 +182,7 @@ func dequantQ5KRow(row []byte, cols int, dst []float32) {
 func dequantQ6KRow(row []byte, cols int, dst []float32) {
 	for b := range cols / qkK {
 		blk := row[b*q6kBlockB : (b+1)*q6kBlockB]
-		d := f16ToF32(u16le(blk[208:]))
+		d := half.ToF32(u16le(blk[208:]))
 		out := dst[b*qkK : (b+1)*qkK]
 		for h := range 2 {
 			for c := range 4 {
@@ -195,8 +200,8 @@ func dotQ5KGo(row []byte, aq []int8, aS []float32, sums []int32, K int) float32 
 	var acc float32
 	for b := range K / qkK {
 		blk := row[b*q5kBlockB : (b+1)*q5kBlockB]
-		d := f16ToF32(u16le(blk[0:]))
-		dmin := f16ToF32(u16le(blk[2:]))
+		d := half.ToF32(u16le(blk[0:]))
+		dmin := half.ToF32(u16le(blk[2:]))
 		scales, qh, qs := blk[4:16], blk[16:48], blk[48:176]
 		for j := range 4 {
 			lo := aq[b*qkK+64*j : b*qkK+64*j+32]
@@ -221,7 +226,7 @@ func dotQ6KGo(row []byte, aq []int8, aS []float32, K int) float32 {
 	var acc float32
 	for b := range K / qkK {
 		blk := row[b*q6kBlockB : (b+1)*q6kBlockB]
-		d := f16ToF32(u16le(blk[208:]))
+		d := half.ToF32(u16le(blk[208:]))
 		for h := range 2 {
 			for c := range 4 {
 				a := aq[b*qkK+128*h+32*c:]

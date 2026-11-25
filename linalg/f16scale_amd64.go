@@ -2,7 +2,11 @@
 
 package linalg
 
-import "github.com/townsendmerino/aikit/internal/cpufeat"
+import (
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+
+	"github.com/townsendmerino/aikit/internal/half"
+)
 
 //go:noescape
 func cvtF16ToF32x8F16C(dst *float32, src *uint16, n8 int)
@@ -16,7 +20,7 @@ func widenF16(dst []float32, src []uint16) {
 	n := len(src)
 	if n < 8 || !cpufeat.HasF16C {
 		for i, h := range src {
-			dst[i] = f16ToF32(h)
+			dst[i] = half.ToF32(h)
 		}
 		return
 	}

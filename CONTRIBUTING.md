@@ -141,7 +141,7 @@ Experimental in `experimentalSyms`/`experimentalMembers`
 ## Go style and structure
 
 - **Structure over growth.** Don't append unrelated state to a struct,
-  file or package that is already large (`linalg`, `encoder`, `vision`):
+  file or package that is already large (`linalg`, `encoder`):
   group related state into a cohesive sub-struct, or split along a clean
   seam early. A new test seam is an injected option, a struct field or a
   constructor parameter, not a package-global `*ForTest` hook or a

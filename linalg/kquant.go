@@ -27,6 +27,9 @@ package linalg
 import (
 	"fmt"
 	"math"
+
+	"github.com/townsendmerino/aikit/internal/half"
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
 )
 
 // u16le reads a little-endian uint16 (linalg avoids encoding/binary for this one spot).
@@ -37,33 +40,6 @@ const (
 	q6kBlockB = 210 // Q6_K bytes per superblock: ql[128] qh[64] sc[16] d(f16)
 	q4kBlockB = 144 // Q4_K bytes per superblock: d(f16) dmin(f16) scales[12] qs[128]
 )
-
-// f16ToF32 decodes an IEEE-754 half. Mirrors embed.halfBitsToF32 (linalg cannot import embed).
-func f16ToF32(h uint16) float32 {
-	sign := uint32(h&0x8000) << 16
-	exp := int32(h>>10) & 0x1f
-	mant := uint32(h & 0x3ff)
-	var bits uint32
-	switch {
-	case exp == 0:
-		if mant == 0 {
-			bits = sign
-			break
-		}
-		exp = 1
-		for mant&0x400 == 0 {
-			mant <<= 1
-			exp--
-		}
-		mant &= 0x3ff
-		bits = sign | uint32(exp+(127-15))<<23 | mant<<13
-	case exp == 0x1f:
-		bits = sign | 0x7f800000 | mant<<13
-	default:
-		bits = sign | uint32(exp+(127-15))<<23 | mant<<13
-	}
-	return math.Float32frombits(bits)
-}
 
 // Q8K is a Q8_K-quantized activation matrix (mirrors llama.cpp block_q8_K): each 256-value block
 // carries a single f32 scale, 256 int8 values, and 16 int16 bsums (the sum of each consecutive-16
@@ -87,13 +63,13 @@ func QuantizeActQ8K(a []float32, M, K int) Q8K {
 	if K%qkK != 0 {
 		panic(fmt.Sprintf("QuantizeActQ8K: K=%d not a multiple of %d", K, qkK))
 	}
-	requireExactLen("QuantizeActQ8K", "a", len(a), mul(M, K))
+	shape.RequireExactLen("QuantizeActQ8K", "a", len(a), shape.Mul(M, K))
 	nb := K / qkK
 	q := Q8K{
 		M: M, K: K,
-		D:     make([]float32, mul(M, nb)),
-		Qs:    make([]int8, mul(M, K)),
-		Bsums: make([]int16, mul(M, K/16)),
+		D:     make([]float32, shape.Mul(M, nb)),
+		Qs:    make([]int8, shape.Mul(M, K)),
+		Bsums: make([]int16, shape.Mul(M, K/16)),
 	}
 	for m := range M {
 		for b := range nb {
@@ -146,7 +122,7 @@ func unpackQ6K(raw []byte, sb int, codes *[qkK]int8) (scales [16]int8, d float32
 	ql := raw[base : base+128]
 	qh := raw[base+128 : base+192]
 	sc := raw[base+192 : base+208]
-	d = f16ToF32(u16le(raw[base+208:]))
+	d = half.ToF32(u16le(raw[base+208:]))
 	for i := range 16 {
 		scales[i] = int8(sc[i])
 	}
@@ -173,8 +149,8 @@ func unpackQ6K(raw []byte, sb int, codes *[qkK]int8) (scales [16]int8, d float32
 // s*32+32]), and the f16 super-scales d, dmin. Mirrors embed.dequantQ4KBlock.
 func unpackQ4K(raw []byte, sb int, codes *[qkK]int8) (scales, mins [8]uint8, d, dmin float32) {
 	base := sb * q4kBlockB
-	d = f16ToF32(u16le(raw[base:]))
-	dmin = f16ToF32(u16le(raw[base+2:]))
+	d = half.ToF32(u16le(raw[base:]))
+	dmin = half.ToF32(u16le(raw[base+2:]))
 	scaleBytes := raw[base+4 : base+16]
 	qs := raw[base+16 : base+144]
 	for s := range 8 {
@@ -281,8 +257,8 @@ func MatmulBTGGUFQ6K(a []float32, w []byte, dst []float32, M, K, N int) {
 	}
 	nb := K / qkK
 	rowBytes := nb * q6kBlockB
-	requireExactLen("MatmulBTGGUFQ6K", "w", len(w), mul(N, rowBytes))
-	requireExactLen("MatmulBTGGUFQ6K", "dst", len(dst), mul(M, N))
+	shape.RequireExactLen("MatmulBTGGUFQ6K", "w", len(w), shape.Mul(N, rowBytes))
+	shape.RequireExactLen("MatmulBTGGUFQ6K", "dst", len(dst), shape.Mul(M, N))
 	q8 := QuantizeActQ8K(a, M, K)
 	for m := range M {
 		for n := range N {
@@ -300,8 +276,8 @@ func MatmulBTGGUFQ4K(a []float32, w []byte, dst []float32, M, K, N int) {
 	}
 	nb := K / qkK
 	rowBytes := nb * q4kBlockB
-	requireExactLen("MatmulBTGGUFQ4K", "w", len(w), mul(N, rowBytes))
-	requireExactLen("MatmulBTGGUFQ4K", "dst", len(dst), mul(M, N))
+	shape.RequireExactLen("MatmulBTGGUFQ4K", "w", len(w), shape.Mul(N, rowBytes))
+	shape.RequireExactLen("MatmulBTGGUFQ4K", "dst", len(dst), shape.Mul(M, N))
 	q8 := QuantizeActQ8K(a, M, K)
 	for m := range M {
 		for n := range N {

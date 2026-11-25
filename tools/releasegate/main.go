@@ -39,7 +39,7 @@ import (
 const rootMod = "github.com/townsendmerino/aikit"
 
 // hardPkgs are the packages README § "Stability tiers" lists as Hard; TestReadmeTiers_matchGate holds the two equal.
-var hardPkgs = []string{"topk", "ann", "bm25", "fuse", "embed", "encoder", "chunk", "mmap", "vision"}
+var hardPkgs = []string{"topk", "ann", "bm25", "fuse", "embed", "encoder", "chunk", "mmap"}
 
 // experimentalSyms: symbols documented Experimental that LIVE INSIDE a Hard-tier package —
 // their leading symbol name is the whole match, so an apidiff line led by one is exempt.

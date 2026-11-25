@@ -2,7 +2,11 @@
 
 package linalg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
+)
 
 // The row4 paths over binary16 scales (f16scale.go). Each quad's interleaved scales are widened into a
 // buffer and the existing f32-scale kernel runs on them, so every result is bit-identical to the f32 path
@@ -12,8 +16,8 @@ import "fmt"
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:4*nGroups].
 func RepackInt4Row4ScalesQuadF16(dst, src []uint16, nGroups int) {
-	requireLen("RepackInt4Row4ScalesQuadF16", "dst", len(dst), 4*nGroups)
-	requireLen("RepackInt4Row4ScalesQuadF16", "src", len(src), 4*nGroups)
+	shape.RequireLen("RepackInt4Row4ScalesQuadF16", "dst", len(dst), 4*nGroups)
+	shape.RequireLen("RepackInt4Row4ScalesQuadF16", "src", len(src), 4*nGroups)
 	for g := range nGroups {
 		for r := range 4 {
 			dst[4*g+r] = src[r*nGroups+g]

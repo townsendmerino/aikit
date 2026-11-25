@@ -7,7 +7,7 @@
 // n8 blocks of eight binary16 → f32: one 16-byte load, FCVTL for the low four halves and FCVTL2 for the high
 // four, one 32-byte store. The arm64 twin of cvtF16ToF32x8F16C (dot_w4a8_f16_amd64.s). FCVTL from half is
 // base ARMv8.0 AdvSIMD (sz=0: half → single, no FEAT_FP16) and exact for every finite input, subnormals
-// included, so the result is f16ToF32's bit for bit; a signalling NaN comes back quieted, and a scale is
+// included, so the result is half.ToF32's bit for bit; a signalling NaN comes back quieted, and a scale is
 // never NaN.
 //
 // WORDs from the encoding FCVTL{2} Vd.4S, Vn.{4,8}H = 0x0E217800 | Q<<30 | Rn<<5 | Rd, cross-checked against
