@@ -7,7 +7,7 @@ import "github.com/townsendmerino/aikit/internal/kernreg"
 // Dispatch are measurement probes that no production function calls.
 var w4a8Rows = []kernreg.Row{
 	{Symbol: "dotW4A8FoldAVX2", Arch: "amd64", Dispatch: "dotW4A8", Oracle: "TestW4A8_dotMatchesScalar"},
-	{Symbol: "dotW4A8Fold2AccAVX2", Arch: "amd64", Oracle: "TestDotW4A8Fold2AccAVX2_matchesOracle"},
+	{Symbol: "dotW4A8Fold2AccAVX2", Arch: "amd64", Undispatched: "a measurement arm: two chains sum in a different order, so not wired into dotW4A8's bit-identity-gated dispatch", Oracle: "TestDotW4A8Fold2AccAVX2_matchesOracle"},
 	{Symbol: "dotW4A8SplitHalfAVX2", Arch: "amd64", Dispatch: "w4a8SplitHalfSpan", Oracle: "TestDotW4A8SplitHalfAVX2_matchesOracle"},
 	{Symbol: "dotW4A8SplitHalfScaledAVX2", Arch: "amd64", Dispatch: "matmulBTW4A8SplitHalfGroupedQ", Oracle: "TestActGroup_splitHalfScaledKernelOddGroups"},
 	{Symbol: "dotW4A8FoldAVX512VNNI", Arch: "amd64", Dispatch: "dotW4A8", Oracle: "TestAVX512VNNI_dotW4A8FoldAVX512VNNI_matchesScalar"},
@@ -17,12 +17,12 @@ var w4a8Rows = []kernreg.Row{
 	{Symbol: "dotW4A8Tile4RowAVX2", Arch: "amd64", Dispatch: "w4a8TileRows", Oracle: "TestW4A8TileRowsIndexHoisted_isBitIdentical"},
 
 	{Symbol: "dotW4A8FoldSDOT", Arch: "arm64", Dispatch: "dotW4A8", Oracle: "TestW4A8_dotMatchesScalar"},
-	{Symbol: "dotW4A8FoldSDOTv2", Arch: "arm64", Oracle: "TestDotW4A8FoldSDOTv2_matchesOracle"},
-	{Symbol: "dotW4A8SplitHalfSDOT", Arch: "arm64", Oracle: "TestDotW4A8SplitHalfSDOT_matchesOracle"},
-	{Symbol: "dotW4A8FoldSDOT2Acc", Arch: "arm64", Oracle: "TestDotW4A8FoldSDOT2Acc_matchesOracle"},
-	{Symbol: "dotW4A8FoldSDOT4Acc", Arch: "arm64", Oracle: "TestDotW4A8FoldSDOT4Acc_matchesOracle"},
-	{Symbol: "dotW4A8SplitHalf2Acc", Arch: "arm64", Oracle: "TestDotW4A8SplitHalf2Acc_matchesOracle"},
-	{Symbol: "dotW4A8SplitHalf4Acc", Arch: "arm64", Oracle: "TestDotW4A8SplitHalf4Acc_matchesOracle"},
+	{Symbol: "dotW4A8FoldSDOTv2", Arch: "arm64", Undispatched: "a measurement arm kept beside dotW4A8FoldSDOT for comparison", Oracle: "TestDotW4A8FoldSDOTv2_matchesOracle"},
+	{Symbol: "dotW4A8SplitHalfSDOT", Arch: "arm64", Undispatched: "a measurement arm: the split-half layout alone, which dotW4A8's canonical-layout callers do not produce", Oracle: "TestDotW4A8SplitHalfSDOT_matchesOracle"},
+	{Symbol: "dotW4A8FoldSDOT2Acc", Arch: "arm64", Undispatched: "a measurement arm: the two-chain probe of the SDOT fold", Oracle: "TestDotW4A8FoldSDOT2Acc_matchesOracle"},
+	{Symbol: "dotW4A8FoldSDOT4Acc", Arch: "arm64", Undispatched: "a measurement arm: the four-chain probe of the SDOT fold", Oracle: "TestDotW4A8FoldSDOT4Acc_matchesOracle"},
+	{Symbol: "dotW4A8SplitHalf2Acc", Arch: "arm64", Undispatched: "a measurement arm: two chains over the split-half layout", Oracle: "TestDotW4A8SplitHalf2Acc_matchesOracle"},
+	{Symbol: "dotW4A8SplitHalf4Acc", Arch: "arm64", Undispatched: "a measurement arm: four chains over the split-half layout", Oracle: "TestDotW4A8SplitHalf4Acc_matchesOracle"},
 	{Symbol: "dotW4A8SplitHalf4Row", Arch: "arm64", Dispatch: "w4a8Row4Span", Oracle: "TestDotW4A8SplitHalf4RowFold_bitIdenticalToSplitHalf4Row"},
 	{Symbol: "dotW4A8SplitHalf4RowPrefetch", Arch: "arm64", Dispatch: "MatmulBTW4A8Row4PrefetchInto", Oracle: "TestMatmulBTW4A8Row4PrefetchInto_bitIdenticalToRow4"},
 	{Symbol: "dotW4A8SplitHalf4RowDeshared", Arch: "arm64", Dispatch: "MatmulBTW4A8Row4DesharedInto", Oracle: "TestMatmulBTW4A8Row4DesharedInto_bitIdenticalToRow4"},

@@ -13,6 +13,19 @@ import (
 // test file; this list gathers them.
 var kernelRows = slices.Concat(
 	dotRows,
+	kquantRows,
+	attnRows,
+	expRows,
+	widenRows,
+	f16scaleRows,
+	hammingKernelRows,
+	peakRows,
+	doti8Rows,
+	dequanti8Rows,
+	dotmicroRows,
+	quantactRows,
+	quantint4Rows,
+	w4a8Rows,
 )
 
 // TestKernelRegistry_complete fails on a TEXT symbol with no row, a row whose symbol,
