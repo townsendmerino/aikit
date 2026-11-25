@@ -64,7 +64,7 @@ On top of the dot kernels, `linalg` provides:
   keeps the vectorized dequant-then-GEMM path (`HasFusedQ8Kernel` false there).
 - The quant matmuls: `MatmulBTQ8` (int8 weights), `MatmulBTQ4` (int4 group, f32
   activations — prefill path), **W8A8** (`MatmulBTW8A8` + the zero-alloc
-  `…Into(ws *Workspace)` and the fused `MatmulBTW8A8Batch`), and **W4A8**
+  `…Into(ws *Workspace)` and the fused W8A8 batch, now `MatmulBTBatchInto`), and **W4A8**
   (`MatmulBTW4A8`, int4 weights × int8 activations — the int4 *decode* path).
   See `quant.go`, `workspace.go`, `quant_w4a8*.go`.
 - `DequantizeRowsInt8Into` — bulk int8→f32 weight widen (`float32(q)*scale` per
@@ -104,7 +104,7 @@ tolerance. Tests assert exact equality.
   single-row and register-blocked kernels bit-match the scalar reference. Numbers
   + the one tuning finding below.
 - **Perf campaign landed (v0.5.0–0.5.2)** in `linalg`: zero-alloc W8A8 decode
-  (`Workspace`/`…Into`), batched W8A8 (`MatmulBTW8A8Batch`), serial-decode
+  (`Workspace`/`…Into`), batched W8A8 (now `MatmulBTBatchInto`), serial-decode
   threshold + `SetParallelThreshold`/`SetParallelWidth`, the spin-park pool, and
   the column-outer W8A8 re-block (weight reused across M rows). See CHANGELOG.
   goinfer's end-to-end decode is the arbiter for those (warm microbenches mislead).
@@ -234,14 +234,16 @@ tolerance. Tests assert exact equality.
   kernel's own contract) — `PreferredInt4Layout`'s split-half gate already refuses a tensor
   that doesn't satisfy this at construction, so a split-half-only WeightMat
   can never present a bad K to any of these three rows.
-  <br>`MatmulBTW4A8Batch` (the batched q‖k‖v / gate‖up entry) gained a
-  `SplitHalf []byte` field on `W4A8Op` (scales are `Scales`, shared with
+  <br>The batched q‖k‖v / gate‖up W4A8 entry (since LS6 the int4 path of
+  `MatmulBTBatchInto`, internally `matmulBTW4A8Batch`) gained a
+  `SplitHalf []byte` field on its op (scales are `Scales`, shared with
   canonical — never repacked), routed at M=1 through the same
   `dotW4A8SplitHalfAVX2` kernel with NO quad-alignment carve-out (unlike
   `Row4`, split-half doesn't interleave rows, so a `SplitHalf` op serves its
   entire requested column range or none of it). The batch path still has no
-  tile for EITHER repacked layout, so a `SplitHalf` op at M>1 still panics,
-  now naming split-half in the message too — this is seam-completeness for
+  tile for EITHER repacked layout, so a `SplitHalf` op at M>1 still panics
+  inside it (`MatmulBTBatchInto` runs such a batch per op instead),
+  naming split-half in the message too — this is seam-completeness for
   a currently-unreachable case (goinfer's batch callers are both M=1), not a
   new capability.
   <br>Verified on real AVX2 hardware via a linux/amd64 container under QEMU

@@ -32,7 +32,7 @@ func TestDotI8Scaled32_matchesGo(t *testing.T) {
 	}
 }
 
-// TestActGroup_w8a8KernelMatchesReference: MatmulBTW8A8Into and MatmulBTW8A8Batch under per-32
+// TestActGroup_w8a8KernelMatchesReference: MatmulBTW8A8Into and matmulBTW8A8Batch under per-32
 // activations (the dotI8Scaled32 path) agree with the Go reference, at M=2 with an outlier.
 func TestActGroup_w8a8KernelMatchesReference(t *testing.T) {
 	r := rand.New(rand.NewPCG(23, 24))
@@ -47,7 +47,7 @@ func TestActGroup_w8a8KernelMatchesReference(t *testing.T) {
 	got := make([]float32, M*N)
 	MatmulBTW8A8Into(new(Workspace), a, q8, s8, got, M, K, N)
 	batch := make([]float32, M*N)
-	MatmulBTW8A8Batch(new(Workspace), a, M, K, []W8A8Op{{BQ: q8, Scales: s8, Dst: batch, N: N}})
+	matmulBTW8A8Batch(new(Workspace), a, M, K, []w8a8Op{{BQ: q8, Scales: s8, Dst: batch, N: N}})
 	for name, v := range map[string][]float32{"Into": got, "Batch": batch} {
 		if e := agRelErr(v, ref); e > 1e-6 {
 			t.Errorf("W8A8 %s grouped vs reference: rel err %.3g", name, e)
@@ -55,7 +55,7 @@ func TestActGroup_w8a8KernelMatchesReference(t *testing.T) {
 	}
 }
 
-// TestActGroup_w8a8BatchMultiOp: MatmulBTW8A8Batch under per-32 activations with several ops of mixed
+// TestActGroup_w8a8BatchMultiOp: matmulBTW8A8Batch under per-32 activations with several ops of mixed
 // and odd N (the Q/K/V and gate/up shape the batch exists for) matches the reference per op, serial
 // and fanned out. The fan-out splits the concatenated column space in multiples of 8, so op
 // boundaries land mid-shard and a shard can start or end on an odd column of an op: the 2-column
@@ -68,14 +68,14 @@ func TestActGroup_w8a8BatchMultiOp(t *testing.T) {
 	for _, M := range []int{1, 3} {
 		a := agRandMat(r, M*K)
 		a[K/3] = 350
-		ops := make([]W8A8Op, len(Ns))
+		ops := make([]w8a8Op, len(Ns))
 		refs := make([][]float32, len(Ns))
 		for i, N := range Ns {
 			wm := QuantizeInt8(agRandMat(r, N*K), N, K, true)
 			q8, s8, _, _ := wm.Int8()
 			refs[i] = make([]float32, M*N)
 			matmulW8A8GroupedRef(new(Workspace), 32, a, q8, s8, refs[i], M, K, N)
-			ops[i] = W8A8Op{BQ: q8, Scales: s8, N: N}
+			ops[i] = w8a8Op{BQ: q8, Scales: s8, N: N}
 		}
 		for _, par := range []bool{false, true} {
 			ws := new(Workspace)
@@ -88,7 +88,7 @@ func TestActGroup_w8a8BatchMultiOp(t *testing.T) {
 			for i := range ops {
 				ops[i].Dst = make([]float32, M*Ns[i])
 			}
-			MatmulBTW8A8Batch(ws, a, M, K, ops)
+			matmulBTW8A8Batch(ws, a, M, K, ops)
 			for i := range ops {
 				if e := agRelErr(ops[i].Dst, refs[i]); e > 1e-6 {
 					t.Errorf("M=%d par=%v op %d (N=%d): rel err %.3g vs reference", M, par, i, Ns[i], e)

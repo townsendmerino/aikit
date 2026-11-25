@@ -33,7 +33,7 @@ func TestMatmulBTW4A8Batch_repackedOnlyMatchesCanonical(t *testing.T) {
 	// aligned) land on quad boundaries for every op and the row4 path
 	// covers the whole batch.
 	shapes := []int{256, 512}
-	var canonOps, repackedOps []W4A8Op
+	var canonOps, repackedOps []w4a8Op
 	var wantDst, gotDst [][]float32
 	for _, n := range shapes {
 		q4, q4s := quantizeInt4Random(rng, n, K, group)
@@ -41,16 +41,16 @@ func TestMatmulBTW4A8Batch_repackedOnlyMatchesCanonical(t *testing.T) {
 		gD := make([]float32, n)
 		wantDst = append(wantDst, wD)
 		gotDst = append(gotDst, gD)
-		canonOps = append(canonOps, W4A8Op{W4: q4, Scales: q4s, Dst: wD, N: n})
+		canonOps = append(canonOps, w4a8Op{W4: q4, Scales: q4s, Dst: wD, N: n})
 
 		row4, row4s := RepackW4A8Row4(q4, n, K, group), RepackW4A8Row4Scales(q4s, n, K, group)
-		repackedOps = append(repackedOps, W4A8Op{Row4: row4, Row4Scales: row4s, Dst: gD, N: n})
+		repackedOps = append(repackedOps, w4a8Op{Row4: row4, Row4Scales: row4s, Dst: gD, N: n})
 	}
 
 	var wsCanon Workspace
-	MatmulBTW4A8Batch(&wsCanon, a, M, K, group, canonOps)
+	matmulBTW4A8Batch(&wsCanon, a, M, K, group, canonOps)
 	var wsRepacked Workspace
-	MatmulBTW4A8Batch(&wsRepacked, a, M, K, group, repackedOps)
+	matmulBTW4A8Batch(&wsRepacked, a, M, K, group, repackedOps)
 
 	for opIdx := range wantDst {
 		for i := range wantDst[opIdx] {
@@ -64,7 +64,7 @@ func TestMatmulBTW4A8Batch_repackedOnlyMatchesCanonical(t *testing.T) {
 // TestMatmulBTW4A8Batch_repackedOnlyUnalignedEdgePanics is the failure-mode
 // half of the M-22 batch fix: a repacked-only op whose requested column
 // range straddles a non-quad boundary must panic, naming the op and range,
-// rather than dereference W4A8Op.W4 == nil three calls into w4a8Span.
+// rather than dereference w4a8Op.W4 == nil three calls into w4a8Span.
 func TestMatmulBTW4A8Batch_repackedOnlyUnalignedEdgePanics(t *testing.T) {
 	const group, K = 32, 1536
 	if !row4Usable() {
@@ -78,7 +78,7 @@ func TestMatmulBTW4A8Batch_repackedOnlyUnalignedEdgePanics(t *testing.T) {
 	aq := make([]int8, K)
 	aScales := []float32{1}
 	dst := make([]float32, n)
-	op := W4A8Op{Row4: row4, Row4Scales: row4s, Dst: dst, N: n}
+	op := w4a8Op{Row4: row4, Row4Scales: row4s, Dst: dst, N: n}
 	nGroups, bpr := groupsFor(K, group)
 
 	defer func() {

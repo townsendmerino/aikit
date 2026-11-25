@@ -264,9 +264,9 @@ func outputContractCases() []outputcontract.Case {
 			bq2, bs2 := QuantizeRowsInt8(rf32(25, 5*s.K), 5, s.K)
 			d1, o1 := outputcontract.MkOut[float32]("op0.Dst", s.M*s.N)
 			d2, o2 := outputcontract.MkOut[float32]("op1.Dst", s.M*5)
-			ops := []W8A8Op{{BQ: bq1, Scales: bs1, Dst: d1, N: s.N}, {BQ: bq2, Scales: bs2, Dst: d2, N: 5}}
+			ops := []w8a8Op{{BQ: bq1, Scales: bs1, Dst: d1, N: s.N}, {BQ: bq2, Scales: bs2, Dst: d2, N: 5}}
 			aa := a()
-			return func() { MatmulBTW8A8Batch(&Workspace{}, aa, s.M, s.K, ops) }, []*outputcontract.OutBuf{o1, o2}
+			return func() { matmulBTW8A8Batch(&Workspace{}, aa, s.M, s.K, ops) }, []*outputcontract.OutBuf{o1, o2}
 		})
 		// int4 (group 32) for the Q4 / W4A8 family
 		for _, g := range []int{32} {
@@ -307,9 +307,25 @@ func outputContractCases() []outputcontract.Case {
 				pk2, sc2 := QuantizeGroupsInt4(rf32(28, 5*s.K), 5, s.K, g)
 				d1, o1 := outputcontract.MkOut[float32]("op0.Dst", s.M*s.N)
 				d2, o2 := outputcontract.MkOut[float32]("op1.Dst", s.M*5)
-				ops := []W4A8Op{{W4: pk1, Scales: sc1, Dst: d1, N: s.N}, {W4: pk2, Scales: sc2, Dst: d2, N: 5}}
+				ops := []w4a8Op{{W4: pk1, Scales: sc1, Dst: d1, N: s.N}, {W4: pk2, Scales: sc2, Dst: d2, N: 5}}
 				aa := a()
-				return func() { MatmulBTW4A8Batch(&Workspace{}, aa, s.M, s.K, g, ops) }, []*outputcontract.OutBuf{o1, o2}
+				return func() { matmulBTW4A8Batch(&Workspace{}, aa, s.M, s.K, g, ops) }, []*outputcontract.OutBuf{o1, o2}
+			})
+		}
+		for _, kind := range []string{"w8a8", "int4", "mixed"} {
+			add(fmt.Sprintf("MatmulBTBatchInto/%s,%s", nm, kind), func() (func(), []*outputcontract.OutBuf) {
+				w1, w2 := QuantizeInt8(rf32(29, s.N*s.K), s.N, s.K, true), QuantizeInt8(rf32(30, 5*s.K), 5, s.K, true)
+				if kind != "w8a8" {
+					w2 = QuantizeInt4(rf32(30, 5*s.K), 5, s.K, 32)
+				}
+				if kind == "int4" {
+					w1 = QuantizeInt4(rf32(29, s.N*s.K), s.N, s.K, 32)
+				}
+				d1, o1 := outputcontract.MkOut[float32]("op0.Dst", s.M*s.N)
+				d2, o2 := outputcontract.MkOut[float32]("op1.Dst", s.M*5)
+				ops := []BatchOp{{W: &w1, Dst: d1}, {W: &w2, Dst: d2}}
+				aa := a()
+				return func() { MatmulBTBatchInto(&Workspace{}, aa, s.M, ops) }, []*outputcontract.OutBuf{o1, o2}
 			})
 		}
 	}

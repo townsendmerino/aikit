@@ -58,10 +58,10 @@ func TestMatmulShapeChecks_recoverableAcrossFanout(t *testing.T) {
 		{"MatmulBTAcc64 short dst", func() { MatmulBTAcc64(a, bF, short, M, K, N) }},
 		// §2.1: the batch variant checks each op before the fan-out.
 		{"MatmulBTW8A8Batch short op.Dst", func() {
-			MatmulBTW8A8Batch(&Workspace{}, a, M, K, []W8A8Op{{BQ: bQ, Scales: scales, Dst: short, N: N}})
+			matmulBTW8A8Batch(&Workspace{}, a, M, K, []w8a8Op{{BQ: bQ, Scales: scales, Dst: short, N: N}})
 		}},
 		{"MatmulBTW8A8Batch short op.BQ", func() {
-			MatmulBTW8A8Batch(&Workspace{}, a, M, K, []W8A8Op{{BQ: bQ[:N*K-1], Scales: scales, Dst: good, N: N}})
+			matmulBTW8A8Batch(&Workspace{}, a, M, K, []w8a8Op{{BQ: bQ[:N*K-1], Scales: scales, Dst: good, N: N}})
 		}},
 	}
 	for _, c := range cases {
