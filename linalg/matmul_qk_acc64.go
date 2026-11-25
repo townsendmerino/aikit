@@ -1,5 +1,7 @@
 package linalg
 
+import "github.com/townsendmerino/aikit/linalg/internal/shape"
+
 // MatmulQKAcc64 computes dst[M,N] = a[M,K] · b[N,K]ᵀ, f64-accumulated, where b's
 // rows are contiguous K-wide slices of a row-major buffer spaced rowStride
 // apart (bOff selects a head's K-wide column range within each row) — the
@@ -89,8 +91,8 @@ func checkMatmulQKAcc64(aLen, bLen, dstLen, M, K, N, bOff, rowStride int) {
 	if M < 0 || K < 0 || N < 0 || bOff < 0 || rowStride < K {
 		panic("linalg: MatmulQKAcc64 invalid shape")
 	}
-	requireExactLen("MatmulQKAcc64", "a", aLen, mul(M, K))
-	requireExactLen("MatmulQKAcc64", "dst", dstLen, mul(M, N))
+	shape.RequireExactLen("MatmulQKAcc64", "a", aLen, shape.Mul(M, K))
+	shape.RequireExactLen("MatmulQKAcc64", "dst", dstLen, shape.Mul(M, N))
 	need := bOff + max(0, N-1)*rowStride + K
 	if bLen < need {
 		panic("linalg: MatmulQKAcc64 bMat too short for the given shape/strides")
