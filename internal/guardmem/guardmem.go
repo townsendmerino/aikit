@@ -99,7 +99,11 @@ func place[T any](a *Arena, name string, n int, atEnd bool) []T {
 	if err != nil {
 		a.t.Fatalf("guardmem: %s: %v", name, err)
 	}
-	a.t.Cleanup(func() { unmap(m) })
+	a.t.Cleanup(func() {
+		if err := unmap(m); err != nil {
+			a.t.Errorf("guardmem: %s: munmap: %v", name, err)
+		}
+	})
 	base := uintptr(unsafe.Pointer(unsafe.SliceData(m)))
 	dataLo := base + page
 	dataHi := dataLo + dataPages*page

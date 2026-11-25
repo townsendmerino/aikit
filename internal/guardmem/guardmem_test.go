@@ -86,8 +86,8 @@ func TestNonFaultPanicIsReRaised(t *testing.T) {
 			t.Fatalf("recovered %v, want the kernel's own panic", r)
 		}
 	}()
-	a.Catch("panics", func() { panic("boom") })
-	t.Fatal("Catch returned after a non-fault panic")
+	f := a.Catch("panics", func() { panic("boom") })
+	t.Fatalf("Catch returned (fault %v) after a non-fault panic", f)
 }
 
 func TestCopyHelpers(t *testing.T) {

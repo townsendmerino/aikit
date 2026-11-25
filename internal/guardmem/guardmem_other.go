@@ -16,4 +16,4 @@ func platform() string { return runtime.GOOS + "/" + runtime.GOARCH }
 
 func mapGuarded(int) ([]byte, error) { return nil, errors.New("guard pages are not supported here") }
 
-func unmap([]byte) {}
+func unmap([]byte) error { return nil }

@@ -3,6 +3,7 @@
 package guardmem
 
 import (
+	"errors"
 	"fmt"
 	"runtime"
 	"syscall"
@@ -24,14 +25,12 @@ func mapGuarded(data int) ([]byte, error) {
 		return nil, fmt.Errorf("mmap: %w", err)
 	}
 	if err := syscall.Mprotect(m[:page], syscall.PROT_NONE); err != nil {
-		_ = syscall.Munmap(m)
-		return nil, fmt.Errorf("mprotect low guard: %w", err)
+		return nil, errors.Join(fmt.Errorf("mprotect low guard: %w", err), syscall.Munmap(m))
 	}
 	if err := syscall.Mprotect(m[page+data:], syscall.PROT_NONE); err != nil {
-		_ = syscall.Munmap(m)
-		return nil, fmt.Errorf("mprotect high guard: %w", err)
+		return nil, errors.Join(fmt.Errorf("mprotect high guard: %w", err), syscall.Munmap(m))
 	}
 	return m, nil
 }
 
-func unmap(m []byte) { _ = syscall.Munmap(m) }
+func unmap(m []byte) error { return syscall.Munmap(m) }
