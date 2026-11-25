@@ -96,7 +96,7 @@ func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) 
 	// audit M-22: structurally unreachable for a successfully-constructed
 	// split-half-only WeightMat — the branch above now catches q4SplitHalf !=
 	// nil at every M, so this is reached only by a hand-built WeightMat{} that
-	// bypasses RepackInt4SplitHalfInPlace/WrapInt4SplitHalfOnly's validation
+	// bypasses RepackInt4InPlace(LayoutSplitHalf)/WrapInt4(LayoutSplitHalf)'s validation
 	// (no split-half AND no canonical). A canonical-only or "both" WeightMat
 	// never reaches this: q4SplitHalf is nil for canonical-only, and w.q4 is
 	// non-nil for "both", so the call below is identical to before this check
@@ -155,9 +155,9 @@ func w4a8SplitHalfSpan(aq []int8, aScale float32, w4sh []byte, wScales, dst []fl
 // splitHalfUsable reports whether this CPU can safely dispatch the
 // split-half AVX2 kernel — the same cpufeat.HasAVX2 && !cpufeat.HasAVX512VNNIVL gate
 // RepackInt4SplitHalf's own body applies (see its comment for why a VNNI
-// host declines rather than downgrading). Exported via Int4SplitHalfUsable
-// (weightmat.go, audit M-22) for a caller building a repacked-only
-// WeightMat, which has no canonical to fall back to if this is false.
+// host declines rather than downgrading). A caller sees it through
+// PreferredInt4Layout (via int4SplitHalfUsable), which a repacked-only
+// WeightMat needs, having no canonical to fall back to if this is false.
 func splitHalfUsable() bool { return cpufeat.HasAVX2 && !cpufeat.HasAVX512VNNIVL }
 
 // w4a8BatchSplitHalfSpan is w4a8SplitHalfSpan reached from the portable batch

@@ -3,7 +3,7 @@
 // row4 has no amd64/portable twin (RepackW4A8Row4/RepackW4A8Row4Scales live
 // only in matmul_w4a8_row4_arm64.go), so this file — which builds row4 test
 // data directly rather than going through a gated wrapper — is arm64-only.
-// Int4Row4Usable/row4Usable are false everywhere off arm64 anyway, so
+// int4Row4Usable/row4Usable are false everywhere off arm64 anyway, so
 // nothing here would ever run on another arch.
 package linalg
 
@@ -21,7 +21,7 @@ import (
 // dereferencing a nil W4/Scales.
 func TestMatmulBTW4A8Batch_repackedOnlyMatchesCanonical(t *testing.T) {
 	const group, K = 32, 1536
-	if !Int4Row4Usable(8, K, group) {
+	if !int4Row4Usable(8, K, group) {
 		t.Skip("row4 not usable on this core")
 	}
 	rng := rand.New(rand.NewPCG(22, 5))

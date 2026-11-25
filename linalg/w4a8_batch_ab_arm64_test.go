@@ -74,7 +74,7 @@ func TestW4A8BatchVsPerOpAB(t *testing.T) {
 				}
 				q4, q4s := QuantizeGroupsInt4(w, N, K, group)
 				f16RoundScales(q4s) // the WeightMat below stores binary16 scales
-				wm := WrapInt4(q4, q4s, N, K, group)
+				wm := wrapInt4F32(q4, q4s, N, K, group)
 				if !wm.RepackInt4Row4() {
 					t.Fatalf("N=%d did not repack to row4 — the arm would not be representative", N)
 				}

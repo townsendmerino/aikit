@@ -9,9 +9,9 @@ import (
 
 // TestWrapInt4Row4_matchesRepackInt4Row4 proves the two ways of getting q4Row4/
 // q4Row4Scales onto a WeightMat produce byte-identical results: computing them
-// internally at load time (RepackInt4Row4, today's arm64-only in-RAM path) vs.
-// handing back already-repacked bytes computed elsewhere (WrapInt4Row4 — the
-// goinfer .giw kind-4 loader's path, where RepackW4A8Row4/RepackW4A8Row4Scales
+// internally at load time (RepackInt4Row4, the arm64 in-RAM path) vs.
+// handing back already-repacked bytes computed elsewhere (WrapInt4 with LayoutRow4,
+// the goinfer .giw kind-4 loader's path, where RepackW4A8Row4/RepackW4A8Row4Scales
 // ran once at prequant time and the bytes were written to disk). Both derive
 // from the same pure functions, so this is a construction-path equivalence
 // check, not a numerics one — but it's the correctness anchor kind 4 depends on:
@@ -32,7 +32,7 @@ func TestWrapInt4Row4_matchesRepackInt4Row4(t *testing.T) {
 		q4, q4s := QuantizeGroupsInt4(w, N, K, group)
 
 		// Path A: internal derivation via RepackInt4Row4 (today's load-time path).
-		wmA := WrapInt4(q4, q4s, N, K, group)
+		wmA := wrapInt4F32(q4, q4s, N, K, group)
 		if !wmA.RepackInt4Row4() {
 			t.Skipf("K=%d N=%d: RepackInt4Row4 declined (no DotProd on this build/core) — nothing to compare", K, N)
 		}
@@ -42,14 +42,17 @@ func TestWrapInt4Row4_matchesRepackInt4Row4(t *testing.T) {
 		}
 
 		// Path B: repack the SAME canonical bytes directly (what a prequant tool
-		// does once, ahead of time), then hand the result to WrapInt4Row4 (what a
+		// does once, ahead of time), then hand the result to WrapInt4 with LayoutRow4 (what a
 		// .giw kind-4 loader does, mmap-aliasing bytes read off disk).
 		row4B := RepackW4A8Row4(q4, N, K, group)
 		scalesB := RepackW4A8Row4Scales(q4s, N, K, group)
-		wmB := WrapInt4Row4(q4, q4s, N, K, group, row4B, scalesB)
+		wmB, ok := wrapInt4Row4OnlyF32(row4B, scalesB, N, K, group)
+		if !ok {
+			t.Fatalf("K=%d N=%d: WrapInt4(LayoutRow4) declined a shape RepackInt4Row4 accepted", K, N)
+		}
 		gotRow4B, gotScalesB, ok := wmB.Int4Row4()
 		if !ok {
-			t.Fatalf("K=%d N=%d: WrapInt4Row4 did not populate Int4Row4", K, N)
+			t.Fatalf("K=%d N=%d: WrapInt4(LayoutRow4) did not populate Int4Row4", K, N)
 		}
 
 		if len(gotRow4A) != len(gotRow4B) {
@@ -69,7 +72,7 @@ func TestWrapInt4Row4_matchesRepackInt4Row4(t *testing.T) {
 			}
 		}
 
-		// And the dispatch itself must agree: a WeightMat built via WrapInt4Row4
+		// And the dispatch itself must agree: a WeightMat built via WrapInt4(LayoutRow4)
 		// must compute the identical M=1 result as one built via RepackInt4Row4.
 		a := make([]float32, K)
 		for i := range a {
@@ -82,29 +85,9 @@ func TestWrapInt4Row4_matchesRepackInt4Row4(t *testing.T) {
 		wmB.MatmulBTW4A8Into(&wsB, a, gotB, 1)
 		for i := range gotA {
 			if gotA[i] != gotB[i] {
-				t.Fatalf("K=%d N=%d: dispatch result[%d] mismatch: RepackInt4Row4=%v WrapInt4Row4=%v", K, N, i, gotA[i], gotB[i])
+				t.Fatalf("K=%d N=%d: dispatch result[%d] mismatch: RepackInt4Row4=%v WrapInt4=%v", K, N, i, gotA[i], gotB[i])
 			}
 		}
-	}
-}
-
-// TestWrapInt4Row4_nilIsPlainWrapInt4 confirms passing nil/nil for the row4
-// arguments is exactly WrapInt4 — the "no row4 layout attached" case a kind-3
-// (or non-arm64-emitted) .giw load takes.
-func TestWrapInt4Row4_nilIsPlainWrapInt4(t *testing.T) {
-	const group, K, N = 32, 64, 8
-	rng := rand.New(rand.NewSource(11))
-	w := make([]float32, N*K)
-	for i := range w {
-		w[i] = float32(rng.NormFloat64())
-	}
-	q4, q4s := QuantizeGroupsInt4(w, N, K, group)
-	wm := WrapInt4Row4(q4, q4s, N, K, group, nil, nil)
-	if _, _, ok := wm.Int4Row4(); ok {
-		t.Fatal("WrapInt4Row4(nil, nil) should leave Int4Row4 ok=false")
-	}
-	if got, _, _, ok := wm.Int4(); !ok || len(got) != len(q4) {
-		t.Fatalf("WrapInt4Row4(nil, nil) should still carry the canonical q4, got len=%d ok=%v", len(got), ok)
 	}
 }
 
@@ -114,7 +97,7 @@ func TestWrapInt4Row4_nilIsPlainWrapInt4(t *testing.T) {
 // read out of bounds.
 func TestWrapInt4Row4_panicsOnBadLength(t *testing.T) {
 	if !cpufeat.HasDotProd {
-		t.Skip("DotProd required: the row4 layout declines without it (WrapInt4Row4Only reports false, WrapInt4Row4 returns the plain int4 matrix)")
+		t.Skip("DotProd required: without it WrapInt4(LayoutRow4) declines before checking lengths")
 	}
 	const group, K, N = 32, 64, 8
 	rng := rand.New(rand.NewSource(13))
@@ -129,5 +112,5 @@ func TestWrapInt4Row4_panicsOnBadLength(t *testing.T) {
 			t.Fatal("expected a panic on a short q4Row4")
 		}
 	}()
-	WrapInt4Row4(q4, q4s, N, K, group, badRow4, RepackW4A8Row4Scales(q4s, N, K, group))
+	WrapInt4(badRow4, RepackW4A8Row4ScalesF16(F32ToF16Scales(q4s), N, K, group), N, K, group, LayoutRow4)
 }

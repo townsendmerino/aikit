@@ -122,7 +122,7 @@ func TestW4A8F16_everyPathMatchesF32(t *testing.T) {
 
 				// WeightMat: canonical, then whichever repacked layout this arch has.
 				for _, layout := range []string{"canonical", "repacked"} {
-					wm := WrapInt4F16(append([]byte(nil), q4...), append([]uint16(nil), s16...), N, K, 32)
+					wm := wrapInt4Canonical(append([]byte(nil), q4...), append([]uint16(nil), s16...), N, K, 32)
 					if layout == "repacked" && !wm.RepackInt4Row4() && !wm.RepackInt4SplitHalf() {
 						continue
 					}
@@ -151,7 +151,7 @@ func TestW4A8F16_everyPathMatchesF32(t *testing.T) {
 					m16 := append([]uint16(nil), s16...)
 					m16[5]++
 					if layout == "canonical" {
-						mut = WrapInt4F16(q4, m16, N, K, 32)
+						mut = wrapInt4Canonical(q4, m16, N, K, 32)
 					} else if mut.q4Row4Scales16 != nil {
 						mut.q4Row4Scales16 = append([]uint16(nil), wm.q4Row4Scales16...)
 						mut.q4Row4Scales16[5]++
@@ -169,7 +169,7 @@ func TestW4A8F16_everyPathMatchesF32(t *testing.T) {
 		// Row(): every layout dequantizes to DequantizeRowInt4 over the widened scales.
 		nG := K / 32
 		for _, layout := range []string{"canonical", "repacked"} {
-			wm := WrapInt4F16(append([]byte(nil), q4...), append([]uint16(nil), s16...), N, K, 32)
+			wm := wrapInt4Canonical(append([]byte(nil), q4...), append([]uint16(nil), s16...), N, K, 32)
 			if layout == "repacked" && !wm.RepackInt4Row4() && !wm.RepackInt4SplitHalf() {
 				continue
 			}

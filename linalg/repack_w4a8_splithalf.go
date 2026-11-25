@@ -10,10 +10,10 @@ import (
 // cols/2 bytes) into dst (bpr bytes) in split-half order — byte i holds
 // weight i (low nibble) and weight i+16 (high), within each 32-wide group;
 // see RepackW4A8SplitHalf's own comment for why. Factored out (audit M-22)
-// so RepackW4A8SplitHalf (below) and RepackInt4SplitHalfInPlace
+// so RepackW4A8SplitHalf (below) and RepackInt4InPlace(LayoutSplitHalf)
 // (weightmat.go) share one row transform.
 //
-// dst and src MUST NOT OVERLAP. RepackInt4SplitHalfInPlace gets this safely
+// dst and src MUST NOT OVERLAP. RepackInt4InPlace(LayoutSplitHalf) gets this safely
 // by snapshotting the live row into scratch before calling this with
 // dst=the live array, src=the scratch — same hazard and same fix as
 // RepackInt4Row4Quad's (the row4 arm64 twin), just at row granularity

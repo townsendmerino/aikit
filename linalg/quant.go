@@ -921,7 +921,7 @@ func w4a8SpanRows(aq []int8, aScales []float32, w4 []byte, wScales, dst []float3
 //
 // Row4/Row4Scales are OPTIONAL and are the reason this struct is not simply
 // W8A8Op with different field names. On arm64 an int4 tensor that has been
-// through RepackInt4Row4/WrapInt4Row4 runs the split-half 4-row kernel, which
+// through RepackInt4Row4 or WrapInt4(LayoutRow4) runs the split-half 4-row kernel, which
 // measures ~42 GB/s against the canonical kernel's ~24. A batch form that
 // accepted only the canonical layout would hand a row4-resident caller a 1.75×
 // KERNEL regression in exchange for a ~1.26× fan-out gain — a net loss, and

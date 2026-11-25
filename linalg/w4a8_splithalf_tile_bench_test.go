@@ -31,9 +31,9 @@ func BenchmarkMatmulBTW4A8SplitHalfTile(b *testing.B) {
 		w[i] = float32(rng.NormFloat64())
 	}
 	q4, q4s := QuantizeGroupsInt4(w, N, K, 32)
-	wm, ok := RepackInt4SplitHalfInPlace(q4, q4s, N, K, 32)
+	wm, ok := repackInt4SplitHalfInPlaceF32(q4, q4s, N, K, 32)
 	if !ok {
-		b.Fatal("RepackInt4SplitHalfInPlace: ok=false despite cpufeat.HasAVX2 && !cpufeat.HasAVX512VNNIVL")
+		b.Fatal("RepackInt4InPlace(LayoutSplitHalf): ok=false despite cpufeat.HasAVX2 && !cpufeat.HasAVX512VNNIVL")
 	}
 	for _, M := range []int{1, 4, 8, 32, 128} {
 		a := make([]float32, M*K)

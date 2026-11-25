@@ -12,7 +12,7 @@ package linalg
 func (w *WeightMat) RepackInt4Row4() bool { return false }
 
 // row4Usable is always false on non-arm64 — the split-half + 4-row kernel is
-// NEON-only. See the arm64 file's comment for why WrapInt4Row4 needs this.
+// NEON-only. See the arm64 file's comment for why WrapInt4 needs this.
 func row4Usable() bool { return false }
 
 // w4a8BatchRow4Span is unreachable off arm64: MatmulBTW4A8Batch only calls it
@@ -24,21 +24,12 @@ func w4a8BatchRow4Span(aq []int8, aScale float32, row4 []byte, row4Scales, dst [
 	panic("linalg: w4a8BatchRow4Span reached off arm64 — row4Usable() should have gated this")
 }
 
-// RepackInt4Row4InPlace is always ok=false off arm64 (Int4Row4Usable is
-// always false there, via row4Usable above) — input untouched, no partial
-// write. audit M-22. See weightmat_row4_arm64.go for the real body.
-//
-// Output contract: rewrites q4 and q4s in place; there is no separate destination, and nothing needs zeroing.
-func RepackInt4Row4InPlace(q4 []byte, q4s []float32, rows, cols, group int) (WeightMat, bool) {
-	return WeightMat{}, false
-}
-
 // w4a8BatchRow4SpanF16 is unreachable off arm64, like its f32 twin above.
 func w4a8BatchRow4SpanF16(aq []int8, aScale float32, row4 []byte, s4 []uint16, dst []float32, nGroups, bpr, q0, q1 int) {
 	panic("linalg: w4a8BatchRow4SpanF16 reached off arm64 — row4Usable() should have gated this")
 }
 
-// RepackInt4Row4InPlaceF16 is always ok=false off arm64, like RepackInt4Row4InPlace.
-func RepackInt4Row4InPlaceF16(q4 []byte, q4s []uint16, rows, cols, group int) (WeightMat, bool) {
+// repackInt4Row4InPlace is always ok=false off arm64 (int4Row4Usable is false there): input untouched.
+func repackInt4Row4InPlace(q4 []byte, q4s []uint16, rows, cols, group int) (WeightMat, bool) {
 	return WeightMat{}, false
 }
