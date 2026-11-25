@@ -2,11 +2,13 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 // dotW4A8FoldAVX2 returns the per-group-scaled f32 dot Σ_g scale[g]·(act·w)_g of
 // one int4 weight row against the int8 activation row, via the fused AVX2 kernel
 // in dot_w4a8_amd64.s. The f32 weight scales are folded IN-REGISTER (convert +
 // FMA into an 8-lane accumulator, one reduce at the end) — no per-group int32
-// scratch and no Go-side fold loop. Only safe when hasAVX2. group is fixed at 32;
+// scratch and no Go-side fold loop. Only safe when cpufeat.HasAVX2. group is fixed at 32;
 // nGroups = K/32.
 //
 //go:noescape
@@ -22,9 +24,9 @@ func dotW4A8(act []int8, packed []byte, scales []float32, group, K int) float32 
 		nFull := K / 32
 		var total float32
 		switch {
-		case hasAVX512VNNIVL:
+		case cpufeat.HasAVX512VNNIVL:
 			total = dotW4A8FoldAVX512VNNI(&act[0], &packed[0], &scales[0], nFull)
-		case hasAVX2:
+		case cpufeat.HasAVX2:
 			total = dotW4A8FoldAVX2(&act[0], &packed[0], &scales[0], nFull)
 		default:
 			return dotW4A8Scalar(act, packed, scales, group, K)

@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // forkJoinLayer is one distinct weight matrix in the row4 layout, sized and
@@ -85,7 +87,7 @@ type rec2 struct {
 
 func TestW4A8ForkJoinShardTiming(t *testing.T) {
 	harnessOnly(t)
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	const (
@@ -226,7 +228,7 @@ func row4SpanProbe(l forkJoinLayer, aq []int8, aScale float32, dst []float32, nG
 // gate‖up — the two shapes goinfer would actually call.
 func TestW4A8WorkPerBarrier(t *testing.T) {
 	harnessOnly(t)
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	const (

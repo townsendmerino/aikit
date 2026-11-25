@@ -7,6 +7,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // m1ProPCoreGHz is the M1 Pro P-core's maximum clock, the same constant
@@ -27,7 +29,7 @@ const m1ProPCoreGHz = 3.2
 // the reading is logged, not gated.
 func TestSDOTIssuePeak(t *testing.T) {
 	harnessOnly(t)
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("no FEAT_DotProd on this core")
 	}
 	const iters = 4_000_000

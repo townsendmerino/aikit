@@ -59,8 +59,16 @@ func dequantRange(typ uint32, raw []byte, start int, dst []float32, blockElems i
 				dequantIQ4NLBlock(raw, first+k, out)
 			case ggmlTypeMXFP4:
 				dequantMXFP4Block(raw, first+k, out)
+			case ggmlTypeNVFP4:
+				dequantNVFP4Block(raw, first+k, out)
 			case ggmlTypeIQ4XS:
 				dequantIQ4XSBlock(raw, first+k, out)
+			case ggmlTypeIQ2XXS:
+				dequantIQ2XXSBlock(raw, first+k, out)
+			case ggmlTypeIQ2XS:
+				dequantIQ2XSBlock(raw, first+k, out)
+			case ggmlTypeIQ3XXS:
+				dequantIQ3XXSBlock(raw, first+k, out)
 			case ggmlTypeIQ2S:
 				dequantIQ2SBlock(raw, first+k, out)
 			case ggmlTypeIQ3S:
@@ -244,6 +252,43 @@ func dequantMXFP4Block(raw []byte, blk int, out []float32) {
 	}
 }
 
+// qkNVFP4 is the NVFP4 block size (ggml's QK_NVFP4): four 16-element sub-blocks.
+const qkNVFP4 = 64
+
+// ue4m3ToF32Half decodes an NVFP4 sub-block scale as ggml's ggml_ue4m3_to_fp32 does: bits 6..3 are the
+// exponent (bias 7), bits 2..0 the mantissa, bit 7 is ignored, and 0x00 and 0x7F decode to zero. The result
+// is halved, pairing with the doubled e2m1 table mxfp4KValues as e8m0ToF32Half does for MXFP4. Every
+// nonzero result is a power of two times a 4-bit mantissa, so it and its product with a table entry are exact.
+func ue4m3ToF32Half(x uint8) float32 {
+	if x == 0 || x == 0x7F {
+		return 0
+	}
+	exp := int(x>>3) & 0xF
+	man := float32(x & 0x7)
+	if exp == 0 {
+		return float32(math.Ldexp(float64(man), -9)) * 0.5
+	}
+	return float32(math.Ldexp(float64(1+man/8), exp-7)) * 0.5
+}
+
+// dequantNVFP4Block dequantizes one 36-byte NVFP4 (ggml type 40) block into out[:64]. Bytes 0..3 are the
+// ue4m3 scales of the four 16-element sub-blocks; bytes 4..35 hold 8 bytes per sub-block, and within
+// sub-block s byte j's low nibble is element 16s+j and its high nibble element 16s+j+8 (ggml's
+// dequantize_row_nvfp4). The per-tensor scale is a separate GGUF tensor the caller applies.
+func dequantNVFP4Block(raw []byte, blk int, out []float32) {
+	base := blk * 36
+	out = out[:qkNVFP4:qkNVFP4]
+	for s := range 4 {
+		d := ue4m3ToF32Half(raw[base+s])
+		qs := raw[base+4+8*s : base+4+8*s+8]
+		o := out[16*s : 16*s+16]
+		for j := range 8 {
+			o[j] = d * float32(mxfp4KValues[qs[j]&0x0F])
+			o[j+8] = d * float32(mxfp4KValues[qs[j]>>4])
+		}
+	}
+}
+
 // dequantIQ4XSBlock dequantizes one 256-element IQ4_XS super-block (sb) into
 // out[:256]. Layout (136 bytes): d (f16 super-scale), scales_h (u16), scales_l[4],
 // qs[128]. The super-block splits into eight 32-element sub-blocks; sub-block ib
@@ -265,6 +310,89 @@ func dequantIQ4XSBlock(raw []byte, sb int, out []float32) {
 		for j := range 16 {
 			out[base2+j] = dl * float32(kvaluesIQ4NL[q[j]&0x0F])
 			out[base2+j+16] = dl * float32(kvaluesIQ4NL[q[j]>>4])
+		}
+	}
+}
+
+// signedMul returns db·g, negated when bit j of signs is set. g is a sign-free grid magnitude, so XORing
+// the sign bit is IEEE-754-exact negation, bit-identical to ggml's multiply by -1.
+func signedMul(db float32, g int8, signs byte, j int) float32 {
+	return math.Float32frombits(math.Float32bits(db*float32(g)) ^ uint32((signs>>j)&1)<<31)
+}
+
+// dequantIQ2XXSBlock dequantizes one 256-element IQ2_XXS super-block (sb) into out[:256]. Layout
+// (66 bytes): d (f16), then per 32-element sub-block two little-endian u32s: the first holds four
+// iq2xxsGrid indices (one byte each, 8 elements each), the second four 7-bit ksignsIQ2XS indices
+// (bits 0, 7, 14, 21) and a 4-bit scale (bits 28..31): db = d·(0.5+scale)·0.25. Mirrors ggml's
+// dequantize_row_iq2_xxs.
+func dequantIQ2XXSBlock(raw []byte, sb int, out []float32) {
+	base := sb * 66
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	out = out[:256:256]
+	for ib := range 8 {
+		q := raw[base+2+8*ib : base+2+8*ib+8]
+		aux := binary.LittleEndian.Uint32(q[4:])
+		db := d * (0.5 + float32(aux>>28)) * 0.25
+		for l := range 4 {
+			g := iq2xxsGrid[int(q[l])*8 : int(q[l])*8+8]
+			signs := ksignsIQ2XS[(aux>>(7*l))&127]
+			o := out[32*ib+8*l : 32*ib+8*l+8]
+			for j := range 8 {
+				o[j] = signedMul(db, g[j], signs, j)
+			}
+		}
+	}
+}
+
+// dequantIQ2XSBlock dequantizes one 256-element IQ2_XS super-block (sb) into out[:256]. Layout
+// (74 bytes): d (f16), qs[32] little-endian u16s (bits 0..8 an iq2xsGrid index, bits 9..15 a
+// ksignsIQ2XS index; 8 elements each), scales[8] (two 4-bit scales per 32-element sub-block, low
+// nibble for its first 16 elements): db = d·(0.5+scale)·0.25. Mirrors ggml's dequantize_row_iq2_xs.
+func dequantIQ2XSBlock(raw []byte, sb int, out []float32) {
+	base := sb * 74
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	scales := raw[base+66 : base+74]
+	out = out[:256:256]
+	for ib := range 8 {
+		db := [2]float32{
+			d * (0.5 + float32(scales[ib]&0x0F)) * 0.25,
+			d * (0.5 + float32(scales[ib]>>4)) * 0.25,
+		}
+		for l := range 4 {
+			q := binary.LittleEndian.Uint16(raw[base+2+2*(4*ib+l):])
+			idx := int(q & 511)
+			g := iq2xsGrid[idx*8 : idx*8+8]
+			signs := ksignsIQ2XS[q>>9]
+			o := out[32*ib+8*l : 32*ib+8*l+8]
+			for j := range 8 {
+				o[j] = signedMul(db[l/2], g[j], signs, j)
+			}
+		}
+	}
+}
+
+// dequantIQ3XXSBlock dequantizes one 256-element IQ3_XXS super-block (sb) into out[:256]. Layout
+// (98 bytes): d (f16), qs[64] (iq3xxsGrid indices, 4 elements each, 8 per 32-element sub-block), then
+// one little-endian u32 per sub-block: four 7-bit ksignsIQ2XS indices (bits 0, 7, 14, 21), each
+// signing 8 elements, and a 4-bit scale (bits 28..31): db = d·(0.5+scale)·0.5. Mirrors ggml's
+// dequantize_row_iq3_xxs.
+func dequantIQ3XXSBlock(raw []byte, sb int, out []float32) {
+	base := sb * 98
+	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	qs := raw[base+2 : base+66]
+	out = out[:256:256]
+	for ib := range 8 {
+		aux := binary.LittleEndian.Uint32(raw[base+66+4*ib:])
+		db := d * (0.5 + float32(aux>>28)) * 0.5
+		for l := range 4 {
+			signs := ksignsIQ2XS[(aux>>(7*l))&127]
+			g1 := iq3xxsGrid[int(qs[8*ib+2*l])*4:][:4]
+			g2 := iq3xxsGrid[int(qs[8*ib+2*l+1])*4:][:4]
+			o := out[32*ib+8*l : 32*ib+8*l+8]
+			for j := range 4 {
+				o[j] = signedMul(db, g1[j], signs, j)
+				o[j+4] = signedMul(db, g2[j], signs, j+4)
+			}
 		}
 	}
 }

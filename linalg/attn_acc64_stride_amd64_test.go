@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // BenchmarkQkAcc64Stride times the 4-key and 16-key acc64 QK kernels on one thread over one head of a cache whose key rows are
@@ -13,7 +15,7 @@ import (
 // 4 KiB, so rows alias in the L1 sets) and that stride padded by 16 floats (no aliasing), to separate an L1 set-conflict cost from the
 // kernels' own arithmetic.
 func BenchmarkQkAcc64Stride(b *testing.B) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		b.Skip("no AVX2")
 	}
 	const K, N = 96, 3904 // a multiple of 16, so both kernels cover every key
@@ -45,7 +47,7 @@ func BenchmarkQkAcc64Stride(b *testing.B) {
 // a multiple of 16), one thread, at Phi-3-mini's f16 key stride (3,072 halves, 6 KiB: rows alternate between two L1 sets, eight of
 // the sixteen live rows in each) and padded by 32 halves. The sub-benchmarks run k16, k4, k4, k16 so -count repeats an A B B A block.
 func BenchmarkQkAcc64StrideF16(b *testing.B) {
-	if !hasAVX2 || !hasF16C {
+	if !cpufeat.HasAVX2 || !cpufeat.HasF16C {
 		b.Skip("no AVX2+F16C")
 	}
 	const K, N = 96, 3904

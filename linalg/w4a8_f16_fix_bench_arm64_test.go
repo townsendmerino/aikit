@@ -8,6 +8,8 @@ import (
 	"sort"
 	"testing"
 	"time"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // BenchmarkW4A8Row4F16Fix is the L1 arm64 fix's pre-registered A-or-B instrument (goinfer
@@ -23,7 +25,7 @@ import (
 // Run with -count 8. -count repeats each arm back-to-back (it does not round-robin), so
 // BenchmarkW4A8Row4F16FixInterleaved below is the drift check.
 func BenchmarkW4A8Row4F16Fix(b *testing.B) {
-	if !hasDotProd || !row4Usable() {
+	if !cpufeat.HasDotProd || !row4Usable() {
 		b.Skip("DotProd / row4 required")
 	}
 	shapes := []struct {
@@ -130,7 +132,7 @@ func matmulRow4F16ScalarWiden(ws *Workspace, a []float32, w4Row4 []byte, s4 []ui
 // each timing every arm of a shape in an order rotated by one per round, and logs each arm's median. Run it once:
 // -run '^$' -bench W4A8Row4F16FixInterleaved -benchtime 1x.
 func BenchmarkW4A8Row4F16FixInterleaved(b *testing.B) {
-	if !hasDotProd || !row4Usable() {
+	if !cpufeat.HasDotProd || !row4Usable() {
 		b.Skip("DotProd / row4 required")
 	}
 	shapes := []struct {
