@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"testing"
+	"time"
 	"unsafe"
 )
 
@@ -146,6 +147,22 @@ func (a *Arena) Run(kernel string, fn func()) *Fault {
 	return f
 }
 
+// RunWithin is Run with a deadline: if fn has not returned after d it panics, naming
+// kernel, so a loop that does not end stops the binary with that name instead of at the
+// test binary's own timeout. The stuck goroutine cannot be stopped, which is why this
+// panics rather than failing one test and going on.
+func (a *Arena) RunWithin(kernel string, d time.Duration, fn func()) *Fault {
+	a.t.Helper()
+	f, other := a.catchWithin(kernel, d, fn)
+	if other != nil {
+		panic(other)
+	}
+	if f != nil {
+		a.t.Error(f.Error())
+	}
+	return f
+}
+
 // Catch is Run without failing the test: it returns the fault for a test that expects one.
 func (a *Arena) Catch(kernel string, fn func()) *Fault {
 	a.t.Helper()
@@ -157,6 +174,11 @@ func (a *Arena) Catch(kernel string, fn func()) *Fault {
 }
 
 func (a *Arena) catch(kernel string, fn func()) (fault *Fault, other any) {
+	return a.catchWithin(kernel, 0, fn)
+}
+
+// catchWithin waits for fn with no limit when d is 0.
+func (a *Arena) catchWithin(kernel string, d time.Duration, fn func()) (fault *Fault, other any) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -176,7 +198,17 @@ func (a *Arena) catch(kernel string, fn func()) (fault *Fault, other any) {
 		debug.SetPanicOnFault(true)
 		fn()
 	}()
-	<-done
+	if d == 0 {
+		<-done
+		return fault, other
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+		panic(fmt.Sprintf("guardmem: %s did not return within %v", kernel, d))
+	}
 	return fault, other
 }
 
