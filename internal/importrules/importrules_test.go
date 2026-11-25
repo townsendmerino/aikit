@@ -45,6 +45,7 @@ var rules = map[string]rule{
 	"chunk":                {},
 	"internal/accum":       {},
 	"internal/cursor":      {},
+	"internal/guardmem":    {},
 	"internal/importrules": {},
 
 	// mmap is a leaf among aikit packages. Its one external import is madvise on darwin.
