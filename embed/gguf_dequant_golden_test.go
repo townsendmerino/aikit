@@ -281,3 +281,63 @@ func TestIQXXSDequant_goldenCatchesPlants(t *testing.T) {
 	}
 	requirePlantCaught(t, c, "grid index pair swapped", c.dequantRaw(raw))
 }
+
+// permuteBlocks returns a copy of raw with f applied to each blockBytes-sized block in place.
+func permuteBlocks(raw []byte, blockBytes int, f func(b []byte)) []byte {
+	out := append([]byte(nil), raw...)
+	for o := 0; o+blockBytes <= len(out); o += blockBytes {
+		f(out[o : o+blockBytes])
+	}
+	return out
+}
+
+// TestLowBitDequant_goldenCatchesPlants covers Q4_1, Q5_1, IQ1_S, IQ1_M, TQ1_0 and TQ2_0: for each, a
+// misread field order (planted by rearranging the raw bytes, or the output for TQ1_0's trit order), and for
+// the IQ1 types one wrong grid value, turn the golden red.
+func TestLowBitDequant_goldenCatchesPlants(t *testing.T) {
+	swapNibbles := func(b []byte) {
+		for i := range b {
+			b[i] = b[i]<<4 | b[i]>>4
+		}
+	}
+
+	c := dequantGoldenCaseOf(t, "Q4_1")
+	requirePlantCaught(t, c, "nibble halves swapped", c.dequantRaw(permuteBlocks(c.raw(t), 20, func(b []byte) { swapNibbles(b[4:]) })))
+
+	c = dequantGoldenCaseOf(t, "Q5_1")
+	requirePlantCaught(t, c, "qh halves swapped", c.dequantRaw(permuteBlocks(c.raw(t), 24, func(b []byte) {
+		b[4], b[5], b[6], b[7] = b[6], b[7], b[4], b[5]
+	})))
+
+	c = dequantGoldenCaseOf(t, "IQ1_S")
+	e := &iq1sGrid[len(iq1sGrid)/2+5]
+	var got []float32
+	plantTableEntry(e, otherMagnitude(iq1sGrid, *e), func() { got = c.dequant(t) })
+	requirePlantCaught(t, c, "one grid value", got)
+	requirePlantCaught(t, c, "delta sign inverted", c.dequantRaw(permuteBlocks(c.raw(t), 50, func(b []byte) {
+		for ib := range 8 {
+			b[34+2*ib+1] ^= 0x80
+		}
+	})))
+
+	c = dequantGoldenCaseOf(t, "IQ1_M")
+	requirePlantCaught(t, c, "qh nibbles swapped", c.dequantRaw(permuteBlocks(c.raw(t), 56, func(b []byte) { swapNibbles(b[32:48]) })))
+
+	c = dequantGoldenCaseOf(t, "TQ1_0")
+	right := c.dequant(t)
+	rev := append([]float32(nil), right...)
+	for blk := 0; blk < len(right); blk += 256 {
+		for n := range 5 {
+			copy(rev[blk+32*n:blk+32*n+32], right[blk+32*(4-n):blk+32*(4-n)+32])
+		}
+	}
+	requirePlantCaught(t, c, "trit order reversed", rev)
+
+	c = dequantGoldenCaseOf(t, "TQ2_0")
+	requirePlantCaught(t, c, "2-bit fields reversed", c.dequantRaw(permuteBlocks(c.raw(t), 66, func(b []byte) {
+		for i := range 64 {
+			x := b[i]
+			b[i] = x>>6&3 | (x>>4&3)<<2 | (x>>2&3)<<4 | (x&3)<<6
+		}
+	})))
+}

@@ -29,7 +29,9 @@ const (
 	ggmlTypeF16    uint32 = 1
 	ggmlTypeBF16   uint32 = 30 // bfloat16: the top half of an f32 (Ollama's projector blobs store their matrices this way)
 	ggmlTypeQ4_0   uint32 = 2
+	ggmlTypeQ4_1   uint32 = 3
 	ggmlTypeQ5_0   uint32 = 6
+	ggmlTypeQ5_1   uint32 = 7
 	ggmlTypeQ8_0   uint32 = 8
 	ggmlTypeQ2_K   uint32 = 10
 	ggmlTypeQ3_K   uint32 = 11
@@ -39,10 +41,14 @@ const (
 	ggmlTypeIQ2XXS uint32 = 16
 	ggmlTypeIQ2XS  uint32 = 17
 	ggmlTypeIQ3XXS uint32 = 18
+	ggmlTypeIQ1S   uint32 = 19
 	ggmlTypeIQ4NL  uint32 = 20
 	ggmlTypeIQ3S   uint32 = 21
 	ggmlTypeIQ2S   uint32 = 22
 	ggmlTypeIQ4XS  uint32 = 23
+	ggmlTypeIQ1M   uint32 = 29
+	ggmlTypeTQ1_0  uint32 = 34 // ternary, 5 trits per byte
+	ggmlTypeTQ2_0  uint32 = 35 // ternary, 2 bits per element
 	ggmlTypeMXFP4  uint32 = 39 // OCP Microscaling FP4: 32-elem block, e8m0 scale + 16 e2m1 nibble-pairs (gpt-oss)
 	ggmlTypeNVFP4  uint32 = 40 // NVIDIA FP4: 64-elem block, 4 ue4m3 sub-block scales + 32 e2m1 nibble-pairs
 )
@@ -433,14 +439,15 @@ func (g *GGUFFile) RowDequantizer(name string) (dims []int, into func(start int,
 	}
 	// ∏dims feeds make([]float32, n) and the byte-size arithmetic, and every dim
 	// is an untrusted uint64. A hostile tensor can claim dims whose product
-	// overflows int (wrapping the byte check and OOM-ing the make). Bound it:
-	// the densest supported type is Q2_K at ~0.33 bytes/element (IQ2_S ~0.32),
-	// so a tensor's element count can't exceed 4×|data section| — using 2× here
-	// falsely rejected a legitimate Q2_K/IQ2_S tensor occupying >~65% of the
-	// data section (tensorBytes would have validated it exactly). Check before
-	// each multiply so the product itself can never overflow.
+	// overflows int (wrapping the byte check and OOM-ing the make). Bound it by
+	// the densest supported type, IQ1_S at 50 bytes per 256 elements (5.12
+	// elements a byte): a tensor's element count can't exceed 6×|data section|.
+	// A tighter bound rejects a legitimate tensor of a dense type that fills the
+	// section (tensorBytes validates the size exactly);
+	// TestIQDequant_goldenThroughGGUF reads such a tensor of every type. Check
+	// before each multiply so the product itself can never overflow.
 	sec := g.section(info)
-	maxElems := 4*len(sec) + qkK
+	maxElems := 6*len(sec) + qkK
 	n := 1
 	dims = make([]int, len(info.dims))
 	for i, d := range info.dims {
@@ -456,7 +463,7 @@ func (g *GGUFFile) RowDequantizer(name string) (dims []int, into func(start int,
 	}
 	blockElems, ok := ggmlBlockElems(info.typ)
 	if !ok {
-		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0/Q5_0/Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/IQ4_NL/IQ4_XS/IQ2_XXS/IQ2_XS/IQ2_S/IQ3_XXS/IQ3_S/MXFP4/NVFP4)", name, info.typ)
+		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0/Q4_1/Q5_0/Q5_1/Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/IQ4_NL/IQ4_XS/IQ1_S/IQ1_M/TQ1_0/TQ2_0/IQ2_XXS/IQ2_XS/IQ2_S/IQ3_XXS/IQ3_S/MXFP4/NVFP4)", name, info.typ)
 	}
 	raw, err := g.tensorBytes(info, n)
 	if err != nil {
@@ -487,10 +494,10 @@ func ggmlBlockElems(typ uint32) (int, bool) {
 	switch typ {
 	case ggmlTypeF32, ggmlTypeF16, ggmlTypeBF16:
 		return 1, true
-	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ5_0, ggmlTypeIQ4NL, ggmlTypeMXFP4:
+	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ4_1, ggmlTypeQ5_0, ggmlTypeQ5_1, ggmlTypeIQ4NL, ggmlTypeMXFP4:
 		return 32, true
 	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K, ggmlTypeIQ4XS, ggmlTypeIQ2S, ggmlTypeIQ3S,
-		ggmlTypeIQ2XXS, ggmlTypeIQ2XS, ggmlTypeIQ3XXS:
+		ggmlTypeIQ2XXS, ggmlTypeIQ2XS, ggmlTypeIQ3XXS, ggmlTypeIQ1S, ggmlTypeIQ1M, ggmlTypeTQ1_0, ggmlTypeTQ2_0:
 		return qkK, true
 	case ggmlTypeNVFP4:
 		return qkNVFP4, true
@@ -508,7 +515,7 @@ func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
 		nbytes = n * 4
 	case ggmlTypeF16, ggmlTypeBF16:
 		nbytes = n * 2
-	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ5_0, ggmlTypeIQ4NL, ggmlTypeMXFP4:
+	case ggmlTypeQ8_0, ggmlTypeQ4_0, ggmlTypeQ4_1, ggmlTypeQ5_0, ggmlTypeQ5_1, ggmlTypeIQ4NL, ggmlTypeMXFP4:
 		if n%32 != 0 {
 			return nil, fmt.Errorf("element count %d not a multiple of 32 (block size)", n)
 		}
@@ -520,6 +527,10 @@ func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
 			nbytes = blocks * 18 // 2-byte f16 scale + 16 packed nibbles
 		case ggmlTypeMXFP4:
 			nbytes = blocks * 17 // 1-byte e8m0 scale + 16 packed e2m1 nibbles
+		case ggmlTypeQ4_1:
+			nbytes = blocks * 20 // f16 scale + f16 min + 16 packed nibbles
+		case ggmlTypeQ5_1:
+			nbytes = blocks * 24 // f16 scale + f16 min + 4-byte high bits + 16 packed nibbles
 		default: // Q5_0
 			nbytes = blocks * 22 // 2-byte f16 scale + 4-byte high bits + 16 packed nibbles
 		}
@@ -529,12 +540,20 @@ func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
 		}
 		nbytes = n / qkNVFP4 * 36 // 4 ue4m3 sub-block scales + 32 packed e2m1 nibbles
 	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K, ggmlTypeIQ4XS, ggmlTypeIQ2S, ggmlTypeIQ3S,
-		ggmlTypeIQ2XXS, ggmlTypeIQ2XS, ggmlTypeIQ3XXS:
+		ggmlTypeIQ2XXS, ggmlTypeIQ2XS, ggmlTypeIQ3XXS, ggmlTypeIQ1S, ggmlTypeIQ1M, ggmlTypeTQ1_0, ggmlTypeTQ2_0:
 		if n%qkK != 0 {
 			return nil, fmt.Errorf("element count %d not a multiple of %d (super-block)", n, qkK)
 		}
 		nSuperblocks := n / qkK
 		switch info.typ {
+		case ggmlTypeIQ1S:
+			nbytes = nSuperblocks * 50 // d(f16) + qs[32] + qh[8] (u16 each)
+		case ggmlTypeIQ1M:
+			nbytes = nSuperblocks * 56 // qs[32] + qh[16] + scales[8] (the f16 scale split across their top nibbles)
+		case ggmlTypeTQ1_0:
+			nbytes = nSuperblocks * 54 // qs[48] + qh[4] + d(f16)
+		case ggmlTypeTQ2_0:
+			nbytes = nSuperblocks * 66 // qs[64] + d(f16)
 		case ggmlTypeIQ2XXS:
 			nbytes = nSuperblocks * 66 // d(f16) + qs[32] (u16 each)
 		case ggmlTypeIQ2XS:
