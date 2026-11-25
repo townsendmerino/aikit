@@ -1,0 +1,27 @@
+placement start 17:47 expected end ~17:59
+load at start: 0.07 0.10 0.37
+block 1 cell 1 A done 17:49:43 load 0.14
+block 1 cell 2 B done 17:49:47 load 0.61
+block 1 cell 3 B done 17:49:51 load 0.61
+block 1 cell 4 A done 17:49:55 load 0.64
+block 2 cell 1 A done 17:49:59 load 0.67
+block 2 cell 2 B done 17:50:03 load 0.70
+block 2 cell 3 B done 17:50:07 load 0.72
+block 2 cell 4 A done 17:50:11 load 0.72
+block 3 cell 1 A done 17:50:15 load 0.74
+block 3 cell 2 B done 17:50:19 load 0.84
+block 3 cell 3 B done 17:50:23 load 2.06
+block 3 cell 4 A done 17:50:27 load 1.97
+block 4 cell 1 A done 17:50:31 load 1.97
+block 4 cell 2 B done 17:50:35 load 1.90
+block 4 cell 3 B done 17:50:39 load 1.82
+block 4 cell 4 A done 17:50:43 load 1.76
+block 5 cell 1 A done 17:50:47 load 1.70
+block 5 cell 2 B done 17:50:51 load 1.70
+block 5 cell 3 B done 17:50:55 load 1.64
+block 5 cell 4 A done 17:50:58 load 2.79
+np576: pairs 10 median padded/plain 1.0676 (bar 1.042) range 1.028-1.071 -> meets
+np1024: pairs 10 median padded/plain 1.0656 (bar 1.0389) range 1.057-1.076 -> meets
+np2048: pairs 10 median padded/plain 1.0700 (bar 1.0334) range 1.061-1.085 -> meets
+PLACEMENT VERDICT: REPRODUCES
+placement rc=0 17:50:59
