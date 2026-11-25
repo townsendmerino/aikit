@@ -133,7 +133,7 @@ func (f *FlatBinaryI8) rerank(sc *binScratchI8, q []float32, ids []int32, k int)
 	sc.gatherCodes, sc.gatherScales = codes, scales
 
 	dst := ensure(sc.dst, len(ids))
-	linalg.MatmulBTW8A8Into(&sc.ws, q, codes, scales, dst, 1, dim, len(ids))
+	scoreW8A8(&sc.ws, q, codes, scales, dst, 1, dim, len(ids))
 	sc.dst = dst
 
 	sel := topk.New[int](k)
