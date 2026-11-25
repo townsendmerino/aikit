@@ -172,10 +172,10 @@ func TestMatmulBTW4A8Row4_rejectsTooSmallKAtEntry(t *testing.T) {
 	}{
 		{"tile_M4", func(ws *Workspace) {
 			matmulBTW4A8Row4TileInto(ws, nil, nil, nil, make([]float32, 4*N), 4, 0, N, group)
-		}, "MatmulBTW4A8Row4TileInto requires K >= group=32"},
+		}, "matmulBTW4A8Row4TileInto requires K >= group=32"},
 		{"row4_M1", func(ws *Workspace) {
 			matmulBTW4A8Row4Into(ws, nil, nil, nil, make([]float32, N), 1, 0, N, group)
-		}, "MatmulBTW4A8Row4Into requires K >= group=32"},
+		}, "matmulBTW4A8Row4Into requires K >= group=32"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {

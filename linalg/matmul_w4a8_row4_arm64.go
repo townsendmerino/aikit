@@ -101,25 +101,25 @@ func RepackW4A8Row4Scales(scales []float32, N, K, group int) []float32 {
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func matmulBTW4A8Row4Into(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []float32, dst []float32, M, K, N, group int) {
-	requireRow4DotProd("MatmulBTW4A8Row4Into")
+	requireRow4DotProd("matmulBTW4A8Row4Into")
 	checkMatmulW4A8("MatmulBTW4A8Row4", len(a), len(w4Row4), len(wScales4), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTW4A8Row4", len(a), w4Row4, wScales4, len(dst), M, K, N, group)
 	if M != 1 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires M=1, got M=%d — use MatmulBTW4A8Into for M>1", M))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4Into requires M=1, got M=%d — use WeightMat.MatmulBTInto for M>1", M))
 	}
 	if group != 32 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires group=32, got %d", group))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4Into requires group=32, got %d", group))
 	}
 	if N%4 != 0 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires N a multiple of 4, got %d", N))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4Into requires N a multiple of 4, got %d", N))
 	}
 	// The 4-row layout stores 16 bytes per 32-wide group, so a ragged K has no valid
 	// layout on either path below; K=0 passes K%group and then indexes an empty block.
 	if K%group != 0 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires K a multiple of group=%d, got %d", group, K))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4Into requires K a multiple of group=%d, got %d", group, K))
 	}
 	if K < group {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires K >= group=%d, got %d", group, K))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4Into requires K >= group=%d, got %d", group, K))
 	}
 	if g := actGroupFor(ws); g > 0 {
 		if g == 32 {

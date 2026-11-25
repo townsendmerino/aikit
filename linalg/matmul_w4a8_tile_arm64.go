@@ -29,24 +29,24 @@ import "fmt"
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func matmulBTW4A8Row4TileInto(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []float32, dst []float32, M, K, N, group int) {
-	requireRow4DotProd("MatmulBTW4A8Row4TileInto")
+	requireRow4DotProd("matmulBTW4A8Row4TileInto")
 	checkMatmulW4A8("MatmulBTW4A8Row4Tile", len(a), len(w4Row4), len(wScales4), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTW4A8Row4Tile", len(a), w4Row4, wScales4, len(dst), M, K, N, group)
 	if group != 32 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4TileInto requires group=32, got %d", group))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4TileInto requires group=32, got %d", group))
 	}
 	if N%4 != 0 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4TileInto requires N a multiple of 4, got %d", N))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4TileInto requires N a multiple of 4, got %d", N))
 	}
 	if K%group != 0 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4TileInto requires K a multiple of group=%d, got %d", group, K))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4TileInto requires K a multiple of group=%d, got %d", group, K))
 	}
 	// K=0 satisfies K%group==0, so without this it reaches the span with
 	// nGroups=0 and fails as an index-out-of-range on &blk[0] — a panic that
 	// names a kernel internal instead of the caller's shape. Every other bad
 	// shape here reports itself; this one did not.
 	if K < group {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4TileInto requires K >= group=%d, got %d", group, K))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4TileInto requires K >= group=%d, got %d", group, K))
 	}
 	nGroups, bpr := groupsFor(K, group)
 	aq := ws.int8Buf(M * K)

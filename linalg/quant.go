@@ -179,7 +179,7 @@ func matmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, 
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func matmulBTQ8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
-	checkMatmulQ8("MatmulBTQ8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
+	checkMatmulQ8("matmulBTQ8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	if M*N*K < ws.thr() || N < 2 {
 		q8Span(a, bQ, bScales, dst, M, K, N, 0, N, ws.deqBuf(q8SpanScratchLen(M, K)))
 		return
@@ -282,7 +282,7 @@ func matmulBTW8A8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func matmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
-	checkMatmulQ8("MatmulBTW8A8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
+	checkMatmulQ8("matmulBTW8A8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	if g := actGroupFor(ws); g > 0 {
 		matmulW8A8Grouped(ws, g, a, bQ, bScales, dst, M, K, N) // actgroup.go
 		return
@@ -855,8 +855,8 @@ func matmulBTW4A8Into(ws *Workspace, a []float32, w4 []byte, wScales []float32, 
 	// Always-on O(1) entry guard (M2): the aikit_checks contract below compiles
 	// to a no-op in production, so without this a bad shape would fault inside a
 	// worker goroutine (uncatchable). This panics recoverably, caller-side.
-	checkMatmulW4A8("MatmulBTW4A8", len(a), len(w4), len(wScales), len(dst), M, K, N, group)
-	checkGroupMatmul("MatmulBTW4A8", len(a), w4, wScales, len(dst), M, K, N, group)
+	checkMatmulW4A8("matmulBTW4A8", len(a), len(w4), len(wScales), len(dst), M, K, N, group)
+	checkGroupMatmul("matmulBTW4A8", len(a), w4, wScales, len(dst), M, K, N, group)
 	if g := actGroupFor(ws); g > 0 {
 		matmulW4A8Grouped(ws, g, a, int4Layout{w4: w4, wS: wScales, group: group, K: K}, dst, M, N) // actgroup.go
 		return
@@ -1179,8 +1179,8 @@ func matmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M
 func matmulBTQ4Into(ws *Workspace, a []float32, bPacked []byte, bScales []float32, dst []float32, M, K, N, group int) {
 	// Always-on entry guard (M2); checkGroupMatmul below is a no-op without
 	// -tags aikit_checks. Same group-int4 shape contract as matmulBTW4A8.
-	checkMatmulW4A8("MatmulBTQ4", len(a), len(bPacked), len(bScales), len(dst), M, K, N, group)
-	checkGroupMatmul("MatmulBTQ4", len(a), bPacked, bScales, len(dst), M, K, N, group)
+	checkMatmulW4A8("matmulBTQ4", len(a), len(bPacked), len(bScales), len(dst), M, K, N, group)
+	checkGroupMatmul("matmulBTQ4", len(a), bPacked, bScales, len(dst), M, K, N, group)
 	nGroups, bpr := groupsFor(K, group)
 	if M*N*K < ws.thr() || N < 2 {
 		q4Span(a, bPacked, bScales, dst, M, K, N, group, nGroups, bpr, 0, N, ws.deqBuf(K))

@@ -130,7 +130,8 @@ func row4Usable() bool { return cpufeat.HasDotProd }
 // use matmulBTW4A8Into with the canonical layout.
 func requireRow4DotProd(fn string) {
 	if !row4Usable() {
-		panic("linalg: " + fn + " requires DotProd (SDOT); use MatmulBTW4A8Into with the canonical layout")
+		panic("linalg: " + fn + " requires DotProd (SDOT); without it PreferredInt4Layout reports canonical, " +
+			"WrapInt4 declines LayoutRow4, and WeightMat.MatmulBTInto runs the canonical kernel")
 	}
 }
 

@@ -33,7 +33,7 @@ func TestMatmulBTW4A8Row4Into_raggedKRefusedWithActGroup(t *testing.T) {
 				t.Errorf("%s: crashed with a runtime error: %v", name, r)
 				continue
 			}
-			if msg := fmt.Sprint(r); !strings.Contains(msg, "MatmulBTW4A8Row4") {
+			if msg := fmt.Sprint(r); !strings.Contains(msg, "matmulBTW4A8Row4") {
 				t.Errorf("%s: refused with %q, want a refusal that names the entry point", name, msg)
 			}
 		}
