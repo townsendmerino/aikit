@@ -127,17 +127,17 @@ func interleaveScales4Row(s0, s1, s2, s3 []float32, nGroups int) []float32 {
 // caller-supplied-buffer primitive (audit M-22) so a loader can drive it
 // without repackSplitHalf4RowBlock's 5 per-quad allocations (4 per-row
 // split-half temporaries + 1 output). RepackW4A8Row4 (the existing
-// out-of-place entry point) and RepackInt4Row4InPlace both call this now;
+// out-of-place entry point) and RepackInt4InPlace(LayoutRow4) both call this now;
 // repackSplitHalf4RowBlock itself is untouched — several existing tests and
 // repackSplitHalf4RowDeshared still exercise it directly.
 //
-// bpr = K/2 (K a multiple of 32, group=32 — Int4Row4Usable's own gate, the
+// bpr = K/2 (K a multiple of 32, group=32 — int4Row4Usable's own gate, the
 // row4 kernel's only supported shape).
 //
 // dst and src MUST NOT OVERLAP. The row4 and canonical layouts are
 // different permutations of the same bytes, so a same-buffer call would
 // read a source byte AFTER an earlier group's write had already overwritten
-// it — see RepackInt4Row4InPlace, which snapshots the live quad into
+// it — see RepackInt4InPlace(LayoutRow4), which snapshots the live quad into
 // scratch BEFORE calling this with dst=the live array, src=the scratch, so
 // that hazard never arises.
 //

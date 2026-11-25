@@ -11,6 +11,20 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **One int4 constructor with a layout** (LS6, step 1): `WrapInt4(q, scales16, rows, cols, group, layout) (WeightMat, bool)`
+  with `type Layout` (`LayoutCanonical`, `LayoutRow4`, `LayoutSplitHalf`; `String()` returns the names
+  `WeightMat.Int4Layout` reports), `RepackInt4InPlace` with the same arguments for canonical bytes permuted in place, and
+  `PreferredInt4Layout(rows, cols, group)` for the layout this CPU's kernel runs. A repacked layout is accepted only when it
+  is the preferred one (ok=false otherwise, nothing retained or written); canonical is always ok. Scales are binary16 only.
+  They replace `WrapInt4` (f32 scales), `WrapInt4F16`, `WrapInt4Row4`, `WrapInt4Row4F16`, `WrapInt4Row4Only`,
+  `WrapInt4Row4OnlyF16`, `WrapInt4SplitHalfOnly`, `WrapInt4SplitHalfOnlyF16`, `RepackInt4Row4InPlace`,
+  `RepackInt4Row4InPlaceF16`, `RepackInt4SplitHalfInPlace`, `RepackInt4SplitHalfInPlaceF16`, `Int4Row4Usable` and
+  `Int4SplitHalfUsable`. The form that attached separately supplied row4 bytes to a canonical weight (`WrapInt4Row4`) has
+  no replacement: no consumer's production code called it, and `RepackInt4Row4` derives the same bytes. Wrapping and the
+  in-place repack stay two calls because the second consumes the caller's slices. In goinfer: `WrapInt4F16(...)` becomes
+  `WrapInt4(..., LayoutCanonical)`, `WrapInt4Row4OnlyF16` `WrapInt4(..., LayoutRow4)`, `RepackInt4Row4InPlaceF16`
+  `RepackInt4InPlace(..., LayoutRow4)`, and `Int4Row4Usable(r, c, g)` `PreferredInt4Layout(r, c, g) == LayoutRow4`.
+
 - **The two kernel A/B switches leave the public surface** (LS6, step 3, narrowed 2026-11-24): `SetInt4WeightScheme` and
   `Int4WeightScheme`, which only linalg's tests used, are unexported. `SetW4A8RowFold` and `W4A8RowFold` become the test hooks
   `SetW4A8RowFoldForTest` and `W4A8RowFoldForTest`, which goinfer's arm64 A/B test calls. `SetParallelThreshold`,

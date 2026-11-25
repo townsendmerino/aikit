@@ -42,7 +42,7 @@ func RepackW4A8Row4(packed []byte, N, K, group int) []byte {
 	// into out's own quad slice — src (packed's quad, canonical, untouched)
 	// and dst (out's quad, being built) never overlap here, so this is
 	// exactly RepackInt4Row4Quad's contract, not the aliased case
-	// RepackInt4Row4InPlace's scratch dance is for. Used to call
+	// RepackInt4InPlace(LayoutRow4)'s scratch dance is for. Used to call
 	// repackSplitHalf4RowBlock, which does the same transform via 5 per-quad
 	// allocations (4 per-row split-half temporaries + 1 output); that
 	// function is unchanged and still exercised directly by its own tests.

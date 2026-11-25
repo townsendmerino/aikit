@@ -28,7 +28,7 @@ func dotW4A8SplitHalfTile4RowAVX2(act *int8, actStride int, packed *byte, scales
 // K%32==0 is a hard guard, not an assumption: unlike the canonical kernel,
 // neither the tile nor the M=1 split-half kernel has a ragged-tail path
 // (see matmulBTW4A8SplitHalfInto's own comment) — a split-half-only
-// WeightMat can only exist when Int4SplitHalfUsable already enforced this,
+// WeightMat can only exist when int4SplitHalfUsable already enforced this,
 // but a future caller could reach this function directly, so it is checked
 // again here rather than assumed.
 func matmulBTW4A8SplitHalfMultiInto(ws *Workspace, a []float32, w4sh []byte, wScales, dst []float32, M, K, N, group int) {

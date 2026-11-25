@@ -21,7 +21,7 @@ func BenchmarkQ4KvsSplitHalf(b *testing.B) {
 		b.Fatal(err)
 	}
 	q4, s4 := QuantizeGroupsInt4(agRandMat(r, N*K), N, K, 32)
-	sh, ok := RepackInt4SplitHalfInPlace(q4, s4, N, K, 32)
+	sh, ok := repackInt4SplitHalfInPlaceF32(q4, s4, N, K, 32)
 	if !ok {
 		b.Skip("split-half repack declined")
 	}

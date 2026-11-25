@@ -47,7 +47,7 @@ func cloneFloats(f []float32) []float32 {
 // "is/which int4" — this is the distinction the whole task exists to make,
 // asserted directly rather than left implicit in the matmul/Row tests.
 //
-// RepackInt4Row4InPlace/RepackInt4SplitHalfInPlace MUTATE their q4/q4s
+// RepackInt4InPlace(LayoutRow4)/RepackInt4InPlace(LayoutSplitHalf) MUTATE their q4/q4s
 // inputs, so each sub-test that calls one gets its OWN fresh
 // quantizeInt4Random output — never the shared q4/q4s the canonical-only/
 // "both" sub-tests read.
@@ -85,11 +85,11 @@ func TestWeightMatInt4_truthTable(t *testing.T) {
 		check(t, &w, "int8", false, false, "")
 	})
 	t.Run("canonical-only", func(t *testing.T) {
-		w := WrapInt4(cloneBytes(q4), cloneFloats(q4s), 8, 1536, group)
+		w := wrapInt4F32(cloneBytes(q4), cloneFloats(q4s), 8, 1536, group)
 		check(t, &w, "int4", true, true, "canonical")
 	})
 	t.Run("both", func(t *testing.T) {
-		w := WrapInt4(cloneBytes(q4), cloneFloats(q4s), 8, 1536, group)
+		w := wrapInt4F32(cloneBytes(q4), cloneFloats(q4s), 8, 1536, group)
 		haveRow4 := w.RepackInt4Row4()
 		haveSplitHalf := false
 		if !haveRow4 {
@@ -108,22 +108,22 @@ func TestWeightMatInt4_truthTable(t *testing.T) {
 		}
 	})
 	t.Run("repacked-only-row4", func(t *testing.T) {
-		if !Int4Row4Usable(8, 1536, group) {
+		if !int4Row4Usable(8, 1536, group) {
 			t.Skip("row4 not usable on this core")
 		}
-		w, ok := RepackInt4Row4InPlace(cloneBytes(q4), cloneFloats(q4s), 8, 1536, group)
+		w, ok := repackInt4Row4InPlaceF32(cloneBytes(q4), cloneFloats(q4s), 8, 1536, group)
 		if !ok {
-			t.Fatal("RepackInt4Row4InPlace: ok=false, Int4Row4Usable said yes")
+			t.Fatal("RepackInt4InPlace(LayoutRow4): ok=false, int4Row4Usable said yes")
 		}
 		check(t, &w, "int4", true, false, "row4")
 	})
 	t.Run("repacked-only-splithalf", func(t *testing.T) {
-		if !Int4SplitHalfUsable(1536, group) {
+		if !int4SplitHalfUsable(1536, group) {
 			t.Skip("split-half not usable on this core")
 		}
-		w, ok := RepackInt4SplitHalfInPlace(cloneBytes(q4), cloneFloats(q4s), 8, 1536, group)
+		w, ok := repackInt4SplitHalfInPlaceF32(cloneBytes(q4), cloneFloats(q4s), 8, 1536, group)
 		if !ok {
-			t.Fatal("RepackInt4SplitHalfInPlace: ok=false, Int4SplitHalfUsable said yes")
+			t.Fatal("RepackInt4InPlace(LayoutSplitHalf): ok=false, int4SplitHalfUsable said yes")
 		}
 		check(t, &w, "int4", true, false, "splithalf")
 	})
@@ -137,20 +137,20 @@ func TestWeightMatInt4_repackedOnlyHoldsNoCanonical(t *testing.T) {
 	rng := rand.New(rand.NewPCG(22, 2))
 	q4, q4s := quantizeInt4Random(rng, 8, 1536, group)
 
-	if Int4Row4Usable(8, 1536, group) {
-		w, ok := RepackInt4Row4InPlace(cloneBytes(q4), cloneFloats(q4s), 8, 1536, group)
+	if int4Row4Usable(8, 1536, group) {
+		w, ok := repackInt4Row4InPlaceF32(cloneBytes(q4), cloneFloats(q4s), 8, 1536, group)
 		if !ok {
-			t.Fatal("RepackInt4Row4InPlace: ok=false")
+			t.Fatal("RepackInt4InPlace(LayoutRow4): ok=false")
 		}
 		if q4got, q4sgot, _, ok := w.Int4(); ok || len(q4got) != 0 || len(q4sgot) != 0 {
 			t.Errorf("row4-only: Int4() = (%d bytes, %d scales, ok=%v), want (0, 0, false)",
 				len(q4got), len(q4sgot), ok)
 		}
 	}
-	if Int4SplitHalfUsable(1536, group) {
-		w, ok := RepackInt4SplitHalfInPlace(cloneBytes(q4), cloneFloats(q4s), 8, 1536, group)
+	if int4SplitHalfUsable(1536, group) {
+		w, ok := repackInt4SplitHalfInPlaceF32(cloneBytes(q4), cloneFloats(q4s), 8, 1536, group)
 		if !ok {
-			t.Fatal("RepackInt4SplitHalfInPlace: ok=false")
+			t.Fatal("RepackInt4InPlace(LayoutSplitHalf): ok=false")
 		}
 		// split-half-only DOES retain q4s (shared scales, see the q4SplitHalf
 		// field comment) but never the packed canonical NIBBLES — Int4()'s ok
@@ -162,37 +162,37 @@ func TestWeightMatInt4_repackedOnlyHoldsNoCanonical(t *testing.T) {
 }
 
 // TestWeightMatInt4_repackedOnlyGateFailureLeavesInputUntouched: when
-// Int4Row4Usable/Int4SplitHalfUsable is false, RepackInt4Row4InPlace/
-// RepackInt4SplitHalfInPlace must return before writing anything — checked
+// int4Row4Usable/int4SplitHalfUsable is false, RepackInt4InPlace(LayoutRow4)/
+// RepackInt4InPlace(LayoutSplitHalf) must return before writing anything — checked
 // directly by comparing before/after bytes, not inferred from ok=false
 // alone (ok=false with a partially-mutated input would be a worse bug than
 // ok=false with an untouched one).
 func TestWeightMatInt4_repackedOnlyGateFailureLeavesInputUntouched(t *testing.T) {
 	const group = 32
 	rng := rand.New(rand.NewPCG(22, 7))
-	// rows=6 fails Int4Row4Usable's rows%4==0 check unconditionally,
+	// rows=6 fails int4Row4Usable's rows%4==0 check unconditionally,
 	// regardless of CPU features — a gate failure guaranteed on every arch.
 	q4, q4s := quantizeInt4Random(rng, 6, 1536, group)
 	before4, beforeS := cloneBytes(q4), cloneFloats(q4s)
 
-	if Int4Row4Usable(6, 1536, group) {
-		t.Fatal("test premise broken: rows=6 should never satisfy Int4Row4Usable's rows%4==0")
+	if int4Row4Usable(6, 1536, group) {
+		t.Fatal("test premise broken: rows=6 should never satisfy int4Row4Usable's rows%4==0")
 	}
-	w, ok := RepackInt4Row4InPlace(q4, q4s, 6, 1536, group)
+	w, ok := repackInt4Row4InPlaceF32(q4, q4s, 6, 1536, group)
 	if ok {
-		t.Fatal("RepackInt4Row4InPlace: ok=true for rows=6, want false")
+		t.Fatal("RepackInt4InPlace(LayoutRow4): ok=true for rows=6, want false")
 	}
 	if w.IsInt4() {
-		t.Error("RepackInt4Row4InPlace: ok=false but returned a non-zero WeightMat")
+		t.Error("RepackInt4InPlace(LayoutRow4): ok=false but returned a non-zero WeightMat")
 	}
 	for i := range q4 {
 		if q4[i] != before4[i] {
-			t.Fatalf("RepackInt4Row4InPlace wrote to q4[%d] despite ok=false", i)
+			t.Fatalf("RepackInt4InPlace(LayoutRow4) wrote to q4[%d] despite ok=false", i)
 		}
 	}
 	for i := range q4s {
 		if q4s[i] != beforeS[i] {
-			t.Fatalf("RepackInt4Row4InPlace wrote to q4s[%d] despite ok=false", i)
+			t.Fatalf("RepackInt4InPlace(LayoutRow4) wrote to q4s[%d] despite ok=false", i)
 		}
 	}
 }
@@ -216,7 +216,7 @@ func TestWeightMatInt4_existingPoliciesUnchanged(t *testing.T) {
 	}
 
 	build := func() WeightMat {
-		w := WrapInt4(q4, q4s, 8, 1536, group)
+		w := wrapInt4F32(q4, q4s, 8, 1536, group)
 		w.RepackInt4Row4()
 		w.RepackInt4SplitHalf()
 		return w
@@ -226,7 +226,7 @@ func TestWeightMatInt4_existingPoliciesUnchanged(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			var w WeightMat
 			if name == "canonical-only" {
-				w = WrapInt4(q4, q4s, 8, 1536, group)
+				w = wrapInt4F32(q4, q4s, 8, 1536, group)
 			} else {
 				w = build()
 			}
@@ -272,7 +272,7 @@ func TestWeightMatRow_repackedMatchesCanonical(t *testing.T) {
 		t.Run("rows"+itoa(sh.rows)+"_cols"+itoa(sh.cols), func(t *testing.T) {
 			const group = 32
 			q4, q4s := quantizeInt4Random(rng, sh.rows, sh.cols, group)
-			canon := WrapInt4(cloneBytes(q4), cloneFloats(q4s), sh.rows, sh.cols, group)
+			canon := wrapInt4F32(cloneBytes(q4), cloneFloats(q4s), sh.rows, sh.cols, group)
 
 			checkRow := func(t *testing.T, w *WeightMat, i int) {
 				t.Helper()
@@ -287,22 +287,22 @@ func TestWeightMatRow_repackedMatchesCanonical(t *testing.T) {
 				}
 			}
 
-			if Int4Row4Usable(sh.rows, sh.cols, group) {
+			if int4Row4Usable(sh.rows, sh.cols, group) {
 				t.Run("row4", func(t *testing.T) {
-					w, ok := RepackInt4Row4InPlace(cloneBytes(q4), cloneFloats(q4s), sh.rows, sh.cols, group)
+					w, ok := repackInt4Row4InPlaceF32(cloneBytes(q4), cloneFloats(q4s), sh.rows, sh.cols, group)
 					if !ok {
-						t.Fatal("RepackInt4Row4InPlace: ok=false")
+						t.Fatal("RepackInt4InPlace(LayoutRow4): ok=false")
 					}
 					for i := range sh.rows {
 						checkRow(t, &w, i)
 					}
 				})
 			}
-			if Int4SplitHalfUsable(sh.cols, group) {
+			if int4SplitHalfUsable(sh.cols, group) {
 				t.Run("splithalf", func(t *testing.T) {
-					w, ok := RepackInt4SplitHalfInPlace(cloneBytes(q4), cloneFloats(q4s), sh.rows, sh.cols, group)
+					w, ok := repackInt4SplitHalfInPlaceF32(cloneBytes(q4), cloneFloats(q4s), sh.rows, sh.cols, group)
 					if !ok {
-						t.Fatal("RepackInt4SplitHalfInPlace: ok=false")
+						t.Fatal("RepackInt4InPlace(LayoutSplitHalf): ok=false")
 					}
 					for i := range sh.rows {
 						checkRow(t, &w, i)
@@ -325,19 +325,19 @@ func TestWeightMatRow_repackedMatchesCanonical(t *testing.T) {
 // step 3 asks for: peak extra memory is the one-quad scratch, not O(rows).
 func TestRepackInt4Row4InPlace_allocsIndependentOfRows(t *testing.T) {
 	const group = 32
-	if !Int4Row4Usable(128, 1536, group) {
+	if !int4Row4Usable(128, 1536, group) {
 		t.Skip("row4 not usable on this core")
 	}
 	rng := rand.New(rand.NewPCG(22, 10))
 
-	// runs=1: RepackInt4Row4InPlace mutates its input, so it must only be
+	// runs=1: RepackInt4InPlace(LayoutRow4) mutates its input, so it must only be
 	// called ONCE per (q4, q4s) pair — testing.AllocsPerRun(1, ...) does
 	// exactly that, measuring a single call in isolation.
 	allocsFor := func(rows int) float64 {
 		q4, q4s := quantizeInt4Random(rng, rows, 1536, group)
 		return testing.AllocsPerRun(1, func() {
-			if _, ok := RepackInt4Row4InPlace(q4, q4s, rows, 1536, group); !ok {
-				t.Fatal("RepackInt4Row4InPlace: ok=false")
+			if _, ok := repackInt4Row4InPlaceF32(q4, q4s, rows, 1536, group); !ok {
+				t.Fatal("RepackInt4InPlace(LayoutRow4): ok=false")
 			}
 		})
 	}
@@ -348,7 +348,7 @@ func TestRepackInt4Row4InPlace_allocsIndependentOfRows(t *testing.T) {
 	// scratch), regardless of rows.
 	t.Logf("allocs: rows=8 -> %.0f, rows=128 -> %.0f", small, large)
 	if small != large {
-		t.Errorf("RepackInt4Row4InPlace's allocation count depends on rows: rows=8 -> %.0f allocs, rows=128 -> %.0f allocs, want equal",
+		t.Errorf("RepackInt4InPlace(LayoutRow4)'s allocation count depends on rows: rows=8 -> %.0f allocs, rows=128 -> %.0f allocs, want equal",
 			small, large)
 	}
 }

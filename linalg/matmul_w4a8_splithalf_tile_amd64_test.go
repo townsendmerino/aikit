@@ -118,15 +118,15 @@ func TestWeightMatW4A8_MConsistentAcrossSplitHalfDispatch(t *testing.T) {
 
 	for _, c := range quantMConsistentCases {
 		t.Run(c.name, func(t *testing.T) {
-			if !Int4SplitHalfUsable(c.K, group) {
+			if !int4SplitHalfUsable(c.K, group) {
 				t.Skipf("split-half not usable for K=%d group=%d on this core", c.K, group)
 			}
 			assertSplitHalfTileEngages(t, 4, c.K)
 			a := mconsistentRand(rng, maxM*c.K)
 			q4, q4s := QuantizeGroupsInt4(mconsistentRand(rng, c.N*c.K), c.N, c.K, group)
-			wm := WrapInt4(q4, q4s, c.N, c.K, group)
+			wm := wrapInt4F32(q4, q4s, c.N, c.K, group)
 			if !wm.RepackInt4SplitHalf() {
-				t.Fatal("RepackInt4SplitHalf declined despite Int4SplitHalfUsable saying yes")
+				t.Fatal("RepackInt4SplitHalf declined despite int4SplitHalfUsable saying yes")
 			}
 
 			solo := make([]float32, maxM*c.N)

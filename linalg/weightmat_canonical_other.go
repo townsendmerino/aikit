@@ -9,7 +9,7 @@ import "fmt"
 // (RepackInt4SplitHalf likewise), so there is nothing to dispatch on.
 //
 // audit M-22: a repacked-only WeightMat cannot be constructed on this target
-// at all (Int4Row4Usable/Int4SplitHalfUsable are both always false here, via
+// at all (int4Row4Usable/int4SplitHalfUsable are both always false here, via
 // row4Usable/splitHalfUsable below), so w.q4 == nil should be unreachable —
 // panic rather than pass nil into the canonical kernel's length checks if
 // something (a hand-built WeightMat bypassing the constructors) reaches it

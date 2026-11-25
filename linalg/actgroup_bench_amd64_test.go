@@ -21,7 +21,7 @@ func BenchmarkActGroupSplitHalf(b *testing.B) {
 		r := rand.New(rand.NewPCG(uint64(K), uint64(N)))
 		a := agRandMat(r, K)
 		q4, s4 := QuantizeGroupsInt4(agRandMat(r, N*K), N, K, 32)
-		wm, ok := RepackInt4SplitHalfInPlace(q4, s4, N, K, 32)
+		wm, ok := repackInt4SplitHalfInPlaceF32(q4, s4, N, K, 32)
 		if !ok {
 			b.Skip("split-half repack declined")
 		}

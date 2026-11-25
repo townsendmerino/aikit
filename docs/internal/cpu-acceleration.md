@@ -170,15 +170,16 @@ tolerance. Tests assert exact equality.
     CUDA mirror in `gpu/anncuda`).
 - **`WeightMat` int4 storage now has three representation policies, fixed at
   construction (audit M-22, aikit side; CHANGELOG `[1.41.0]`).**
-  1. **Canonical-only** (`WrapInt4`) — packed nibbles + per-group scales, the
+  1. **Canonical-only** (`WrapInt4` with `LayoutCanonical`) — packed nibbles + per-group scales, the
      original storage. Every accessor works; `Int4()` returns them.
-  2. **"Both"** (`WrapInt4` + `RepackInt4Row4`/`RepackInt4SplitHalf`) — canonical
+  2. **"Both"** (canonical `WrapInt4` + `RepackInt4Row4`/`RepackInt4SplitHalf`) — canonical
      PLUS the arch-specific repacked layout (row4 on arm64/NEON, split-half on
      amd64/AVX2), the pre-M-22 fast-matmul path. Costs 2× the nibbles (row4
      also 2× the scales, since split-half shares scales unrepacked). Unchanged
      by M-22 — same bytes, same dispatch order, same code path.
-  3. **Repacked-only** (`RepackInt4Row4InPlace`/`RepackInt4SplitHalfInPlace`,
-     or `WrapInt4Row4Only`/`WrapInt4SplitHalfOnly` for already-repacked bytes)
+  3. **Repacked-only** (`RepackInt4InPlace` with `LayoutRow4`/`LayoutSplitHalf`,
+     or `WrapInt4` with that layout for already-repacked bytes; since LS6 one
+     constructor and one in-place repack, `PreferredInt4Layout` naming the layout)
      — ONLY the repacked layout, no canonical bytes resident at all. The
      memory win M-22 exists for. The in-place constructors permute the
      caller's own q4/q4s bytes using one quad's (row4) or one row's
@@ -230,7 +231,7 @@ tolerance. Tests assert exact equality.
   | any M, the `M%4` remainder (this is ALL of M when 2≤M<4) | `matmulBTW4A8SplitHalfMultiInto` → `dotW4A8SplitHalfAVX2`, one activation row at a time — the same per-row kernel M=1 uses, just fed from the already-quantized batch rather than a fresh single-row quantize |
 
   K%32==0 is a hard guard at every M (no ragged-tail path, matching the M=1
-  kernel's own contract) — `Int4SplitHalfUsable` already refuses a tensor
+  kernel's own contract) — `PreferredInt4Layout`'s split-half gate already refuses a tensor
   that doesn't satisfy this at construction, so a split-half-only WeightMat
   can never present a bad K to any of these three rows.
   <br>`MatmulBTW4A8Batch` (the batched q‖k‖v / gate‖up entry) gained a

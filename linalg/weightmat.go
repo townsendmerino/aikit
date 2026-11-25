@@ -140,25 +140,9 @@ func WrapInt8(q8 []int8, scales []float32, rows, cols int, w8a8 bool) WeightMat 
 	return WeightMat{q8: q8, scales: scales, w8a8: w8a8, rows: rows, cols: cols}
 }
 
-// WrapInt4 wraps ALREADY-quantized group-wise int4 weights WITHOUT copying or
-// re-quantizing — the inverse of Int4(). q4 is [rows*((cols+1)/2)] packed nibbles
-// (two per byte, row-major) and q4s is [rows*nGroups] per-group scales, where
-// nGroups = ⌈cols/group⌉. Aliases the caller's slices (e.g. a zero-copy mmap of a
-// quantized checkpoint), so the caller keeps them alive.
-// Panics if rows or cols is negative, group <= 0, len(q4) != rows*⌈cols/2⌉, or
-// len(q4s) != rows*⌈cols/group⌉ (all checked overflow-safe).
-//
-// Deprecated: int4 scales are stored as binary16. This converts q4s with F32ToF16 into a new slice (so
-// scales that are not binary16-representable are rounded, and q4s is not aliased); use WrapInt4F16.
-func WrapInt4(q4 []byte, q4s []float32, rows, cols, group int) WeightMat {
-	checkWrapInt4("WrapInt4", q4, len(q4s), rows, cols, group)
-	return WrapInt4F16(q4, F32ToF16Scales(q4s), rows, cols, group)
-}
-
-// WrapInt4F16 is WrapInt4 over binary16 scales (F32ToF16's bit patterns), aliasing both slices without
-// copying — the form a loader mapping a quantized checkpoint uses.
-func WrapInt4F16(q4 []byte, q4s16 []uint16, rows, cols, group int) WeightMat {
-	checkWrapInt4("WrapInt4F16", q4, len(q4s16), rows, cols, group)
+// wrapInt4Canonical is WrapInt4's LayoutCanonical form.
+func wrapInt4Canonical(q4 []byte, q4s16 []uint16, rows, cols, group int) WeightMat {
+	checkWrapInt4("WrapInt4", q4, len(q4s16), rows, cols, group)
 	return WeightMat{q4: q4, q4s16: q4s16, group: group, rows: rows, cols: cols}
 }
 
@@ -174,169 +158,49 @@ func checkWrapInt4(name string, q4 []byte, nScales, rows, cols, group int) {
 	shape.RequireExactLen(name, "q4s", nScales, shape.Mul(rows, nGroups))
 }
 
-// WrapInt4Row4 is WrapInt4 plus an ALREADY-repacked split-half + 4-row-interleaved
-// layout (q4Row4/q4Row4Scales, in RepackW4A8Row4/RepackW4A8Row4Scales's own output
-// shape) — for a caller that computed or read those bytes itself (a prequant tool
-// writing them to disk, or a loader mmap-aliasing them back from a serialized
-// bundle) rather than one that wants RepackInt4Row4 to derive them from q4/q4s at
-// call time. Portable (no build tag): on a non-arm64 build the fields are simply
-// unused, since MatmulBTW4A8Into's non-arm64 form never reads them.
-//
-// Aliases q4Row4/q4Row4Scales WITHOUT copying, same contract as WrapInt4 for
-// q4/q4s. Pass both nil to get exactly WrapInt4's result (no row4 layout attached).
-//
-// SAFETY GATE: silently keeps q4Row4/q4Row4Scales unset (canonical-only, same as
-// passing nil) when row4Usable() is false — a non-arm64 build, or an arm64 core
-// without the DotProd extension. RepackInt4Row4 already refuses to populate
-// q4Row4 on such a core; this is the same gate applied to bytes that arrived
-// from somewhere else (a .giw kind-4 file, computed on a DIFFERENT machine that
-// may have DotProd when this one doesn't) rather than derived locally. Without
-// this, MatmulBTW4A8Into's dispatch (which only checks q4Row4 != nil, not the
-// CPU feature — that was always RepackInt4Row4's job) could route to a kernel
-// this core cannot safely execute.
-//
-// Panics on the same q4/q4s length mismatches WrapInt4 checks, plus (when
-// q4Row4/q4Row4Scales are non-nil AND row4Usable()) if they don't match
-// RepackW4A8Row4's own output-length contract for this rows/cols/group — the
-// same shape the repack functions would have produced, applied to bytes that
-// arrived from elsewhere.
-//
-// Deprecated: int4 scales are stored as binary16; this converts both scale slices with F32ToF16. Use
-// WrapInt4Row4F16.
-func WrapInt4Row4(q4 []byte, q4s []float32, rows, cols, group int, q4Row4 []byte, q4Row4Scales []float32) WeightMat {
-	return WrapInt4Row4F16(q4, F32ToF16Scales(q4s), rows, cols, group, q4Row4, F32ToF16Scales(q4Row4Scales))
-}
-
-// WrapInt4Row4F16 is WrapInt4Row4 over binary16 scales, aliasing every slice.
-func WrapInt4Row4F16(q4 []byte, q4s16 []uint16, rows, cols, group int, q4Row4 []byte, q4Row4Scales []uint16) WeightMat {
-	w := WrapInt4F16(q4, q4s16, rows, cols, group)
-	if q4Row4 == nil && q4Row4Scales == nil {
-		return w
-	}
-	if !row4Usable() {
-		return w
-	}
-	// SHAPE, NOT JUST LENGTH (task-simd-audit.md S-10). The row4 kernel interleaves
-	// FOUR rows and reads whole groups; it cannot express rows%4 != 0 or
-	// cols%group != 0. Until this check existed, a blob with the right byte COUNT
-	// but the wrong shape passed both requireExactLen calls below, got stored, and
-	// panicked later inside MatmulBTW4A8Row4Into on the first M=1 matmul — far from
-	// the blob that caused it and with nothing naming it.
-	//
-	// RepackInt4Row4 (weightmat_row4_arm64.go) already declines exactly this shape,
-	// so the constraint was known; this is the OTHER door into the same field, the
-	// one a prebuilt kind-4 blob comes through. Panicking here is deliberate and
-	// matches the two length checks immediately below: a caller cannot recover from
-	// a malformed weight blob, and failing at load names it while failing at the
-	// first matmul does not.
-	if group <= 0 || rows%4 != 0 || cols%group != 0 {
-		panic(fmt.Sprintf("linalg: WrapInt4Row4: the row4 layout needs rows%%4==0 and cols%%group==0, "+
-			"got rows=%d cols=%d group=%d", rows, cols, group))
-	}
-	nGroups, bpr := groupsFor(cols, group)
-	shape.RequireExactLen("WrapInt4Row4", "q4Row4", len(q4Row4), shape.Mul(rows, bpr))
-	shape.RequireExactLen("WrapInt4Row4", "q4Row4Scales", len(q4Row4Scales), shape.Mul(rows, nGroups))
-	w.q4Row4 = q4Row4
-	w.q4Row4Scales16 = q4Row4Scales
-	return w
-}
-
-// Int4Row4Usable reports whether a row4-repacked (canonical or repacked-
-// only) WeightMat can be built for this shape on THIS core — the same gate
-// RepackInt4Row4 already applies before setting q4Row4, exported (audit
-// M-22) so a caller can check it BEFORE committing to repacked-only at
-// construction time: RepackInt4Row4InPlace/WrapInt4Row4Only have no canonical
-// to fall back to if the shape or core does not qualify, unlike
-// RepackInt4Row4/WrapInt4Row4, which decline quietly and keep the tensor
-// canonical-only.
-func Int4Row4Usable(rows, cols, group int) bool {
+// int4Row4Usable reports whether this core runs the row4 kernel for this shape: the gate RepackInt4Row4
+// applies before setting q4Row4, and the one PreferredInt4Layout reports as LayoutRow4. A repacked-only
+// weight (WrapInt4 or RepackInt4InPlace with LayoutRow4) has no canonical bytes to fall back to, so it is
+// checked before anything is built or written.
+func int4Row4Usable(rows, cols, group int) bool {
 	return row4Usable() && group == 32 && rows%4 == 0 && cols%group == 0
 }
 
-// Int4SplitHalfUsable is Int4Row4Usable's amd64 split-half twin — the same
-// gate RepackInt4SplitHalf applies (AVX2 present, no VNNI — see that
-// method's comment for why a VNNI host declines split-half rather than
-// downgrading to it), exported for the same before-construction reason.
-func Int4SplitHalfUsable(cols, group int) bool {
+// int4SplitHalfUsable is int4Row4Usable's amd64 split-half twin: the gate RepackInt4SplitHalf applies (AVX2
+// present, no VNNI; see that method's comment for why a VNNI host declines split-half rather than
+// downgrading to it).
+func int4SplitHalfUsable(cols, group int) bool {
 	return splitHalfUsable() && group == 32 && cols%32 == 0
 }
 
-// RepackInt4Row4InPlace permutes the CALLER'S OWN q4/q4s into row4 layout —
-// audit M-22's repacked-only policy, in-place form. Declared here rather
-// than alongside the other repacked-only constructors below because its
-// implementation is arm64-specific (RepackInt4Row4Quad/RepackInt4Row4Scales
-// Quad, weightmat_row4_arm64.go); see that file for the real body and
-// weightmat_row4_other.go for the portable (always ok=false) stub.
-
-// WrapInt4Row4Only wraps ALREADY-repacked row4 bytes (RepackW4A8Row4/
-// RepackW4A8Row4Scales layout — a .giw kind-4 file storing pre-repacked
-// bytes, or a loader that streamed canonical straight into row4 order via
-// RepackInt4Row4Quad per quad as it copied off an mmap'd checkpoint) into a
-// repacked-only WeightMat — audit M-22, WrapInt4's no-canonical-at-all twin.
-// This is the form that actually avoids EVERY extra byte
-// RepackInt4Row4InPlace's quad scratch still costs: canonical never exists
-// in this process's heap at all, not even transiently.
-//
-// ok=false (zero WeightMat, q4Row4/q4Row4Scales NOT retained) when
-// Int4Row4Usable(rows, cols, group) is false — this core cannot safely run
-// the kernel these bytes are shaped for, and unlike WrapInt4Row4 there is no
-// canonical to fall back to, so returning a half-built WeightMat would be
-// worse than refusing.
-//
-// Panics on a length mismatch against RepackW4A8Row4/RepackW4A8Row4Scales's
-// own output-length contract for this rows/cols/group — the same shape
-// check WrapInt4Row4 applies to externally-supplied row4 bytes.
-//
-// Deprecated: int4 scales are stored as binary16; this converts q4Row4Scales with F32ToF16. Use
-// WrapInt4Row4OnlyF16.
-func WrapInt4Row4Only(q4Row4 []byte, q4Row4Scales []float32, rows, cols, group int) (WeightMat, bool) {
-	if !Int4Row4Usable(rows, cols, group) {
-		return WeightMat{}, false
-	}
-	return WrapInt4Row4OnlyF16(q4Row4, F32ToF16Scales(q4Row4Scales), rows, cols, group)
-}
-
-// WrapInt4Row4OnlyF16 is WrapInt4Row4Only over binary16 scales, aliasing both slices.
-func WrapInt4Row4OnlyF16(q4Row4 []byte, q4Row4Scales []uint16, rows, cols, group int) (WeightMat, bool) {
-	if !Int4Row4Usable(rows, cols, group) {
+// wrapInt4Row4Only is WrapInt4's LayoutRow4 form: already-repacked row4 bytes (RepackW4A8Row4 and
+// RepackW4A8Row4ScalesF16's output order: a .giw kind-4 file, or a loader that streamed canonical bytes into
+// row4 order with RepackInt4Row4Quad as it copied them off a mapping), so canonical bytes never exist in this
+// process at all. ok=false, nothing retained, when int4Row4Usable is false: this core cannot run the kernel
+// these bytes are shaped for, and there is no canonical to fall back to. The shape check comes first, so a
+// blob with the right byte count but a shape the row4 kernel cannot express (rows%4 != 0, a ragged group)
+// is declined at the wrap rather than reaching the matmul.
+func wrapInt4Row4Only(q4Row4 []byte, q4Row4Scales []uint16, rows, cols, group int) (WeightMat, bool) {
+	if !int4Row4Usable(rows, cols, group) {
 		return WeightMat{}, false
 	}
 	nGroups, bpr := groupsFor(cols, group)
-	shape.RequireExactLen("WrapInt4Row4Only", "q4Row4", len(q4Row4), shape.Mul(rows, bpr))
-	shape.RequireExactLen("WrapInt4Row4Only", "q4Row4Scales", len(q4Row4Scales), shape.Mul(rows, nGroups))
+	shape.RequireExactLen("WrapInt4", "q4Row4", len(q4Row4), shape.Mul(rows, bpr))
+	shape.RequireExactLen("WrapInt4", "q4Row4Scales", len(q4Row4Scales), shape.Mul(rows, nGroups))
 	return WeightMat{q4Row4: q4Row4, q4Row4Scales16: q4Row4Scales, group: group, rows: rows, cols: cols}, true
 }
 
-// RepackInt4SplitHalfInPlace is RepackInt4Row4InPlace's amd64 split-half
-// twin: q4 is permuted in place, ROW BY ROW (split-half does not interleave
-// rows, so the scratch is one row — bpr bytes — not one quad), using
-// RepackInt4SplitHalfRow the same scratch-then-overwrite way. q4s is
-// retained UNCHANGED in the result: split-half shares the canonical scale
-// array rather than repacking it (see the q4SplitHalf field comment), so it
-// is the one piece of "canonical" state a split-half-only WeightMat
-// legitimately keeps — Int4()'s ok is still false, since ok means "packed
-// NIBBLES present", not scales. Same input-is-consumed contract as
-// RepackInt4Row4InPlace.
-//
-// Deprecated: int4 scales are stored as binary16; this converts q4s with F32ToF16. Use
-// RepackInt4SplitHalfInPlaceF16.
-//
-// Output contract: rewrites q4 and q4s in place; there is no separate destination, and nothing needs zeroing.
-func RepackInt4SplitHalfInPlace(q4 []byte, q4s []float32, rows, cols, group int) (WeightMat, bool) {
-	if !Int4SplitHalfUsable(cols, group) {
-		return WeightMat{}, false
-	}
-	return RepackInt4SplitHalfInPlaceF16(q4, F32ToF16Scales(q4s), rows, cols, group)
-}
-
-// RepackInt4SplitHalfInPlaceF16 is RepackInt4SplitHalfInPlace over binary16 scales (aliased).
-func RepackInt4SplitHalfInPlaceF16(q4 []byte, q4s []uint16, rows, cols, group int) (WeightMat, bool) {
-	if !Int4SplitHalfUsable(cols, group) {
+// repackInt4SplitHalfInPlace is RepackInt4InPlace's LayoutSplitHalf form: q4 is permuted in place row by row
+// (split-half does not interleave rows, so the scratch is one row, bpr bytes), with RepackInt4SplitHalfRow
+// reading from the scratch copy. q4s is kept unchanged: split-half shares the canonical scale order (see the
+// q4SplitHalf field comment), so Int4()'s ok is still false, since ok means canonical nibbles are present.
+func repackInt4SplitHalfInPlace(q4 []byte, q4s []uint16, rows, cols, group int) (WeightMat, bool) {
+	if !int4SplitHalfUsable(cols, group) {
 		return WeightMat{}, false
 	}
 	nGroups, bpr := groupsFor(cols, group)
-	shape.RequireExactLen("RepackInt4SplitHalfInPlace", "q4", len(q4), shape.Mul(rows, bpr))
-	shape.RequireExactLen("RepackInt4SplitHalfInPlace", "q4s", len(q4s), shape.Mul(rows, nGroups))
+	shape.RequireExactLen("RepackInt4InPlace", "q4", len(q4), shape.Mul(rows, bpr))
+	shape.RequireExactLen("RepackInt4InPlace", "q4s", len(q4s), shape.Mul(rows, nGroups))
 	rowScratch := make([]byte, bpr) // the one allocation, reused every row
 	for r := range rows {
 		row := q4[r*bpr : (r+1)*bpr]
@@ -346,29 +210,15 @@ func RepackInt4SplitHalfInPlaceF16(q4 []byte, q4s []uint16, rows, cols, group in
 	return WeightMat{q4SplitHalf: q4, q4s16: q4s, group: group, rows: rows, cols: cols}, true
 }
 
-// WrapInt4SplitHalfOnly is WrapInt4Row4Only's amd64 split-half twin: q4s is
-// still required (it is the canonical PER-GROUP SCALES, shared by split-half
-// — see the q4SplitHalf field comment — not the canonical packed NIBBLES,
-// which this constructor never takes). ok=false when
-// Int4SplitHalfUsable(cols, group) is false.
-//
-// Deprecated: int4 scales are stored as binary16; this converts q4s with F32ToF16. Use
-// WrapInt4SplitHalfOnlyF16.
-func WrapInt4SplitHalfOnly(q4SplitHalf []byte, q4s []float32, rows, cols, group int) (WeightMat, bool) {
-	if !Int4SplitHalfUsable(cols, group) {
-		return WeightMat{}, false
-	}
-	return WrapInt4SplitHalfOnlyF16(q4SplitHalf, F32ToF16Scales(q4s), rows, cols, group)
-}
-
-// WrapInt4SplitHalfOnlyF16 is WrapInt4SplitHalfOnly over binary16 scales, aliasing both slices.
-func WrapInt4SplitHalfOnlyF16(q4SplitHalf []byte, q4s []uint16, rows, cols, group int) (WeightMat, bool) {
-	if !Int4SplitHalfUsable(cols, group) {
+// wrapInt4SplitHalfOnly is WrapInt4's LayoutSplitHalf form. q4s is the canonical per-group scales, which
+// split-half shares (see the q4SplitHalf field comment). ok=false when int4SplitHalfUsable is false.
+func wrapInt4SplitHalfOnly(q4SplitHalf []byte, q4s []uint16, rows, cols, group int) (WeightMat, bool) {
+	if !int4SplitHalfUsable(cols, group) {
 		return WeightMat{}, false
 	}
 	nGroups, bpr := groupsFor(cols, group)
-	shape.RequireExactLen("WrapInt4SplitHalfOnly", "q4SplitHalf", len(q4SplitHalf), shape.Mul(rows, bpr))
-	shape.RequireExactLen("WrapInt4SplitHalfOnly", "q4s", len(q4s), shape.Mul(rows, nGroups))
+	shape.RequireExactLen("WrapInt4", "q4SplitHalf", len(q4SplitHalf), shape.Mul(rows, bpr))
+	shape.RequireExactLen("WrapInt4", "q4s", len(q4s), shape.Mul(rows, nGroups))
 	return WeightMat{q4SplitHalf: q4SplitHalf, q4s16: q4s, group: group, rows: rows, cols: cols}, true
 }
 
@@ -396,8 +246,8 @@ func (w *WeightMat) MatmulBT(a, dst []float32, M int) {
 		// free-function call, still the exact code path a canonical-only or
 		// "both" WeightMat took before this case existed) — this is reached
 		// only by a WeightMat that never had canonical bytes at all, a state
-		// no constructor could produce before M-22's WrapInt4Row4Only /
-		// RepackInt4Row4InPlace / the split-half twins. Routes through the
+		// no constructor could produce before M-22's WrapInt4(LayoutRow4) /
+		// RepackInt4InPlace(LayoutRow4) / the split-half twins. Routes through the
 		// per-arch method, which already prefers the repacked layout.
 		var ws Workspace
 		w.MatmulBTW4A8Into(&ws, a, dst, M)
@@ -635,7 +485,7 @@ func (w *WeightMat) F32() (f32 []float32, ok bool) { return w.f32, w.f32 != nil 
 // WeightMat never has, so it returns nil there too — same as f32/empty. This
 // is not expected to matter in practice: MappedSpan exists for the PAGED
 // (mmap, never fully loaded) case, and a paged tensor has no load-time
-// repack step to begin with (RepackInt4Row4InPlace/RepackInt4SplitHalfInPlace need
+// repack step to begin with (RepackInt4InPlace(LayoutRow4)/RepackInt4InPlace(LayoutSplitHalf) need
 // canonical bytes IN HAND to repack from), so a pageable tensor and a
 // repacked-only one are not expected to be the same tensor. A caller
 // combining paging with a repacked-only policy would need to read w.q4Row4
@@ -673,9 +523,9 @@ func (w *WeightMat) MappedSpan(base, end uintptr) []byte {
 
 // MappedSpanRow4 is MappedSpan for the split-half + 4-row-interleaved layout
 // (q4Row4) instead of the canonical q4 — same page-alignment/containment contract,
-// returned separately because a WeightMat carrying BOTH layouts (WrapInt4Row4) has
-// two independently-mmap'd byte arrays a pager must account for separately: they
-// are different spans at different offsets in the same file, not one span twice.
+// returned separately because a WeightMat carrying BOTH layouts has two byte arrays
+// a pager must account for separately (a row4-only WrapInt4 over a mapping has
+// only this one; RepackInt4Row4 adds a heap-backed row4 beside a mapped canonical).
 // nil if q4Row4 was never populated, or if it's heap-backed rather than part of
 // [base, end).
 func (w *WeightMat) MappedSpanRow4(base, end uintptr) []byte {

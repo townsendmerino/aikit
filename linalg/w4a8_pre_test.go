@@ -28,7 +28,7 @@ func TestW4A8Pre_bitIdenticalToQuantizingEntry(t *testing.T) {
 		for _, repack := range []bool{false, true} {
 			mk := func() WeightMat {
 				q4, q4s := QuantizeGroupsInt4(rnd(sh.N*sh.K), sh.N, sh.K, wGroup)
-				w := WrapInt4(q4, q4s, sh.N, sh.K, wGroup)
+				w := wrapInt4F32(q4, q4s, sh.N, sh.K, wGroup)
 				if repack {
 					w.RepackInt4Row4()
 					w.RepackInt4SplitHalf()
@@ -88,7 +88,7 @@ func TestW4A8Pre_bitIdenticalToQuantizingEntry(t *testing.T) {
 // (it would silently give another result).
 func TestW4A8Pre_refusesAMismatchedBlock(t *testing.T) {
 	q4, q4s := QuantizeGroupsInt4(make([]float32, 8*64), 8, 64, 32)
-	w := WrapInt4(q4, q4s, 8, 64, 32)
+	w := wrapInt4F32(q4, q4s, 8, 64, 32)
 	var ws Workspace
 	ws.SetActQuantGroup(32)
 	a := make([]float32, 2*64)

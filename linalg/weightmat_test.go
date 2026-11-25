@@ -143,7 +143,7 @@ func TestWeightMat_wrapConstructors(t *testing.T) {
 	// int4 group-wise: WrapInt4 of the quantizer's output == QuantizeInt4.
 	{
 		q4, q4s := QuantizeGroupsInt4(wf, N, K, group)
-		wm := WrapInt4(q4, q4s, N, K, group)
+		wm := wrapInt4F32(q4, q4s, N, K, group)
 		ref := QuantizeInt4(wf, N, K, group)
 		got, want := make([]float32, M*N), make([]float32, M*N)
 		wm.MatmulBT(a, got, M)
@@ -154,7 +154,7 @@ func TestWeightMat_wrapConstructors(t *testing.T) {
 		wm.Row(2, rGot)
 		ref.Row(2, rWant)
 		eq("wrapint4_row", rGot, rWant)
-		// The scales are stored as binary16: WrapInt4 converts them, so only the nibbles alias. WrapInt4F16
+		// The scales are stored as binary16: WrapInt4 converts them, so only the nibbles alias. WrapInt4
 		// aliases both, and Int4F16 returns them as stored.
 		gq4, gq4s, ggroup, ok := wm.Int4()
 		if !ok || ggroup != group || &gq4[0] != &q4[0] || len(gq4s) != len(q4s) {
@@ -166,10 +166,10 @@ func TestWeightMat_wrapConstructors(t *testing.T) {
 			}
 		}
 		s16 := F32ToF16Scales(q4s)
-		wf16 := WrapInt4F16(q4, s16, N, K, group)
+		wf16 := wrapInt4Canonical(q4, s16, N, K, group)
 		hq4, hs16, _, ok := wf16.Int4F16()
 		if !ok || &hq4[0] != &q4[0] || &hs16[0] != &s16[0] {
-			t.Fatalf("WrapInt4F16 accessor: ok=%v aliased(q4)=%v aliased(q4s16)=%v", ok, &hq4[0] == &q4[0], &hs16[0] == &s16[0])
+			t.Fatalf("WrapInt4 accessor: ok=%v aliased(q4)=%v aliased(q4s16)=%v", ok, &hq4[0] == &q4[0], &hs16[0] == &s16[0])
 		}
 	}
 	// shape guards panic.
@@ -186,6 +186,6 @@ func TestWeightMat_wrapConstructors(t *testing.T) {
 	mustPanic("int8_bad_q", func() { WrapInt8(q[:N*K-1], s, N, K, false) })
 	mustPanic("int8_bad_scales", func() { WrapInt8(q, s[:N-1], N, K, false) })
 	q4, q4s := QuantizeGroupsInt4(wf, N, K, group)
-	mustPanic("int4_bad_group", func() { WrapInt4(q4, q4s, N, K, 0) })
-	mustPanic("int4_bad_q4", func() { WrapInt4(q4[:len(q4)-1], q4s, N, K, group) })
+	mustPanic("int4_bad_group", func() { wrapInt4F32(q4, q4s, N, K, 0) })
+	mustPanic("int4_bad_q4", func() { wrapInt4F32(q4[:len(q4)-1], q4s, N, K, group) })
 }

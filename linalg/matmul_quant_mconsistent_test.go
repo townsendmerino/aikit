@@ -183,7 +183,7 @@ func TestWeightMatW4A8_MConsistentAcrossRow4Dispatch(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			a := mconsistentRand(rng, maxM*c.K)
 			q4, q4s := QuantizeGroupsInt4(mconsistentRand(rng, c.N*c.K), c.N, c.K, group)
-			wm := WrapInt4(q4, q4s, c.N, c.K, group)
+			wm := wrapInt4F32(q4, q4s, c.N, c.K, group)
 			repacked := wm.RepackInt4Row4()
 
 			solo := make([]float32, maxM*c.N)

@@ -35,7 +35,7 @@ func TestW4A8Batch_bitIdenticalToPerOp(t *testing.T) {
 		f16RoundScales(q4s) // the WeightMat below stores binary16 scales
 		op := W4A8Op{W4: q4, Scales: q4s, N: N}
 		if withRow4 && row4Usable() && N%4 == 0 && K%group == 0 {
-			wm := WrapInt4(q4, q4s, N, K, group)
+			wm := wrapInt4F32(q4, q4s, N, K, group)
 			if wm.RepackInt4Row4() {
 				op.Row4, op.Row4ScalesF16 = wm.q4Row4, wm.q4Row4Scales16
 			}
@@ -141,7 +141,7 @@ func TestW4A8Batch_widthInert(t *testing.T) {
 			f16RoundScales(q4s) // the WeightMat below stores binary16 scales
 			ops[i] = W4A8Op{W4: q4, Scales: q4s, N: N, Dst: make([]float32, M*N)}
 			if row4Usable() {
-				wm := WrapInt4(q4, q4s, N, K, group)
+				wm := wrapInt4F32(q4, q4s, N, K, group)
 				if wm.RepackInt4Row4() {
 					ops[i].Row4, ops[i].Row4ScalesF16 = wm.q4Row4, wm.q4Row4Scales16
 				}

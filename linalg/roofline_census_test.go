@@ -142,14 +142,14 @@ func censusInt4(M int, repacked bool) func(*rand.Rand, int) censusCase {
 			return c
 		}
 		layout := "row4"
-		wm, ok := RepackInt4Row4InPlaceF16(q4, s16, N, K, g)
+		wm, ok := repackInt4Row4InPlace(q4, s16, N, K, g)
 		if !ok {
 			layout = "splithalf"
-			wm, ok = RepackInt4SplitHalfInPlaceF16(q4, s16, N, K, g)
+			wm, ok = repackInt4SplitHalfInPlace(q4, s16, N, K, g)
 		}
 		if !ok {
 			layout = "canonical"
-			wm = WrapInt4F16(q4, s16, N, K, g)
+			wm = wrapInt4Canonical(q4, s16, N, K, g)
 		}
 		c.run = func() { wm.MatmulBTW4A8Into(ws, a, dst, M) }
 		c.shape += "_" + layout
