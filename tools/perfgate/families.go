@@ -23,7 +23,7 @@ func (f family) appliesTo(goarch string) bool {
 // benchmark name in whichever of them defines it, so a family that moves between packages
 // across the tag boundary is still compared. A package missing at the previous tag is skipped
 // there.
-var defaultPackages = []string{"./linalg"}
+var defaultPackages = []string{"./linalg", "./linalg/attn", "./linalg/elem", "./linalg/bitvec"}
 
 // defaultFamilies is the gate's coverage. Each family is here because a regression in it would
 // otherwise ship green; TestDefaultFamilies_resolveInSource holds the arches column to the

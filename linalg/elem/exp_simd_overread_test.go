@@ -1,4 +1,4 @@
-package linalg
+package elem
 
 import (
 	"testing"
@@ -12,18 +12,18 @@ import (
 // full-width load or store of a short tail faults instead of reading the next bytes.
 func TestElementwise_noReadPastShortTail(t *testing.T) {
 	fns := map[string]func(dst, src []float32){
-		"ExpF32Into":             ExpF32Into,
+		"ExpF32Into":             expF32Into,
 		"ExpContractInto":        ExpContractInto,
-		"SiLUInto":               SiLUInto,
+		"SiLUInto":               siluInto,
 		"SiLUContractInto":       SiLUContractInto,
-		"GELUInto":               GELUInto,
+		"GELUInto":               geluInto,
 		"GELUContractInto":       GELUContractInto,
 		"GELUTanhInto":           GELUTanhInto,
 		"GELUTanhContractInto":   GELUTanhContractInto,
 		"TanhInto":               TanhInto,
-		"SoftmaxRowInto":         SoftmaxRowInto,
+		"SoftmaxRowInto":         softmaxRowInto,
 		"SoftmaxRowContractInto": SoftmaxRowContractInto,
-		"SoftmaxRowScaledInto":   func(dst, src []float32) { SoftmaxRowScaledInto(dst, src, 0.125) },
+		"SoftmaxRowScaledInto":   func(dst, src []float32) { softmaxRowScaledInto(dst, src, 0.125) },
 		"SoftmaxRowScaledContractInto": func(dst, src []float32) {
 			SoftmaxRowScaledContractInto(dst, src, 0.125)
 		},
