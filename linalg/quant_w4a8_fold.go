@@ -8,7 +8,7 @@ package linalg
 // to compile on linux/amd64 (goinfer run 35763888743): an exported symbol that exists on
 // one architecture is a defect even in the Experimental tier.
 
-// w4a8RowFold selects dotW4A8SplitHalf4RowFold for MatmulBTW4A8Row4Into's M=1 path
+// w4a8RowFold selects dotW4A8SplitHalf4RowFold for matmulBTW4A8Row4Into's M=1 path
 // (true, the default) or the pre-S-05 dotW4A8SplitHalf4Row (false). The two are
 // bit-identical for every input (TestDotW4A8SplitHalf4RowFold_*), so this is a
 // performance switch kept for in-process A/B measurement. Not goroutine-safe to flip

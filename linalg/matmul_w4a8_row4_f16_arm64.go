@@ -42,7 +42,7 @@ func RepackW4A8Row4ScalesF16(scales []uint16, N, K, group int) []uint16 {
 	return out
 }
 
-// matmulBTW4A8Row4F16Into is MatmulBTW4A8Row4Into (M=1) over binary16 interleaved scales.
+// matmulBTW4A8Row4F16Into is matmulBTW4A8Row4Into (M=1) over binary16 interleaved scales.
 func matmulBTW4A8Row4F16Into(ws *Workspace, a []float32, w4Row4 []byte, s4 []uint16, dst []float32, K, N, group int) {
 	const M = 1
 	checkMatmulW4A8("MatmulBTW4A8Row4F16", len(a), len(w4Row4), len(s4), len(dst), M, K, N, group)

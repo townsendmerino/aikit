@@ -16,7 +16,7 @@ import (
 //
 // Returns false — not an error, just "this tensor or this core does not qualify" — when w is not
 // int4-resident, AVX2 is unavailable, the group size is not 32, or cols is not a multiple of 32.
-// MatmulBTW4A8Into below then keeps using the canonical path transparently.
+// matmulBTW4A8Into below then keeps using the canonical path transparently.
 //
 // Scales are shared, not repacked: split-half permutes nibbles within a group and never reorders
 // groups, so w.q4s serves both layouts (unlike row4, which needs RepackW4A8Row4Scales).
@@ -79,10 +79,10 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 	w.matmulBTW4A8Q(ws, &q, dst, M)
 }
 
-// w4a8ActGroup is the activation group MatmulBTW4A8Into quantizes with (R-13).
+// w4a8ActGroup is the activation group matmulBTW4A8Into quantizes with (R-13).
 func (w *WeightMat) w4a8ActGroup(ws *Workspace, _ int) int { return w.groupFor(ws) }
 
-// matmulBTW4A8Q is MatmulBTW4A8Into after its activation quantization: the dispatch it and MatmulBTW4A8PreInto
+// matmulBTW4A8Q is matmulBTW4A8Into after its activation quantization: the dispatch it and MatmulBTW4A8PreInto
 // share (R-13).
 func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) {
 	if q.Group > 0 {
@@ -108,10 +108,10 @@ func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) 
 	matmulBTW4A8F16Q(ws, q, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
 }
 
-// matmulBTW4A8SplitHalfInto is MatmulBTW4A8Into's M=1 split-half twin. It mirrors that function's
+// matmulBTW4A8SplitHalfInto is matmulBTW4A8Into's M=1 split-half twin. It mirrors that function's
 // structure deliberately — same activation quantization, same serial/parallel split on ws.thr(),
 // same span shape — so the two stay comparable when either is changed; arm64's
-// MatmulBTW4A8Row4Into duplicates the same skeleton for the same reason.
+// matmulBTW4A8Row4Into duplicates the same skeleton for the same reason.
 func matmulBTW4A8SplitHalfInto(ws *Workspace, a []float32, w4sh []byte, wScales, dst []float32, K, N, group int) {
 	const M = 1
 	checkMatmulW4A8("MatmulBTW4A8SplitHalf", len(a), len(w4sh), len(wScales), len(dst), M, K, N, group)

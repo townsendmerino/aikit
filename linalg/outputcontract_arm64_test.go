@@ -54,7 +54,7 @@ func archContractCases() []outputcontract.Case {
 			w, sc := q4()
 			dst, o := outputcontract.MkOut[float32]("dst", s.M*s.N)
 			aa := rf32(27, s.M*s.K)
-			return func() { MatmulBTW4A8Row4Into(&Workspace{}, aa, w, sc, dst, s.M, s.K, s.N, 32) }, []*outputcontract.OutBuf{o}
+			return func() { matmulBTW4A8Row4Into(&Workspace{}, aa, w, sc, dst, s.M, s.K, s.N, 32) }, []*outputcontract.OutBuf{o}
 		})
 		add("MatmulBTW4A8Row4PrefetchInto/"+nm, func() (func(), []*outputcontract.OutBuf) {
 			w, sc := q4()

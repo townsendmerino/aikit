@@ -40,13 +40,13 @@ func BenchmarkQ4vsQ8(b *testing.B) {
 			b.Run(fmt.Sprintf("Q8/K%d_N%d/M%d", s.K, s.N, M), func(b *testing.B) {
 				b.ResetTimer()
 				for range b.N {
-					MatmulBTQ8(a, q8q, q8s, dst, M, s.K, s.N)
+					matmulBTQ8(a, q8q, q8s, dst, M, s.K, s.N)
 				}
 			})
 			b.Run(fmt.Sprintf("W8A8/K%d_N%d/M%d", s.K, s.N, M), func(b *testing.B) {
 				b.ResetTimer()
 				for range b.N {
-					MatmulBTW8A8(a, q8q, q8s, dst, M, s.K, s.N)
+					matmulBTW8A8(a, q8q, q8s, dst, M, s.K, s.N)
 				}
 			})
 			b.Run(fmt.Sprintf("W4A8/K%d_N%d/M%d", s.K, s.N, M), func(b *testing.B) {

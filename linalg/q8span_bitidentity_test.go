@@ -10,7 +10,7 @@ import (
 // scalar int8→f32 widen for the SIMD dequantRowInt8(_, _, 1.0) leaves the LM-head output
 // byte-for-byte unchanged (P2 item 4). The reference computes the pre-change math explicitly —
 // scalar widen, then the same dotF32, then the row scale — and every output float is compared
-// by its raw bits against MatmulBTQ8. Shapes cover M=1 serial, M=1 parallel (the large-vocab
+// by its raw bits against matmulBTQ8. Shapes cover M=1 serial, M=1 parallel (the large-vocab
 // case), M>1 prefill, and a K that is NOT a multiple of 16 to exercise the SIMD widen's scalar
 // tail.
 func TestQ8Span_bitIdenticalToScalarWiden(t *testing.T) {
@@ -54,7 +54,7 @@ func TestQ8Span_bitIdenticalToScalarWiden(t *testing.T) {
 		}
 
 		got := make([]float32, M*N)
-		MatmulBTQ8(a, bQ, bScales, got, M, K, N)
+		matmulBTQ8(a, bQ, bScales, got, M, K, N)
 
 		for idx := range got {
 			if math.Float32bits(got[idx]) != math.Float32bits(ref[idx]) {

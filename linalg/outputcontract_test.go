@@ -219,13 +219,13 @@ func outputContractCases() []outputcontract.Case {
 			bq, bs := q8w()
 			dst, o := outputcontract.MkOut[float32]("dst", s.M*s.N)
 			aa := a()
-			return func() { MatmulBTQ8(aa, bq, bs, dst, s.M, s.K, s.N) }, []*outputcontract.OutBuf{o}
+			return func() { matmulBTQ8(aa, bq, bs, dst, s.M, s.K, s.N) }, []*outputcontract.OutBuf{o}
 		})
 		add("MatmulBTQ8Into/"+nm, func() (func(), []*outputcontract.OutBuf) {
 			bq, bs := q8w()
 			dst, o := outputcontract.MkOut[float32]("dst", s.M*s.N)
 			aa := a()
-			return func() { MatmulBTQ8Into(&Workspace{}, aa, bq, bs, dst, s.M, s.K, s.N) }, []*outputcontract.OutBuf{o}
+			return func() { matmulBTQ8Into(&Workspace{}, aa, bq, bs, dst, s.M, s.K, s.N) }, []*outputcontract.OutBuf{o}
 		})
 		add("MatmulBTQ8Fused/"+nm, func() (func(), []*outputcontract.OutBuf) {
 			bq, bs := q8w()
@@ -243,13 +243,13 @@ func outputContractCases() []outputcontract.Case {
 			bq, bs := q8w()
 			dst, o := outputcontract.MkOut[float32]("dst", s.M*s.N)
 			aa := a()
-			return func() { MatmulBTW8A8(aa, bq, bs, dst, s.M, s.K, s.N) }, []*outputcontract.OutBuf{o}
+			return func() { matmulBTW8A8(aa, bq, bs, dst, s.M, s.K, s.N) }, []*outputcontract.OutBuf{o}
 		})
 		add("MatmulBTW8A8Into/"+nm, func() (func(), []*outputcontract.OutBuf) {
 			bq, bs := q8w()
 			dst, o := outputcontract.MkOut[float32]("dst", s.M*s.N)
 			aa := a()
-			return func() { MatmulBTW8A8Into(&Workspace{}, aa, bq, bs, dst, s.M, s.K, s.N) }, []*outputcontract.OutBuf{o}
+			return func() { matmulBTW8A8Into(&Workspace{}, aa, bq, bs, dst, s.M, s.K, s.N) }, []*outputcontract.OutBuf{o}
 		})
 		add("MatmulBTW8A8Pre/"+nm, func() (func(), []*outputcontract.OutBuf) {
 			bq, bs := q8w()
@@ -293,7 +293,7 @@ func outputContractCases() []outputcontract.Case {
 				pk, sc := q4w()
 				dst, o := outputcontract.MkOut[float32]("dst", s.M*s.N)
 				aa := a()
-				return func() { MatmulBTW4A8Into(&Workspace{}, aa, pk, sc, dst, s.M, s.K, s.N, g) }, []*outputcontract.OutBuf{o}
+				return func() { matmulBTW4A8Into(&Workspace{}, aa, pk, sc, dst, s.M, s.K, s.N, g) }, []*outputcontract.OutBuf{o}
 			})
 			add(fmt.Sprintf("MatmulBTW4A8F16Into/%s,group=%d", nm, g), func() (func(), []*outputcontract.OutBuf) {
 				pk, sc := q4w()

@@ -28,7 +28,7 @@ import (
 var actQuantGroup int
 
 // SetActQuantGroup selects per-group activation scales for every W8A8/W4A8 matmul entry point
-// (MatmulBTW8A8Into/Batch, MatmulBTW4A8Into/Batch, MatmulBTW4A8Row4Into and
+// (matmulBTW8A8Into/Batch, matmulBTW4A8Into/Batch, matmulBTW4A8Row4Into and
 // WeightMat.MatmulBTW4A8Into): 0 restores the per-row kernels, g > 0 routes those calls through
 // the Go reference with one int8 scale per g inputs. For W4A8, g and the weight group must divide
 // one another.
@@ -141,7 +141,7 @@ func quantizeActGrouped(ws *Workspace, g int, a []float32, M, K int) ([]int8, []
 	return aq, aS, nG
 }
 
-// matmulW8A8GroupedRef is MatmulBTW8A8Into with per-group activation scales:
+// matmulW8A8GroupedRef is matmulBTW8A8Into with per-group activation scales:
 // dst[m,n] = bScales[n] · Σ_g aS[m,g] · Σ_{k∈g} aq[m,k]·bQ[n,k].
 func matmulW8A8GroupedRef(ws *Workspace, g int, a []float32, bQ []int8, bScales, dst []float32, M, K, N int) {
 	aq, aS, nG := quantizeActGrouped(ws, g, a, M, K)

@@ -45,22 +45,22 @@ func TestActGroup_wholeRowGroupIsThePerRowKernel(t *testing.T) {
 	w8 := QuantizeInt8(w, N, K, true)
 	q8, s8, _, _ := w8.Int8()
 	want8 := make([]float32, M*N)
-	MatmulBTW8A8Into(new(Workspace), a, q8, s8, want8, M, K, N)
+	matmulBTW8A8Into(new(Workspace), a, q8, s8, want8, M, K, N)
 	w4 := QuantizeInt4(w, N, K, 32)
 	q4, s4, _, _ := w4.Int4()
 	want4 := make([]float32, M*N)
-	MatmulBTW4A8Into(new(Workspace), a, q4, s4, want4, M, K, N, 32)
+	matmulBTW4A8Into(new(Workspace), a, q4, s4, want4, M, K, N, 32)
 
 	withActGroup(t, K)
 	got8 := make([]float32, M*N)
-	MatmulBTW8A8Into(new(Workspace), a, q8, s8, got8, M, K, N)
+	matmulBTW8A8Into(new(Workspace), a, q8, s8, got8, M, K, N)
 	for i := range want8 {
 		if got8[i] != want8[i] {
 			t.Fatalf("W8A8 [%d]: reference %v != kernel %v (want bit-identical)", i, got8[i], want8[i])
 		}
 	}
 	got4 := make([]float32, M*N)
-	MatmulBTW4A8Into(new(Workspace), a, q4, s4, got4, M, K, N, 32)
+	matmulBTW4A8Into(new(Workspace), a, q4, s4, got4, M, K, N, 32)
 	if e := agRelErr(got4, want4); e > 1e-6 {
 		t.Errorf("W4A8 whole-row reference vs kernel: rel err %.3g, want float-rounding level", e)
 	}
@@ -82,7 +82,7 @@ func TestActGroup_layoutsAgree(t *testing.T) {
 	ref := make([]float32, M*N)
 	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, M, N)
 	canon := make([]float32, M*N)
-	MatmulBTW4A8Into(new(Workspace), a, q4, s4, canon, M, K, N, 32)
+	matmulBTW4A8Into(new(Workspace), a, q4, s4, canon, M, K, N, 32)
 	sh := RepackW4A8SplitHalf(q4, N, K, 32)
 	batch := make([]float32, M*N)
 	matmulBTW4A8Batch(new(Workspace), a, M, K, 32, []w4a8Op{{SplitHalf: sh, Scales: s4, Dst: batch, N: N}})
@@ -107,7 +107,7 @@ func TestActGroup_outlierStaysInItsGroup(t *testing.T) {
 	wm := QuantizeInt8(agRandMat(r, N*K), N, K, true)
 	q8, s8, _, _ := wm.Int8()
 	ref := make([]float32, M*N) // f32 activations × the same int8 weights
-	MatmulBTQ8(a, q8, s8, ref, M, K, N)
+	matmulBTQ8(a, q8, s8, ref, M, K, N)
 	// The outlier's own contribution is exact under any activation scale (it sets the scale), so
 	// compare on the product WITHOUT it — what the other 3071 inputs contribute.
 	for n := range N {
@@ -121,10 +121,10 @@ func TestActGroup_outlierStaysInItsGroup(t *testing.T) {
 		return o
 	}
 	perRow := make([]float32, M*N)
-	MatmulBTW8A8Into(new(Workspace), a, q8, s8, perRow, M, K, N)
+	matmulBTW8A8Into(new(Workspace), a, q8, s8, perRow, M, K, N)
 	withActGroup(t, 32)
 	grouped := make([]float32, M*N)
-	MatmulBTW8A8Into(new(Workspace), a, q8, s8, grouped, M, K, N)
+	matmulBTW8A8Into(new(Workspace), a, q8, s8, grouped, M, K, N)
 	eRow, eGrp := agRelErr(sub(perRow), ref), agRelErr(sub(grouped), ref)
 	t.Logf("rel err without the outlier's own term: per-row %.3g, per-32 %.3g", eRow, eGrp)
 	if eRow < 0.5 {
@@ -147,11 +147,11 @@ func TestActGroup_offIsInert(t *testing.T) {
 	wm := QuantizeInt8(agRandMat(r, N*K), N, K, true)
 	q8, s8, _, _ := wm.Int8()
 	before := make([]float32, M*N)
-	MatmulBTW8A8Into(new(Workspace), a, q8, s8, before, M, K, N)
+	matmulBTW8A8Into(new(Workspace), a, q8, s8, before, M, K, N)
 	SetActQuantGroup(32)
 	SetActQuantGroup(0)
 	after := make([]float32, M*N)
-	MatmulBTW8A8Into(new(Workspace), a, q8, s8, after, M, K, N)
+	matmulBTW8A8Into(new(Workspace), a, q8, s8, after, M, K, N)
 	for i := range before {
 		if before[i] != after[i] {
 			t.Fatalf("[%d] %v != %v after toggling the group off", i, after[i], before[i])
@@ -173,18 +173,18 @@ func TestActGroup_perWorkspace(t *testing.T) {
 		t.Fatal("process-wide group must start at 0")
 	}
 	perRow := make([]float32, N)
-	MatmulBTW8A8Into(new(Workspace), a, q8, s8, perRow, M, K, N)
+	matmulBTW8A8Into(new(Workspace), a, q8, s8, perRow, M, K, N)
 	var grouped Workspace
 	grouped.SetActQuantGroup(32)
 	viaWS := make([]float32, N)
-	MatmulBTW8A8Into(&grouped, a, q8, s8, viaWS, M, K, N)
+	matmulBTW8A8Into(&grouped, a, q8, s8, viaWS, M, K, N)
 	ref := make([]float32, N)
 	matmulW8A8GroupedRef(new(Workspace), 32, a, q8, s8, ref, M, K, N)
 	if e := agRelErr(viaWS, ref); e > 1e-6 {
 		t.Errorf("workspace group 32 vs reference: rel err %.3g", e)
 	}
 	again := make([]float32, N)
-	MatmulBTW8A8Into(new(Workspace), a, q8, s8, again, M, K, N)
+	matmulBTW8A8Into(new(Workspace), a, q8, s8, again, M, K, N)
 	for i := range perRow {
 		if again[i] != perRow[i] {
 			t.Fatalf("[%d] a default workspace changed after another used group 32: %v != %v", i, again[i], perRow[i])
@@ -198,7 +198,7 @@ func TestActGroup_perWorkspace(t *testing.T) {
 }
 
 // TestActGroup_weightStamp: a weight stamped with SetActQuantGroup(32) runs per-32 through every
-// WeightMat entry point (MatmulBT, MatmulBTInto, MatmulBTW4A8Into) with a default workspace and the
+// WeightMat entry point (MatmulBT, MatmulBTInto, matmulBTW4A8Into) with a default workspace and the
 // process-wide setting at 0, and an unstamped weight in the same process still runs per-row.
 func TestActGroup_weightStamp(t *testing.T) {
 	r := rand.New(rand.NewPCG(27, 28))

@@ -62,8 +62,8 @@ On top of the dot kernels, `linalg` provides:
   columns for small M, rows for large M — so each worker runs the fused kernel over a
   small row block and never opens `packedFill`'s missing-m-blocking gap (item 23). amd64
   keeps the vectorized dequant-then-GEMM path (`HasFusedQ8Kernel` false there).
-- The quant matmuls: `MatmulBTQ8` (int8 weights), `matmulBTQ4` (int4 group, f32
-  activations — prefill path), **W8A8** (`MatmulBTW8A8` + the zero-alloc
+- The quant matmuls: `matmulBTQ8` (int8 weights), `matmulBTQ4` (int4 group, f32
+  activations — prefill path), **W8A8** (`matmulBTW8A8` + the zero-alloc
   `…Into(ws *Workspace)` and the fused W8A8 batch, now `MatmulBTBatchInto`), and **W4A8**
   (`matmulBTW4A8`, int4 weights × int8 activations — the int4 *decode* path).
   See `quant.go`, `workspace.go`, `quant_w4a8*.go`. Since LS6 the raw-slice forms

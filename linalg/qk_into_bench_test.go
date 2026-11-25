@@ -20,10 +20,10 @@ func TestMatmulBTQ8Into_bitIdentical(t *testing.T) {
 			scales[i] = rng.Float32() + 0.1
 		}
 		want := make([]float32, sh.M*sh.N)
-		MatmulBTQ8(a, bq, scales, want, sh.M, sh.K, sh.N)
+		matmulBTQ8(a, bq, scales, want, sh.M, sh.K, sh.N)
 		var ws Workspace
 		got := make([]float32, sh.M*sh.N)
-		MatmulBTQ8Into(&ws, a, bq, scales, got, sh.M, sh.K, sh.N)
+		matmulBTQ8Into(&ws, a, bq, scales, got, sh.M, sh.K, sh.N)
 		for i := range want {
 			if got[i] != want[i] {
 				t.Fatalf("M=%d K=%d N=%d: got[%d]=%v want %v", sh.M, sh.K, sh.N, i, got[i], want[i])
@@ -44,7 +44,7 @@ func BenchmarkMatmulBTQ8Into_reusedWS(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		MatmulBTQ8Into(&ws, a, bq, scales, dst, M, K, N)
+		matmulBTQ8Into(&ws, a, bq, scales, dst, M, K, N)
 	}
 }
 func BenchmarkMatmulBTQ8_wrapper(b *testing.B) {
@@ -56,6 +56,6 @@ func BenchmarkMatmulBTQ8_wrapper(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for range b.N {
-		MatmulBTQ8(a, bq, scales, dst, M, K, N)
+		matmulBTQ8(a, bq, scales, dst, M, K, N)
 	}
 }

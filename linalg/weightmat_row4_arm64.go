@@ -13,7 +13,7 @@ import (
 // RepackInt4Row4 attempts to populate w's optional split-half +
 // 4-row-interleaved layout (RepackW4A8Row4/RepackW4A8Row4Scales) from its
 // canonical int4 storage, for a load-time caller to opt a tensor into the
-// faster MatmulBTW4A8Into dispatch below. Explicit and caller-driven, never
+// faster matmulBTW4A8Into dispatch below. Explicit and caller-driven, never
 // probed for automatically inside a matmul (docs/task-w4a8-neon-bandwidth.md's
 // plumbing brief design constraint): a loader decides per-tensor whether to
 // call this, e.g. skipping it for tensors expertPager will read directly off
@@ -24,7 +24,7 @@ import (
 // this core, rows isn't a multiple of 4, or cols isn't a multiple of the
 // int4 group size (currently only group=32 is supported — the kernel's own
 // fixed contract). A false return is not an error; it means this tensor's
-// shape or this core doesn't qualify, and MatmulBTW4A8Into below will keep
+// shape or this core doesn't qualify, and matmulBTW4A8Into below will keep
 // using the canonical path transparently.
 func (w *WeightMat) RepackInt4Row4() bool {
 	if w.q4 == nil || !cpufeat.HasDotProd {
@@ -38,7 +38,7 @@ func (w *WeightMat) RepackInt4Row4() bool {
 	return true
 }
 
-// MatmulBTW4A8Into is MatmulBTW4A8Into's WeightMat-method form for an
+// MatmulBTW4A8Into is matmulBTW4A8Into's WeightMat-method form for an
 // int4-resident w, uniform for the caller: uses the row4-interleaved layout
 // whenever RepackInt4Row4 (or WrapInt4 with LayoutRow4) has populated it, and the
 // canonical per-row kernel otherwise.
@@ -76,7 +76,7 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 	w.matmulBTW4A8Q(ws, &q, dst, M)
 }
 
-// w4a8ActGroup is the activation group MatmulBTW4A8Into quantizes with: w.groupFor(ws), except that the row4 M=1
+// w4a8ActGroup is the activation group matmulBTW4A8Into quantizes with: w.groupFor(ws), except that the row4 M=1
 // path reads the workspace's own group (matmulBTW4A8Row4F16Into's actGroupFor), as it always has. The two differ only
 // when w carries a group the workspace does not.
 func (w *WeightMat) w4a8ActGroup(ws *Workspace, M int) int {
@@ -87,7 +87,7 @@ func (w *WeightMat) w4a8ActGroup(ws *Workspace, M int) int {
 	return g
 }
 
-// matmulBTW4A8Q is MatmulBTW4A8Into after its activation quantization: the dispatch it and MatmulBTW4A8PreInto
+// matmulBTW4A8Q is matmulBTW4A8Into after its activation quantization: the dispatch it and MatmulBTW4A8PreInto
 // share (R-13).
 func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) {
 	if w.q4Row4 != nil && M == 1 {
@@ -127,7 +127,7 @@ func row4Usable() bool { return cpufeat.HasDotProd }
 // requireRow4DotProd refuses, by name, a call to one of the exported 4-row W4A8 matmuls
 // on a CPU without DotProd: their kernels are SDOT throughout, and without the
 // instruction they would die with SIGILL. Callers check row4Usable (WeightMat does) or
-// use MatmulBTW4A8Into with the canonical layout.
+// use matmulBTW4A8Into with the canonical layout.
 func requireRow4DotProd(fn string) {
 	if !row4Usable() {
 		panic("linalg: " + fn + " requires DotProd (SDOT); use MatmulBTW4A8Into with the canonical layout")

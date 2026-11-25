@@ -60,7 +60,7 @@ func BenchmarkW4A8Row4F16Fix(b *testing.B) {
 				b.ReportMetric(bytesPer*float64(b.N)/b.Elapsed().Seconds()/1e9, "GB/s")
 			})
 		}
-		run("f32", func(m *f16FixMat) { MatmulBTW4A8Row4Into(&ws, a, m.row4, m.s32, dst, 1, sh.K, sh.N, 32) })
+		run("f32", func(m *f16FixMat) { matmulBTW4A8Row4Into(&ws, a, m.row4, m.s32, dst, 1, sh.K, sh.N, 32) })
 		run("scalar", func(m *f16FixMat) { matmulRow4F16ScalarWiden(&ws, a, m.row4, m.s16, dst, sh.K, sh.N) })
 		run("neon", func(m *f16FixMat) {
 			w4a8Row4FusedF16 = false
@@ -160,7 +160,7 @@ func BenchmarkW4A8Row4F16FixInterleaved(b *testing.B) {
 		call := func(arm string, m *f16FixMat) {
 			switch arm {
 			case "f32":
-				MatmulBTW4A8Row4Into(&ws, a, m.row4, m.s32, dst, 1, sh.K, sh.N, 32)
+				matmulBTW4A8Row4Into(&ws, a, m.row4, m.s32, dst, 1, sh.K, sh.N, 32)
 			case "scalar":
 				matmulRow4F16ScalarWiden(&ws, a, m.row4, m.s16, dst, sh.K, sh.N)
 			case "neon":

@@ -57,7 +57,7 @@ func TestWorkspace_scopedW8A8(t *testing.T) {
 	ref := make([]float32, M*N)
 	var base Workspace
 	base.SetThreshold(1 << 30) // serial reference
-	MatmulBTW8A8Into(&base, a, bQ, bScales, ref, M, K, N)
+	matmulBTW8A8Into(&base, a, bQ, bScales, ref, M, K, N)
 
 	var wg sync.WaitGroup
 	for _, thr := range []int{0, 1 << 30} {
@@ -67,7 +67,7 @@ func TestWorkspace_scopedW8A8(t *testing.T) {
 			var ws Workspace
 			ws.SetThreshold(thr)
 			got := make([]float32, M*N)
-			MatmulBTW8A8Into(&ws, a, bQ, bScales, got, M, K, N)
+			matmulBTW8A8Into(&ws, a, bQ, bScales, got, M, K, N)
 			for i := range ref {
 				if got[i] != ref[i] {
 					t.Errorf("thr=%d W8A8[%d]=%v != %v", thr, i, got[i], ref[i])

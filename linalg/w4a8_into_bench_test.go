@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// BenchmarkW4A8_allocVsInto shows MatmulBTW4A8Into is zero-alloc in steady
+// BenchmarkW4A8_allocVsInto shows matmulBTW4A8Into is zero-alloc in steady
 // state (reused Workspace) vs the allocating matmulBTW4A8 — the int4 decode
 // equivalent of the W8A8 Into win.
 func BenchmarkW4A8_allocVsInto(b *testing.B) {
@@ -32,7 +32,7 @@ func BenchmarkW4A8_allocVsInto(b *testing.B) {
 		var ws Workspace
 		b.ReportAllocs()
 		for range b.N {
-			MatmulBTW4A8Into(&ws, a, q4, q4s, dst, M, K, N, group)
+			matmulBTW4A8Into(&ws, a, q4, q4s, dst, M, K, N, group)
 		}
 	})
 }

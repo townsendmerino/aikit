@@ -4,7 +4,7 @@ package linalg
 
 import "fmt"
 
-// matmulBTW4A8Row4TileInto is MatmulBTW4A8Row4Into's M>1 sibling: the same
+// matmulBTW4A8Row4TileInto is matmulBTW4A8Row4Into's M>1 sibling: the same
 // row4 weights (RepackW4A8Row4 / RepackW4A8Row4Scales), the same numerics, but
 // four ACTIVATION rows are reduced against a quad's four weight rows in one
 // kernel call instead of one activation row per call.
@@ -17,7 +17,7 @@ import "fmt"
 // cache anyway while the unpack ALU cost stays. Here the unpack is paid once per
 // weight row per group regardless of M.
 //
-// Bit-identical to MatmulBTW4A8Into on the same logical weights, by construction
+// Bit-identical to matmulBTW4A8Into on the same logical weights, by construction
 // rather than by tolerance: see dot_w4a8_tile_arm64.s for the per-output
 // instruction sequence, and TestMatmulBTW4A8_MConsistent /
 // TestWeightMatW4A8_MConsistentAcrossRow4Dispatch for the gates that hold it.

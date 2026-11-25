@@ -11,7 +11,7 @@ import (
 )
 
 // TestMatmulBTW4A8Row4TileInto_bitIdenticalToCanonical is the S-01 tile's own
-// gate, held against the canonical M>1 path (MatmulBTW4A8Into over the SAME
+// gate, held against the canonical M>1 path (matmulBTW4A8Into over the SAME
 // logical weights in their canonical packing) rather than against the row4 M=1
 // kernel — so it proves the thing callers care about, which is that swapping the
 // dispatch changes no bit of any logit.
@@ -51,7 +51,7 @@ func TestMatmulBTW4A8Row4TileInto_bitIdenticalToCanonical(t *testing.T) {
 			var wsWant, wsGot Workspace
 			want := make([]float32, M*N)
 			got := make([]float32, M*N)
-			MatmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
+			matmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
 			matmulBTW4A8Row4TileInto(&wsGot, a, row4, row4s, got, M, K, N, group)
 			for i := range got {
 				if got[i] != want[i] {
@@ -135,7 +135,7 @@ func TestMatmulBTW4A8Row4TileInto_zeroActivationRow(t *testing.T) {
 		var wsWant, wsGot Workspace
 		want := make([]float32, M*N)
 		got := make([]float32, M*N)
-		MatmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
+		matmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
 		matmulBTW4A8Row4TileInto(&wsGot, a, row4, row4s, got, M, K, N, group)
 		for i := range got {
 			if got[i] != want[i] {
@@ -174,7 +174,7 @@ func TestMatmulBTW4A8Row4_rejectsTooSmallKAtEntry(t *testing.T) {
 			matmulBTW4A8Row4TileInto(ws, nil, nil, nil, make([]float32, 4*N), 4, 0, N, group)
 		}, "MatmulBTW4A8Row4TileInto requires K >= group=32"},
 		{"row4_M1", func(ws *Workspace) {
-			MatmulBTW4A8Row4Into(ws, nil, nil, nil, make([]float32, N), 1, 0, N, group)
+			matmulBTW4A8Row4Into(ws, nil, nil, nil, make([]float32, N), 1, 0, N, group)
 		}, "MatmulBTW4A8Row4Into requires K >= group=32"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

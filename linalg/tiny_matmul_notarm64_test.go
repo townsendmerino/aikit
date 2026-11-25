@@ -4,10 +4,8 @@ package linalg
 
 import "github.com/townsendmerino/aikit/internal/kernreg"
 
-// tmArchExempt names the arm64-only entry points, which this architecture's test binary
-// cannot call; tiny_matmul_arm64_test.go sweeps them on arm64.
-var tmArchExempt = map[string]string{
-	"MatmulBTW4A8Row4Into": "arm64 only; swept on arm64",
-}
+// tmArchExempt is empty: the arm64-only matmuls are unexported (LS6), so the completeness
+// check does not count them; tiny_matmul_arm64_test.go still sweeps them on arm64.
+var tmArchExempt = map[string]string{}
 
 func tmArchAdapters() []kernreg.Adapter { return nil }

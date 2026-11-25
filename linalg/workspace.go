@@ -26,7 +26,7 @@ type Workspace struct {
 	deq []float32
 	// i32 is the S-05 lane-sum correction for the M=1 row4 W4A8 path
 	// (w4a8LaneCorrNeg8: 4 int32 per 32-k group of one activation row), per call,
-	// consumed within MatmulBTW4A8Row4Into. Its own buffer for the same reason deq
+	// consumed within matmulBTW4A8Row4Into. Its own buffer for the same reason deq
 	// is: it must never alias the activation scales in f32. Also the Q4_K matmul's
 	// per-group activation sums (q4k.go), a different call, so never live at once.
 	i32 []int32

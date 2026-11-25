@@ -48,9 +48,9 @@ func TestMatmulShapeChecks_recoverableAcrossFanout(t *testing.T) {
 		call func()
 	}{
 		{"MatmulBT short dst", func() { MatmulBT(a, bF, short, M, K, N) }},
-		{"MatmulBTQ8 short dst", func() { MatmulBTQ8(a, bQ, scales, short, M, K, N) }},
-		{"MatmulBTW8A8 short dst", func() { MatmulBTW8A8(a, bQ, scales, short, M, K, N) }},
-		{"MatmulBTQ8 short scales", func() { MatmulBTQ8(a, bQ, scales[:N-1], good, M, K, N) }},
+		{"MatmulBTQ8 short dst", func() { matmulBTQ8(a, bQ, scales, short, M, K, N) }},
+		{"MatmulBTW8A8 short dst", func() { matmulBTW8A8(a, bQ, scales, short, M, K, N) }},
+		{"MatmulBTQ8 short scales", func() { matmulBTQ8(a, bQ, scales[:N-1], good, M, K, N) }},
 		{"MatmulBTW4A8 group 0", func() {
 			matmulBTW4A8(a, make([]byte, N*((K+1)/2)), make([]float32, N), good, M, K, N, 0)
 		}},

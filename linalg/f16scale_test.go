@@ -111,7 +111,7 @@ func TestW4A8F16_everyPathMatchesF32(t *testing.T) {
 				var ws Workspace
 				ws.SetActQuantGroup(ag)
 				want, got := make([]float32, M*N), make([]float32, M*N)
-				MatmulBTW4A8Into(&ws, a, q4, s32, want, M, K, N, 32)
+				matmulBTW4A8Into(&ws, a, q4, s32, want, M, K, N, 32)
 				MatmulBTW4A8F16Into(&ws, a, q4, s16, got, M, K, N, 32)
 				eqF32(t, "MatmulBTW4A8F16Into", got, want)
 

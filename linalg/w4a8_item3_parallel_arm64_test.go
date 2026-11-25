@@ -14,7 +14,7 @@ import (
 // criterion (docs/prompts/w4a8-item3-harness.md): the 6-worker aggregate at
 // the real shape, for the combined dotW4A8SplitHalf2Acc kernel, against the
 // SAME production fork-join primitive TestW4A8_parallelScaling measures
-// (Workspace.parallel — the identical mechanism MatmulBTW4A8Into's parallel
+// (Workspace.parallel — the identical mechanism matmulBTW4A8Into's parallel
 // branch uses), not a from-scratch goroutine loop. No dispatch wiring: this
 // calls the harness kernel directly inside the span closure, mirroring
 // w4a8Span's per-row shape but repacked-layout, mirroring only the

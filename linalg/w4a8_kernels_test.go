@@ -26,7 +26,7 @@ var w4a8Rows = []kernreg.Row{
 	{Symbol: "dotW4A8SplitHalf4Row", Arch: "arm64", Dispatch: "w4a8Row4Span", Oracle: "TestDotW4A8SplitHalf4RowFold_bitIdenticalToSplitHalf4Row"},
 	{Symbol: "dotW4A8SplitHalf4RowPrefetch", Arch: "arm64", Dispatch: "matmulBTW4A8Row4PrefetchInto", Oracle: "TestMatmulBTW4A8Row4PrefetchInto_bitIdenticalToRow4"},
 	{Symbol: "dotW4A8SplitHalf4RowDeshared", Arch: "arm64", Dispatch: "matmulBTW4A8Row4DesharedInto", Oracle: "TestMatmulBTW4A8Row4DesharedInto_bitIdenticalToRow4"},
-	{Symbol: "w4a8LaneCorrNeg8", Arch: "arm64", Dispatch: "MatmulBTW4A8Row4Into", Oracle: "TestW4A8LaneCorrNeg8_matchesScalar"},
+	{Symbol: "w4a8LaneCorrNeg8", Arch: "arm64", Dispatch: "matmulBTW4A8Row4Into", Oracle: "TestW4A8LaneCorrNeg8_matchesScalar"},
 	{Symbol: "dotW4A8SplitHalf4RowFold", Arch: "arm64", Dispatch: "w4a8Row4Span", Oracle: "TestDotW4A8SplitHalf4RowFold_bitIdenticalToSplitHalf4Row"},
 	{Symbol: "dotW4A8SplitHalf4RowFoldF16", Arch: "arm64", Dispatch: "w4a8Row4SpanF16", Oracle: "TestDotW4A8SplitHalf4RowFoldF16_matchesF32"},
 	{Symbol: "dotW4A8Tile4RowSDOT", Arch: "arm64", Dispatch: "w4a8TileRows", Oracle: "TestW4A8Tile4RowSDOT_bitIdenticalToFoldSDOT"},

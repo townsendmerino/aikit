@@ -16,7 +16,7 @@ import (
 // on load), at a per-row reconstruction error the model tolerates.
 //
 // The decoder uses weight-only int8: weights are int8, activations stay f32,
-// and the int8→f32 widen happens inside the matmul (MatmulBTQ8) — the win is
+// and the int8→f32 widen happens inside the matmul (matmulBTQ8) — the win is
 // the 2–4× smaller weight footprint and the memory bandwidth it saves.
 
 // QuantizeRowsInt8 quantizes a [rows, cols] f32 matrix (row-major) to int8
@@ -152,7 +152,7 @@ func DequantizeRowInt8(q []int8, scale float32, dst []float32) {
 	dequantRowInt8(dst, q, scale)
 }
 
-// MatmulBTQ8 computes dst[M,N] = a[M,K] · bᵀ where b is the [N,K] matrix stored
+// matmulBTQ8 computes dst[M,N] = a[M,K] · bᵀ where b is the [N,K] matrix stored
 // as int8 rows bQ + per-row f32 scales bScales (b[j,k] ≈ float32(bQ[j,k]) *
 // bScales[j]). Each output row is widened int8→f32 into a reused scratch buffer
 // via the SIMD dequantRowInt8 (AVX2/NEON — see q8Span, P2/2f0c65f), then the SIMD
@@ -164,12 +164,12 @@ func DequantizeRowInt8(q []int8, scale float32, dst []float32) {
 // calls on the parallel path. Parallelized over the N columns.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
+func matmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	var ws Workspace
-	MatmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
+	matmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
 }
 
-// MatmulBTQ8Into is MatmulBTQ8 through a Workspace: the SERIAL path (the decode
+// matmulBTQ8Into is matmulBTQ8 through a Workspace: the SERIAL path (the decode
 // case, M=1 below the parallel threshold — ~168 such calls per token) takes its
 // widened-weight-row scratch from ws.deqBuf and allocates nothing after warm-up,
 // instead of the K-wide make per call the wrapper did. The parallel path takes a
@@ -178,7 +178,7 @@ func MatmulBTQ8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, 
 // (audit #14; TestQ8Span8Cols_bitIdenticalToColumnForm for the arm64 span).
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTQ8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
+func matmulBTQ8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	checkMatmulQ8("MatmulBTQ8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	if M*N*K < ws.thr() || N < 2 {
 		q8Span(a, bQ, bScales, dst, M, K, N, 0, N, ws.deqBuf(q8SpanScratchLen(M, K)))
@@ -210,7 +210,7 @@ func q8SpanScratchGet(n int) *[]float32 {
 
 func q8SpanScratchPut(p *[]float32) { q8SpanScratchPool.Put(p) }
 
-// q8SpanColumn is the single-column form of q8Span — the definition of MatmulBTQ8's
+// q8SpanColumn is the single-column form of q8Span — the definition of matmulBTQ8's
 // arithmetic, and what every arch ran for every column before the arm64 8-column
 // span (q8span_arm64.go) — kept as the remainder path there and the whole path
 // elsewhere (q8span_other.go). It widens weight row j to f32 ONCE into deq and
@@ -260,28 +260,28 @@ func quantizeRowInt8(a []float32, dst []int8) (scale float32) {
 	return quantizeRowInt8Core(a, dst, 0)
 }
 
-// MatmulBTW8A8 computes dst[M,N] = a[M,K] · bᵀ as full int8×int8→int32 (W8A8):
+// matmulBTW8A8 computes dst[M,N] = a[M,K] · bᵀ as full int8×int8→int32 (W8A8):
 // the f32 activation row is quantized to int8 on the fly (dynamic per-row scale),
 // the integer dot accumulates in int32, and the result is rescaled by the
-// activation scale × the per-row weight scale. Unlike MatmulBTQ8 (weight-only
+// activation scale × the per-row weight scale. Unlike matmulBTQ8 (weight-only
 // int8, f32 activations) this also quantizes the activations, so it is lossier —
 // the tradeoff for an integer kernel. Parallelized over the N columns.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTW8A8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
+func matmulBTW8A8(a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	var ws Workspace
-	MatmulBTW8A8Into(&ws, a, bQ, bScales, dst, M, K, N)
+	matmulBTW8A8Into(&ws, a, bQ, bScales, dst, M, K, N)
 }
 
-// MatmulBTW8A8Into is MatmulBTW8A8 with caller-supplied scratch, so a steady-
+// matmulBTW8A8Into is matmulBTW8A8 with caller-supplied scratch, so a steady-
 // state decode loop allocates nothing. It also quantizes each activation row
 // ONCE (into ws) rather than once per worker — the old code re-quantized the
 // same row in every parallel chunk and allocated a scratch buffer per worker,
 // which was the bulk of decode alloc_space. Output is bit-identical to
-// MatmulBTW8A8 (same quantizeRowInt8 / dotI8 / rescale, just hoisted).
+// matmulBTW8A8 (same quantizeRowInt8 / dotI8 / rescale, just hoisted).
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
+func matmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, dst []float32, M, K, N int) {
 	checkMatmulQ8("MatmulBTW8A8", len(a), len(bQ), len(bScales), len(dst), M, K, N)
 	if g := actGroupFor(ws); g > 0 {
 		matmulW8A8Grouped(ws, g, a, bQ, bScales, dst, M, K, N) // actgroup.go
@@ -295,7 +295,7 @@ func MatmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, 
 
 // QuantizeActivationsInto quantizes a's M rows of K floats to int8 with a per-row
 // symmetric (max/127) scale — the same dynamic activation quantization
-// MatmulBTW8A8Into does internally, exposed so a caller that reuses one activation
+// matmulBTW8A8Into does internally, exposed so a caller that reuses one activation
 // across many weight blocks quantizes it ONCE. aq must be len ≥ M*K, scales ≥ M.
 // (A paged FlatI8 scan reuses the query across ~9766 blocks; re-quantizing it in
 // every block cost ~52 ms/query at 10M vectors — lens §3.5.)
@@ -379,9 +379,9 @@ func sumActGroupsInto(sumAct []int32, aq []int8, M, K, group int) {
 	}
 }
 
-// MatmulBTW8A8Pre is MatmulBTW8A8Into with the activations ALREADY quantized (aq +
+// MatmulBTW8A8Pre is matmulBTW8A8Into with the activations ALREADY quantized (aq +
 // aScales from QuantizeActivationsInto) — it skips the per-call requantization.
-// Bit-identical to MatmulBTW8A8Into given the same aq/aScales (same w8a8Span / dotI8
+// Bit-identical to matmulBTW8A8Into given the same aq/aScales (same w8a8Span / dotI8
 // / rescale). For a paged scan that reuses one query across thousands of weight
 // blocks: quantize once, call this per block.
 //
@@ -512,7 +512,7 @@ type w8a8Op struct {
 // place, so a consumer that aliases int8 weights zero-copy (goinfer's prequant
 // path) gets the dispatch reduction with NO concat copy.
 //
-// Numerically identical to calling MatmulBTW8A8Into once per op.
+// Numerically identical to calling matmulBTW8A8Into once per op.
 //
 // Output contract: overwrites each op's Dst; do not pre-zero. Covers Dst[:M*op.N] of every op.
 func matmulBTW8A8Batch(ws *Workspace, a []float32, M, K int, ops []w8a8Op) {
@@ -822,10 +822,10 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 }
 
 // matmulBTW4A8 computes dst[M,N] = a[M,K] · bᵀ as int4 WEIGHTS × int8
-// ACTIVATIONS — the int4 analogue of MatmulBTW8A8, and the fast M=1 (decode)
+// ACTIVATIONS — the int4 analogue of matmulBTW8A8, and the fast M=1 (decode)
 // path that matmulBTQ4 can't be. b is group-wise int4 (w4 nibbles + wScales per
 // group, QuantizeGroupsInt4 layout); the f32 activations are dynamically
-// quantized to int8 per row (per-row scale, like MatmulBTW8A8).
+// quantized to int8 per row (per-row scale, like matmulBTW8A8).
 //
 // Each output is one fused dotW4A8 call that streams the whole weight row in the
 // integer domain — unpack each int4 group to int8 (nibble−8), int8×int8 SDOT
@@ -840,18 +840,18 @@ func DequantizeRowInt4(packed []byte, scales []float32, group, cols int, dst []f
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func matmulBTW4A8(a []float32, w4 []byte, wScales []float32, dst []float32, M, K, N, group int) {
 	var ws Workspace
-	MatmulBTW4A8Into(&ws, a, w4, wScales, dst, M, K, N, group)
+	matmulBTW4A8Into(&ws, a, w4, wScales, dst, M, K, N, group)
 }
 
-// MatmulBTW4A8Into is matmulBTW4A8 with caller-supplied scratch (a Workspace), so
+// matmulBTW4A8Into is matmulBTW4A8 with caller-supplied scratch (a Workspace), so
 // a steady-state int4 decode loop allocates nothing: the activation is quantized
 // once into the Workspace's reusable int8/f32 buffers instead of a fresh
-// make([]int8, M*K) + make([]float32, M) per call — the same alloc MatmulBTW8A8
+// make([]int8, M*K) + make([]float32, M) per call — the same alloc matmulBTW8A8
 // was re-engineered to remove, now available for the RAM-constrained int4 path.
 // Output is bit-identical to matmulBTW4A8.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTW4A8Into(ws *Workspace, a []float32, w4 []byte, wScales []float32, dst []float32, M, K, N, group int) {
+func matmulBTW4A8Into(ws *Workspace, a []float32, w4 []byte, wScales []float32, dst []float32, M, K, N, group int) {
 	// Always-on O(1) entry guard (M2): the aikit_checks contract below compiles
 	// to a no-op in production, so without this a bad shape would fault inside a
 	// worker goroutine (uncatchable). This panics recoverably, caller-side.
@@ -867,7 +867,7 @@ func MatmulBTW4A8Into(ws *Workspace, a []float32, w4 []byte, wScales []float32, 
 	quantizeRowsInto(aq, aScales, a, M, K, ws.width)
 	// Serial fast-path calls the named span directly (no closure → no heap
 	// escape → zero alloc, the steady-state decode case). Only the parallel
-	// branch pays a closure allocation. Mirrors MatmulBTW8A8Into.
+	// branch pays a closure allocation. Mirrors matmulBTW8A8Into.
 	if M*N*K < ws.thr() || N < 2 {
 		w4a8Span(aq, aScales, w4, wScales, dst, M, K, N, group, nGroups, bpr, 0, N)
 		return
@@ -976,7 +976,7 @@ func (op *w4a8Op) row4ScalesLen() int {
 // so a caller that aliases int4 weights zero-copy gets the dispatch reduction
 // with no concat copy. Mirrors matmulBTW8A8Batch.
 //
-// group is one scalar for the whole batch, matching MatmulBTW4A8Into's own
+// group is one scalar for the whole batch, matching matmulBTW4A8Into's own
 // signature: q/k/v share a group size within a layer, and so do gate/up.
 //
 // WHY THIS EXISTS, measured before it was written (docs/task-simd-audit.md
@@ -990,7 +990,7 @@ func (op *w4a8Op) row4ScalesLen() int {
 // worker there is no stagger to amortize, so the effect is the barrier and not
 // cache residency.
 //
-// Numerically identical to calling MatmulBTW4A8Into once per op.
+// Numerically identical to calling matmulBTW4A8Into once per op.
 //
 // Output contract: overwrites each op's Dst; do not pre-zero. Covers Dst[:M*op.N] of every op.
 func matmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []w4a8Op) {
@@ -1152,7 +1152,7 @@ func w4a8BatchOp(aq []int8, aScales []float32, op w4a8Op, M, K, group, nGroups, 
 // f32 scratch (4-bit code − 8, times its group scale — the same per-element
 // reconstruction as DequantizeRowInt4), then the SIMD dotF32 kernel (AVX2/NEON,
 // the primitive MatmulBT uses) runs over the WHOLE row. So the dequant is the
-// only scalar work (O(K), like the int8-widen in MatmulBTQ8) and the
+// only scalar work (O(K), like the int8-widen in matmulBTQ8) and the
 // multiply-accumulate is one vectorized pass — not K/group tiny 32-wide dots,
 // which were so per-call-overhead-bound they ran slower than scalar.
 //
@@ -1170,7 +1170,7 @@ func matmulBTQ4(a []float32, bPacked []byte, bScales []float32, dst []float32, M
 	matmulBTQ4Into(&ws, a, bPacked, bScales, dst, M, K, N, group)
 }
 
-// matmulBTQ4Into is matmulBTQ4 through a Workspace — same win as MatmulBTQ8Into:
+// matmulBTQ4Into is matmulBTQ4 through a Workspace — same win as matmulBTQ8Into:
 // the serial path takes its dequantized-weight-row scratch from ws.deqBuf(K)
 // (zero alloc after warm-up), the parallel path keeps a per-worker scratch. Output
 // is byte-identical (audit #14).

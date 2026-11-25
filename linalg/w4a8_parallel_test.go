@@ -10,7 +10,7 @@ import (
 	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
-// TestW4A8_parallelScaling checks how much the REAL parallel MatmulBTW4A8Into
+// TestW4A8_parallelScaling checks how much the REAL parallel matmulBTW4A8Into
 // (fork-join across ws.parallel) actually gains over its own serial rate, at
 // the real 1.5B model's actual gate/up-proj shape ([8960,1536] -- embedding
 // 1536, FFN intermediate 8960, from the real GGUF metadata, not the borrowed
@@ -63,7 +63,7 @@ func TestW4A8_parallelScaling(t *testing.T) {
 			r := testing.Benchmark(func(b *testing.B) {
 				for b.Loop() {
 					l := layers[i]
-					MatmulBTW4A8Into(&ws, a, l.packed, l.scales, dst, M, K, N, group)
+					matmulBTW4A8Into(&ws, a, l.packed, l.scales, dst, M, K, N, group)
 					i++
 					if i == NLAYERS {
 						i = 0

@@ -6,7 +6,7 @@ import (
 )
 
 // TestW4A8Batch_bitIdenticalToPerOp is matmulBTW4A8Batch's contract: it must
-// produce EXACTLY the bits that calling MatmulBTW4A8Into once per op produces.
+// produce EXACTLY the bits that calling matmulBTW4A8Into once per op produces.
 // The batch form exists to remove fork/join barriers and redundant activation
 // quantization, never to change a number — goinfer's decode == batched prefill
 // == speculative verify guarantee runs through these projections.
@@ -78,10 +78,10 @@ func TestW4A8Batch_bitIdenticalToPerOp(t *testing.T) {
 				want[i] = make([]float32, c.M*N)
 			}
 
-			// Reference: one MatmulBTW4A8Into per op, canonical layout.
+			// Reference: one matmulBTW4A8Into per op, canonical layout.
 			var wsRef Workspace
 			for i, op := range ops {
-				MatmulBTW4A8Into(&wsRef, a, op.W4, op.Scales, want[i], c.M, c.K, op.N, group)
+				matmulBTW4A8Into(&wsRef, a, op.W4, op.Scales, want[i], c.M, c.K, op.N, group)
 			}
 
 			for _, forced := range []bool{false, true} {

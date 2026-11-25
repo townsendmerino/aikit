@@ -93,7 +93,7 @@ func BenchmarkW4A8_CanonicalVsSplitHalf(b *testing.B) {
 		b.ResetTimer()
 		for i := range b.N {
 			m := &mats[i%bank]
-			MatmulBTW4A8Into(&ws, a, m.canon, m.canonS, dst, 1, K, N, group)
+			matmulBTW4A8Into(&ws, a, m.canon, m.canonS, dst, 1, K, N, group)
 		}
 		sinkW4A8F32ARM64 = dst[0]
 		b.ReportMetric(float64(K)*float64(N)*float64(b.N)/b.Elapsed().Seconds()/1e9, "GMAC/s")
@@ -102,7 +102,7 @@ func BenchmarkW4A8_CanonicalVsSplitHalf(b *testing.B) {
 		b.ResetTimer()
 		for i := range b.N {
 			m := &mats[i%bank]
-			MatmulBTW4A8Row4Into(&ws, a, m.row4, m.row4S, dst, 1, K, N, group)
+			matmulBTW4A8Row4Into(&ws, a, m.row4, m.row4S, dst, 1, K, N, group)
 		}
 		sinkW4A8F32ARM64 = dst[0]
 		b.ReportMetric(float64(K)*float64(N)*float64(b.N)/b.Elapsed().Seconds()/1e9, "GMAC/s")

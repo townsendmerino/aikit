@@ -9,19 +9,19 @@ import "fmt"
 // 4 simultaneous accumulator chains share each cold cache-line region, so
 // one miss stalls 4 rows' in-flight work at once). This file is the
 // full-tensor exported plumbing for the two mechanism-aimed remedies —
-// HARNESS ONLY, mirroring MatmulBTW4A8Row4Into's own shape exactly but never
+// HARNESS ONLY, mirroring matmulBTW4A8Row4Into's own shape exactly but never
 // wired into WeightMat's dispatch (weightmat_row4_arm64.go) or the .giw
 // format. Neither remedy changes any numeric result: both are proven
-// bit-identical to MatmulBTW4A8Row4Into by construction (same per-row math,
+// bit-identical to matmulBTW4A8Row4Into by construction (same per-row math,
 // only the memory access pattern differs).
 
-// matmulBTW4A8Row4PrefetchInto is MatmulBTW4A8Row4Into plus a software
+// matmulBTW4A8Row4PrefetchInto is matmulBTW4A8Row4Into plus a software
 // prefetch hint, prefetchDistance BYTES ahead of each quad's own read
 // position, threaded down to dotW4A8SplitHalf4RowPrefetch. Same
-// w4Row4/wScales4 layout as MatmulBTW4A8Row4Into (RepackW4A8Row4/
+// w4Row4/wScales4 layout as matmulBTW4A8Row4Into (RepackW4A8Row4/
 // RepackW4A8Row4Scales, or a .giw kind-4 tensor's on-disk bytes) — this is
 // the SAME data, just dispatched through a kernel with one added PRFM per
-// iteration. Same M/N/K/group contract as MatmulBTW4A8Row4Into.
+// iteration. Same M/N/K/group contract as matmulBTW4A8Row4Into.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func matmulBTW4A8Row4PrefetchInto(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []float32, dst []float32, M, K, N, group, prefetchDistance int) {
@@ -130,7 +130,7 @@ func RepackW4A8Row4DesharedScales(scales []float32, N, K, group int) (s0, s1, s2
 
 // matmulBTW4A8Row4DesharedInto computes dst[N] = a[K]·bᵀ from
 // RepackW4A8Row4Deshared/RepackW4A8Row4DesharedScales's 4-array layout —
-// bit-identical to MatmulBTW4A8Row4Into/MatmulBTW4A8Into for the same
+// bit-identical to matmulBTW4A8Row4Into/matmulBTW4A8Into for the same
 // logical weights. Same M/N/K/group contract.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].

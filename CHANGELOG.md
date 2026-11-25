@@ -11,6 +11,13 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **The raw-slice int8 and int4 matmuls goinfer reached are unexported** (LS6, step 4, second part): `MatmulBTQ8`,
+  `MatmulBTQ8Into`, `MatmulBTW8A8`, `MatmulBTW8A8Into`, `MatmulBTW4A8Into` and `MatmulBTW4A8Row4Into`. A caller wraps
+  its rows in a `WeightMat` (`WrapInt8`, `WrapInt4`, which copy nothing) and calls `MatmulBT`/`MatmulBTInto`, which
+  dispatch to the same kernels. Five raw-slice forms stay exported until the decision on their callers: the encoder's
+  `MatmulBTQ8Fused` and `MatmulBTQ8FusedInto`, `ann`'s `MatmulBTW8A8Pre`, and goinfer's `MatmulBTW4A8F16Into` and
+  `MatmulBTW4A8F16Pre`.
+
 - **Raw-slice matmuls nothing outside `linalg` calls are unexported** (LS6, step 4, first part): `MatmulBTGGUFQ4K`,
   `MatmulBTGGUFQ6K`, `MatmulBTQ4`, `MatmulBTQ4Into`, `MatmulBTW4A8`, `MatmulBTW4A8Row4DesharedInto`,
   `MatmulBTW4A8Row4PrefetchInto` and `MatmulBTW4A8Row4TileInto`. Each is reached through `WeightMat` (the K-quant kinds,

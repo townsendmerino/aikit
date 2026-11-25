@@ -8,7 +8,7 @@ import (
 )
 
 // TestActGroup_row4LayoutAgrees: the arm64 row4 layout (split-half + 4-row interleave), through
-// MatmulBTW4A8Row4Into and through a repacked-only WeightMat, runs the per-32 kernel path at M=1: the
+// matmulBTW4A8Row4Into and through a repacked-only WeightMat, runs the per-32 kernel path at M=1: the
 // two entry points agree bit-for-bit with each other, and with the canonical layout's Go reference to
 // accumulation order.
 func TestActGroup_row4LayoutAgrees(t *testing.T) {
@@ -22,10 +22,10 @@ func TestActGroup_row4LayoutAgrees(t *testing.T) {
 	q4, s4, _, _ := wm.Int4()
 	withActGroup(t, 32)
 	canon := make([]float32, N)
-	MatmulBTW4A8Into(new(Workspace), a, q4, s4, canon, 1, K, N, 32)
+	matmulBTW4A8Into(new(Workspace), a, q4, s4, canon, 1, K, N, 32)
 	r4, r4s := RepackW4A8Row4(q4, N, K, 32), RepackW4A8Row4Scales(s4, N, K, 32)
 	viaFree := make([]float32, N)
-	MatmulBTW4A8Row4Into(new(Workspace), a, r4, r4s, viaFree, 1, K, N, 32)
+	matmulBTW4A8Row4Into(new(Workspace), a, r4, r4s, viaFree, 1, K, N, 32)
 	only, ok := wrapInt4Row4OnlyF32(r4, r4s, N, K, 32)
 	if !ok {
 		t.Fatal("WrapInt4(LayoutRow4) declined")
@@ -63,7 +63,7 @@ func TestActGroup_row4KernelMatchesReference(t *testing.T) {
 		prev := W4A8RowFoldForTest()
 		SetW4A8RowFoldForTest(fold)
 		got := make([]float32, N)
-		MatmulBTW4A8Row4Into(new(Workspace), a, r4, r4s, got, 1, K, N, 32)
+		matmulBTW4A8Row4Into(new(Workspace), a, r4, r4s, got, 1, K, N, 32)
 		SetW4A8RowFoldForTest(prev)
 		if e := agRelErr(got, ref); e > 1e-6 {
 			t.Errorf("fold=%v: row4 grouped kernel vs reference: rel err %.3g", fold, e)

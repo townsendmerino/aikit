@@ -290,7 +290,7 @@ func TestDotW4A8SplitHalf4Row_bitIdenticalToCanonical(t *testing.T) {
 	// The structural argument says a group-count-dependent residue cannot exist —
 	// the kernel's accumulator layout does not vary with nGroups — and the
 	// production-shaped sibling gate (TestMatmulBTW4A8Row4Into_bitIdenticalTo-
-	// MatmulBTW4A8Into, which already runs {1536, 8960} and {8960, 1536}) covers
+	// matmulBTW4A8Into, which already runs {1536, 8960} and {8960, 1536}) covers
 	// the same ground one level up. This adds the two production counts to the RAW
 	// KERNEL gate anyway, because "an argument plus a different test" is weaker
 	// than the same test executing the shape, and it costs two iterations.

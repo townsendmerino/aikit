@@ -14,7 +14,7 @@ import (
 // numeric result at any swept distance — PRFM never faults and never
 // touches a register any SDOT/FMLA reads, so this should hold trivially, but
 // it's proven the same way every other kernel variant in this file is,
-// across every (K,N) shape MatmulBTW4A8Row4Into itself is tested against
+// across every (K,N) shape matmulBTW4A8Row4Into itself is tested against
 // (every residue this campaign's harness convention checks), not assumed
 // from the assembly alone.
 func TestMatmulBTW4A8Row4PrefetchInto_bitIdenticalToRow4(t *testing.T) {
@@ -43,7 +43,7 @@ func TestMatmulBTW4A8Row4PrefetchInto_bitIdenticalToRow4(t *testing.T) {
 
 		var ws Workspace
 		want := make([]float32, N)
-		MatmulBTW4A8Row4Into(&ws, a, packed4, scales4, want, 1, K, N, group)
+		matmulBTW4A8Row4Into(&ws, a, packed4, scales4, want, 1, K, N, group)
 
 		for _, dist := range distances {
 			var ws2 Workspace
@@ -88,7 +88,7 @@ func TestMatmulBTW4A8Row4DesharedInto_bitIdenticalToRow4(t *testing.T) {
 
 		var ws Workspace
 		want := make([]float32, N)
-		MatmulBTW4A8Row4Into(&ws, a, packed4, scales4, want, 1, K, N, group)
+		matmulBTW4A8Row4Into(&ws, a, packed4, scales4, want, 1, K, N, group)
 
 		w0, w1, w2, w3 := RepackW4A8Row4Deshared(packed, N, K, group)
 		s0, s1, s2, s3 := RepackW4A8Row4DesharedScales(scales, N, K, group)

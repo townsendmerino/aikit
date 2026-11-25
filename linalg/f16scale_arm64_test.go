@@ -12,14 +12,14 @@ func layoutRefF32(ws *Workspace, a []float32, wm *WeightMat, q4 []byte, s32 []fl
 	out := make([]float32, M*N)
 	if g := wm.groupFor(ws); g > 0 {
 		if M == 1 {
-			MatmulBTW4A8Row4Into(ws, a, wm.q4Row4, s4, out, M, K, N, 32)
+			matmulBTW4A8Row4Into(ws, a, wm.q4Row4, s4, out, M, K, N, 32)
 			return out
 		}
 		matmulW4A8Grouped(ws, g, a, int4Layout{w4: q4, r4: wm.q4Row4, wS: s32, r4S: s4, group: 32, K: K}, out, M, N)
 		return out
 	}
 	if M == 1 {
-		MatmulBTW4A8Row4Into(ws, a, wm.q4Row4, s4, out, M, K, N, 32)
+		matmulBTW4A8Row4Into(ws, a, wm.q4Row4, s4, out, M, K, N, 32)
 	} else {
 		matmulBTW4A8Row4TileInto(ws, a, wm.q4Row4, s4, out, M, K, N, 32)
 	}

@@ -98,7 +98,7 @@ func (w *WeightMat) QuantizeActW4A8(ws *Workspace, a []float32, M int, q *ActQ) 
 	QuantizeActQ(a, M, w.cols, w.w4a8ActGroup(ws, M), q)
 }
 
-// MatmulBTW4A8PreInto is MatmulBTW4A8Into on an activation already quantized by QuantizeActW4A8 (or QuantizeActQ
+// MatmulBTW4A8PreInto is matmulBTW4A8Into on an activation already quantized by QuantizeActW4A8 (or QuantizeActQ
 // with w.ActQuantGroup's effective group): bit-identical to w.MatmulBTW4A8Into on the activation q was quantized
 // from, on every layout and arch (it is the same dispatch).
 //

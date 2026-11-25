@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// MatmulBTW4A8Row4Into refuses a K that is not a positive multiple of 32 by name on
+// matmulBTW4A8Row4Into refuses a K that is not a positive multiple of 32 by name on
 // every path, including with a workspace activation group set, where it used to reach
 // the per-group path and index past the 4-row weights.
 func TestMatmulBTW4A8Row4Into_raggedKRefusedWithActGroup(t *testing.T) {
@@ -22,7 +22,7 @@ func TestMatmulBTW4A8Row4Into_raggedKRefusedWithActGroup(t *testing.T) {
 			var r any
 			func() {
 				defer func() { r = recover() }()
-				MatmulBTW4A8Row4Into(ws, a, w4, wS, dst, 1, K, N, group)
+				matmulBTW4A8Row4Into(ws, a, w4, wS, dst, 1, K, N, group)
 			}()
 			name := fmt.Sprintf("actGroup=%d K=%d", actGroup, K)
 			if r == nil {

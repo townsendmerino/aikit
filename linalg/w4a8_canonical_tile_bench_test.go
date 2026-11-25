@@ -31,7 +31,7 @@ func BenchmarkMatmulBTW4A8Canonical(b *testing.B) {
 			var ws Workspace
 			b.ResetTimer()
 			for b.Loop() {
-				MatmulBTW4A8Into(&ws, a, packed, wScales, dst, M, K, N, 32)
+				matmulBTW4A8Into(&ws, a, packed, wScales, dst, M, K, N, 32)
 			}
 			macs := int64(M) * int64(K) * int64(N)
 			b.ReportMetric(float64(macs)/(float64(b.Elapsed().Nanoseconds())/float64(b.N)), "GMAC/s")
