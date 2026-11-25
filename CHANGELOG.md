@@ -9,6 +9,19 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Changed
+
+- **`perfgate` judges seventeen benchmark families, finds each by name in a list of packages, and fails on a listed family it
+  cannot find** (`tools/perfgate/families.go`). New: the K-quant kinds (`BenchmarkQ56KvsInt8`, `BenchmarkQ4KvsSplitHalf`), the f16
+  acc64 attention kernels (`BenchmarkMatmulQKAcc64F16`, `BenchmarkMatmulAVAcc64F16`, added beside their f32 twins) and amd64's
+  contract transcendentals (`BenchmarkExpF32KernelsAMD64`, `BenchmarkSiLUAMD64`). Each family names the arches whose build defines
+  it: the old list ran `BenchmarkSoftmaxRowKernels` and `BenchmarkSiLUKernels`, which exist on arm64 only, on amd64 too, and
+  `BenchmarkMatmulBTW4A8SplitHalfTile`, amd64 only, on arm64, where nothing defined them and nothing said so.
+  `TestDefaultFamilies_resolveInSource` holds the table to the source on linux and darwin arm64 and linux and windows amd64.
+  A family is matched across the tag boundary by benchmark name, so one that moves package is still compared; a listed family
+  no package of the working tree defines fails the gate before anything is measured (exit 6). `--pkg` takes a comma-separated
+  package list and `--bench` a comma-separated list of benchmark names (it took a regex).
+
 ## [1.79.0] — 2026-11-24
 
 `perfgate` VERDICT: FAIL — 3 regression(s) vs v1.78.0 across 47 shapes, confirmed on a second measurement
@@ -44,16 +57,6 @@ RETRIEVAL: no — vs v1.78.0, none of 17 changed files is in the retrieval zone
   than the 4-key kernel (`BenchmarkQkAcc64Stride`, one thread, medians: 308 µs against 193 µs at a 12 KiB stride, 125 µs against 191 µs
   padded by 64 B); the 4-key kernel takes those calls.
   A dispatch guard: the scores are bit-identical either way (`TestQkAcc64Keys16_declinesAtAnAliasingStride`).
-- **`perfgate` judges seventeen benchmark families, finds each by name in a list of packages, and fails on a listed family it
-  cannot find** (`tools/perfgate/families.go`). New: the K-quant kinds (`BenchmarkQ56KvsInt8`, `BenchmarkQ4KvsSplitHalf`), the f16
-  acc64 attention kernels (`BenchmarkMatmulQKAcc64F16`, `BenchmarkMatmulAVAcc64F16`, added beside their f32 twins) and amd64's
-  contract transcendentals (`BenchmarkExpF32KernelsAMD64`, `BenchmarkSiLUAMD64`). Each family names the arches whose build defines
-  it: the old list ran `BenchmarkSoftmaxRowKernels` and `BenchmarkSiLUKernels`, which exist on arm64 only, on amd64 too, and
-  `BenchmarkMatmulBTW4A8SplitHalfTile`, amd64 only, on arm64, where nothing defined them and nothing said so.
-  `TestDefaultFamilies_resolveInSource` holds the table to the source on linux and darwin arm64 and linux and windows amd64.
-  A family is matched across the tag boundary by benchmark name, so one that moves package is still compared; a listed family
-  no package of the working tree defines fails the gate before anything is measured (exit 6). `--pkg` takes a comma-separated
-  package list and `--bench` a comma-separated list of benchmark names (it took a regex).
 
 ### Added (Experimental tier)
 
