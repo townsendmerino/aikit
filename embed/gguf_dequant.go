@@ -3,6 +3,8 @@ package embed
 import (
 	"encoding/binary"
 	"math"
+
+	"github.com/townsendmerino/aikit/internal/half"
 )
 
 // GGML block dequantizers — one function per quantization type, moved out of
@@ -28,7 +30,7 @@ func dequantRange(typ uint32, raw []byte, start int, dst []float32, blockElems i
 		}
 	case ggmlTypeF16:
 		for i := range dst {
-			dst[i] = halfBitsToF32(binary.LittleEndian.Uint16(raw[2*(start+i):]))
+			dst[i] = half.ToF32(binary.LittleEndian.Uint16(raw[2*(start+i):]))
 		}
 	case ggmlTypeBF16:
 		for i := range dst {
@@ -94,7 +96,7 @@ func dequantRange(typ uint32, raw []byte, start int, dst []float32, blockElems i
 // f16 scale d then 32 int8 q; value = d*q.
 func dequantQ8_0Block(raw []byte, blk int, out []float32) {
 	base := blk * 34
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+34]
 	out = out[:32:32]
 	qs = qs[:32:32]
@@ -108,7 +110,7 @@ func dequantQ8_0Block(raw []byte, blk int, out []float32) {
 // element i+16, each recentered by -8: value = d*(nibble-8).
 func dequantQ4_0Block(raw []byte, blk int, out []float32) {
 	base := blk * 18
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+18]
 	out = out[:32:32]
 	qs = qs[:16:16]
@@ -125,7 +127,7 @@ func dequantQ4_0Block(raw []byte, blk int, out []float32) {
 // recentered by -16: value = d*(code-16). Mirrors ggml's dequantize_row_q5_0.
 func dequantQ5_0Block(raw []byte, blk int, out []float32) {
 	base := blk * 22
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qh := binary.LittleEndian.Uint32(raw[base+2:])
 	qs := raw[base+6 : base+22]
 	out = out[:32:32]
@@ -145,7 +147,7 @@ func dequantQ5_0Block(raw []byte, blk int, out []float32) {
 // order the kernels read them: ds[4*(2*chunk+is)+k] scales the 16 weights at out[128*chunk+32*k+16*is:].
 func q6kBlockScales(raw []byte, base int) (ds [16]float32) {
 	sc := raw[base+192 : base+208]
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+208:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base+208:]))
 	for chunk := range 2 {
 		for is := range 2 {
 			for k := range 4 {
@@ -166,7 +168,7 @@ func dequantQ6KBlockScalar(raw []byte, sb int, out []float32) {
 	ql := raw[base : base+128]
 	qh := raw[base+128 : base+192]
 	sc := raw[base+192 : base+208] // int8 scales
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+208:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base+208:]))
 	out = out[:256:256]
 	for chunk := range 2 {
 		n0 := chunk * 128
@@ -210,8 +212,8 @@ func dequantQ6KBlockScalar(raw []byte, sb int, out []float32) {
 // then 16 bytes whose low nibble is element j and high nibble element j+16; value = q·d + m.
 func dequantQ4_1Block(raw []byte, blk int, out []float32) {
 	base := blk * 20
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
-	m := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
+	m := half.ToF32(binary.LittleEndian.Uint16(raw[base+2:]))
 	qs := raw[base+4 : base+20]
 	out = out[:32:32]
 	for j := range 16 {
@@ -225,8 +227,8 @@ func dequantQ4_1Block(raw []byte, blk int, out []float32) {
 // value = q·d + m.
 func dequantQ5_1Block(raw []byte, blk int, out []float32) {
 	base := blk * 24
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
-	m := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
+	m := half.ToF32(binary.LittleEndian.Uint16(raw[base+2:]))
 	qh := binary.LittleEndian.Uint32(raw[base+4:])
 	qs := raw[base+8 : base+24]
 	out = out[:32:32]
@@ -244,7 +246,7 @@ func dequantQ5_1Block(raw []byte, blk int, out []float32) {
 // nibble looked up in the kvaluesIQ4NL codebook: value = d·kvaluesIQ4NL[code].
 func dequantIQ4NLBlock(raw []byte, blk int, out []float32) {
 	base := blk * 18
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+18]
 	out = out[:32:32]
 	qs = qs[:16:16]
@@ -341,7 +343,7 @@ func dequantNVFP4Block(raw []byte, blk int, out []float32) {
 // kvaluesIQ4NL codebook (low → element j, high → j+16 within the sub-block).
 func dequantIQ4XSBlock(raw []byte, sb int, out []float32) {
 	base := sb * 136
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
 	scalesH := binary.LittleEndian.Uint16(raw[base+2:])
 	scalesL := raw[base+4 : base+8]
 	qs := raw[base+8 : base+136]
@@ -369,7 +371,7 @@ const iq1Delta = 0.125
 // dequantize_row_iq1_s.
 func dequantIQ1SBlock(raw []byte, sb int, out []float32) {
 	base := sb * 50
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+34]
 	out = out[:256:256]
 	for ib := range 8 {
@@ -404,7 +406,7 @@ func dequantIQ1MBlock(raw []byte, sb int, out []float32) {
 	for i := range 4 {
 		sc[i] = binary.LittleEndian.Uint16(raw[base+48+2*i:])
 	}
-	d := halfBitsToF32(sc[0]>>12 | (sc[1]>>8)&0x00F0 | (sc[2]>>4)&0x0F00 | sc[3]&0xF000)
+	d := half.ToF32(sc[0]>>12 | (sc[1]>>8)&0x00F0 | (sc[2]>>4)&0x0F00 | sc[3]&0xF000)
 	out = out[:256:256]
 	for ib := range 8 {
 		shift := 6 * (ib % 2)
@@ -443,7 +445,7 @@ func dequantTQ1_0Block(raw []byte, sb int, out []float32) {
 	base := sb * 54
 	qs := raw[base : base+48]
 	qh := raw[base+48 : base+52]
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+52:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base+52:]))
 	out = out[:256:256]
 	for n := range 5 {
 		for m := range 32 {
@@ -466,7 +468,7 @@ func dequantTQ1_0Block(raw []byte, sb int, out []float32) {
 func dequantTQ2_0Block(raw []byte, sb int, out []float32) {
 	base := sb * 66
 	qs := raw[base : base+64]
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+64:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base+64:]))
 	out = out[:256:256]
 	for h := range 2 {
 		for l := range 4 {
@@ -490,7 +492,7 @@ func signedMul(db float32, g int8, signs byte, j int) float32 {
 // dequantize_row_iq2_xxs.
 func dequantIQ2XXSBlock(raw []byte, sb int, out []float32) {
 	base := sb * 66
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
 	out = out[:256:256]
 	for ib := range 8 {
 		q := raw[base+2+8*ib : base+2+8*ib+8]
@@ -513,7 +515,7 @@ func dequantIQ2XXSBlock(raw []byte, sb int, out []float32) {
 // nibble for its first 16 elements): db = d·(0.5+scale)·0.25. Mirrors ggml's dequantize_row_iq2_xs.
 func dequantIQ2XSBlock(raw []byte, sb int, out []float32) {
 	base := sb * 74
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
 	scales := raw[base+66 : base+74]
 	out = out[:256:256]
 	for ib := range 8 {
@@ -541,7 +543,7 @@ func dequantIQ2XSBlock(raw []byte, sb int, out []float32) {
 // dequantize_row_iq3_xxs.
 func dequantIQ3XXSBlock(raw []byte, sb int, out []float32) {
 	base := sb * 98
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+66]
 	out = out[:256:256]
 	for ib := range 8 {
@@ -568,7 +570,7 @@ func dequantIQ3XXSBlock(raw []byte, sb int, out []float32) {
 // sign comes from the packed sign bits. Mirrors ggml's dequantize_row_iq2_s.
 func dequantIQ2SBlock(raw []byte, sb int, out []float32) {
 	base := sb * 82
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+34]
 	signs := raw[base+34 : base+66]
 	qh := raw[base+66 : base+74]
@@ -603,7 +605,7 @@ func dequantIQ2SBlock(raw []byte, sb int, out []float32) {
 // bits. Mirrors ggml's dequantize_row_iq3_s.
 func dequantIQ3SBlock(raw []byte, sb int, out []float32) {
 	base := sb * 110
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+66]
 	qh := raw[base+66 : base+74]
 	signs := raw[base+74 : base+106]
@@ -635,8 +637,8 @@ func dequantIQ3SBlock(raw []byte, sb int, out []float32) {
 // q4kBlockScales reads a Q4_K super-block's prologue: dmin, and for each of its eight 32-weight sub-blocks the
 // multiplier d·scale (one float32 product, as dequantQ4KBlockScalar computes it) and the 6-bit min as a float32.
 func q4kBlockScales(raw []byte, base int) (mul, mins [8]float32, dmin float32) {
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
-	dmin = halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
+	dmin = half.ToF32(binary.LittleEndian.Uint16(raw[base+2:]))
 	scales := raw[base+4 : base+16]
 	for j := range 8 {
 		sc, m := q4kScaleMin(j, scales)
@@ -658,8 +660,8 @@ func q4kBlockScales(raw []byte, base int) (mul, mins [8]float32, dmin float32) {
 // own architecture's order.
 func dequantQ4KBlockScalar(raw []byte, sb int, out []float32) {
 	base := sb * 144
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
-	dmin := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
+	dmin := half.ToF32(binary.LittleEndian.Uint16(raw[base+2:]))
 	scales := raw[base+4 : base+16]
 	qs := raw[base+16 : base+144]
 	// Direct index (base2+l) instead of an accumulated yi counter, PLUS reslicing
@@ -703,8 +705,8 @@ func q4kScaleMin(j int, q []byte) (scale, min uint8) {
 // a mask that walks the qh byte two bits at a time across the four 64-elem groups.
 func dequantQ5KBlock(raw []byte, sb int, out []float32) {
 	base := sb * 176
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
-	dmin := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
+	dmin := half.ToF32(binary.LittleEndian.Uint16(raw[base+2:]))
 	scales := raw[base+4 : base+16]
 	qh := raw[base+16 : base+48]
 	qs := raw[base+48 : base+176]
@@ -754,8 +756,8 @@ func dequantQ2KBlock(raw []byte, sb int, out []float32) {
 	base := sb * 84
 	scales := raw[base : base+16]
 	qs := raw[base+16 : base+80]
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+80:]))
-	dmin := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+82:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base+80:]))
+	dmin := half.ToF32(binary.LittleEndian.Uint16(raw[base+82:]))
 
 	is := 0
 	// Direct index (base+l / base+16+l) instead of an accumulated yi counter,
@@ -801,7 +803,7 @@ func dequantQ3KBlock(raw []byte, sb int, out []float32) {
 	hm := raw[base : base+32]
 	q := raw[base+32 : base+96]
 	scRaw := raw[base+96 : base+108]
-	dAll := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+108:]))
+	dAll := half.ToF32(binary.LittleEndian.Uint16(raw[base+108:]))
 
 	// Unpack the 16 six-bit sub-block scales: the 12 packed bytes are read as three
 	// little-endian uint32s, recombined (ggml's bit dance), and laid back down as a

@@ -59,19 +59,21 @@ var rules = map[string]rule{
 	"internal/accum":                 {},
 	"internal/cursor":                {},
 	"internal/cpufeat":               {},
-	"linalg/internal/outputcontract": {},
 	"internal/guardmem":              {},
 	"internal/importrules":           {},
+	"linalg/internal/shape":          {},
 	"internal/kernreg":               {aikit: []string{"internal/guardmem"}},
+	"internal/half":                  {},
+	"linalg/internal/outputcontract": {},
 
 	// mmap is a leaf among aikit packages. Its one external import is madvise on darwin.
 	"mmap": {ext: []ext{{path: "golang.org/x/sys/unix", goos: "darwin"}}},
 
 	// Kernels and loaders.
-	"linalg":      {aikit: []string{"internal/cpufeat", "linalg/elem", "mmap"}},
+	"linalg":      {aikit: []string{"internal/cpufeat", "internal/half", "linalg/elem", "linalg/internal/shape", "mmap"}},
 	"linalg/elem": {aikitOn: []ext{{path: "internal/cpufeat", goarch: "amd64"}}},
 	"embed": {
-		aikit: []string{"internal/cursor", "mmap"},
+		aikit: []string{"internal/cursor", "internal/half", "mmap"},
 		ext: []ext{
 			{path: "golang.org/x/text/unicode/norm"},
 			{path: "golang.org/x/sys/cpu", goarch: "amd64"},
@@ -342,7 +344,7 @@ func TestREADMEPackageTable(t *testing.T) {
 		rows++
 		var want []string
 		for _, a := range r.aikit {
-			if !strings.HasPrefix(a, "internal/") {
+			if !strings.HasPrefix(a, "internal/") && !strings.Contains(a, "/internal/") {
 				want = append(want, a)
 			}
 		}

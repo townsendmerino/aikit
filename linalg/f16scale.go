@@ -1,6 +1,10 @@
 package linalg
 
-import "math"
+import (
+	"math"
+
+	"github.com/townsendmerino/aikit/internal/half"
+)
 
 // Int4 group scales are stored as IEEE binary16 (goinfer docs/tasks/task-cpu-decode-peer-gap-2026-09.md, L1):
 // 2 bytes per 32 weights instead of 4, and the exact values every GPU backend already serves. Kernels widen
@@ -40,7 +44,7 @@ func F32ToF16(f float32) uint16 {
 }
 
 // F16ToF32 widens an IEEE binary16 bit pattern to f32. Exact.
-func F16ToF32(h uint16) float32 { return f16ToF32(h) }
+func F16ToF32(h uint16) float32 { return half.ToF32(h) }
 
 // F32ToF16Slice converts src into dst[:len(src)] with F32ToF16.
 //

@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/townsendmerino/aikit/internal/cpufeat"
+
+	"github.com/townsendmerino/aikit/internal/half"
 )
 
 // TestDotW4A8SplitHalf4RowFoldF16_matchesF32 is gate 2 of the L1 arm64 fix for the fused kernel (goinfer
@@ -98,11 +100,11 @@ func TestDotW4A8SplitHalf4RowFoldF16_matchesF32(t *testing.T) {
 	t.Logf("one-ulp scale changes that moved the output: %d of %d", ulpMoved, ulpTried)
 }
 
-// fold4F32 is dotW4A8SplitHalf4RowFold on s16 widened by the scalar f16ToF32 (independent of widenF16's asm).
+// fold4F32 is dotW4A8SplitHalf4RowFold on s16 widened by the scalar half.ToF32 (independent of widenF16's asm).
 func fold4F32(act []int8, corr []int32, packed4 []byte, s16 []uint16, nGroups int) [4]float32 {
 	s32 := make([]float32, len(s16))
 	for i, h := range s16 {
-		s32[i] = f16ToF32(h)
+		s32[i] = half.ToF32(h)
 	}
 	var out [4]float32
 	dotW4A8SplitHalf4RowFold(&act[0], &corr[0], &packed4[0], &s32[0], &out[0], nGroups)

@@ -1,5 +1,7 @@
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/half"
+
 // MatmulQKAcc64F16 is MatmulQKAcc64 over a key cache stored as IEEE binary16 bits: dst[M,N] = a[M,K] · b[N,K]ᵀ, f64-accumulated,
 // b's rows K-wide at bOff within rows rowStride halves apart. Each half is widened exactly to f32, so the result equals
 // MatmulQKAcc64 run on the widened cache bit for bit (every key's sum is the same d-ascending fold), while the cache is read at two
@@ -17,14 +19,14 @@ func MatmulQKAcc64F16(a []float32, bMat []uint16, dst []float32, M, K, N, bOff, 
 			var s0, s1, s2, s3, s4, s5, s6, s7 float64
 			for d := range K {
 				qd := float64(arow[d])
-				s0 += qd * float64(f16ToF32(bMat[base+d]))
-				s1 += qd * float64(f16ToF32(bMat[base+rowStride+d]))
-				s2 += qd * float64(f16ToF32(bMat[base+2*rowStride+d]))
-				s3 += qd * float64(f16ToF32(bMat[base+3*rowStride+d]))
-				s4 += qd * float64(f16ToF32(bMat[base+4*rowStride+d]))
-				s5 += qd * float64(f16ToF32(bMat[base+5*rowStride+d]))
-				s6 += qd * float64(f16ToF32(bMat[base+6*rowStride+d]))
-				s7 += qd * float64(f16ToF32(bMat[base+7*rowStride+d]))
+				s0 += qd * float64(half.ToF32(bMat[base+d]))
+				s1 += qd * float64(half.ToF32(bMat[base+rowStride+d]))
+				s2 += qd * float64(half.ToF32(bMat[base+2*rowStride+d]))
+				s3 += qd * float64(half.ToF32(bMat[base+3*rowStride+d]))
+				s4 += qd * float64(half.ToF32(bMat[base+4*rowStride+d]))
+				s5 += qd * float64(half.ToF32(bMat[base+5*rowStride+d]))
+				s6 += qd * float64(half.ToF32(bMat[base+6*rowStride+d]))
+				s7 += qd * float64(half.ToF32(bMat[base+7*rowStride+d]))
 			}
 			drow[j], drow[j+1], drow[j+2], drow[j+3] = float32(s0), float32(s1), float32(s2), float32(s3)
 			drow[j+4], drow[j+5], drow[j+6], drow[j+7] = float32(s4), float32(s5), float32(s6), float32(s7)
@@ -33,7 +35,7 @@ func MatmulQKAcc64F16(a []float32, bMat []uint16, dst []float32, M, K, N, bOff, 
 			row := bMat[bOff+j*rowStride : bOff+j*rowStride+K]
 			var s float64
 			for d := range K {
-				s += float64(arow[d]) * float64(f16ToF32(row[d]))
+				s += float64(arow[d]) * float64(half.ToF32(row[d]))
 			}
 			drow[j] = float32(s)
 		}
@@ -57,7 +59,7 @@ func MatmulAVAcc64F16(scores []float32, vals []uint16, dst []float32, acc []floa
 				w := float64(srow[s])
 				v := vals[headOff+s*rowStride+d0 : headOff+s*rowStride+d0+16 : headOff+s*rowStride+d0+16]
 				for d := range a {
-					a[d] += w * float64(f16ToF32(v[d]))
+					a[d] += w * float64(half.ToF32(v[d]))
 				}
 			}
 			for d := range a {
@@ -72,7 +74,7 @@ func MatmulAVAcc64F16(scores []float32, vals []uint16, dst []float32, acc []floa
 				w := float64(srow[s])
 				vrow := vals[headOff+s*rowStride : headOff+s*rowStride+hd]
 				for d := d0; d < hd; d++ {
-					acc[d] += w * float64(f16ToF32(vrow[d]))
+					acc[d] += w * float64(half.ToF32(vrow[d]))
 				}
 			}
 			for d := d0; d < hd; d++ {

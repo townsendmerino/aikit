@@ -4,6 +4,8 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/half"
 )
 
 // Correctness for the native K-quant integer-accumulation matmul (kquant.go). Order of trust:
@@ -22,7 +24,7 @@ func refDequantQ6K(raw []byte, sb int, out []float32) {
 	ql := raw[base : base+128]
 	qh := raw[base+128 : base+192]
 	sc := raw[base+192 : base+208]
-	d := f16ToF32(u16le(raw[base+208:]))
+	d := half.ToF32(u16le(raw[base+208:]))
 	for chunk := range 2 {
 		n0 := chunk * 128
 		qlo := ql[chunk*64:]
@@ -44,8 +46,8 @@ func refDequantQ6K(raw []byte, sb int, out []float32) {
 
 func refDequantQ4K(raw []byte, sb int, out []float32) {
 	base := sb * 144
-	d := f16ToF32(u16le(raw[base:]))
-	dmin := f16ToF32(u16le(raw[base+2:]))
+	d := half.ToF32(u16le(raw[base:]))
+	dmin := half.ToF32(u16le(raw[base+2:]))
 	scales := raw[base+4 : base+16]
 	qs := raw[base+16 : base+144]
 	yi := 0
