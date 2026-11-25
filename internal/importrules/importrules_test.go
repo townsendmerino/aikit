@@ -40,15 +40,16 @@ type rule struct {
 // the same commit.
 var rules = map[string]rule{
 	// Leaves: stdlib only.
-	"topk":                 {},
-	"fuse":                 {},
-	"chunk":                {},
-	"internal/accum":       {},
-	"internal/cursor":      {},
-	"internal/cpufeat":     {},
-	"internal/guardmem":    {},
-	"internal/importrules": {},
-	"internal/kernreg":     {aikit: []string{"internal/guardmem"}},
+	"topk":                           {},
+	"fuse":                           {},
+	"chunk":                          {},
+	"internal/accum":                 {},
+	"internal/cursor":                {},
+	"internal/cpufeat":               {},
+	"linalg/internal/outputcontract": {},
+	"internal/guardmem":              {},
+	"internal/importrules":           {},
+	"internal/kernreg":               {aikit: []string{"internal/guardmem"}},
 
 	// mmap is a leaf among aikit packages. Its one external import is madvise on darwin.
 	"mmap": {ext: []ext{{path: "golang.org/x/sys/unix", goos: "darwin"}}},
