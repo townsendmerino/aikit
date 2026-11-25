@@ -37,7 +37,7 @@ func TestGroupZero_refusedByName(t *testing.T) {
 			"DequantizeRowInt4":              func() { DequantizeRowInt4(make([]byte, K/2), make([]float32, K), group, K, make([]float32, K)) },
 			"QuantizeGroupInt4Row":           func() { QuantizeGroupInt4Row(a, K, group, make([]byte, K/2), make([]float32, K)) },
 			"QuantizeActivationsGroupedInto": func() { QuantizeActivationsGroupedInto(aq, make([]float32, K), a, 1, K, group) },
-			"SumActGroupsInto":               func() { SumActGroupsInto(make([]int32, K), aq, 1, K, group) },
+			"SumActGroupsInto":               func() { sumActGroupsInto(make([]int32, K), aq, 1, K, group) },
 		}
 		for name, fn := range cases {
 			msg := refusal(t, fmt.Sprintf("%s(group=%d)", name, group), fn)

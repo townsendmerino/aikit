@@ -148,6 +148,6 @@ func (w *Workspace) q4kSumBuf(n int) []float32 {
 func (w *Workspace) QuantizeActivations(a []float32, M, K int) (aq []int8, scales []float32) {
 	aq = w.int8Buf(M * K)
 	scales = w.f32Buf(M)
-	QuantizeActivationsInto(aq, scales, a, M, K)
+	quantizeActivationsInto(aq, scales, a, M, K)
 	return aq, scales
 }

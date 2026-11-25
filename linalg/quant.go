@@ -289,7 +289,7 @@ func MatmulBTW8A8Into(ws *Workspace, a []float32, bQ []int8, bScales []float32, 
 	}
 	aq := ws.int8Buf(M * K)
 	aScales := ws.f32Buf(M)
-	QuantizeActivationsInto(aq, aScales, a, M, K)
+	quantizeActivationsInto(aq, aScales, a, M, K)
 	MatmulBTW8A8Pre(ws, aq, aScales, bQ, bScales, dst, M, K, N)
 }
 
@@ -337,7 +337,7 @@ const quantRowsParallelMinElems = 1 << 16
 
 // QuantizeActivationsInto writes into a caller's buffer; its output contract:
 // Output contract: overwrites aq and scales; do not pre-zero. Cover aq[:M*K] and scales[:M] (one scale per row).
-func QuantizeActivationsInto(aq []int8, scales []float32, a []float32, M, K int) {
+func quantizeActivationsInto(aq []int8, scales []float32, a []float32, M, K int) {
 	if len(aq) < M*K || len(scales) < M || len(a) < M*K {
 		panic("linalg: QuantizeActivationsInto short buffer")
 	}
@@ -358,7 +358,7 @@ func QuantizeActivationsInto(aq []int8, scales []float32, a []float32, M, K int)
 // docs/task-w4a8-neon-bandwidth.md (goinfer) for the full rationale.
 //
 // Output contract: overwrites sumAct; do not pre-zero. Every group sum is recomputed from aq.
-func SumActGroupsInto(sumAct []int32, aq []int8, M, K, group int) {
+func sumActGroupsInto(sumAct []int32, aq []int8, M, K, group int) {
 	requirePositiveGroup("SumActGroupsInto", group)
 	nGroups := (K + group - 1) / group
 	if len(sumAct) < M*nGroups || len(aq) < M*K {

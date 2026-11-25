@@ -56,7 +56,7 @@ func NewFusedAttnScratch(kt, hd int) *FusedAttnScratch {
 }
 
 // Fits reports whether this scratch is already large enough for the requested shape.
-func (f *FusedAttnScratch) Fits(kt, hd int) bool {
+func (f *FusedAttnScratch) fits(kt, hd int) bool {
 	return f != nil &&
 		len(f.SBlk) >= kt*FusedAttnKeyBlock &&
 		len(f.Tmp) >= kt*hd && len(f.Acc) >= kt*hd &&
@@ -137,7 +137,7 @@ func attendTileFused(
 	lo, hi []int,
 	contractExp bool,
 ) bool {
-	if mm == nil || !sc.Fits(kt, hd) {
+	if mm == nil || !sc.fits(kt, hd) {
 		return false
 	}
 	scale32 := float32(scale)

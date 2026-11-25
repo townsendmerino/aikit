@@ -22,7 +22,7 @@ func TestExpF32_accuracy(t *testing.T) {
 	var worstAt float32
 	var n int
 	check := func(x float32) {
-		got := ExpF32(x)
+		got := expF32(x)
 		want := math.Exp(float64(x))
 		if math.IsInf(want, 1) || want < math.SmallestNonzeroFloat32 {
 			return // overflow handled by the special-case test
@@ -73,17 +73,17 @@ func TestExpF32_specialCases(t *testing.T) {
 		{-200, 0, "underflow flushes to zero"},
 		{-87.34, 0, "just below the underflow bound — flushed, not subnormal"},
 	} {
-		if got := ExpF32(tc.in); got != tc.want {
+		if got := expF32(tc.in); got != tc.want {
 			t.Errorf("ExpF32(%v) = %v, want %v — %s", tc.in, got, tc.want, tc.desc)
 		}
 	}
 	// The top of the range: k reaches 128 while the true result is still
 	// finite, so a one-step 2^k scale would encode +Inf and poison it.
 	// exp(88.376335) ≈ 2.406e38, under MaxFloat32 ≈ 3.403e38.
-	if got := ExpF32(88.376335); math.IsInf(float64(got), 1) {
+	if got := expF32(88.376335); math.IsInf(float64(got), 1) {
 		t.Errorf("ExpF32(88.376335) = +Inf, want ≈2.406e38 — the 2^k scale overflowed early")
 	}
-	if got := ExpF32(float32(math.NaN())); !math.IsNaN(float64(got)) {
+	if got := expF32(float32(math.NaN())); !math.IsNaN(float64(got)) {
 		t.Errorf("ExpF32(NaN) = %v, want NaN", got)
 	}
 }
@@ -91,9 +91,9 @@ func TestExpF32_specialCases(t *testing.T) {
 // TestExpF32_monotone matters for softmax: a non-monotone exp could reorder two
 // nearly-equal logits and flip an argmax downstream.
 func TestExpF32_monotone(t *testing.T) {
-	prev := ExpF32(-104)
+	prev := expF32(-104)
 	for x := float32(-104); x < 88.7; x += 0.0001 {
-		got := ExpF32(x)
+		got := expF32(x)
 		if got < prev {
 			t.Fatalf("not monotone at x=%v: %v then %v", x, prev, got)
 		}
@@ -114,7 +114,7 @@ func TestSoftmaxRowInto_matchesReference(t *testing.T) {
 				src[i] = float32(rng.NormFloat64() * scale)
 			}
 			got := make([]float32, n)
-			SoftmaxRowInto(got, src)
+			softmaxRowInto(got, src)
 
 			// Reference: float64 throughout.
 			maxV := float64(src[0])
@@ -167,13 +167,13 @@ func TestSoftmaxRowScaledInto_bitIdenticalToTwoPass(t *testing.T) {
 				}
 
 				fused := make([]float32, n)
-				SoftmaxRowScaledInto(fused, src, scale)
+				softmaxRowScaledInto(fused, src, scale)
 
 				twoPass := make([]float32, n)
 				for i, v := range src {
 					twoPass[i] = v * scale
 				}
-				SoftmaxRowInto(twoPass, twoPass)
+				softmaxRowInto(twoPass, twoPass)
 
 				for i := range fused {
 					if fused[i] != twoPass[i] {
@@ -205,7 +205,7 @@ func BenchmarkExpF32_vs_mathExp(b *testing.B) {
 	})
 	b.Run("ExpF32", func(b *testing.B) {
 		for b.Loop() {
-			ExpF32Into(dst, src)
+			expF32Into(dst, src)
 		}
 		b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*n), "ns/elem")
 	})
@@ -233,7 +233,7 @@ func BenchmarkSoftmaxRow_vs_scalar(b *testing.B) {
 		})
 		b.Run("n"+itoaBench(n)+"/f32", func(b *testing.B) {
 			for b.Loop() {
-				SoftmaxRowInto(dst, src)
+				softmaxRowInto(dst, src)
 			}
 			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*n), "ns/elem")
 		})
@@ -261,13 +261,13 @@ func BenchmarkSoftmaxRowScaled_vs_twoPass(b *testing.B) {
 				for i, v := range src {
 					dst[i] = v * scale
 				}
-				SoftmaxRowInto(dst, dst)
+				softmaxRowInto(dst, dst)
 			}
 			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*n), "ns/elem")
 		})
 		b.Run("n"+itoaBench(n)+"/fused", func(b *testing.B) {
 			for b.Loop() {
-				SoftmaxRowScaledInto(dst, src, scale)
+				softmaxRowScaledInto(dst, src, scale)
 			}
 			b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*n), "ns/elem")
 		})
@@ -330,11 +330,11 @@ func TestErfF32_accuracy(t *testing.T) {
 
 	for i := range 4_000_001 {
 		x := float32(-8 + 16*float64(i)/4_000_000)
-		if d := math.Abs(float64(ErfF32(x)) - math.Erf(float64(x))); d > worstErf {
+		if d := math.Abs(float64(erfF32(x)) - math.Erf(float64(x))); d > worstErf {
 			worstErf, atErf = d, x
 		}
 		want := 0.5 * float64(x) * (1 + math.Erf(float64(x)*0.7071067811865476))
-		abs := math.Abs(float64(GELUF32(x)) - want)
+		abs := math.Abs(float64(geluF32(x)) - want)
 		if abs > worstGeluAbs {
 			worstGeluAbs = abs
 		}
@@ -390,18 +390,18 @@ func TestErfF32_specialCases(t *testing.T) {
 	for _, tc := range []struct{ in, want float32 }{
 		{0, 0}, {10, 1}, {-10, -1}, {5, 1}, {-5, -1},
 	} {
-		if got := ErfF32(tc.in); got != tc.want {
+		if got := erfF32(tc.in); got != tc.want {
 			t.Errorf("ErfF32(%v) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
 	// GELU's saturating ends: large positive -> x, large negative -> 0.
-	if got := GELUF32(10); got != 10 {
+	if got := geluF32(10); got != 10 {
 		t.Errorf("GELUF32(10) = %v, want 10", got)
 	}
-	if got := GELUF32(-10); got != 0 {
+	if got := geluF32(-10); got != 0 {
 		t.Errorf("GELUF32(-10) = %v, want 0", got)
 	}
-	if got := GELUF32(0); got != 0 {
+	if got := geluF32(0); got != 0 {
 		t.Errorf("GELUF32(0) = %v, want 0", got)
 	}
 }
@@ -424,7 +424,7 @@ func BenchmarkGELU_vs_mathErf(b *testing.B) {
 	})
 	b.Run("GELUF32", func(b *testing.B) {
 		for b.Loop() {
-			GELUInto(dst, src)
+			geluInto(dst, src)
 		}
 		b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*n), "ns/elem")
 	})
@@ -451,7 +451,7 @@ func BenchmarkSiLU_vs_scalar(b *testing.B) {
 	})
 	b.Run("SiLUInto", func(b *testing.B) {
 		for b.Loop() {
-			SiLUInto(dst, src)
+			siluInto(dst, src)
 		}
 		b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*n), "ns/elem")
 	})
@@ -569,7 +569,7 @@ func TestTanhF32_accuracy(t *testing.T) {
 		if want == 0 {
 			continue
 		}
-		if rel := math.Abs((float64(TanhF32(x)) - want) / want); rel > worstRel {
+		if rel := math.Abs((float64(tanhF32(x)) - want) / want); rel > worstRel {
 			worstRel, at = rel, x
 		}
 	}
@@ -582,7 +582,7 @@ func TestTanhF32_accuracy(t *testing.T) {
 	for _, tc := range []struct{ in, want float32 }{
 		{0, 0}, {20, 1}, {-20, -1}, {10, 1}, {-10, -1},
 	} {
-		if got := TanhF32(tc.in); got != tc.want {
+		if got := tanhF32(tc.in); got != tc.want {
 			t.Errorf("TanhF32(%v) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
@@ -611,7 +611,7 @@ func TestGELUTanhF32_accuracy(t *testing.T) {
 	var maxDiff float64
 	for i := range 20001 {
 		x := float32(-5 + 10*float64(i)/20000)
-		if d := math.Abs(float64(GELUTanhF32(x)) - float64(GELUF32(x))); d > maxDiff {
+		if d := math.Abs(float64(GELUTanhF32(x)) - float64(geluF32(x))); d > maxDiff {
 			maxDiff = d
 		}
 	}

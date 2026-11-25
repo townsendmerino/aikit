@@ -21,7 +21,7 @@ func TestDotW4A8Uncentered_matchesScalar_exact(t *testing.T) {
 		}
 		packed, scales := QuantizeGroupsInt4(w, 1, K, group)
 		sumAct := make([]int32, nGroups)
-		SumActGroupsInto(sumAct, act, 1, K, group)
+		sumActGroupsInto(sumAct, act, 1, K, group)
 
 		got := dotW4A8UncenteredScalar(act, packed, scales, sumAct, group, K)
 		want := dotW4A8Scalar(act, packed, scales, group, K)

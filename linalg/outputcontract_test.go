@@ -149,7 +149,7 @@ func outputContractCases() []outputcontract.Case {
 			a := rf32(14, M*K)
 			aq, o1 := outputcontract.MkOut[int8]("aq", M*K)
 			sc, o2 := outputcontract.MkOut[float32]("scales", M)
-			return func() { QuantizeActivationsInto(aq, sc, a, M, K) }, []*outputcontract.OutBuf{o1, o2}
+			return func() { quantizeActivationsInto(aq, sc, a, M, K) }, []*outputcontract.OutBuf{o1, o2}
 		})
 		for _, g := range []int{16, 32} {
 			ng := (K + g - 1) / g
@@ -162,7 +162,7 @@ func outputContractCases() []outputcontract.Case {
 			add(fmt.Sprintf("SumActGroupsInto/M=%d,K=%d,group=%d", M, K, g), func() (func(), []*outputcontract.OutBuf) {
 				aq0 := ri8(16, M*K)
 				sum, o := outputcontract.MkOut[int32]("sumAct", M*ng)
-				return func() { SumActGroupsInto(sum, aq0, M, K, g) }, []*outputcontract.OutBuf{o}
+				return func() { sumActGroupsInto(sum, aq0, M, K, g) }, []*outputcontract.OutBuf{o}
 			})
 		}
 	}
@@ -179,10 +179,10 @@ func outputContractCases() []outputcontract.Case {
 			"Workspace.MatmulBT":              func(d, a, b []float32) { (&Workspace{}).MatmulBT(a, b, d, s.M, s.K, s.N) },
 			"MatmulBTInto":                    func(d, a, b []float32) { MatmulBTInto(d, a, b, s.M, s.K, s.N) },
 			"MatmulBTAcc64":                   func(d, a, b []float32) { MatmulBTAcc64(a, b, d, s.M, s.K, s.N) },
-			"Workspace.MatmulBTAcc64":         func(d, a, b []float32) { (&Workspace{}).MatmulBTAcc64(a, b, d, s.M, s.K, s.N) },
+			"Workspace.MatmulBTAcc64":         func(d, a, b []float32) { (&Workspace{}).matmulBTAcc64(a, b, d, s.M, s.K, s.N) },
 			"MatmulBTAcc64Strided/contiguous": func(d, a, b []float32) { MatmulBTAcc64Strided(a, b, d, s.M, s.K, s.N, 0, s.K, 1) },
 			"MatmulBTAcc64Strided/transposed": func(d, a, b []float32) { MatmulBTAcc64Strided(a, b, d, s.M, s.K, s.N, 0, 1, s.N) },
-			"Workspace.MatmulBTAcc64Strided":  func(d, a, b []float32) { (&Workspace{}).MatmulBTAcc64Strided(a, b, d, s.M, s.K, s.N, 0, s.K, 1) },
+			"Workspace.MatmulBTAcc64Strided":  func(d, a, b []float32) { (&Workspace{}).matmulBTAcc64Strided(a, b, d, s.M, s.K, s.N, 0, s.K, 1) },
 		}
 		for name, f := range f32mm {
 			add(name+"/"+nm, func() (func(), []*outputcontract.OutBuf) {
@@ -255,7 +255,7 @@ func outputContractCases() []outputcontract.Case {
 			bq, bs := q8w()
 			aq := make([]int8, s.M*s.K)
 			asc := make([]float32, s.M)
-			QuantizeActivationsInto(aq, asc, a(), s.M, s.K)
+			quantizeActivationsInto(aq, asc, a(), s.M, s.K)
 			dst, o := outputcontract.MkOut[float32]("dst", s.M*s.N)
 			return func() { MatmulBTW8A8Pre(&Workspace{}, aq, asc, bq, bs, dst, s.M, s.K, s.N) }, []*outputcontract.OutBuf{o}
 		})
@@ -338,7 +338,7 @@ func outputContractCases() []outputcontract.Case {
 				rs[i] = rf32(int64(70+i), n4*4)
 			}
 			s, o := outputcontract.MkOut[float32]("sums", 16)
-			return func() { Dot4x4(&rs[0][0], &rs[1][0], &rs[2][0], &rs[3][0], &rs[4][0], n4, (*[16]float32)(s)) }, []*outputcontract.OutBuf{o}
+			return func() { dot4x4(&rs[0][0], &rs[1][0], &rs[2][0], &rs[3][0], &rs[4][0], n4, (*[16]float32)(s)) }, []*outputcontract.OutBuf{o}
 		})
 		add(fmt.Sprintf("Dot8x4/n4=%d", n4), func() (func(), []*outputcontract.OutBuf) {
 			rs := make([][]float32, 9)

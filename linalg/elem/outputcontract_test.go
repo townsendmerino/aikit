@@ -30,9 +30,9 @@ func outputContractCases() []outputcontract.Case {
 		f    func(dst, src []float32)
 	}
 	for _, k := range []ew{
-		{"ExpF32Into", ExpF32Into}, {"SoftmaxRowInto", SoftmaxRowInto}, {"GELUInto", GELUInto}, {"SiLUInto", SiLUInto}, {"GELUTanhInto", GELUTanhInto}, {"TanhInto", TanhInto},
+		{"ExpF32Into", expF32Into}, {"SoftmaxRowInto", softmaxRowInto}, {"GELUInto", geluInto}, {"SiLUInto", siluInto}, {"GELUTanhInto", GELUTanhInto}, {"TanhInto", TanhInto},
 		{"ExpContractInto", ExpContractInto}, {"GELUContractInto", GELUContractInto}, {"GELUTanhContractInto", GELUTanhContractInto}, {"SiLUContractInto", SiLUContractInto}, {"SoftmaxRowContractInto", SoftmaxRowContractInto},
-		{"SoftmaxRowScaledInto", func(d, s []float32) { SoftmaxRowScaledInto(d, s, 0.35) }}, {"SoftmaxRowScaledContractInto", func(d, s []float32) { SoftmaxRowScaledContractInto(d, s, 0.35) }},
+		{"SoftmaxRowScaledInto", func(d, s []float32) { softmaxRowScaledInto(d, s, 0.35) }}, {"SoftmaxRowScaledContractInto", func(d, s []float32) { SoftmaxRowScaledContractInto(d, s, 0.35) }},
 	} {
 		for _, n := range []int{1, 5, 37, 130} {
 			k, n := k, n

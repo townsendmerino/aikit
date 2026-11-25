@@ -34,14 +34,14 @@ func outputContractCases() []outputcontract.Case {
 			const n = 5
 			src := randF32(61, n*dim)
 			dst, o := outputcontract.MkOut[uint64]("dst", n*words)
-			return func() { PackSignBits(dst, src, n, dim) }, []*outputcontract.OutBuf{o}
+			return func() { packSignBits(dst, src, n, dim) }, []*outputcontract.OutBuf{o}
 		})
 		add(fmt.Sprintf("HammingRows/dim=%d", dim), func() (func(), []*outputcontract.OutBuf) {
 			const n = 7
 			q := make([]uint64, words)
 			PackSignBitsRow(q, randF32(62, dim))
 			codes := make([]uint64, n*words)
-			PackSignBits(codes, randF32(63, n*dim), n, dim)
+			packSignBits(codes, randF32(63, n*dim), n, dim)
 			dst, o := outputcontract.MkOut[uint16]("dst", n)
 			return func() { HammingRows(q, codes, words, n, dst) }, []*outputcontract.OutBuf{o}
 		})

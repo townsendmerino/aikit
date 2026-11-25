@@ -42,7 +42,7 @@ func MatmulBTAcc64Strided(a, bMat, dst []float32, M, K, N, bOff, bRowStride, bEl
 // the other Workspace matmuls — the shape a steady-state decode stream uses.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func (w *Workspace) MatmulBTAcc64Strided(a, bMat, dst []float32, M, K, N, bOff, bRowStride, bElemStride int) {
+func (w *Workspace) matmulBTAcc64Strided(a, bMat, dst []float32, M, K, N, bOff, bRowStride, bElemStride int) {
 	checkMatmulBTStrided("MatmulBTAcc64Strided", len(a), len(bMat), len(dst), M, K, N, bOff, bRowStride, bElemStride)
 	w.parallelCols(M*N*K, N, func(j0, j1 int) {
 		matmulBTAcc64StridedSpan(a, bMat, dst, M, K, N, bOff, bRowStride, bElemStride, j0, j1)

@@ -68,7 +68,7 @@ func BenchmarkGELUErfKernels(b *testing.B) {
 		b.SetBytes(int64(n) * 4)
 		for b.Loop() {
 			for i, v := range src {
-				dst[i] = GELUF32(v)
+				dst[i] = geluF32(v)
 			}
 		}
 	})

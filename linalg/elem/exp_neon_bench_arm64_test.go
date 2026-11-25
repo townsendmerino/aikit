@@ -82,7 +82,7 @@ func BenchmarkSoftmaxRowKernels(b *testing.B) {
 	b.Run("shipped_SoftmaxRowInto", func(b *testing.B) {
 		b.SetBytes(int64(n) * 4)
 		for b.Loop() {
-			SoftmaxRowInto(dst, src)
+			softmaxRowInto(dst, src)
 		}
 	})
 }

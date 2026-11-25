@@ -16,4 +16,4 @@ package linalg
 // blockRows3x4/Dot8x4 path the f32 GEMM already uses. No new kernel, and
 // bit-identical to the reference because it reuses blockedFill rather than
 // reimplementing its reduction order.
-const HasFusedQ8Kernel = true
+const hasFusedQ8Kernel = true

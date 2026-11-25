@@ -74,7 +74,7 @@ func TestMatmulBTQ8Fused_bitIdentical(t *testing.T) {
 				}
 			}
 
-			if HasFusedQ8Kernel {
+			if hasFusedQ8Kernel {
 				// The live arch: bit-identical to the replaced path.
 				for i := range ref {
 					if serial[i] != ref[i] {

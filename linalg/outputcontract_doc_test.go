@@ -16,7 +16,7 @@ import (
 
 // longer exists, or no longer carries a contract line, fails.
 var nonDstWriters = map[string]bool{
-	"QuantizeActivationsInto": true, "QuantizeActivationsGroupedInto": true, "QuantizeRowInt8": true, "SumActGroupsInto": true, "QuantizeGroupInt4Row": true,
+	"QuantizeActivationsGroupedInto": true, "QuantizeRowInt8": true, "QuantizeGroupInt4Row": true,
 	"RepackInt4SplitHalfInPlace": true, "RepackInt4Row4InPlace": true,
 	"MatmulBTW8A8Batch": true, "MatmulBTW4A8Batch": true, // outputs are each op's Dst field
 }
