@@ -30,3 +30,6 @@ One run, 17:47–17:51 PST under the exclusive lock, start load 0.07 / 0.10 / 0.
 
 v1.78.0's own source with one 32-byte function added ahead of the contract-exp code is 6.6–7.0% slower on these shapes, the size of
 perfgate run 2's 6.2–7.0%: the "regression" is where the linker places unchanged code, not anything this release changed.
+
+**Note.** Before the run, a 3-iteration smoke run of the plain binary (well under a second, to check the output parses) ran without the
+timing lock's shared hold. No timed run was in progress then, so no cell of this test or of anyone else's is affected.
