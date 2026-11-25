@@ -25,6 +25,12 @@ excluded from that promise and may change in any release until it graduates.
   per-tensor scale is a separate GGUF tensor, which the caller applies. Held bit-exact against gguf-py's `gguf.quants` on every
   scale byte against every code (`TestIQDequant_matchesReference/NVFP4`); a wrong e2m1 entry, ModelOpt's sequential nibble order
   or an honored scale sign bit each turns it red (`TestNVFP4Dequant_goldenCatchesPlants`).
+- **`embed` reads GGUF types 16, 17 and 18: IQ2_XXS, IQ2_XS and IQ3_XXS** (`dequantIQ2XXSBlock`, `dequantIQ2XSBlock`,
+  `dequantIQ3XXSBlock`), as ggml's `dequantize_row_iq2_xxs`, `_iq2_xs` and `_iq3_xxs` read them. Their grids and the shared
+  sign table `ksigns_iq2xs` are dumped from gguf-py into `embed/iq_grids.go`, and `gen_iq_grids.py --ggml-common` proves each
+  table byte-equal to `ggml-common.h`'s. The golden uses every grid entry and sign index of each type, bit-exact against
+  gguf-py; one wrong grid magnitude, one wrong sign-table entry, or a misread field order turns it red
+  (`TestIQXXSDequant_goldenCatchesPlants`).
 - **The dequant golden is compared bit for bit**, where it allowed a relative 1e-4: every type in it already matched exactly. Each
   case is also read through a one-tensor GGUF, so each type's byte size is checked with its kernel
   (`TestIQDequant_goldenThroughGGUF`), and `TestOutputContract_dequantWritersOverwrite` covers every type the reader admits
