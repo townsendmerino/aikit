@@ -360,3 +360,68 @@ func TestGoSep_separatesStdoutAndStderr(t *testing.T) {
 		t.Errorf("stderr = %q, want a note about missing packages", stderr)
 	}
 }
+
+// TestRepoRoot_linkedWorktreeHook is RepoRoot as a pre-push hook in a linked worktree sees it: git exports GIT_DIR (the
+// worktree's own git directory, absolute), and the hook's `go run -C tools` puts the cwd in tools/. With GIT_DIR set and
+// no GIT_WORK_TREE, `git rev-parse --show-toplevel` answers the cwd, so RepoRoot must not pass the hook's GIT_DIR on.
+func TestRepoRoot_linkedWorktreeHook(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not on PATH")
+	}
+	base := t.TempDir()
+	main, wt := filepath.Join(base, "main"), filepath.Join(base, "wt")
+	gitRun := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		cmd.Env = envWithout(os.Environ(), "GIT_DIR", "GIT_WORK_TREE")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if err := os.MkdirAll(main, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(main, "init", "-q")
+	gitRun(main, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x")
+	gitRun(main, "worktree", "add", "-q", "--detach", wt)
+	sub := filepath.Join(wt, "tools")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_DIR", gitRun(wt, "rev-parse", "--absolute-git-dir"))
+	chdir(t, sub)
+
+	got, err := RepoRoot()
+	if err != nil {
+		t.Fatalf("RepoRoot() error = %v", err)
+	}
+	want, _ := filepath.EvalSymlinks(wt)
+	if g, _ := filepath.EvalSymlinks(got); g != want {
+		t.Errorf("RepoRoot() = %q, want the worktree root %q", got, want)
+	}
+}
+
+// TestRepoRoot_walkUpFindsWorktreeFile: a linked worktree's .git is a file, not a directory, and the walk-up fallback
+// must stop there too.
+func TestRepoRoot_walkUpFindsWorktreeFile(t *testing.T) {
+	base := t.TempDir()
+	if err := os.WriteFile(filepath.Join(base, ".git"), []byte("gitdir: /nonexistent\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(base, "a", "b")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, nested)
+	got, err := RepoRoot()
+	if err != nil {
+		t.Fatalf("RepoRoot() error = %v", err)
+	}
+	want, _ := filepath.EvalSymlinks(base)
+	if g, _ := filepath.EvalSymlinks(got); g != want {
+		t.Errorf("RepoRoot() = %q, want %q", got, want)
+	}
+}

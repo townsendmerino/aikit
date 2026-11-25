@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -25,8 +26,14 @@ const GolangciLint = "github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.
 // RepoRoot finds the checkout root regardless of the caller's cwd (the tools run as
 // `go run -C tools ./gpugate`, whose cwd is tools/). git is the authority; a walk up to a
 // .git directory is the fallback for a detached tree.
+//
+// A hook's GIT_DIR and GIT_WORK_TREE are dropped from git's environment: in a linked worktree git exports GIT_DIR to a
+// pre-push hook, and with it set `rev-parse --show-toplevel` answers the cwd (tools/), not the checkout. The walk-up
+// stops at a .git file as well as a directory, since a linked worktree's .git is a file.
 func RepoRoot() (string, error) {
-	if out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
+	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
+	cmd.Env = envWithout(os.Environ(), "GIT_DIR", "GIT_WORK_TREE")
+	if out, err := cmd.Output(); err == nil {
 		if p := strings.TrimSpace(string(out)); p != "" {
 			return p, nil
 		}
@@ -36,7 +43,7 @@ func RepoRoot() (string, error) {
 		return "", err
 	}
 	for {
-		if fi, err := os.Stat(filepath.Join(dir, ".git")); err == nil && fi.IsDir() {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 			return dir, nil
 		}
 		parent := filepath.Dir(dir)
@@ -45,6 +52,18 @@ func RepoRoot() (string, error) {
 		}
 		dir = parent
 	}
+}
+
+// envWithout returns env minus the named variables. An empty value is not the same: git rejects GIT_DIR="".
+func envWithout(env []string, keys ...string) []string {
+	var out []string
+	for _, kv := range env {
+		k, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(keys, k) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }
 
 // ModuleDirs returns every gpu module directory relative to root ("gpu",
