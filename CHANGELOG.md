@@ -11,6 +11,11 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **The binary-vector kernels move from `linalg` to `linalg/bitvec`**: `PackSignBits`, `PackSignBitsRow`, `PackedWords` and
+  `HammingRows`, unchanged but for the package. `ann` and ken call them; bitvec imports `internal/cpufeat` (amd64) and nothing
+  from `linalg`, and carries its own output-contract cases, kernel-registry rows and over-read adapters. The retrieval zone
+  holds it whole.
+
 - **The attention kernels move from `linalg` to `linalg/attn`**: `MatmulQKAcc64`, `MatmulAVAcc64`, their `Group` and `F16`
   forms, `AttendTileFused`, `AttendTileFusedContractExp`, `FusedAttnScratch`, `NewFusedAttnScratch`, `FusedAttnKeyBlock` and
   `GatherVBlockMajor`: 12 names, unchanged but for the package. attn imports `linalg/elem` and nothing from `linalg`; its tests

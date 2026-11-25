@@ -49,7 +49,7 @@ large embedded-grammar payload) — is quarantined in the separate
 | Package | Purpose | Deps (beyond stdlib) |
 |---|---|---|
 | `topk` | bounded min-heap top-K selector (generic) | — |
-| `ann` | cosine ANN over a dense matrix — exact flat scan + approximate HNSW graph | `linalg`, `mmap`, `topk` |
+| `ann` | cosine ANN over a dense matrix — exact flat scan + approximate HNSW graph | `linalg`, `linalg/bitvec`, `mmap`, `topk` |
 | `bm25` | identifier-aware BM25 lexical index (Lucene-variant); `Tokenize` (code) + `TokenizePlain` (general text) | `mmap`, `topk` |
 | `fuse` | rank fusion (RRF) + relative-score fusion (RSF) — blend lexical + dense rankings for hybrid search | — |
 | `hybrid` *(Experimental)* | thin, opt-in wrapper around "retrieve dense + lexical, then `fuse.RRF`" — composes already-built indices, doesn't build/embed/tokenize/rerank | `ann`, `bm25`, `fuse` |
@@ -57,6 +57,7 @@ large embedded-grammar payload) — is quarantined in the separate
 | `late` *(Experimental)* | ColBERT-style late-interaction (MaxSim) reranking over pre-computed per-token vectors (`encoder.Model.EncodeTokens`) — a shortlist reranker, not a corpus-scale index | `linalg`, `topk` |
 | `bench` | reproducible recall + latency harness for the dense indexes (Flat / HNSW / FlatI8) — Experimental tooling | `ann` |
 | `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | `mmap` |
+| `linalg/bitvec` | binary vectors: sign-bit packing of f32 rows and Hamming distance over packed rows (POPCNT, NEON) | — |
 | `linalg/attn` | attention kernels: the f64-accumulating QK and AV matmuls (f32 and binary16 caches, per head and grouped) and the fused attention tile | `linalg/elem` |
 | `linalg/elem` | elementwise kernels: exp, tanh, erf, SiLU, GELU and softmax, scalar and in-place forms, and the contract forms (every multiply-add fused, the same bits on every architecture) | — |
 | `mmap` | read-only file mapping + `madvise` residency hints + a demand-signal-agnostic `SpanCache` (LRU spans under a byte budget) — the substrate the `ann`, `bm25`, `embed` and `linalg` mmap loaders sit on; cgo-free, `!unix` heap fallback | `golang.org/x/sys` *(darwin only)* |
@@ -417,7 +418,7 @@ no such consumer has surfaced yet.
   `SoftmaxRowInto`), the fused Q8 matmul (`MatmulBTQ8Fused{,Into}`,
   `HasFusedQ8Kernel`, `FusedQ8Applies`), W8A8 activation quantization
   (`QuantizeActivations{,Into}`, `MatmulBTW8A8Pre`, `DequantizeRowsInt8Into`) and
-  the Hamming/SimHash primitives (`PackSignBits{,Row}`, `PackedWords`,
+  the Hamming/SimHash primitives (now `linalg/bitvec`: `PackSignBits{,Row}`, `PackedWords`,
   `HammingRows`) — new surface.
 - `linalg`'s fused attention (v1.35.0; now `linalg/attn`) — `AttendTileFused`, `FusedAttnScratch`,
   `NewFusedAttnScratch`, `FusedAttnKeyBlock`, `GatherVBlockMajor`. A

@@ -1,4 +1,4 @@
-package linalg
+package bitvec
 
 import (
 	"github.com/townsendmerino/aikit/internal/cpufeat"

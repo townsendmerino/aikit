@@ -1,9 +1,11 @@
-package linalg
+package bitvec
 
 import (
 	"fmt"
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/linalg"
 )
 
 // BenchmarkHammingRows sizes perf-campaign item 38's first stage. Three things
@@ -67,7 +69,7 @@ func BenchmarkHammingRows(b *testing.B) {
 		b.Run(fmt.Sprintf("d%d/exactdot", dim), func(b *testing.B) {
 			b.SetBytes(int64(n) * int64(dim) * 4)
 			for b.Loop() {
-				MatmulBT(qf, flat, scores, 1, dim, n)
+				linalg.MatmulBT(qf, flat, scores, 1, dim, n)
 			}
 			perVec(b)
 		})

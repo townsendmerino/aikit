@@ -70,9 +70,10 @@ var rules = map[string]rule{
 	"mmap": {ext: []ext{{path: "golang.org/x/sys/unix", goos: "darwin"}}},
 
 	// Kernels and loaders.
-	"linalg":      {aikit: []string{"internal/cpufeat", "internal/half", "linalg/internal/shape", "mmap"}},
-	"linalg/attn": {aikit: []string{"internal/half", "linalg/elem", "linalg/internal/shape"}, aikitOn: []ext{{path: "internal/cpufeat", goarch: "amd64"}}},
-	"linalg/elem": {aikitOn: []ext{{path: "internal/cpufeat", goarch: "amd64"}}},
+	"linalg":        {aikit: []string{"internal/cpufeat", "internal/half", "linalg/internal/shape", "mmap"}},
+	"linalg/bitvec": {aikitOn: []ext{{path: "internal/cpufeat", goarch: "amd64"}}},
+	"linalg/attn":   {aikit: []string{"internal/half", "linalg/elem", "linalg/internal/shape"}, aikitOn: []ext{{path: "internal/cpufeat", goarch: "amd64"}}},
+	"linalg/elem":   {aikitOn: []ext{{path: "internal/cpufeat", goarch: "amd64"}}},
 	"embed": {
 		aikit: []string{"internal/cursor", "internal/half", "mmap"},
 		ext: []ext{
@@ -86,7 +87,7 @@ var rules = map[string]rule{
 	"chunk/regex":    {aikit: []string{"chunk"}},
 
 	// Indexes and rerankers.
-	"ann":    {aikit: []string{"internal/cursor", "linalg", "mmap", "topk"}},
+	"ann":    {aikit: []string{"internal/cursor", "linalg", "linalg/bitvec", "mmap", "topk"}},
 	"bm25":   {aikit: []string{"internal/accum", "internal/cursor", "mmap", "topk"}},
 	"sparse": {aikit: []string{"internal/accum", "topk"}},
 	"late":   {aikit: []string{"linalg", "topk"}},

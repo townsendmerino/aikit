@@ -1,6 +1,6 @@
 //go:build !amd64 && !arm64
 
-package linalg
+package bitvec
 
 // hammingRows on every non-amd64, non-arm64 arch is the portable kernel.
 //
