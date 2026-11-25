@@ -1,11 +1,10 @@
 package ann
 
 import (
+	"github.com/townsendmerino/aikit/linalg/bitvec"
+	"github.com/townsendmerino/aikit/topk"
 	"slices"
 	"sync"
-
-	"github.com/townsendmerino/aikit/linalg"
-	"github.com/townsendmerino/aikit/topk"
 )
 
 // FlatBinary is Flat with a two-stage scan: a 1-bit sign-quantized Hamming
@@ -121,7 +120,7 @@ func (f *FlatBinary) query(q []float32, k int, keep func(int) bool) []Hit {
 	defer binScratchPool.Put(sc)
 	sc.qc = ensure(sc.qc, f.pf.words)
 	sc.qf = ensure(sc.qf, f.pf.dim)
-	linalg.PackSignBitsRow(sc.qc, f.pf.centered(sc.qf, q))
+	bitvec.PackSignBitsRow(sc.qc, f.pf.centered(sc.qf, q))
 
 	ids := f.pf.prefilter(sc.qc, &sc.binPrefilterScratch, cand, keep)
 	return f.rerank(sc, q, ids, k)

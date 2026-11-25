@@ -1,11 +1,10 @@
 package ann
 
 import (
+	"github.com/townsendmerino/aikit/linalg/bitvec"
 	"math"
 	"math/rand"
 	"testing"
-
-	"github.com/townsendmerino/aikit/linalg"
 )
 
 // unitVecs builds n L2-normalized vectors — the package invariant every index
@@ -327,7 +326,7 @@ func TestFlatBinary_shardedMatchesSerial(t *testing.T) {
 }
 
 func packQueryForTest(f *FlatBinary, sc *binScratch, q []float32) {
-	linalg.PackSignBitsRow(sc.qc, f.pf.centered(sc.qf, q))
+	bitvec.PackSignBitsRow(sc.qc, f.pf.centered(sc.qf, q))
 }
 
 // TestFlatBinary_poolIsInert poisons every pooled scratch buffer before a query

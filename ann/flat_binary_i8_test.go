@@ -1,10 +1,9 @@
 package ann
 
 import (
+	"github.com/townsendmerino/aikit/linalg/bitvec"
 	"math"
 	"testing"
-
-	"github.com/townsendmerino/aikit/linalg"
 )
 
 // TestFlatBinaryI8_exactWhenNothingToPrune pins the boundary where
@@ -243,7 +242,7 @@ func TestFlatBinaryI8_prefilterMatchesFlatBinary(t *testing.T) {
 	for qi, q := range qs {
 		qc := make([]uint64, fbFloat.pf.words)
 		qf := make([]float32, fbFloat.pf.dim)
-		linalg.PackSignBitsRow(qc, fbFloat.pf.centered(qf, q))
+		bitvec.PackSignBitsRow(qc, fbFloat.pf.centered(qf, q))
 
 		sc1 := &binPrefilterScratch{}
 		ids1 := fbFloat.pf.prefilter(qc, sc1, k*over, nil)

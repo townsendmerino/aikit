@@ -1,6 +1,6 @@
 //go:build arm64
 
-package linalg
+package bitvec
 
 // hammingNEON is the vectorized NEON kernel in hamming_arm64.s.
 //

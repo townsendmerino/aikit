@@ -330,30 +330,7 @@ func outputContractCases() []outputcontract.Case {
 		})
 	}
 
-	// ---- packing, Hamming, and the Dot tiles (they write a sums array)
-	for _, dim := range []int{37, 64, 130} {
-		words := (dim + 63) / 64
-		add(fmt.Sprintf("PackSignBitsRow/dim=%d", dim), func() (func(), []*outputcontract.OutBuf) {
-			v := rf32(60, dim)
-			dst, o := outputcontract.MkOut[uint64]("dst", words)
-			return func() { PackSignBitsRow(dst, v) }, []*outputcontract.OutBuf{o}
-		})
-		add(fmt.Sprintf("PackSignBits/dim=%d", dim), func() (func(), []*outputcontract.OutBuf) {
-			const n = 5
-			src := rf32(61, n*dim)
-			dst, o := outputcontract.MkOut[uint64]("dst", n*words)
-			return func() { PackSignBits(dst, src, n, dim) }, []*outputcontract.OutBuf{o}
-		})
-		add(fmt.Sprintf("HammingRows/dim=%d", dim), func() (func(), []*outputcontract.OutBuf) {
-			const n = 7
-			q := make([]uint64, words)
-			PackSignBitsRow(q, rf32(62, dim))
-			codes := make([]uint64, n*words)
-			PackSignBits(codes, rf32(63, n*dim), n, dim)
-			dst, o := outputcontract.MkOut[uint16]("dst", n)
-			return func() { HammingRows(q, codes, words, n, dst) }, []*outputcontract.OutBuf{o}
-		})
-	}
+	// ---- the Dot tiles (they write a sums array)
 	for _, n4 := range []int{1, 5, 16} {
 		add(fmt.Sprintf("Dot4x4/n4=%d", n4), func() (func(), []*outputcontract.OutBuf) {
 			rs := make([][]float32, 5)
