@@ -10,8 +10,9 @@ const maxF32Lanes = 16
 
 // loadF32Part loads s, which is shorter than one vector, into the low lanes of a
 // Float32s and zeroes the rest. It stages s through a stack buffer and never reads past
-// len(s): simd.LoadFloat32sPart reads a whole vector on amd64, past the end of a short
-// slice (TestElementwise_noReadPastShortTail).
+// len(s): Load*Part reads a whole vector on amd64 before Go 1.28, past the end of a
+// short slice (golang/go#81692; TestElementwise_noReadPastShortTail). Once go.mod
+// requires 1.28, these helpers can go back to LoadFloat32sPart and StorePart.
 func loadF32Part(s []float32) simd.Float32s {
 	var probe simd.Float32s
 	var buf [maxF32Lanes]float32

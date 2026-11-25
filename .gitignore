@@ -206,6 +206,7 @@ docs/prompts/
 # Local settings and secrets: never committed. (go list -toolexec=<prog> runs a program, so .claude/settings.json allows only exact
 # `go list` forms, not `go list *`.)
 .claude/settings.local.json
+CLAUDE.local.md
 .env
 .env.*
 *.pem

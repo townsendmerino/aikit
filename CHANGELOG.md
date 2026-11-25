@@ -34,12 +34,17 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Added
 
+- **`tools/roofline`: a per-kernel roofline census.** It covers each kernel perfgate or goinfer's kernelprint names (`linalg`'s
+  `BenchmarkRooflineCensus`, 27 kernels), single-threaded, at a 128 KiB and a 128 MiB operand. Each row reports operand GB/s,
+  GMAC/s and its fraction of this box's roof. The roofs are measured by `BenchmarkRooflineRoofs`: the f32 FMA peak, the SDOT
+  issue probe on arm64, and a streaming-read probe with a resident cross-check. An amd64 int8 roof is cited with
+  `--int8-roof`. It writes the table under `docs/bench-records/` with the CPU and the commit. Its arithmetic is tested on planted
+  timings. The readings follow `docs/bench-records/roofline-registration.md`.
 - **`tools/linalgcensus`: who reaches each exported name of `linalg`, by the type checker** (`go run -C tools ./linalgcensus
   --goinfer <dir> --ken <dir> --tack <dir>`). It compiles every consumer against this tree through a generated go.work, checks
   every Go file of each checkout on at least one configuration (GOOS/GOARCH, tags, GOEXPERIMENT) chosen to cover them all, and
   splits each name's reach into linalg, its tests, aikit's other packages, goinfer, ken and tack, production and tests. It ends in
   one VERDICT line. The table at aikit and its consumers' heads on 2026-11-24 is `docs/internal/linalg-census-2026-11.md`.
-
 - **`embed` reads GGUF type 40, NVFP4** (`dequantNVFP4Block`): 64-element blocks of four 16-element sub-blocks, each with an
   unsigned e4m3 scale and 8 bytes of e2m1 nibbles, low nibble to element `j` and high to `j+8`, as ggml's `dequantize_row_nvfp4`
   reads them. The scale decodes as ggml's `ggml_ue4m3_to_fp32` does: the top bit is ignored and `0x00` and `0x7F` are zero. The
