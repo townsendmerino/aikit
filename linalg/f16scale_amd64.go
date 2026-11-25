@@ -2,19 +2,19 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 //go:noescape
 func cvtF16ToF32x8F16C(dst *float32, src *uint16, n8 int)
 
 //go:noescape
 func dotW4A8FoldF16RowAVX2(act *int8, packed *byte, scales *uint16, nGroups int, buf *float32) float32
 
-var hasF16C = detectF16C()
-
 // widenF16 widens src into dst (equal lengths): eight per VCVTPH2PS, the last block overlapping so no
 // scalar tail is needed once there are eight or more.
 func widenF16(dst []float32, src []uint16) {
 	n := len(src)
-	if n < 8 || !hasF16C {
+	if n < 8 || !cpufeat.HasF16C {
 		for i, h := range src {
 			dst[i] = f16ToF32(h)
 		}
@@ -33,7 +33,7 @@ func widenF16(dst []float32, src []uint16) {
 // Bit-identical to dotW4A8 on the widened values either way.
 func dotW4A8F16Row(act []int8, packed []byte, scales []uint16, group, K int, buf []float32) float32 {
 	nG := len(scales)
-	if group == 32 && K%32 == 0 && nG == K/32 && nG >= 8 && nG <= len(buf) && hasAVX2 && hasF16C && !hasAVX512VNNIVL {
+	if group == 32 && K%32 == 0 && nG == K/32 && nG >= 8 && nG <= len(buf) && cpufeat.HasAVX2 && cpufeat.HasF16C && !cpufeat.HasAVX512VNNIVL {
 		return dotW4A8FoldF16RowAVX2(&act[0], &packed[0], &scales[0], nG, &buf[0])
 	}
 	widenF16(buf[:nG], scales)

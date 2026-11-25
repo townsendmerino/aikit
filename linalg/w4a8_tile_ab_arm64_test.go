@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestW4A8TileVsCanonicalAB is docs/task-simd-audit.md S-01's decision-rule
@@ -32,7 +34,7 @@ import (
 // not let CI vote on them.
 func TestW4A8TileVsCanonicalAB(t *testing.T) {
 	harnessOnly(t)
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("no FEAT_DotProd on this core; the row4 kernels do not dispatch")
 	}
 	const (

@@ -45,6 +45,7 @@ var rules = map[string]rule{
 	"chunk":                {},
 	"internal/accum":       {},
 	"internal/cursor":      {},
+	"internal/cpufeat":     {},
 	"internal/guardmem":    {},
 	"internal/importrules": {},
 
@@ -52,7 +53,7 @@ var rules = map[string]rule{
 	"mmap": {ext: []ext{{path: "golang.org/x/sys/unix", goos: "darwin"}}},
 
 	// Kernels and loaders.
-	"linalg": {aikit: []string{"mmap"}},
+	"linalg": {aikit: []string{"internal/cpufeat", "mmap"}},
 	"embed": {
 		aikit: []string{"internal/cursor", "mmap"},
 		ext: []ext{

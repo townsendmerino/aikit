@@ -5,6 +5,8 @@ package linalg
 import (
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // w4a8TileRowsIndexHoisted — MEASURED NEGATIVE, not wired in.
@@ -30,7 +32,7 @@ import (
 // Kept here, not wired into w4a8TileRows, per this codebase's own convention:
 // a documented negative is worth something, a silently-not-tried one is not.
 func w4a8TileRowsIndexHoisted(aq []int8, aScales []float32, w4 []byte, wScales, dst []float32, M, K, N, group, nGroups, bpr, j0, j1 int) int {
-	if !hasAVX2 || hasAVX512VNNIVL || M < 4 || group != 32 || K < 32 {
+	if !cpufeat.HasAVX2 || cpufeat.HasAVX512VNNIVL || M < 4 || group != 32 || K < 32 {
 		return 0
 	}
 	mFull := M &^ 3
@@ -118,7 +120,7 @@ func (c w4a8TileRowsCase) run(fn func(aq []int8, aScales []float32, w4 []byte, w
 }
 
 func TestW4A8TileRowsIndexHoisted_isBitIdentical(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2 on this core; w4a8TileRows never dispatches")
 	}
 	rng := rand.New(rand.NewPCG(48, 8))
@@ -144,7 +146,7 @@ func TestW4A8TileRowsIndexHoisted_isBitIdentical(t *testing.T) {
 }
 
 func benchW4A8TileRows(b *testing.B, fn func(aq []int8, aScales []float32, w4 []byte, wScales, dst []float32, M, K, N, group, nGroups, bpr, j0, j1 int) int, M, K, N int) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		b.Skip("no AVX2 on this core; w4a8TileRows never dispatches")
 	}
 	const group = 32

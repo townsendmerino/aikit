@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestWeightMatSplitHalf_matchesCanonical is the wiring's correctness gate: a WeightMat with the
@@ -17,7 +19,7 @@ import (
 // M=1 branch, the span's row/scale indexing and the parallel fan-out all agree with the
 // canonical path on real matrix shapes.
 func TestWeightMatSplitHalf_matchesCanonical(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("AVX2 required")
 	}
 	// On a VNNI host the repack declines by design (weightmat_splithalf_amd64.go):
@@ -27,7 +29,7 @@ func TestWeightMatSplitHalf_matchesCanonical(t *testing.T) {
 	// here is exactly the regression this gate should catch, and a bare Skip would
 	// hide it. (This is how the VNNI problem was found: before the gate existed,
 	// this test passed on Zen 2 and failed on a VNNI runner at rel 1.09e-4.)
-	if hasAVX512VNNIVL {
+	if cpufeat.HasAVX512VNNIVL {
 		probe := WrapInt4(make([]byte, 32*16), make([]float32, 32), 32, 32, 32)
 		if probe.RepackInt4SplitHalf() {
 			t.Fatal("VNNI host: RepackInt4SplitHalf ACCEPTED, but canonical dispatches to the VNNI tier here — the layout would downgrade the kernel and diverge numerically")
@@ -81,7 +83,7 @@ func TestWeightMatSplitHalf_matchesCanonical(t *testing.T) {
 // path depends on: repacking must not disturb the canonical bytes, which may be an mmap alias of
 // a file on disk. Rewriting them in place would silently misdecode every existing bundle.
 func TestWeightMatSplitHalf_canonicalUntouched(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("AVX2 required")
 	}
 	// On a VNNI host the repack declines by design (weightmat_splithalf_amd64.go):
@@ -91,7 +93,7 @@ func TestWeightMatSplitHalf_canonicalUntouched(t *testing.T) {
 	// here is exactly the regression this gate should catch, and a bare Skip would
 	// hide it. (This is how the VNNI problem was found: before the gate existed,
 	// this test passed on Zen 2 and failed on a VNNI runner at rel 1.09e-4.)
-	if hasAVX512VNNIVL {
+	if cpufeat.HasAVX512VNNIVL {
 		probe := WrapInt4(make([]byte, 32*16), make([]float32, 32), 32, 32, 32)
 		if probe.RepackInt4SplitHalf() {
 			t.Fatal("VNNI host: RepackInt4SplitHalf ACCEPTED, but canonical dispatches to the VNNI tier here — the layout would downgrade the kernel and diverge numerically")

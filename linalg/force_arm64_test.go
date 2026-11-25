@@ -2,13 +2,17 @@
 
 package linalg
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+)
 
 // Under aikit_nodotprod the SDOT flag reads false; a normal build asserts nothing about the hardware.
 func TestForcedFallbacks_flagsFollowTheTags(t *testing.T) {
 	forced := ForcedFallbacks()
 	if len(forced) == 0 {
-		t.Logf("no fallback forced: hasDotProd=%v as detected", hasDotProd)
+		t.Logf("no fallback forced: cpufeat.HasDotProd=%v as detected", cpufeat.HasDotProd)
 		return
 	}
 	for _, f := range forced {
@@ -16,8 +20,8 @@ func TestForcedFallbacks_flagsFollowTheTags(t *testing.T) {
 			t.Errorf("unexpected forced fallback %q on arm64", f)
 			continue
 		}
-		if hasDotProd {
-			t.Error("nodotprod: hasDotProd is still true")
+		if cpufeat.HasDotProd {
+			t.Error("nodotprod: cpufeat.HasDotProd is still true")
 		}
 	}
 }

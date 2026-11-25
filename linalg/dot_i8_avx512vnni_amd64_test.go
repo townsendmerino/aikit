@@ -5,6 +5,8 @@ package linalg
 import (
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestAVX512VNNI_detection sanity-checks that the VNNI probe runs without
@@ -12,11 +14,11 @@ import (
 // does not assert VNNI presence (host-dependent), only that the CPUID/XGETBV
 // machinery itself works.
 func TestAVX512VNNI_detection(t *testing.T) {
-	maxLeaf, _, _, _ := cpuid(0, 0)
+	maxLeaf, _, _, _ := cpufeat.CPUID(0, 0)
 	if maxLeaf < 1 {
 		t.Fatalf("CPUID leaf 0 reported maxLeaf=%d; probe is broken", maxLeaf)
 	}
-	t.Logf("hasAVX512VNNI=%v hasAVX2=%v (maxLeaf=%d)", hasAVX512VNNI, hasAVX2, maxLeaf)
+	t.Logf("cpufeat.HasAVX512VNNI=%v cpufeat.HasAVX2=%v (maxLeaf=%d)", cpufeat.HasAVX512VNNI, cpufeat.HasAVX2, maxLeaf)
 }
 
 // TestAVX512VNNI_dotI8AVX512VNNI_matchesScalar directly exercises the raw
@@ -31,7 +33,7 @@ func TestAVX512VNNI_detection(t *testing.T) {
 // magnitude (-128/-128, -128/127, 127/-128, 127/127), which is where an
 // off-by-one in the +128 correction or the ones-vector would first show up.
 func TestAVX512VNNI_dotI8AVX512VNNI_matchesScalar(t *testing.T) {
-	if !hasAVX512VNNI {
+	if !cpufeat.HasAVX512VNNI {
 		t.Skip("CPU lacks AVX-512 VNNI; dotI8AVX512VNNI asm path not exercised")
 	}
 	rng := rand.New(rand.NewPCG(41, 43))
@@ -70,7 +72,7 @@ func TestAVX512VNNI_dotI8AVX512VNNI_matchesScalar(t *testing.T) {
 // a VNNI-then-AVX2-then-scalar combination (n%64 in (0,64), n%16!=0), a
 // VNNI-then-scalar combination (n%64!=0, remainder<16), and pure-VNNI
 // (n%64==0) — so a regrouping bug across tiers, not just within one kernel,
-// would show up. Runs regardless of hasAVX512VNNI/hasAVX2: on lesser hardware
+// would show up. Runs regardless of cpufeat.HasAVX512VNNI/cpufeat.HasAVX2: on lesser hardware
 // it's exercising whichever tiers ARE present, which is the point.
 func TestAVX512VNNI_dotI8_dispatchesThroughEveryTier(t *testing.T) {
 	rng := rand.New(rand.NewPCG(53, 59))

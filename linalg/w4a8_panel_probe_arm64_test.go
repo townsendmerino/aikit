@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestW4A8TilePanelTraffic is step 0.2 of the CPU-prefill-remainder brief: it
@@ -28,7 +30,7 @@ import (
 // row (a panel row is K bytes after quantisation, so 8960 B/row against 1536).
 func TestW4A8TilePanelTraffic(t *testing.T) {
 	harnessOnly(t)
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("no FEAT_DotProd; the row4 tile does not dispatch")
 	}
 	const group = 32

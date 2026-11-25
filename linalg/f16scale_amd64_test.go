@@ -2,7 +2,11 @@
 
 package linalg
 
-func f16FusedKernelActive() bool { return hasAVX2 && hasF16C && !hasAVX512VNNIVL }
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
+func f16FusedKernelActive() bool {
+	return cpufeat.HasAVX2 && cpufeat.HasF16C && !cpufeat.HasAVX512VNNIVL
+}
 
 // layoutRefF32 is the f32-scale reference for a repacked WeightMat's own layout (split-half here), following
 // the amd64 WeightMat.MatmulBTW4A8Into dispatch; nil when wm has no repacked layout.

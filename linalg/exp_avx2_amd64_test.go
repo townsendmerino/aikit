@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestExpF32AVX2_bitIdenticalToContract is the amd64 acceptance test, and it
@@ -14,7 +16,7 @@ import (
 // is what the whole contract was built to buy: a golden generated on an M1 is
 // valid on a Zen 2.
 func TestExpF32AVX2_bitIdenticalToContract(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2+FMA3 on this core; the kernel does not dispatch")
 	}
 	var xs []float32
@@ -54,7 +56,7 @@ func TestExpF32AVX2_bitIdenticalToContract(t *testing.T) {
 // the arm64 kernel gets, for the same reason: the random fill would not prove
 // the branch was exercised.
 func TestExpF32AVX2_overflowBranch(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2+FMA3")
 	}
 	var xs []float32
@@ -90,7 +92,7 @@ func TestExpF32AVX2_overflowBranch(t *testing.T) {
 // saturates LATER than TanhF32 by one ULP, at the signed zeros, and out past the
 // 2|x| clamp where the unused polynomial half diverges.
 func TestTanhF32AVX2_bitIdenticalToContract(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2+FMA3 on this core; the kernel does not dispatch")
 	}
 	var xs []float32
@@ -124,7 +126,7 @@ func TestTanhF32AVX2_bitIdenticalToContract(t *testing.T) {
 // |x| ≈ 4 point where the tail saturates to exactly 1 on its own, and the large
 // arguments where -x² has to be clamped before the exponent construction sees it.
 func TestErfF32AVX2_bitIdenticalToContract(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2+FMA3 on this core; the kernel does not dispatch")
 	}
 	var xs []float32

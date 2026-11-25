@@ -9,13 +9,13 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
-### Fixed
+### Changed
 
-- **A group size of 0 is refused by name instead of dividing by zero**: `DequantizeRowInt4`, `QuantizeGroupInt4Row`,
-  `QuantizeActivationsGroupedInto` and `SumActGroupsInto` panic with "group must be > 0, got 0", as `QuantizeGroupsInt4` already did,
-  where they crashed with an integer divide by zero (or, at a negative group, an index out of range). **An empty source converts to
-  nothing**: `F32ToF16Slice` with an empty `src`, and `QuantizeF16` at rows×cols = 0, returned a slice-bounds panic
-  (`TestGroupZero_refusedByName`, `TestF16_emptySource`). Found by the tiny-shape sweep of linalg's exported entry points.
+- **`linalg`'s CPU-feature flags, their detection and the `aikit_no*` fallback tags live in one internal package,
+  `internal/cpufeat`** (from `linalg`'s `has*`/`detect*` variables, its `cpuid`/`xgetbv` probes and its `force_no*` files). Every
+  dispatcher reads the one copy, so `SelfCheck`'s repair and each forced fallback keep governing a kernel package split out of
+  `linalg` later. No exported name changes: `ActiveKernels` and `ForcedFallbacks` report the same strings under each tag
+  (compared on linux/amd64 for the untagged build and each amd64 tag), and the forced-fallback tests pass under each tag.
 
 ### Added
 
@@ -35,6 +35,14 @@ excluded from that promise and may change in any release until it graduates.
   case is also read through a one-tensor GGUF, so each type's byte size is checked with its kernel
   (`TestIQDequant_goldenThroughGGUF`), and `TestOutputContract_dequantWritersOverwrite` covers every type the reader admits
   rather than a list.
+
+### Fixed
+
+- **A group size of 0 is refused by name instead of dividing by zero**: `DequantizeRowInt4`, `QuantizeGroupInt4Row`,
+  `QuantizeActivationsGroupedInto` and `SumActGroupsInto` panic with "group must be > 0, got 0", as `QuantizeGroupsInt4` already did,
+  where they crashed with an integer divide by zero (or, at a negative group, an index out of range). **An empty source converts to
+  nothing**: `F32ToF16Slice` with an empty `src`, and `QuantizeF16` at rows×cols = 0, returned a slice-bounds panic
+  (`TestGroupZero_refusedByName`, `TestF16_emptySource`). Found by the tiny-shape sweep of linalg's exported entry points.
 
 ## [1.79.0] — 2026-11-24
 
