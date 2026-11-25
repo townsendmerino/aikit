@@ -15,11 +15,11 @@ package linalg
 // mid-matmul; a benchmark sets it between calls.
 var w4a8RowFold = true
 
-// SetW4A8RowFold switches the arm64 M=1 row4 W4A8 path between the S-05 fold kernel
+// SetW4A8RowFoldForTest is a test hook, not API: it switches the arm64 M=1 row4 W4A8 path between the S-05 fold kernel
 // (true, the default) and the pre-S-05 kernel (false). Numerically inert — both kernels
 // produce identical bits — so this exists only for same-process A/B measurement
 // (docs/internal/measuring-performance.md rule 3). A no-op on non-arm64.
-func SetW4A8RowFold(on bool) { w4a8RowFold = on }
+func SetW4A8RowFoldForTest(on bool) { w4a8RowFold = on }
 
-// W4A8RowFold reports whether the S-05 fold kernel is selected (see SetW4A8RowFold).
-func W4A8RowFold() bool { return w4a8RowFold }
+// W4A8RowFoldForTest reports whether the S-05 fold kernel is selected (see SetW4A8RowFoldForTest).
+func W4A8RowFoldForTest() bool { return w4a8RowFold }

@@ -5,7 +5,7 @@ package linalg
 // S-05 (docs/task-simd-audit.md): the M=1 row4 decode kernel with the -8
 // centering folded into the SDOT accumulators' initial value. See
 // dot_w4a8_fold_arm64.s for the identity and the µop count. The A/B toggle
-// (w4a8RowFold, SetW4A8RowFold, W4A8RowFold) is declared portably in
+// (w4a8RowFold, SetW4A8RowFoldForTest, W4A8RowFoldForTest) is declared portably in
 // quant_w4a8_fold.go so consumers can reference it from untagged files.
 
 // w4a8LaneCorrNeg8 writes corr[4g+l] = -8·(Σ act[32g+4l..32g+4l+3] +

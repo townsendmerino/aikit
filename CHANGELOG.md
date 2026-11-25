@@ -11,6 +11,12 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **The two kernel A/B switches leave the public surface** (LS6, step 3, narrowed 2026-11-24): `SetInt4WeightScheme` and
+  `Int4WeightScheme`, which only linalg's tests used, are unexported. `SetW4A8RowFold` and `W4A8RowFold` become the test hooks
+  `SetW4A8RowFoldForTest` and `W4A8RowFoldForTest`, which goinfer's arm64 A/B test calls. `SetParallelThreshold`,
+  `SetParallelWidth` and `SetActQuantGroup` stay as the process default that a `Workspace` overrides (and
+  `WeightMat.SetActQuantGroup` overrides per weight).
+
 - **`WeightMat.Kind` returns a typed `linalg.Kind`** (LS6, step 1): a string type with constants `KindF32`, `KindF16`,
   `KindBF16`, `KindInt8`, `KindInt4`, `KindQ4K`, `KindQ5K`, `KindQ6K` and `KindNone`, whose `String()` returns today's
   names byte for byte (`TestKind_stringsAreStable`). A comparison with a string constant compiles unchanged; a use as a

@@ -7,9 +7,9 @@ import (
 
 func int4SchemeErr(t *testing.T, scheme string, w []float32, rows, cols int) (float64, []byte, []float32) {
 	t.Helper()
-	prev := Int4WeightScheme()
-	SetInt4WeightScheme(scheme)
-	defer SetInt4WeightScheme(prev)
+	prev := currentInt4WeightScheme()
+	setInt4WeightScheme(scheme)
+	defer setInt4WeightScheme(prev)
 	q4, s := QuantizeGroupsInt4(w, rows, cols, 32)
 	dq := make([]float32, cols)
 	nG := (cols + 31) / 32
