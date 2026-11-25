@@ -2,76 +2,13 @@ package embed
 
 import (
 	"encoding/binary"
-	"encoding/hex"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io/fs"
 	"math"
 	"math/rand"
 	"os"
 	"sort"
 	"testing"
 )
-
-// TestIQDequant_matchesReference parity-gates the IQ4_NL / IQ4_XS dequant against
-// llama.cpp's gguf Python reference: the committed golden holds deterministic raw
-// super-blocks (raw_hex) and the reference dequantization (expected); dequantRange
-// must reproduce them. Codebook quants have no convenient small-model f32 oracle,
-// so this pins the kernel directly (every value, not just a forward cosine).
-// Regenerate: .venv/bin/python scripts/oracle/pin_iq_dequant.py
-func TestIQDequant_matchesReference(t *testing.T) {
-	raw, err := os.ReadFile("../testdata/iq_dequant_golden.json")
-	if errors.Is(err, fs.ErrNotExist) {
-		t.Skip("no IQ golden — regenerate with scripts/oracle/pin_iq_dequant.py")
-	}
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
-	}
-	var g struct {
-		Cases []struct {
-			Type     string    `json:"type"`
-			GGMLType uint32    `json:"ggml_type"`
-			Elems    int       `json:"elems"`
-			RawHex   string    `json:"raw_hex"`
-			Expected []float32 `json:"expected"`
-		} `json:"cases"`
-	}
-	if err := json.Unmarshal(raw, &g); err != nil {
-		t.Fatalf("parse golden: %v", err)
-	}
-	if len(g.Cases) == 0 {
-		t.Fatal("golden has no cases")
-	}
-	for _, c := range g.Cases {
-		t.Run(c.Type, func(t *testing.T) {
-			blk, err := hex.DecodeString(c.RawHex)
-			if err != nil {
-				t.Fatalf("decode raw_hex: %v", err)
-			}
-			bs, ok := ggmlBlockElems(c.GGMLType)
-			if !ok {
-				t.Fatalf("type %d (%s) not supported", c.GGMLType, c.Type)
-			}
-			got := make([]float32, c.Elems)
-			dequantRange(c.GGMLType, blk, 0, got, bs)
-			var maxErr float64
-			for i := range got {
-				// Same float32 ops as the reference, so the only slack is mantissa
-				// rounding; a logic bug (wrong codebook entry / scale bit) is off by
-				// far more than this relative bound.
-				d := math.Abs(float64(got[i] - c.Expected[i]))
-				if d > maxErr {
-					maxErr = d
-				}
-				if tol := 1e-4 * (1 + math.Abs(float64(c.Expected[i]))); d > tol {
-					t.Fatalf("%s[%d] = %v, want %v (Δ%.2e > %.2e)", c.Type, i, got[i], c.Expected[i], d, tol)
-				}
-			}
-			t.Logf("%s: %d values match gguf reference, maxΔ=%.3e", c.Type, c.Elems, maxErr)
-		})
-	}
-}
 
 // f16bits returns the IEEE-754 binary16 bit pattern of v (test helper; only
 // exact-in-f16 values are used below).

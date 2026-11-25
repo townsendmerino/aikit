@@ -9,6 +9,19 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added
+
+- **`embed` reads GGUF type 40, NVFP4** (`dequantNVFP4Block`): 64-element blocks of four 16-element sub-blocks, each with an
+  unsigned e4m3 scale and 8 bytes of e2m1 nibbles, low nibble to element `j` and high to `j+8`, as ggml's `dequantize_row_nvfp4`
+  reads them. The scale decodes as ggml's `ggml_ue4m3_to_fp32` does: the top bit is ignored and `0x00` and `0x7F` are zero. The
+  per-tensor scale is a separate GGUF tensor, which the caller applies. Held bit-exact against gguf-py's `gguf.quants` on every
+  scale byte against every code (`TestIQDequant_matchesReference/NVFP4`); a wrong e2m1 entry, ModelOpt's sequential nibble order
+  or an honored scale sign bit each turns it red (`TestNVFP4Dequant_goldenCatchesPlants`).
+- **The dequant golden is compared bit for bit**, where it allowed a relative 1e-4: every type in it already matched exactly. Each
+  case is also read through a one-tensor GGUF, so each type's byte size is checked with its kernel
+  (`TestIQDequant_goldenThroughGGUF`), and `TestOutputContract_dequantWritersOverwrite` covers every type the reader admits
+  rather than a list.
+
 ## [1.79.0] — 2026-11-24
 
 `perfgate` VERDICT: FAIL — 3 regression(s) vs v1.78.0 across 47 shapes, confirmed on a second measurement

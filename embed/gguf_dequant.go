@@ -59,6 +59,8 @@ func dequantRange(typ uint32, raw []byte, start int, dst []float32, blockElems i
 				dequantIQ4NLBlock(raw, first+k, out)
 			case ggmlTypeMXFP4:
 				dequantMXFP4Block(raw, first+k, out)
+			case ggmlTypeNVFP4:
+				dequantNVFP4Block(raw, first+k, out)
 			case ggmlTypeIQ4XS:
 				dequantIQ4XSBlock(raw, first+k, out)
 			case ggmlTypeIQ2S:
@@ -241,6 +243,43 @@ func dequantMXFP4Block(raw []byte, blk int, out []float32) {
 	for j := range 16 {
 		out[j] = d * float32(mxfp4KValues[qs[j]&0x0F])
 		out[j+16] = d * float32(mxfp4KValues[qs[j]>>4])
+	}
+}
+
+// qkNVFP4 is the NVFP4 block size (ggml's QK_NVFP4): four 16-element sub-blocks.
+const qkNVFP4 = 64
+
+// ue4m3ToF32Half decodes an NVFP4 sub-block scale as ggml's ggml_ue4m3_to_fp32 does: bits 6..3 are the
+// exponent (bias 7), bits 2..0 the mantissa, bit 7 is ignored, and 0x00 and 0x7F decode to zero. The result
+// is halved, pairing with the doubled e2m1 table mxfp4KValues as e8m0ToF32Half does for MXFP4. Every
+// nonzero result is a power of two times a 4-bit mantissa, so it and its product with a table entry are exact.
+func ue4m3ToF32Half(x uint8) float32 {
+	if x == 0 || x == 0x7F {
+		return 0
+	}
+	exp := int(x>>3) & 0xF
+	man := float32(x & 0x7)
+	if exp == 0 {
+		return float32(math.Ldexp(float64(man), -9)) * 0.5
+	}
+	return float32(math.Ldexp(float64(1+man/8), exp-7)) * 0.5
+}
+
+// dequantNVFP4Block dequantizes one 36-byte NVFP4 (ggml type 40) block into out[:64]. Bytes 0..3 are the
+// ue4m3 scales of the four 16-element sub-blocks; bytes 4..35 hold 8 bytes per sub-block, and within
+// sub-block s byte j's low nibble is element 16s+j and its high nibble element 16s+j+8 (ggml's
+// dequantize_row_nvfp4). The per-tensor scale is a separate GGUF tensor the caller applies.
+func dequantNVFP4Block(raw []byte, blk int, out []float32) {
+	base := blk * 36
+	out = out[:qkNVFP4:qkNVFP4]
+	for s := range 4 {
+		d := ue4m3ToF32Half(raw[base+s])
+		qs := raw[base+4+8*s : base+4+8*s+8]
+		o := out[16*s : 16*s+16]
+		for j := range 8 {
+			o[j] = d * float32(mxfp4KValues[qs[j]&0x0F])
+			o[j+8] = d * float32(mxfp4KValues[qs[j]>>4])
+		}
 	}
 }
 
