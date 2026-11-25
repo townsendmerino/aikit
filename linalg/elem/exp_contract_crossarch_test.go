@@ -1,4 +1,4 @@
-package linalg
+package elem
 
 import (
 	"encoding/binary"

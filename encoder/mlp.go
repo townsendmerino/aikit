@@ -1,6 +1,8 @@
 package encoder
 
-import "github.com/townsendmerino/aikit/linalg"
+import (
+	"github.com/townsendmerino/aikit/linalg/elem"
+)
 
 // swigluMLP runs one block's SwiGLU MLP and adds the output to the
 // residual `h` (in place). Caller applies the post-MLP LayerNorm.
@@ -35,7 +37,7 @@ func swigluMLP(h []float32, Fc11, Fc12, Fc2 []float32, D, intermediate, L int, s
 	s.mm(h, Fc12, gate, L, D, intermediate)
 	// mid = val ⊙ SiLU(gate), reuse val's storage.
 	//
-	// Two audit fixes here (M-07, M-06). M-07: this called linalg.SiLUInto,
+	// Two audit fixes here (M-07, M-06). M-07: this called elem.SiLUInto,
 	// which is vectorized only under GOEXPERIMENT=simd — a build this library
 	// cannot require of importers, and one docs/task-archsimd-eval.md ruled out
 	// as a shipping path — so in every shipped build it ran the scalar loop. The
@@ -53,7 +55,7 @@ func swigluMLP(h []float32, Fc11, Fc12, Fc2 []float32, D, intermediate, L int, s
 	parallelRows(L, L*intermediate, func(start, end int) {
 		lo, hi := start*intermediate, end*intermediate
 		g := gate[lo:hi]
-		linalg.SiLUContractInto(g, g)
+		elem.SiLUContractInto(g, g)
 		v := val[lo:hi]
 		n := len(v)
 		if n > 0 {

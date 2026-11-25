@@ -25,10 +25,23 @@ func (e ext) on(p platform) bool {
 }
 
 // rule is what one package imports beyond the stdlib: aikit packages (paths relative
-// to the module root) and external packages.
+// to the module root) and external packages. aikitOn lists aikit packages imported only
+// on some platforms (an ext whose path is relative to the module root).
 type rule struct {
-	aikit []string
-	ext   []ext
+	aikit   []string
+	aikitOn []ext
+	ext     []ext
+}
+
+// aikitFor is r's aikit imports on platform p.
+func (r rule) aikitFor(p platform) []string {
+	out := slices.Clone(r.aikit)
+	for _, e := range r.aikitOn {
+		if e.on(p) {
+			out = append(out, e.path)
+		}
+	}
+	return out
 }
 
 // rules is the core module's import graph, one entry per package, non-test imports
@@ -55,7 +68,8 @@ var rules = map[string]rule{
 	"mmap": {ext: []ext{{path: "golang.org/x/sys/unix", goos: "darwin"}}},
 
 	// Kernels and loaders.
-	"linalg": {aikit: []string{"internal/cpufeat", "mmap"}},
+	"linalg":      {aikit: []string{"internal/cpufeat", "linalg/elem", "mmap"}},
+	"linalg/elem": {aikitOn: []ext{{path: "internal/cpufeat", goarch: "amd64"}}},
 	"embed": {
 		aikit: []string{"internal/cursor", "mmap"},
 		ext: []ext{
@@ -76,7 +90,7 @@ var rules = map[string]rule{
 	"hybrid": {aikit: []string{"ann", "bm25", "fuse"}},
 
 	// Model towers.
-	"encoder": {aikit: []string{"embed", "linalg", "sparse"}},
+	"encoder": {aikit: []string{"embed", "linalg", "linalg/elem", "sparse"}},
 
 	// Harness and programs.
 	"bench":                 {aikit: []string{"ann"}},
@@ -254,7 +268,7 @@ func checkPlatform(t *testing.T, p platform) {
 				gotExt = append(gotExt, imp)
 			}
 		}
-		diff(t, p, name, "aikit package", gotAikit, want.aikit)
+		diff(t, p, name, "aikit package", gotAikit, want.aikitFor(p))
 		diff(t, p, name, "external package", gotExt, wantExt)
 		if q.incomplete && !t.Failed() {
 			t.Errorf("%s: go list reports package %s (or a dependency) as broken; run `GOOS=%s GOARCH=%s go list -deps ./%s`",

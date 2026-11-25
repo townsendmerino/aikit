@@ -1,6 +1,6 @@
 //go:build amd64
 
-package linalg
+package elem
 
 import (
 	"math"

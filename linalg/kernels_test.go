@@ -15,7 +15,6 @@ var kernelRows = slices.Concat(
 	dotRows,
 	kquantRows,
 	attnRows,
-	expRows,
 	widenRows,
 	f16scaleRows,
 	hammingKernelRows,

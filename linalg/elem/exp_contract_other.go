@@ -1,6 +1,6 @@
 //go:build !arm64 && !amd64
 
-package linalg
+package elem
 
 // Impls for targets with no kernel: the scalar contract. Bit-identical to the arm64 kernels by
 // construction, so nothing about a model's output depends on which build ran it

@@ -401,7 +401,7 @@ func (c *Config) gatedMLP() bool {
 // geluTanh reports whether the dense GELU MLP (gatedMLP() == false) should use
 // the tanh approximation instead of the exact erf form. "gelu_new", "gelu_fast",
 // and "gelu_pytorch_tanh" are three HF names for the identical tanh formula (see
-// linalg.GELUTanhF32) — a DIFFERENT function from plain "gelu"'s erf form, not an
+// elem.GELUTanhF32) — a DIFFERENT function from plain "gelu"'s erf form, not an
 // approximation safe to collapse into it. Substituting one for the other is a
 // silent model change (see vision.geluTanh's identical caveat for SigLIP).
 func (c *Config) geluTanh() bool {

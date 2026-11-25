@@ -1,6 +1,6 @@
 //go:build arm64
 
-package linalg
+package elem
 
 // arm64 impls: the NEON kernels, with the n%4 tail on the scalar contract.
 

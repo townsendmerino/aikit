@@ -1,6 +1,6 @@
 //go:build !goexperiment.simd
 
-package linalg
+package elem
 
 // softmaxRowIntoRaw is SoftmaxRowInto (exp.go) with the length/empty checks
 // already done. This is the default build — byte-for-byte the body

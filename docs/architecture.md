@@ -78,6 +78,7 @@ graph TD
         end
         chunkers["chunk/regex, chunk/markdown<br/><i>chunkers</i>"]
         linalg["linalg<br/><i>SIMD f32/int8/int4 kernels</i>"]
+        elem["linalg/elem<br/><i>exp, tanh, erf, SiLU, GELU, softmax</i>"]
         embed["embed<br/><i>Model2Vec + safetensors/GGUF loaders</i>"]
         bm25["bm25<br/><i>identifier-aware lexical index</i>"]
         sparse["sparse<br/><i>learned-sparse (SPLADE) index</i>"]
@@ -90,6 +91,8 @@ graph TD
         chunkers --> chunk
         linalg --> mmap
         linalg --> cpufeat
+        linalg --> elem
+        elem --> cpufeat
         embed --> mmap
         embed --> cursor
         bm25 --> topk
@@ -106,6 +109,7 @@ graph TD
         late --> topk
         encoder --> embed
         encoder --> linalg
+        encoder --> elem
         encoder --> sparse
         hybrid --> ann
         hybrid --> bm25
@@ -137,8 +141,9 @@ importer's build pulls in.
 the one most of the tree now rests on: it is the read-only file mapping under
 every loader that maps a blob from disk instead of copying it.
 
-**One step up.** `linalg` imports `mmap` and `internal/cpufeat` and nothing
-else, so it is no longer a leaf. `embed` imports `mmap` and `internal/cursor`. `sparse` imports `topk`
+**One step up.** `linalg/elem` (the elementwise kernels, split out of `linalg`) imports
+`internal/cpufeat` on amd64 and nothing else. `linalg` imports `mmap`, `internal/cpufeat`
+and `linalg/elem` (its fused attention calls the contract exp), so it is no longer a leaf. `embed` imports `mmap` and `internal/cursor`. `sparse` imports `topk`
 and `internal/accum`. `bm25` imports `topk`, `internal/accum`,
 `internal/cursor` and `mmap`: its postings arena maps from disk and its blob
 format is read through the shared cursor. `chunk/regex` and `chunk/markdown`

@@ -2,6 +2,7 @@ package encoder
 
 import (
 	"github.com/townsendmerino/aikit/linalg"
+	"github.com/townsendmerino/aikit/linalg/elem"
 )
 
 // matmulBT computes dst = a · bᵀ where:
@@ -150,7 +151,7 @@ func addBias(dst []float32, bias []float32, M, N int) {
 // max-subtraction for stability and a float64 accumulator for the sum
 // (plan §6: softmax accumulates in f64).
 //
-// The exponentials themselves are float32 (linalg.SoftmaxRowInto), NOT Go's
+// The exponentials themselves are float32 (elem.SoftmaxRowInto), NOT Go's
 // float64 math.Exp. That is perf-campaign item 13, and it is the one change in
 // this campaign that is deliberately NOT bit-identical: math.Exp is a branchy
 // scalar f64 routine that cannot inline into this loop, and attention calls it
@@ -159,14 +160,14 @@ func addBias(dst []float32, bias []float32, M, N int) {
 // normalizes, which cancels most of the residual — the encoders' HF parity
 // goldens are the end-to-end check that this stays invisible.
 func softmaxRow(row []float32) {
-	linalg.SoftmaxRowContractInto(row, row)
+	elem.SoftmaxRowContractInto(row, row)
 }
 
 // softmaxRowScaled is softmaxRow fused with the attention score scale
-// (1/sqrt(headDim)) — see linalg.SoftmaxRowScaledInto for why this replaces
+// (1/sqrt(headDim)) — see elem.SoftmaxRowScaledInto for why this replaces
 // a caller's own separate `scores[i] *= scale` pass bit-identically.
 func softmaxRowScaled(row []float32, scale float32) {
-	linalg.SoftmaxRowScaledContractInto(row, row, scale)
+	elem.SoftmaxRowScaledContractInto(row, row, scale)
 }
 
 // silu returns x · sigmoid(x), the SwiGLU gate activation.
@@ -174,7 +175,7 @@ func softmaxRowScaled(row []float32, scale float32) {
 // linalg's float32 kernel (perf-campaign item 13), not f64 math.Exp. The
 // saturation the old f64 comment worried about is handled by ExpF32's own
 // overflow/underflow cases, and the accuracy contract is absolute error ≤1e-06
-// — see linalg.SiLUF32.
+// — see elem.SiLUF32.
 func silu(x float32) float32 {
-	return linalg.SiLUF32(x)
+	return elem.SiLUF32(x)
 }
