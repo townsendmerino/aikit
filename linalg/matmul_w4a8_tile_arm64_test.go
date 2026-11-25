@@ -52,7 +52,7 @@ func TestMatmulBTW4A8Row4TileInto_bitIdenticalToCanonical(t *testing.T) {
 			want := make([]float32, M*N)
 			got := make([]float32, M*N)
 			MatmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
-			MatmulBTW4A8Row4TileInto(&wsGot, a, row4, row4s, got, M, K, N, group)
+			matmulBTW4A8Row4TileInto(&wsGot, a, row4, row4s, got, M, K, N, group)
 			for i := range got {
 				if got[i] != want[i] {
 					t.Fatalf("K=%d N=%d M=%d idx=%d (row %d, col %d): tile %v != canonical %v (diff %v)",
@@ -88,14 +88,14 @@ func TestMatmulBTW4A8Row4TileInto_parallelMatchesSerial(t *testing.T) {
 	var wsSerial Workspace
 	wsSerial.SetThreshold(1 << 62) // never parallelize
 	serial := make([]float32, M*N)
-	MatmulBTW4A8Row4TileInto(&wsSerial, a, row4, row4s, serial, M, K, N, group)
+	matmulBTW4A8Row4TileInto(&wsSerial, a, row4, row4s, serial, M, K, N, group)
 
 	for _, workers := range []int{1, 2, 3, 4, 8} {
 		var ws Workspace
 		ws.SetThreshold(1)
 		ws.SetWorkers(workers)
 		got := make([]float32, M*N)
-		MatmulBTW4A8Row4TileInto(&ws, a, row4, row4s, got, M, K, N, group)
+		matmulBTW4A8Row4TileInto(&ws, a, row4, row4s, got, M, K, N, group)
 		for i := range got {
 			if got[i] != serial[i] {
 				t.Fatalf("workers=%d idx=%d: %v != serial %v", workers, i, got[i], serial[i])
@@ -136,7 +136,7 @@ func TestMatmulBTW4A8Row4TileInto_zeroActivationRow(t *testing.T) {
 		want := make([]float32, M*N)
 		got := make([]float32, M*N)
 		MatmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
-		MatmulBTW4A8Row4TileInto(&wsGot, a, row4, row4s, got, M, K, N, group)
+		matmulBTW4A8Row4TileInto(&wsGot, a, row4, row4s, got, M, K, N, group)
 		for i := range got {
 			if got[i] != want[i] {
 				t.Fatalf("zeroRow=%d idx=%d (row %d): tile %v != canonical %v", zeroRow, i, i/N, got[i], want[i])
@@ -171,7 +171,7 @@ func TestMatmulBTW4A8Row4_rejectsTooSmallKAtEntry(t *testing.T) {
 		want string
 	}{
 		{"tile_M4", func(ws *Workspace) {
-			MatmulBTW4A8Row4TileInto(ws, nil, nil, nil, make([]float32, 4*N), 4, 0, N, group)
+			matmulBTW4A8Row4TileInto(ws, nil, nil, nil, make([]float32, 4*N), 4, 0, N, group)
 		}, "MatmulBTW4A8Row4TileInto requires K >= group=32"},
 		{"row4_M1", func(ws *Workspace) {
 			MatmulBTW4A8Row4Into(ws, nil, nil, nil, make([]float32, N), 1, 0, N, group)

@@ -73,7 +73,7 @@ func TestMatmulBTW4A8_closeToF32(t *testing.T) {
 		MatmulBT(a, bDeq, want, s.M, s.K, s.N)
 
 		got := make([]float32, s.M*s.N)
-		MatmulBTW4A8(a, packed, scales, got, s.M, s.K, s.N, s.group)
+		matmulBTW4A8(a, packed, scales, got, s.M, s.K, s.N, s.group)
 
 		e := relL2(got, want)
 		t.Logf("shape %+v: W4A8 relL2 = %.4f", s, e)

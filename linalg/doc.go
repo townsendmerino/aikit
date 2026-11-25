@@ -21,7 +21,7 @@
 // On arm64 the int8 path upgrades from the base SMULL/SADALP kernel to the
 // ARMv8.2 SDOT kernel when cpufeat.DetectDotProd reports HWCAP_ASIMDDP. On amd64 the f32
 // and int8 kernels use AVX2+FMA when CPUID/XGETBV confirm OS+CPU support, else
-// scalar. The fused int4×int8 decode kernel (MatmulBTW4A8) has both an arm64+SDOT
+// scalar. The fused int4×int8 decode kernel (matmulBTW4A8) has both an arm64+SDOT
 // and an amd64+AVX2 implementation; non-DotProd arm64 and non-AVX2 amd64 fall
 // back to the scalar reference (a VNNI amd64 variant is a planned follow-up).
 // Detection runs once at init; the hot path is a branch on a bool.
@@ -32,8 +32,8 @@
 //     MAC-count threshold (see SetParallelThreshold / SetParallelWidth).
 //   - Dot4x4, Dot8x4 — register-blocked f32 micro-kernels for a cache-blocked
 //     matmul that tiles K (see Dot8x4 on the large-K cliff).
-//   - MatmulBTQ8, MatmulBTQ4 — quantized weights, f32 activations (prefill).
-//   - MatmulBTW8A8, MatmulBTW4A8 — quantized weights AND int8 activations, the
+//   - MatmulBTQ8, matmulBTQ4 — quantized weights, f32 activations (prefill).
+//   - MatmulBTW8A8, matmulBTW4A8 — quantized weights AND int8 activations, the
 //     fast M=1 (decode) paths. W8A8 also has zero-alloc (…Into) and batched forms.
 //
 // # Numerical invariant

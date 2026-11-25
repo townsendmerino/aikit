@@ -352,7 +352,7 @@ func TestKQuantMatmulBT(t *testing.T) {
 
 	w6 := randQ6KRow(rng, N*nb)
 	dst6 := make([]float32, M*N)
-	MatmulBTGGUFQ6K(a, w6, dst6, M, K, N)
+	matmulBTGGUFQ6K(a, w6, dst6, M, K, N)
 	for m := range M {
 		for n := range N {
 			want := oracleDotQ6K(w6[n*nb*210:(n+1)*nb*210], &q8, m, nb)
@@ -364,7 +364,7 @@ func TestKQuantMatmulBT(t *testing.T) {
 
 	w4 := randQ4KRow(rng, N*nb)
 	dst4 := make([]float32, M*N)
-	MatmulBTGGUFQ4K(a, w4, dst4, M, K, N)
+	matmulBTGGUFQ4K(a, w4, dst4, M, K, N)
 	for m := range M {
 		for n := range N {
 			want := oracleDotQ4K(w4[n*nb*144:(n+1)*nb*144], &q8, m, nb)

@@ -4,7 +4,7 @@ package linalg
 
 import "fmt"
 
-// MatmulBTW4A8Row4TileInto is MatmulBTW4A8Row4Into's M>1 sibling: the same
+// matmulBTW4A8Row4TileInto is MatmulBTW4A8Row4Into's M>1 sibling: the same
 // row4 weights (RepackW4A8Row4 / RepackW4A8Row4Scales), the same numerics, but
 // four ACTIVATION rows are reduced against a quad's four weight rows in one
 // kernel call instead of one activation row per call.
@@ -28,7 +28,7 @@ import "fmt"
 // M=1 path already ships.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTW4A8Row4TileInto(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []float32, dst []float32, M, K, N, group int) {
+func matmulBTW4A8Row4TileInto(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []float32, dst []float32, M, K, N, group int) {
 	checkMatmulW4A8("MatmulBTW4A8Row4Tile", len(a), len(w4Row4), len(wScales4), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTW4A8Row4Tile", len(a), w4Row4, wScales4, len(dst), M, K, N, group)
 	if group != 32 {

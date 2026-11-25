@@ -62,11 +62,14 @@ On top of the dot kernels, `linalg` provides:
   columns for small M, rows for large M — so each worker runs the fused kernel over a
   small row block and never opens `packedFill`'s missing-m-blocking gap (item 23). amd64
   keeps the vectorized dequant-then-GEMM path (`HasFusedQ8Kernel` false there).
-- The quant matmuls: `MatmulBTQ8` (int8 weights), `MatmulBTQ4` (int4 group, f32
+- The quant matmuls: `MatmulBTQ8` (int8 weights), `matmulBTQ4` (int4 group, f32
   activations — prefill path), **W8A8** (`MatmulBTW8A8` + the zero-alloc
   `…Into(ws *Workspace)` and the fused W8A8 batch, now `MatmulBTBatchInto`), and **W4A8**
-  (`MatmulBTW4A8`, int4 weights × int8 activations — the int4 *decode* path).
-  See `quant.go`, `workspace.go`, `quant_w4a8*.go`.
+  (`matmulBTW4A8`, int4 weights × int8 activations — the int4 *decode* path).
+  See `quant.go`, `workspace.go`, `quant_w4a8*.go`. Since LS6 the raw-slice forms
+  are unexported as their last consumer moves to `WeightMat` (`matmulBTQ4`,
+  `matmulBTW4A8` and the GGUF K-quant pair first); a consumer reaches each kernel
+  through `WeightMat.MatmulBTInto`.
 - `DequantizeRowsInt8Into` — bulk int8→f32 weight widen (`float32(q)*scale` per
   element), vectorized both arches: amd64 AVX2 (`VPMOVSXBD`+`VCVTDQ2PS`+`VMULPS`,
   32/iter), arm64 NEON (`dequant_i8_arm64.s`, `SXTL/SXTL2`→`SCVTF`→`FMUL`, 16/iter).

@@ -75,7 +75,7 @@ func TestWeightMat_bitIdenticalToKernels(t *testing.T) {
 		got := make([]float32, M*N)
 		wm.MatmulBT(a, got, M)
 		want := make([]float32, M*N)
-		MatmulBTW4A8(a, q4, q4s, want, M, K, N, group)
+		matmulBTW4A8(a, q4, q4s, want, M, K, N, group)
 		eq("int4", got, want)
 	}
 	// Row dequant (embedRow) — int8 + int4 + f32

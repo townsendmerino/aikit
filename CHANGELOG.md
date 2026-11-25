@@ -11,6 +11,12 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **Raw-slice matmuls nothing outside `linalg` calls are unexported** (LS6, step 4, first part): `MatmulBTGGUFQ4K`,
+  `MatmulBTGGUFQ6K`, `MatmulBTQ4`, `MatmulBTQ4Into`, `MatmulBTW4A8`, `MatmulBTW4A8Row4DesharedInto`,
+  `MatmulBTW4A8Row4PrefetchInto` and `MatmulBTW4A8Row4TileInto`. Each is reached through `WeightMat` (the K-quant kinds,
+  `QuantizeInt4`'s weight) or is a benchmark arm linalg's own tests run. The rest of the family follows as `encoder`, `ann`
+  and goinfer move to `WeightMat`.
+
 - **One batch call through `WeightMat`** (LS6, step 2): `MatmulBTBatchInto(ws, a, M, ops []BatchOp)` with
   `BatchOp{W *WeightMat; Dst []float32}` replaces `MatmulBTW8A8Batch`, `MatmulBTW4A8Batch`, `W8A8Op` and `W4A8Op`. A batch of
   W8A8 weights, or of int4 weights with one group, sharing K and the activation-group stamp, quantizes the activation once

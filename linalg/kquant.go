@@ -245,13 +245,13 @@ func dotQ4KQ8K(w []byte, q8 *q8K, row, nb int) float32 {
 	return out
 }
 
-// MatmulBTGGUFQ6K computes dst[M,N] = a[M,K] · Wᵀ where W is N rows of Q6_K weights (row n at
+// matmulBTGGUFQ6K computes dst[M,N] = a[M,K] · Wᵀ where W is N rows of Q6_K weights (row n at
 // w[n*rowBytes : (n+1)*rowBytes], rowBytes = K/256*210). Activations are quantized to Q8_K once,
 // then integer-accum dotted. Standalone (not a WeightMat kind); scalar; the go/no-go benchmark and
 // the SIMD kernel call the per-row dot directly.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTGGUFQ6K(a []float32, w []byte, dst []float32, M, K, N int) {
+func matmulBTGGUFQ6K(a []float32, w []byte, dst []float32, M, K, N int) {
 	if K%qkK != 0 {
 		panic(fmt.Sprintf("MatmulBTGGUFQ6K: K=%d not a multiple of %d", K, qkK))
 	}
@@ -267,10 +267,10 @@ func MatmulBTGGUFQ6K(a []float32, w []byte, dst []float32, M, K, N int) {
 	}
 }
 
-// MatmulBTGGUFQ4K is MatmulBTGGUFQ6K for Q4_K weights (rowBytes = K/256*144).
+// matmulBTGGUFQ4K is matmulBTGGUFQ6K for Q4_K weights (rowBytes = K/256*144).
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTGGUFQ4K(a []float32, w []byte, dst []float32, M, K, N int) {
+func matmulBTGGUFQ4K(a []float32, w []byte, dst []float32, M, K, N int) {
 	if K%qkK != 0 {
 		panic(fmt.Sprintf("MatmulBTGGUFQ4K: K=%d not a multiple of %d", K, qkK))
 	}
