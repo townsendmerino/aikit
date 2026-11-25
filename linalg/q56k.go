@@ -1,6 +1,10 @@
 package linalg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
+)
 
 // Q5_K and Q6_K weights, kept in GGUF's own super-block layout: the Q4_K kind's siblings (q4k.go). A
 // Q4_K_M file stores some tensors at these types; widening them to int8 reads more bytes than the
@@ -41,7 +45,7 @@ func wrapKQuant(fn string, raw []byte, rows, cols, rowBytes int) error {
 	if rows <= 0 || cols <= 0 || cols%qkK != 0 {
 		return fmt.Errorf("linalg: %s: shape %dx%d (cols must be a positive multiple of 256)", fn, rows, cols)
 	}
-	if want := mul(rows, rowBytes); len(raw) != want {
+	if want := shape.Mul(rows, rowBytes); len(raw) != want {
 		return fmt.Errorf("linalg: %s: %d bytes for %dx%d, want %d", fn, len(raw), rows, cols, want)
 	}
 	return nil

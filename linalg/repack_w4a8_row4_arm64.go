@@ -2,7 +2,11 @@
 
 package linalg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
+)
 
 // docs/task-w4a8-neon-bandwidth.md's item-3+4 harness (GO, 2026-08-23/24) —
 // promoted from harness-only test code to production once the grid recorded
@@ -71,10 +75,10 @@ func repackSplitHalf4RowBlock(row0, row1, row2, row3 []byte, K int) []byte {
 	}
 	nGroups := K / 32
 	bpr := K / 2
-	requireLen("repackSplitHalf4RowBlock", "row0", len(row0), bpr)
-	requireLen("repackSplitHalf4RowBlock", "row1", len(row1), bpr)
-	requireLen("repackSplitHalf4RowBlock", "row2", len(row2), bpr)
-	requireLen("repackSplitHalf4RowBlock", "row3", len(row3), bpr)
+	shape.RequireLen("repackSplitHalf4RowBlock", "row0", len(row0), bpr)
+	shape.RequireLen("repackSplitHalf4RowBlock", "row1", len(row1), bpr)
+	shape.RequireLen("repackSplitHalf4RowBlock", "row2", len(row2), bpr)
+	shape.RequireLen("repackSplitHalf4RowBlock", "row3", len(row3), bpr)
 	out := make([]byte, 4*bpr)
 	for g := range nGroups {
 		base := g * 16
@@ -143,8 +147,8 @@ func RepackInt4Row4Quad(dst, src []byte, K int) {
 		panic(fmt.Sprintf("linalg: RepackInt4Row4Quad requires K a multiple of 32, got %d", K))
 	}
 	bpr := K / 2
-	requireLen("RepackInt4Row4Quad", "dst", len(dst), 4*bpr)
-	requireLen("RepackInt4Row4Quad", "src", len(src), 4*bpr)
+	shape.RequireLen("RepackInt4Row4Quad", "dst", len(dst), 4*bpr)
+	shape.RequireLen("RepackInt4Row4Quad", "src", len(src), 4*bpr)
 	nGroups := K / 32
 	r0 := src[0*bpr : 1*bpr]
 	r1 := src[1*bpr : 2*bpr]
@@ -169,8 +173,8 @@ func RepackInt4Row4Quad(dst, src []byte, K int) {
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:4*nGroups].
 func RepackInt4Row4ScalesQuad(dst, src []float32, nGroups int) {
-	requireLen("RepackInt4Row4ScalesQuad", "dst", len(dst), 4*nGroups)
-	requireLen("RepackInt4Row4ScalesQuad", "src", len(src), 4*nGroups)
+	shape.RequireLen("RepackInt4Row4ScalesQuad", "dst", len(dst), 4*nGroups)
+	shape.RequireLen("RepackInt4Row4ScalesQuad", "src", len(src), 4*nGroups)
 	for g := range nGroups {
 		for r := range 4 {
 			dst[4*g+r] = src[r*nGroups+g]

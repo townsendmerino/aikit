@@ -6,6 +6,8 @@ import (
 	"fmt"
 
 	"github.com/townsendmerino/aikit/internal/cpufeat"
+
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
 )
 
 // RepackInt4Row4 attempts to populate w's optional split-half +
@@ -193,8 +195,8 @@ func RepackInt4Row4InPlaceF16(q4 []byte, q4s []uint16, rows, cols, group int) (W
 		return WeightMat{}, false
 	}
 	nGroups, bpr := groupsFor(cols, group)
-	requireExactLen("RepackInt4Row4InPlace", "q4", len(q4), mul(rows, bpr))
-	requireExactLen("RepackInt4Row4InPlace", "q4s", len(q4s), mul(rows, nGroups))
+	shape.RequireExactLen("RepackInt4Row4InPlace", "q4", len(q4), shape.Mul(rows, bpr))
+	shape.RequireExactLen("RepackInt4Row4InPlace", "q4s", len(q4s), shape.Mul(rows, nGroups))
 
 	quadBytes := 4 * bpr
 	nibScratch := make([]byte, quadBytes) // the ONE allocation the nibble pass makes, reused every quad

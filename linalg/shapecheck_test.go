@@ -3,6 +3,8 @@ package linalg
 import (
 	"strings"
 	"testing"
+
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
 )
 
 // recoverPanic runs fn and returns the recovered panic value (nil if none). It
@@ -78,13 +80,13 @@ func TestMatmulShapeChecks_recoverableAcrossFanout(t *testing.T) {
 // caught, not wrapped negative-and-small to slip a short slice past a length
 // compare.
 func TestShapeChecks_overflow(t *testing.T) {
-	if got := mul(1<<40, 1<<40); got != -1 {
+	if got := shape.Mul(1<<40, 1<<40); got != -1 {
 		t.Errorf("mul overflow: got %d, want -1 sentinel", got)
 	}
-	if got := mul(-1, 4); got != -1 {
+	if got := shape.Mul(-1, 4); got != -1 {
 		t.Errorf("mul negative: got %d, want -1", got)
 	}
-	if got := mul(1000, 1000); got != 1_000_000 {
+	if got := shape.Mul(1000, 1000); got != 1_000_000 {
 		t.Errorf("mul normal: got %d, want 1000000", got)
 	}
 

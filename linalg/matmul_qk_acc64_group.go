@@ -1,5 +1,7 @@
 package linalg
 
+import "github.com/townsendmerino/aikit/linalg/internal/shape"
+
 // MatmulQKAcc64Group computes dst[G,N] = a[G,K] · bMat[N,K]ᵀ, f64-accumulated — G query heads
 // that share ONE kv head's K data (bOff/rowStride select the shared kv head, same convention as
 // MatmulQKAcc64), each with its own query row in a. This is decode's actual GQA shape: G query
@@ -67,8 +69,8 @@ func checkMatmulQKAcc64Group(aLen, bLen, dstLen, G, K, N, bOff, rowStride int) {
 	if G < 0 || K < 0 || N < 0 || bOff < 0 || rowStride < K {
 		panic("linalg: MatmulQKAcc64Group invalid shape")
 	}
-	requireExactLen("MatmulQKAcc64Group", "a", aLen, mul(G, K))
-	requireExactLen("MatmulQKAcc64Group", "dst", dstLen, mul(G, N))
+	shape.RequireExactLen("MatmulQKAcc64Group", "a", aLen, shape.Mul(G, K))
+	shape.RequireExactLen("MatmulQKAcc64Group", "dst", dstLen, shape.Mul(G, N))
 	need := bOff + max(0, N-1)*rowStride + K
 	if bLen < need {
 		panic("linalg: MatmulQKAcc64Group bMat too short for the given shape/strides")
