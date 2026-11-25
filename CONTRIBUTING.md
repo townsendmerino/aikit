@@ -91,7 +91,8 @@ aikit makes a semver promise on its **Hard tier** — most of the retrieval
 core (`ann`, `bm25`, `fuse`, `topk`, `chunk`, `embed`'s stable surface,
 `encoder`'s Hard-tier types) — and explicitly does not on **Experimental**
 (new surface still settling, or acknowledged as likely to move — `sparse`
-in full, plus named parts of `ann`/`embed`/`encoder`/`linalg`: see [README
+in full, `linalg` in full from 2026-11-24 while its surface is cut down and
+split, plus named parts of `ann`/`embed`/`encoder`: see [README
 § Stability tiers](README.md#stability-tiers) for the current,
 authoritative list — it changes as things graduate, so it is not
 duplicated here).

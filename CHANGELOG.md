@@ -11,6 +11,12 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed
 
+- **`linalg` is Experimental as a whole from 2026-11-24 until its surface rework lands** (README § "Stability tiers"): the rework
+  removes and moves exported names, so `linalg.Dot`, `linalg.MatmulBT` and the int8/int4 quant kernels leave the Hard tier meanwhile;
+  the names that survive return to it as an explicit list in the release gate. The gate now checks what the README calls Hard:
+  `mmap` and `vision` join its apidiff packages, and `encoder.Backend`, `RegisterBackend` and `NewBackend` leave its exemption list
+  (`tools/releasegate`, `TestReadmeTiers_matchGate` holds the README's Hard list and the gate's lists equal).
+
 - **The amd64 acc64 QK kernel runs sixteen keys at a time** (`linalg/attn_acc64_amd64.s`, `qkAcc64AVX16`): four 4-key blocks as
   four accumulators in one pass over d, where the 4-key kernel kept one accumulator chain per block and waited out the FMA latency
   every dim. Each key is still one f64 lane folded over ascending d, so `MatmulQKAcc64`'s scores are bit-identical
