@@ -56,12 +56,15 @@ excluded from that promise and may change in any release until it graduates.
   (`TestIQDequant_goldenThroughGGUF`), and `TestOutputContract_dequantWritersOverwrite` covers every type the reader admits
   rather than a list.
 
-### Fixed
-
 - **The pre-push hook works from a linked git worktree** (`tools/gpumod`, `RepoRoot`). git exports `GIT_DIR` to a hook run from a
   linked worktree, and `git rev-parse --show-toplevel` then answers the cwd, so `preflight` took `tools/` for the root and every
   package failed to load. `RepoRoot` asks git without the inherited `GIT_DIR` and `GIT_WORK_TREE`, and its walk-up fallback also
   stops at a worktree's `.git` file (`TestRepoRoot_linkedWorktreeUnderHookEnv`, `TestRepoRoot_walkUpStopsAtGitFile`).
+- **A group size of 0 is refused by name instead of dividing by zero**: `DequantizeRowInt4`, `QuantizeGroupInt4Row`,
+  `QuantizeActivationsGroupedInto` and `SumActGroupsInto` panic with "group must be > 0, got 0", as `QuantizeGroupsInt4` already did,
+  where they crashed with an integer divide by zero (or, at a negative group, an index out of range). **An empty source converts to
+  nothing**: `F32ToF16Slice` with an empty `src`, and `QuantizeF16` at rows×cols = 0, returned a slice-bounds panic
+  (`TestGroupZero_refusedByName`, `TestF16_emptySource`). Found by the tiny-shape sweep of linalg's exported entry points.
 
 ## [1.79.0] — 2026-11-24
 
