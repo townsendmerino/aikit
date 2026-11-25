@@ -4,6 +4,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/half"
 )
 
 // TestF32ToF16_rounding checks the encoder against an independent rule: the result is a nearest binary16
@@ -184,7 +186,7 @@ func TestW4A8F16_everyPathMatchesF32(t *testing.T) {
 
 // TestWidenF16_exhaustive is gate 1 of the L1 arm64 fix (goinfer docs/tasks/task-cpu-decode-peer-gap-2026-09.md,
 // "L1 arm64 fix — pre-registered"): the SIMD widen (F16C on amd64, FCVTL on arm64, the scalar loop elsewhere)
-// turns every one of the 65,536 binary16 patterns into f16ToF32's f32 bits. NaN inputs must stay NaN (both
+// turns every one of the 65,536 binary16 patterns into half.ToF32's f32 bits. NaN inputs must stay NaN (both
 // instructions quiet a signalling NaN; a scale is never NaN).
 //
 // This test is the widen's only independent check. f16Fixture builds TestW4A8F16_everyPathMatchesF32's f32
@@ -199,8 +201,8 @@ func TestWidenF16_exhaustive(t *testing.T) {
 	widenF16(dst, src)
 	mism := widenMismatches(dst, src)
 	if len(mism) != 0 {
-		t.Fatalf("widenF16 disagrees with f16ToF32 on %d of 65536 patterns; first: %#04x → %#08x, want %#08x",
-			len(mism), src[mism[0]], math.Float32bits(dst[mism[0]]), math.Float32bits(f16ToF32(src[mism[0]])))
+		t.Fatalf("widenF16 disagrees with half.ToF32 on %d of 65536 patterns; first: %#04x → %#08x, want %#08x",
+			len(mism), src[mism[0]], math.Float32bits(dst[mism[0]]), math.Float32bits(half.ToF32(src[mism[0]])))
 	}
 
 	// The comparison can go red: widen a shifted input, so each lane holds its neighbour's value.
@@ -222,7 +224,7 @@ func TestWidenF16_exhaustive(t *testing.T) {
 			}
 			widenF16(d[:n], s)
 			if m := widenMismatches(d[:n], s); len(m) != 0 {
-				t.Fatalf("n=%d off=%d: lane %d %#04x → %v, want %v", n, off, m[0], s[m[0]], d[m[0]], f16ToF32(s[m[0]]))
+				t.Fatalf("n=%d off=%d: lane %d %#04x → %v, want %v", n, off, m[0], s[m[0]], d[m[0]], half.ToF32(s[m[0]]))
 			}
 			for i := n; i < len(d); i++ {
 				if d[i] != canary {
@@ -233,11 +235,11 @@ func TestWidenF16_exhaustive(t *testing.T) {
 	}
 }
 
-// widenMismatches lists the indices where got is not f16ToF32(src) bit for bit (NaN matches any NaN).
+// widenMismatches lists the indices where got is not half.ToF32(src) bit for bit (NaN matches any NaN).
 func widenMismatches(got []float32, src []uint16) []int {
 	var out []int
 	for i, h := range src {
-		want := f16ToF32(h)
+		want := half.ToF32(h)
 		if want != want {
 			if got[i] == got[i] {
 				out = append(out, i)

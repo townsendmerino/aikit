@@ -13,13 +13,15 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/half"
 )
 
 // dequantIQ2SBlockPreOpt is the exact pre-optimization body: a branchy
 // `if (sg>>j)&1 != 0 { v = -v }` instead of the branchless XOR.
 func dequantIQ2SBlockPreOpt(raw []byte, sb int, out []float32) {
 	base := sb * 82
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+34]
 	signs := raw[base+34 : base+66]
 	qh := raw[base+66 : base+74]
@@ -49,7 +51,7 @@ func dequantIQ2SBlockPreOpt(raw []byte, sb int, out []float32) {
 // branchy sign flip, instead of the restructured sub/gridChunk/i nesting.
 func dequantIQ3SBlockPreOpt(raw []byte, sb int, out []float32) {
 	base := sb * 110
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
 	qs := raw[base+2 : base+66]
 	qh := raw[base+66 : base+74]
 	signs := raw[base+74 : base+106]
@@ -74,8 +76,8 @@ func dequantIQ3SBlockPreOpt(raw []byte, sb int, out []float32) {
 // missed the first time because it wasn't in the original suggestion list.)
 func dequantQ4KBlockPreOpt(raw []byte, sb int, out []float32) {
 	base := sb * 144
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
-	dmin := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
+	dmin := half.ToF32(binary.LittleEndian.Uint16(raw[base+2:]))
 	scales := raw[base+4 : base+16]
 	qs := raw[base+16 : base+144]
 	yi := 0
@@ -101,8 +103,8 @@ func dequantQ4KBlockPreOpt(raw []byte, sb int, out []float32) {
 // counter instead of a direct index, and out not resliced to a constant cap.
 func dequantQ5KBlockPreOpt(raw []byte, sb int, out []float32) {
 	base := sb * 176
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base:]))
-	dmin := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+2:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base:]))
+	dmin := half.ToF32(binary.LittleEndian.Uint16(raw[base+2:]))
 	scales := raw[base+4 : base+16]
 	qh := raw[base+16 : base+48]
 	qs := raw[base+48 : base+176]
@@ -141,8 +143,8 @@ func dequantQ2KBlockPreOpt(raw []byte, sb int, out []float32) {
 	base := sb * 84
 	scales := raw[base : base+16]
 	qs := raw[base+16 : base+80]
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+80:]))
-	dmin := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+82:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base+80:]))
+	dmin := half.ToF32(binary.LittleEndian.Uint16(raw[base+82:]))
 
 	yi, is := 0, 0
 	for n := range 2 { // two 128-element halves
@@ -178,7 +180,7 @@ func dequantQ3KBlockPreOpt(raw []byte, sb int, out []float32) {
 	hm := raw[base : base+32]
 	q := raw[base+32 : base+96]
 	scRaw := raw[base+96 : base+108]
-	dAll := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+108:]))
+	dAll := half.ToF32(binary.LittleEndian.Uint16(raw[base+108:]))
 
 	a0 := binary.LittleEndian.Uint32(scRaw[0:])
 	a1 := binary.LittleEndian.Uint32(scRaw[4:])
