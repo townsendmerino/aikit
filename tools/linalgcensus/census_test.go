@@ -92,6 +92,9 @@ import (
 )
 
 func TestX(t *testing.T) { _ = la.TestOnly() }
+
+// An interface literal in a parameter, the way a test takes a linalg value without naming its type.
+func other(c interface{ Other() }) { c.Other() }
 `,
 	})
 	// An untracked package that uses Nobody: built by the go tool, not counted.
@@ -154,6 +157,9 @@ func TestX(t *testing.T) { _ = la.TestOnly() }
 	}
 	if got := rs["Closer.Close"].cell("goinfer"); got != "1i" {
 		t.Errorf("Closer.Close in goinfer = %q, want 1i (the closer interface)", got)
+	}
+	if got := rs["Closer.Other"].cell("goinfer tests"); got != "1i" {
+		t.Errorf("Closer.Other in goinfer tests = %q, want 1i (an interface literal in a parameter)", got)
 	}
 	if got := res.platforms(res.c.names["ArmOnly"]); got != "linux/arm64" {
 		t.Errorf("ArmOnly platforms = %q, want linux/arm64", got)

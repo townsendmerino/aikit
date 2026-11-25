@@ -5,7 +5,7 @@ package linalg
 import "fmt"
 
 // matmulBTW4A8Row4TileInto is MatmulBTW4A8Row4Into's M>1 sibling: the same
-// row4 weights (RepackW4A8Row4 / RepackW4A8Row4Scales), the same numerics, but
+// row4 weights (RepackW4A8Row4 / repackW4A8Row4Scales), the same numerics, but
 // four ACTIVATION rows are reduced against a quad's four weight rows in one
 // kernel call instead of one activation row per call.
 //

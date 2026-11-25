@@ -11,7 +11,7 @@ import (
 )
 
 // RepackInt4Row4 attempts to populate w's optional split-half +
-// 4-row-interleaved layout (RepackW4A8Row4/RepackW4A8Row4Scales) from its
+// 4-row-interleaved layout (RepackW4A8Row4/repackW4A8Row4Scales) from its
 // canonical int4 storage, for a load-time caller to opt a tensor into the
 // faster MatmulBTW4A8Into dispatch below. Explicit and caller-driven, never
 // probed for automatically inside a matmul (docs/task-w4a8-neon-bandwidth.md's
@@ -150,13 +150,13 @@ func w4a8BatchRow4Span(aq []int8, aScale float32, row4 []byte, row4Scales, dst [
 // Peak extra memory is one quad's worth of scratch (4*bpr bytes, one allocation reused across every quad:
 // 8 KB at K=4096, independent of rows) for the nibbles, plus one quad of scales, not a second full-tensor
 // array. That works because row4 is a fixed permutation local to one quad of four rows
-// (RepackInt4Row4Quad's doc): a quad's row4 output depends only on that quad's canonical input, so the quad
+// (repackInt4Row4Quad's doc): a quad's row4 output depends only on that quad's canonical input, so the quad
 // is copied to scratch and the result written back into the same position. A same-buffer call without the
 // copy would not be safe: an early group's write can land on a later group's unread source byte.
 //
 // The input is consumed: q4 and q4s must be writable (never a read-only mapping), and after ok they hold
 // row4 order and belong to the result as q4Row4/q4Row4Scales16. A loader that never wants canonical bytes in
-// the heap should run RepackInt4Row4Quad per quad as it copies off the mapping and wrap the result with
+// the heap should run repackInt4Row4Quad per quad as it copies off the mapping and wrap the result with
 // WrapInt4(LayoutRow4).
 func repackInt4Row4InPlace(q4 []byte, q4s []uint16, rows, cols, group int) (WeightMat, bool) {
 	if !int4Row4Usable(rows, cols, group) {
@@ -172,7 +172,7 @@ func repackInt4Row4InPlace(q4 []byte, q4s []uint16, rows, cols, group int) (Weig
 		base := q * quadBytes
 		quad := q4[base : base+quadBytes]
 		copy(nibScratch, quad)
-		RepackInt4Row4Quad(quad, nibScratch, cols)
+		repackInt4Row4Quad(quad, nibScratch, cols)
 	}
 
 	quadScales := 4 * nGroups
@@ -181,7 +181,7 @@ func repackInt4Row4InPlace(q4 []byte, q4s []uint16, rows, cols, group int) (Weig
 		base := q * quadScales
 		quad := q4s[base : base+quadScales]
 		copy(scaleScratch, quad)
-		RepackInt4Row4ScalesQuadF16(quad, scaleScratch, nGroups)
+		repackInt4Row4ScalesQuadF16(quad, scaleScratch, nGroups)
 	}
 
 	return WeightMat{q4Row4: q4, q4Row4Scales16: q4s, group: group, rows: rows, cols: cols}, true

@@ -35,7 +35,7 @@ func TestMatmulBTW4A8Batch_splitHalfOnlyMatchesCanonical(t *testing.T) {
 		gotDst = append(gotDst, gD)
 		canonOps = append(canonOps, w4a8Op{W4: q4, Scales: q4s, Dst: wD, N: n})
 
-		splitHalf := RepackW4A8SplitHalf(cloneBytes(q4), n, K, group)
+		splitHalf := repackW4A8SplitHalf(cloneBytes(q4), n, K, group)
 		splitOps = append(splitOps, w4a8Op{SplitHalf: splitHalf, Scales: q4s, Dst: gD, N: n})
 	}
 
@@ -67,7 +67,7 @@ func TestMatmulBTW4A8Batch_splitHalfOnlyM2Panics(t *testing.T) {
 	rng := rand.New(rand.NewPCG(22, 16))
 	const n = 8
 	q4, q4s := quantizeInt4Random(rng, n, K, group)
-	splitHalf := RepackW4A8SplitHalf(cloneBytes(q4), n, K, group)
+	splitHalf := repackW4A8SplitHalf(cloneBytes(q4), n, K, group)
 
 	const M = 2
 	a := mconsistentRand(rng, M*K)

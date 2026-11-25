@@ -1,6 +1,6 @@
 //go:build arm64
 
-// row4 has no amd64/portable twin (RepackW4A8Row4/RepackW4A8Row4Scales live
+// row4 has no amd64/portable twin (RepackW4A8Row4/repackW4A8Row4Scales live
 // only in matmul_w4a8_row4_arm64.go), so this file — which builds row4 test
 // data directly rather than going through a gated wrapper — is arm64-only.
 // int4Row4Usable/row4Usable are false everywhere off arm64 anyway, so
@@ -43,7 +43,7 @@ func TestMatmulBTW4A8Batch_repackedOnlyMatchesCanonical(t *testing.T) {
 		gotDst = append(gotDst, gD)
 		canonOps = append(canonOps, w4a8Op{W4: q4, Scales: q4s, Dst: wD, N: n})
 
-		row4, row4s := RepackW4A8Row4(q4, n, K, group), RepackW4A8Row4Scales(q4s, n, K, group)
+		row4, row4s := RepackW4A8Row4(q4, n, K, group), repackW4A8Row4Scales(q4s, n, K, group)
 		repackedOps = append(repackedOps, w4a8Op{Row4: row4, Row4Scales: row4s, Dst: gD, N: n})
 	}
 
@@ -73,7 +73,7 @@ func TestMatmulBTW4A8Batch_repackedOnlyUnalignedEdgePanics(t *testing.T) {
 	rng := rand.New(rand.NewPCG(22, 6))
 	const n = 8 // row4-shaped (N%4==0), but the call below asks for a non-quad-aligned slice
 	q4, q4s := quantizeInt4Random(rng, n, K, group)
-	row4, row4s := RepackW4A8Row4(q4, n, K, group), RepackW4A8Row4Scales(q4s, n, K, group)
+	row4, row4s := RepackW4A8Row4(q4, n, K, group), repackW4A8Row4Scales(q4s, n, K, group)
 
 	aq := make([]int8, K)
 	aScales := []float32{1}

@@ -19,7 +19,7 @@ import (
 // MatmulBTW4A8Into below then keeps using the canonical path transparently.
 //
 // Scales are shared, not repacked: split-half permutes nibbles within a group and never reorders
-// groups, so w.q4s serves both layouts (unlike row4, which needs RepackW4A8Row4Scales).
+// groups, so w.q4s serves both layouts (unlike row4, which needs repackW4A8Row4Scales).
 func (w *WeightMat) RepackInt4SplitHalf() bool {
 	// !cpufeat.HasAVX512VNNIVL is not caution, it is correctness in both currencies.
 	//
@@ -49,7 +49,7 @@ func (w *WeightMat) RepackInt4SplitHalf() bool {
 	if w.group != 32 || w.cols%32 != 0 {
 		return false
 	}
-	w.q4SplitHalf = RepackW4A8SplitHalf(w.q4, w.rows, w.cols, w.group)
+	w.q4SplitHalf = repackW4A8SplitHalf(w.q4, w.rows, w.cols, w.group)
 	return true
 }
 

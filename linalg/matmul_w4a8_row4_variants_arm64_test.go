@@ -39,7 +39,7 @@ func TestMatmulBTW4A8Row4PrefetchInto_bitIdenticalToRow4(t *testing.T) {
 		}
 		packed, scales := QuantizeGroupsInt4(w, N, K, group)
 		packed4 := RepackW4A8Row4(packed, N, K, group)
-		scales4 := RepackW4A8Row4Scales(scales, N, K, group)
+		scales4 := repackW4A8Row4Scales(scales, N, K, group)
 
 		var ws Workspace
 		want := make([]float32, N)
@@ -84,14 +84,14 @@ func TestMatmulBTW4A8Row4DesharedInto_bitIdenticalToRow4(t *testing.T) {
 		}
 		packed, scales := QuantizeGroupsInt4(w, N, K, group)
 		packed4 := RepackW4A8Row4(packed, N, K, group)
-		scales4 := RepackW4A8Row4Scales(scales, N, K, group)
+		scales4 := repackW4A8Row4Scales(scales, N, K, group)
 
 		var ws Workspace
 		want := make([]float32, N)
 		MatmulBTW4A8Row4Into(&ws, a, packed4, scales4, want, 1, K, N, group)
 
-		w0, w1, w2, w3 := RepackW4A8Row4Deshared(packed, N, K, group)
-		s0, s1, s2, s3 := RepackW4A8Row4DesharedScales(scales, N, K, group)
+		w0, w1, w2, w3 := repackW4A8Row4Deshared(packed, N, K, group)
+		s0, s1, s2, s3 := repackW4A8Row4DesharedScales(scales, N, K, group)
 
 		var ws2 Workspace
 		got := make([]float32, N)

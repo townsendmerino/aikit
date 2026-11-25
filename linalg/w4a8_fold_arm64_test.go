@@ -142,7 +142,7 @@ func TestMatmulBTW4A8Row4Into_foldBitIdenticalToUnfolded(t *testing.T) {
 		}
 		packed, scales := QuantizeGroupsInt4(w, sh.N, sh.K, group)
 		row4 := RepackW4A8Row4(packed, sh.N, sh.K, group)
-		row4s := RepackW4A8Row4Scales(scales, sh.N, sh.K, group)
+		row4s := repackW4A8Row4Scales(scales, sh.N, sh.K, group)
 		for _, par := range []bool{false, true} {
 			var ws Workspace
 			if par {
@@ -254,7 +254,7 @@ func TestW4A8RowFold_streamedAB(t *testing.T) {
 				w[j] = float32(rng.NormFloat64())
 			}
 			packed, scales := QuantizeGroupsInt4(w, sh.N, sh.K, group)
-			mats[i] = mat{RepackW4A8Row4(packed, sh.N, sh.K, group), RepackW4A8Row4Scales(scales, sh.N, sh.K, group)}
+			mats[i] = mat{RepackW4A8Row4(packed, sh.N, sh.K, group), repackW4A8Row4Scales(scales, sh.N, sh.K, group)}
 		}
 		a := make([]float32, sh.K)
 		for i := range a {

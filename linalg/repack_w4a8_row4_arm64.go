@@ -13,7 +13,7 @@ import (
 // GO. Repacks canonical int4-packed weights (QuantizeGroupInt4Row's
 // interleaved even/odd-nibble layout) into split-half + 4-row-interleaved:
 // no change to quant.go's canonical packer, no .giw/WeightMat change here —
-// RepackW4A8Row4/RepackW4A8Row4Scales (matmul_w4a8_row4_arm64.go) are the
+// RepackW4A8Row4/repackW4A8Row4Scales (matmul_w4a8_row4_arm64.go) are the
 // public entry points a caller's load-time repack should use; these are
 // their per-row/per-quad internals.
 //
@@ -46,7 +46,7 @@ func repackSplitHalfRow(packed []byte, K int) []byte {
 		panic("repackSplitHalfRow: K must be a multiple of 32")
 	}
 	out := make([]byte, len(packed))
-	RepackInt4SplitHalfRow(out, packed, K)
+	repackInt4SplitHalfRow(out, packed, K)
 	return out
 }
 
@@ -118,7 +118,7 @@ func interleaveScales4Row(s0, s1, s2, s3 []float32, nGroups int) []float32 {
 	return out
 }
 
-// RepackInt4Row4Quad writes ONE quad's worth of canonical int4 nibbles (src,
+// repackInt4Row4Quad writes ONE quad's worth of canonical int4 nibbles (src,
 // 4*bpr bytes: row0's bpr canonical bytes, then row1's, row2's, row3's,
 // contiguous — QuantizeGroupsInt4's own row-major layout) into dst (4*bpr
 // bytes) in row4 order: group g's 64-byte block at dst[g*64:g*64+64], row
@@ -142,13 +142,13 @@ func interleaveScales4Row(s0, s1, s2, s3 []float32, nGroups int) []float32 {
 // that hazard never arises.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:4*K/2].
-func RepackInt4Row4Quad(dst, src []byte, K int) {
+func repackInt4Row4Quad(dst, src []byte, K int) {
 	if K%32 != 0 {
 		panic(fmt.Sprintf("linalg: RepackInt4Row4Quad requires K a multiple of 32, got %d", K))
 	}
 	bpr := K / 2
-	shape.RequireLen("RepackInt4Row4Quad", "dst", len(dst), 4*bpr)
-	shape.RequireLen("RepackInt4Row4Quad", "src", len(src), 4*bpr)
+	shape.RequireLen("repackInt4Row4Quad", "dst", len(dst), 4*bpr)
+	shape.RequireLen("repackInt4Row4Quad", "src", len(src), 4*bpr)
 	nGroups := K / 32
 	r0 := src[0*bpr : 1*bpr]
 	r1 := src[1*bpr : 2*bpr]
@@ -164,17 +164,17 @@ func RepackInt4Row4Quad(dst, src []byte, K int) {
 	}
 }
 
-// RepackInt4Row4ScalesQuad is RepackInt4Row4Quad's counterpart for the
+// repackInt4Row4ScalesQuad is repackInt4Row4Quad's counterpart for the
 // per-group f32 scales: src is 4*nGroups floats (row0's nGroups canonical
 // scales, then row1's, row2's, row3's), dst is 4*nGroups floats interleaved
 // — group g's 4 scales (row0..row3) at dst[4*g:4*g+4] — matching
-// RepackW4A8Row4Scales/interleaveScales4Row's existing layout. dst and src
-// must not overlap, same reason as RepackInt4Row4Quad.
+// repackW4A8Row4Scales/interleaveScales4Row's existing layout. dst and src
+// must not overlap, same reason as repackInt4Row4Quad.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:4*nGroups].
-func RepackInt4Row4ScalesQuad(dst, src []float32, nGroups int) {
-	shape.RequireLen("RepackInt4Row4ScalesQuad", "dst", len(dst), 4*nGroups)
-	shape.RequireLen("RepackInt4Row4ScalesQuad", "src", len(src), 4*nGroups)
+func repackInt4Row4ScalesQuad(dst, src []float32, nGroups int) {
+	shape.RequireLen("repackInt4Row4ScalesQuad", "dst", len(dst), 4*nGroups)
+	shape.RequireLen("repackInt4Row4ScalesQuad", "src", len(src), 4*nGroups)
 	for g := range nGroups {
 		for r := range 4 {
 			dst[4*g+r] = src[r*nGroups+g]
