@@ -41,6 +41,7 @@ const (
 	ggmlTypeIQ2S  uint32 = 22
 	ggmlTypeIQ4XS uint32 = 23
 	ggmlTypeMXFP4 uint32 = 39 // OCP Microscaling FP4: 32-elem block, e8m0 scale + 16 e2m1 nibble-pairs (gpt-oss)
+	ggmlTypeNVFP4 uint32 = 40 // NVIDIA FP4: 64-elem block, 4 ue4m3 sub-block scales + 32 e2m1 nibble-pairs
 )
 
 // qkK is the K-quant super-block size (elements per super-block).
@@ -452,7 +453,7 @@ func (g *GGUFFile) RowDequantizer(name string) (dims []int, into func(start int,
 	}
 	blockElems, ok := ggmlBlockElems(info.typ)
 	if !ok {
-		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0/Q5_0/Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/IQ4_NL/IQ4_XS/IQ2_S/IQ3_S)", name, info.typ)
+		return nil, nil, fmt.Errorf("gguf: tensor %q unsupported ggml type %d (have F32/F16/Q8_0/Q4_0/Q5_0/Q2_K/Q3_K/Q4_K/Q5_K/Q6_K/IQ4_NL/IQ4_XS/IQ2_S/IQ3_S/MXFP4/NVFP4)", name, info.typ)
 	}
 	raw, err := g.tensorBytes(info, n)
 	if err != nil {
@@ -487,6 +488,8 @@ func ggmlBlockElems(typ uint32) (int, bool) {
 		return 32, true
 	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K, ggmlTypeIQ4XS, ggmlTypeIQ2S, ggmlTypeIQ3S:
 		return qkK, true
+	case ggmlTypeNVFP4:
+		return qkNVFP4, true
 	default:
 		return 0, false
 	}
@@ -516,6 +519,11 @@ func (g *GGUFFile) tensorBytes(info ggufTensorInfo, n int) ([]byte, error) {
 		default: // Q5_0
 			nbytes = blocks * 22 // 2-byte f16 scale + 4-byte high bits + 16 packed nibbles
 		}
+	case ggmlTypeNVFP4:
+		if n%qkNVFP4 != 0 {
+			return nil, fmt.Errorf("element count %d not a multiple of %d (block size)", n, qkNVFP4)
+		}
+		nbytes = n / qkNVFP4 * 36 // 4 ue4m3 sub-block scales + 32 packed e2m1 nibbles
 	case ggmlTypeQ2_K, ggmlTypeQ3_K, ggmlTypeQ4_K, ggmlTypeQ5_K, ggmlTypeQ6_K, ggmlTypeIQ4XS, ggmlTypeIQ2S, ggmlTypeIQ3S:
 		if n%qkK != 0 {
 			return nil, fmt.Errorf("element count %d not a multiple of %d (super-block)", n, qkK)

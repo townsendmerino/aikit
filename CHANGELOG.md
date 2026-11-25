@@ -9,6 +9,43 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added
+
+- **`embed` reads GGUF type 40, NVFP4** (`dequantNVFP4Block`): 64-element blocks of four 16-element sub-blocks, each with an
+  unsigned e4m3 scale and 8 bytes of e2m1 nibbles, low nibble to element `j` and high to `j+8`, as ggml's `dequantize_row_nvfp4`
+  reads them. The scale decodes as ggml's `ggml_ue4m3_to_fp32` does: the top bit is ignored and `0x00` and `0x7F` are zero. The
+  per-tensor scale is a separate GGUF tensor, which the caller applies. Held bit-exact against gguf-py's `gguf.quants` on every
+  scale byte against every code (`TestIQDequant_matchesReference/NVFP4`); a wrong e2m1 entry, ModelOpt's sequential nibble order
+  or an honored scale sign bit each turns it red (`TestNVFP4Dequant_goldenCatchesPlants`).
+- **The dequant golden is compared bit for bit**, where it allowed a relative 1e-4: every type in it already matched exactly. Each
+  case is also read through a one-tensor GGUF, so each type's byte size is checked with its kernel
+  (`TestIQDequant_goldenThroughGGUF`), and `TestOutputContract_dequantWritersOverwrite` covers every type the reader admits
+  rather than a list.
+
+## [1.79.0] — 2026-11-24
+
+`perfgate` VERDICT: FAIL — 3 regression(s) vs v1.78.0 across 47 shapes, confirmed on a second measurement
+
+sensitivity: 13/47 shapes have a floor ≤ 5.0% (the class this gate targets) nobara (Ryzen 7 3700X, linux/amd64), 94429c9 working tree vs v1.78.0, 2026-11-24, under the timing lock, Go 1.27.4.
+
+> **PERFGATE EXCEPTION: the three regressions are code placement, not this release's code.** They are
+> `BenchmarkAttendTileFused_expKind/contract` at np576 (+6.20%, floor 2.00%), np1024 (+6.87%, 2.98%) and np2048 (+6.95%, 3.61%),
+> with the `f64math` siblings flat. None of the code those benchmarks run changed since v1.78.0 (`fusedattn.go`, `exp_contract*.go`,
+> `matmul.go`). The dispatch functions added to `attn_acc64_amd64.go` move every contract-exp function by 32 B mod 64 (`go tool nm`).
+> A test registered before it ran (`docs/release-evidence/v1.79.0/placement-test.md`) added one 32-byte function to v1.78.0's own
+> source, reproducing that placement, and read it 6.6–7.0% slower on the same three shapes (10 pairs each, A B B A, every shape past
+> its bar): **REPRODUCES**. Approved by the maintainer, 2026-11-24. The perfgate run that started under load (`perfgate-run1-under-load.log`)
+> is not evidence.
+
+STATEMENT: no reachable vulnerabilities in 11/11 modules at 94429c9 +dirty (2026-11-25T01:51:27Z). nobara (linux/amd64), Go 1.27.4 (GOTOOLCHAIN=go1.27.4), govulncheck v1.8.0.
+
+This release adds f16-source acc64 attention kernels and a 16-key amd64 QK kernel. Together they let a consumer read an f16 KV cache in
+place, at two bytes an element, with results bit-identical to the f32 kernels on the widened cache, and run QK faster wherever the key
+stride is not a multiple of 4 KiB. On nobara (Ryzen 7 3700X), goinfer's CPU decode of Phi-3-mini at depth 3,900 read 3.19× faster on an
+f16 cache through the in-place read than through a widen into scratch, and 1.103× faster on the 16-key kernel under its 64 B row pad.
+
+RETRIEVAL: no — vs v1.78.0, none of 17 changed files is in the retrieval zone
+
 ### Changed
 
 - **The amd64 acc64 QK kernel runs sixteen keys at a time** (`linalg/attn_acc64_amd64.s`, `qkAcc64AVX16`): four 4-key blocks as
@@ -6031,7 +6068,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.78.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.79.0...HEAD
+[1.79.0]: https://github.com/townsendmerino/aikit/compare/v1.78.0...v1.79.0
 [1.78.0]: https://github.com/townsendmerino/aikit/compare/v1.77.0...v1.78.0
 [1.77.0]: https://github.com/townsendmerino/aikit/compare/v1.76.0...v1.77.0
 [1.76.0]: https://github.com/townsendmerino/aikit/compare/v1.75.0...v1.76.0

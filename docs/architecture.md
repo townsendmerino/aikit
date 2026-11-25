@@ -122,8 +122,9 @@ graph TD
 ```
 
 Not drawn, but in the table: the four `examples/*` programs and
-`bench/cmd/benchreport`, which sit on top and which nothing imports, and
-`internal/importrules` itself. Test-only imports are not in the table either
+`bench/cmd/benchreport`, which sit on top and which nothing imports,
+`internal/importrules` itself, and `internal/guardmem` (the over-read gate's
+guard-page harness, a stdlib-only leaf that only tests import). Test-only imports are not in the table either
 (`ann`'s tests import `embed` and `fuse`, for one); the rule is about what an
 importer's build pulls in.
 
