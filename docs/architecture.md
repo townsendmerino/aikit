@@ -156,7 +156,7 @@ every loader that maps a blob from disk instead of copying it.
 of `linalg`) imports `linalg/elem` (its fused tile's contract exp), `internal/half`,
 `linalg/internal/shape` and, on amd64, `internal/cpufeat`, and nothing from `linalg`.
 `linalg` imports `mmap`, `internal/cpufeat`, `internal/half` and `linalg/internal/shape`
-(the length checks its kernel packages share), so it is no longer a leaf. `embed` imports `mmap` and `internal/cursor`. `sparse` imports `topk`
+(the length checks its kernel packages share), so it is no longer a leaf. `embed` imports `mmap`, `internal/cursor` and `internal/half`. `sparse` imports `topk`
 and `internal/accum`. `bm25` imports `topk`, `internal/accum`,
 `internal/cursor` and `mmap`: its postings arena maps from disk and its blob
 format is read through the shared cursor. `chunk/regex` and `chunk/markdown`
