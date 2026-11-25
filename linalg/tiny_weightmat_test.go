@@ -147,47 +147,22 @@ func twKinds() []twKind {
 		}},
 		{name: "WrapInt4", shapes: grouped, int4: true, build: func(p *kernreg.Placer, s twShape) (WeightMat, bool, string) {
 			q4, q4s := twQuantInt4(s)
-			return WrapInt4(kernreg.Put(p, "q4", q4), kernreg.Put(p, "q4s", q4s), s.rows, s.cols, s.group), true, ""
+			w, ok := WrapInt4(kernreg.Put(p, "q4", q4), kernreg.Put(p, "q4s16", F32ToF16Scales(q4s)), s.rows, s.cols, s.group, LayoutCanonical)
+			return w, ok, declined(ok, "WrapInt4(LayoutCanonical)")
 		}},
-		{name: "WrapInt4F16", shapes: grouped, int4: true, build: func(p *kernreg.Placer, s twShape) (WeightMat, bool, string) {
-			q4, q4s := twQuantInt4(s)
-			return WrapInt4F16(kernreg.Put(p, "q4", q4), kernreg.Put(p, "q4s16", F32ToF16Scales(q4s)), s.rows, s.cols, s.group), true, ""
-		}},
-		{name: "WrapInt4Row4", shapes: grouped, int4: true, build: func(p *kernreg.Placer, s twShape) (WeightMat, bool, string) {
-			q4, q4s := twQuantInt4(s)
-			r4, r4s, _ := twRow4(q4, q4s, s)
-			return WrapInt4Row4(kernreg.Put(p, "q4", q4), kernreg.Put(p, "q4s", q4s), s.rows, s.cols, s.group,
-				twPutOrNil(p, "q4Row4", r4), twPutOrNil(p, "q4Row4Scales", r4s)), true, ""
-		}},
-		{name: "WrapInt4Row4F16", shapes: grouped, int4: true, build: func(p *kernreg.Placer, s twShape) (WeightMat, bool, string) {
+		// The repacked layouts through the same constructor; their names' lowercase last
+		// part keeps them out of the completeness count, which WrapInt4 above answers.
+		{name: "WrapInt4.row4", shapes: grouped, int4: true, build: func(p *kernreg.Placer, s twShape) (WeightMat, bool, string) {
 			q4, q4s := twQuantInt4(s)
 			r4, r4s16, _ := twRow4F16(q4, F32ToF16Scales(q4s), s)
-			return WrapInt4Row4F16(kernreg.Put(p, "q4", q4), kernreg.Put(p, "q4s16", F32ToF16Scales(q4s)), s.rows, s.cols, s.group,
-				twPutOrNil(p, "q4Row4", r4), twPutOrNil(p, "q4Row4Scales", r4s16)), true, ""
+			w, ok := WrapInt4(twPutOrNil(p, "q4Row4", r4), twPutOrNil(p, "q4Row4Scales", r4s16), s.rows, s.cols, s.group, LayoutRow4)
+			return w, ok, declined(ok, "WrapInt4(LayoutRow4)")
 		}},
-		{name: "WrapInt4Row4Only", shapes: grouped, int4: true, build: func(p *kernreg.Placer, s twShape) (WeightMat, bool, string) {
-			q4, q4s := twQuantInt4(s)
-			r4, r4s, _ := twRow4(q4, q4s, s)
-			w, ok := WrapInt4Row4Only(twPutOrNil(p, "q4Row4", r4), twPutOrNil(p, "q4Row4Scales", r4s), s.rows, s.cols, s.group)
-			return w, ok, declined(ok, "WrapInt4Row4Only")
-		}},
-		{name: "WrapInt4Row4OnlyF16", shapes: grouped, int4: true, build: func(p *kernreg.Placer, s twShape) (WeightMat, bool, string) {
-			q4, q4s := twQuantInt4(s)
-			r4, r4s16, _ := twRow4F16(q4, F32ToF16Scales(q4s), s)
-			w, ok := WrapInt4Row4OnlyF16(twPutOrNil(p, "q4Row4", r4), twPutOrNil(p, "q4Row4Scales", r4s16), s.rows, s.cols, s.group)
-			return w, ok, declined(ok, "WrapInt4Row4OnlyF16")
-		}},
-		{name: "WrapInt4SplitHalfOnly", shapes: grouped, int4: true, build: func(p *kernreg.Placer, s twShape) (WeightMat, bool, string) {
+		{name: "WrapInt4.splithalf", shapes: grouped, int4: true, build: func(p *kernreg.Placer, s twShape) (WeightMat, bool, string) {
 			q4, q4s := twQuantInt4(s)
 			sh := RepackW4A8SplitHalf(q4, s.rows, s.cols, s.group)
-			w, ok := WrapInt4SplitHalfOnly(kernreg.Put(p, "q4SplitHalf", sh), kernreg.Put(p, "q4s", q4s), s.rows, s.cols, s.group)
-			return w, ok, declined(ok, "WrapInt4SplitHalfOnly")
-		}},
-		{name: "WrapInt4SplitHalfOnlyF16", shapes: grouped, int4: true, build: func(p *kernreg.Placer, s twShape) (WeightMat, bool, string) {
-			q4, q4s := twQuantInt4(s)
-			sh := RepackW4A8SplitHalf(q4, s.rows, s.cols, s.group)
-			w, ok := WrapInt4SplitHalfOnlyF16(kernreg.Put(p, "q4SplitHalf", sh), kernreg.Put(p, "q4s16", F32ToF16Scales(q4s)), s.rows, s.cols, s.group)
-			return w, ok, declined(ok, "WrapInt4SplitHalfOnlyF16")
+			w, ok := WrapInt4(kernreg.Put(p, "q4SplitHalf", sh), kernreg.Put(p, "q4s16", F32ToF16Scales(q4s)), s.rows, s.cols, s.group, LayoutSplitHalf)
+			return w, ok, declined(ok, "WrapInt4(LayoutSplitHalf)")
 		}},
 		{name: "WrapQ4K", shapes: kq, build: func(p *kernreg.Placer, s twShape) (WeightMat, bool, string) {
 			w, err := WrapQ4K(kernreg.Put(p, "raw", twKQuantRaw(s, 144, 0, true)), s.rows, s.cols)
@@ -444,14 +419,14 @@ func twWorkspaceAdapters() []kernreg.Adapter {
 				var ws Workspace
 				return twOutcome{kernreg.Refused(func() { ws.MatmulBT(a, b, dst, s.M, s.K, s.N) }), dst}
 			}},
-		{Symbol: "Workspace.MatmulBTAcc64", Lengths: shapeIndices(len(mkn)), Label: shapeLabels(mkn),
+		{Symbol: "Workspace.matmulBTAcc64", Lengths: shapeIndices(len(mkn)), Label: shapeLabels(mkn),
 			Call: func(p *kernreg.Placer, i int) any {
 				s := mkn[i]
 				a, b, dst := ab(p, s)
 				var ws Workspace
-				return twOutcome{kernreg.Refused(func() { ws.MatmulBTAcc64(a, b, dst, s.M, s.K, s.N) }), dst}
+				return twOutcome{kernreg.Refused(func() { ws.matmulBTAcc64(a, b, dst, s.M, s.K, s.N) }), dst}
 			}},
-		{Symbol: "Workspace.MatmulBTAcc64Strided", Lengths: shapeIndices(len(strided)), Label: shapeLabels(strided),
+		{Symbol: "Workspace.matmulBTAcc64Strided", Lengths: shapeIndices(len(strided)), Label: shapeLabels(strided),
 			Call: func(p *kernreg.Placer, i int) any {
 				s := strided[i]
 				a := kernreg.Put(p, "a", seqF32(s.M*s.K, 1))
@@ -459,7 +434,7 @@ func twWorkspaceAdapters() []kernreg.Adapter {
 				dst := kernreg.Put(p, "dst", make([]float32, s.M*s.N))
 				var ws Workspace
 				return twOutcome{kernreg.Refused(func() {
-					ws.MatmulBTAcc64Strided(a, bMat, dst, s.M, s.K, s.N, s.off, s.rowStride, s.elemStride)
+					ws.matmulBTAcc64Strided(a, bMat, dst, s.M, s.K, s.N, s.off, s.rowStride, s.elemStride)
 				}), dst}
 			}},
 		{Symbol: "Workspace.QuantizeActivations", Lengths: shapeIndices(len(mkn)), Label: shapeLabels(mkn),
@@ -502,7 +477,6 @@ var tinyWeightMatExempt = map[string]string{
 	"WeightMat.SetActQuantGroup": "stores a setting; takes no shape",
 	"WeightMat.MappedSpan":       "returns a page-aligned sub-slice of the weight's bytes by address arithmetic; reads none of them",
 	"WeightMat.MappedSpanRow4":   "returns a page-aligned sub-slice of the row4 bytes by address arithmetic; reads none of them",
-	"Workspace.ActQuantGroup":    "reports a setting; takes no shape",
 	"Workspace.SetActQuantGroup": "stores a setting; takes no shape",
 	"Workspace.SetThreshold":     "stores a setting; takes no shape",
 	"Workspace.SetWorkers":       "stores a setting; takes no shape",

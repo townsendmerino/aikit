@@ -111,36 +111,10 @@ func toInt4(s toShape) ([]byte, []float32) {
 	return QuantizeGroupsInt4(seqF32(s.R*s.C, 3), s.R, s.C, cmp.Or(s.G, 32))
 }
 
-// toUnary are the element-wise dst, src entry points.
-var toUnary = map[string]func(dst, src []float32){
-	"ExpContractInto":        ExpContractInto,
-	"ExpF32Into":             ExpF32Into,
-	"GELUContractInto":       GELUContractInto,
-	"GELUInto":               GELUInto,
-	"GELUTanhContractInto":   GELUTanhContractInto,
-	"GELUTanhInto":           GELUTanhInto,
-	"SiLUContractInto":       SiLUContractInto,
-	"SiLUInto":               SiLUInto,
-	"SoftmaxRowContractInto": SoftmaxRowContractInto,
-	"SoftmaxRowInto":         SoftmaxRowInto,
-	"TanhInto":               TanhInto,
-	"SoftmaxRowScaledInto":   func(dst, src []float32) { SoftmaxRowScaledInto(dst, src, 0.125) },
-	"SoftmaxRowScaledContractInto": func(dst, src []float32) {
-		SoftmaxRowScaledContractInto(dst, src, 0.125)
-	},
-}
-
 func tinyOtherAdapters() []kernreg.Adapter {
+	// The element-wise kernels, the binary-vector kernels and the attention scratch are
+	// swept by their own packages' tiny_test.go (linalg/elem, linalg/bitvec, linalg/attn).
 	var ads []kernreg.Adapter
-	for _, name := range slices.Sorted(maps.Keys(toUnary)) {
-		f := toUnary[name]
-		ads = append(ads, toAd(name, toN(), func(p *kernreg.Placer, s toShape) []any {
-			src := kernreg.Put(p, "src", seqF32(s.C, 1))
-			dst := kernreg.Put(p, "dst", make([]float32, s.C))
-			f(dst, src)
-			return []any{dst}
-		}))
-	}
 	n4 := []toShape{}
 	for _, n := range []int{0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17} {
 		n4 = append(n4, toShape{C: n})
@@ -159,14 +133,14 @@ func tinyOtherAdapters() []kernreg.Adapter {
 			}
 			return []any{DotI8x8(kernreg.Put(p, "a", seqI8(s.C, 1)), b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7])}
 		}),
-		toAd("Dot4x4", n4, func(p *kernreg.Placer, s toShape) []any {
+		toAd("dot4x4", n4, func(p *kernreg.Placer, s toShape) []any {
 			n := 4 * s.C
 			var b [4][]float32
 			for r := range b {
 				b[r] = kernreg.Put(p, fmt.Sprint("b", r), seqF32(n, r+2))
 			}
 			sums := kernreg.Put(p, "sums", make([]float32, 16))
-			Dot4x4(ptr(kernreg.Put(p, "a", seqF32(n, 1))), ptr(b[0]), ptr(b[1]), ptr(b[2]), ptr(b[3]), s.C, (*[16]float32)(sums))
+			dot4x4(ptr(kernreg.Put(p, "a", seqF32(n, 1))), ptr(b[0]), ptr(b[1]), ptr(b[2]), ptr(b[3]), s.C, (*[16]float32)(sums))
 			return []any{toLaneSums(sums)}
 		}),
 		toAd("Dot8x4", n4, func(p *kernreg.Placer, s toShape) []any {
@@ -226,10 +200,10 @@ func tinyOtherAdapters() []kernreg.Adapter {
 			q, sc := QuantizeRowsInt8(kernreg.Put(p, "w", seqF32(s.R*s.C, 1)), s.R, s.C)
 			return []any{q, sc}
 		}),
-		toAd("QuantizeActivationsInto", toRC(), func(p *kernreg.Placer, s toShape) []any {
+		toAd("quantizeActivationsInto", toRC(), func(p *kernreg.Placer, s toShape) []any {
 			aq := kernreg.Put(p, "aq", make([]int8, s.R*s.C))
 			sc := kernreg.Put(p, "scales", make([]float32, s.R))
-			QuantizeActivationsInto(aq, sc, kernreg.Put(p, "a", seqF32(s.R*s.C, 1)), s.R, s.C)
+			quantizeActivationsInto(aq, sc, kernreg.Put(p, "a", seqF32(s.R*s.C, 1)), s.R, s.C)
 			return []any{aq, sc}
 		}),
 		toAd("QuantizeActivationsGroupedInto", toRCG(), func(p *kernreg.Placer, s toShape) []any {
@@ -238,9 +212,9 @@ func tinyOtherAdapters() []kernreg.Adapter {
 			QuantizeActivationsGroupedInto(aq, sc, kernreg.Put(p, "a", seqF32(s.R*s.C, 1)), s.R, s.C, s.G)
 			return []any{aq, sc}
 		}),
-		toAd("SumActGroupsInto", toRCG(), func(p *kernreg.Placer, s toShape) []any {
+		toAd("sumActGroupsInto", toRCG(), func(p *kernreg.Placer, s toShape) []any {
 			sum := kernreg.Put(p, "sumAct", make([]int32, s.R*toCeil(s.C, s.G)))
-			SumActGroupsInto(sum, kernreg.Put(p, "aq", seqI8(s.R*s.C, 1)), s.R, s.C, s.G)
+			sumActGroupsInto(sum, kernreg.Put(p, "aq", seqI8(s.R*s.C, 1)), s.R, s.C, s.G)
 			return []any{sum}
 		}),
 		toAd("QuantizeActQ", toRCG(), func(p *kernreg.Placer, s toShape) []any {
@@ -248,8 +222,8 @@ func tinyOtherAdapters() []kernreg.Adapter {
 			QuantizeActQ(kernreg.Put(p, "a", seqF32(s.R*s.C, 1)), s.R, s.C, s.G, &q)
 			return []any{q.Q, q.S, q.M, q.K, q.Group}
 		}),
-		toAd("QuantizeActQ8K", toQK(), func(p *kernreg.Placer, s toShape) []any {
-			q := QuantizeActQ8K(kernreg.Put(p, "a", seqF32(s.R*s.C, 1)), s.R, s.C)
+		toAd("quantizeActQ8K", toQK(), func(p *kernreg.Placer, s toShape) []any {
+			q := quantizeActQ8K(kernreg.Put(p, "a", seqF32(s.R*s.C, 1)), s.R, s.C)
 			return []any{q}
 		}),
 		toAd("QuantizeGroupInt4Row", toRCG(), func(p *kernreg.Placer, s toShape) []any {
@@ -285,56 +259,23 @@ func tinyOtherAdapters() []kernreg.Adapter {
 			packed, _ := toInt4(s)
 			return []any{RepackW4A8SplitHalf(kernreg.Put(p, "packed", packed), s.R, s.C, s.G)}
 		}),
-		toAd("RepackInt4Row4InPlace", toRCG(), func(p *kernreg.Placer, s toShape) []any {
-			q4, q4s := toInt4(s)
-			q4, q4s = kernreg.Put(p, "q4", q4), kernreg.Put(p, "q4s", q4s)
-			w, ok := RepackInt4Row4InPlace(q4, q4s, s.R, s.C, s.G)
-			return toRepacked(w, ok, q4, q4s)
+		// Both repacked layouts through the one in-place repack; a layout this CPU does not
+		// run is declined with its input untouched, which toRepacked records.
+		toAd("RepackInt4InPlace", toRCG(), func(p *kernreg.Placer, s toShape) []any {
+			var out []any
+			for _, l := range []Layout{LayoutCanonical, LayoutRow4, LayoutSplitHalf} {
+				q4, q4s := toInt4(s)
+				q4, q4s16 := kernreg.Put(p, "q4", q4), kernreg.Put(p, "q4s", F32ToF16Scales(q4s))
+				w, ok := RepackInt4InPlace(q4, q4s16, s.R, s.C, s.G, l)
+				out = append(out, toRepacked(w, ok, q4, q4s16)...)
+			}
+			return out
 		}),
-		toAd("RepackInt4Row4InPlaceF16", toRCG(), func(p *kernreg.Placer, s toShape) []any {
-			q4, q4s := toInt4(s)
-			q4, q4s16 := kernreg.Put(p, "q4", q4), kernreg.Put(p, "q4s", F32ToF16Scales(q4s))
-			w, ok := RepackInt4Row4InPlaceF16(q4, q4s16, s.R, s.C, s.G)
-			return toRepacked(w, ok, q4, q4s16)
-		}),
-		toAd("RepackInt4SplitHalfInPlace", toRCG(), func(p *kernreg.Placer, s toShape) []any {
-			q4, q4s := toInt4(s)
-			q4, q4s = kernreg.Put(p, "q4", q4), kernreg.Put(p, "q4s", q4s)
-			w, ok := RepackInt4SplitHalfInPlace(q4, q4s, s.R, s.C, s.G)
-			return toRepacked(w, ok, q4, q4s)
-		}),
-		toAd("RepackInt4SplitHalfInPlaceF16", toRCG(), func(p *kernreg.Placer, s toShape) []any {
-			q4, q4s := toInt4(s)
-			q4, q4s16 := kernreg.Put(p, "q4", q4), kernreg.Put(p, "q4s", F32ToF16Scales(q4s))
-			w, ok := RepackInt4SplitHalfInPlaceF16(q4, q4s16, s.R, s.C, s.G)
-			return toRepacked(w, ok, q4, q4s16)
-		}),
-		toAd("HammingRows", toHamming(), func(p *kernreg.Placer, s toShape) []any {
-			words, n := s.C, s.R
-			dst := kernreg.Put(p, "dst", make([]uint16, n))
-			q := kernreg.Put(p, "q", toU64(words, 1))
-			HammingRows(q, kernreg.Put(p, "codes", toU64(n*words, 2)), words, n, dst)
-			return []any{dst}
-		}),
-		toAd("PackSignBits", toRC(), func(p *kernreg.Placer, s toShape) []any {
-			dst := kernreg.Put(p, "dst", make([]uint64, s.R*PackedWords(s.C)))
-			PackSignBits(dst, kernreg.Put(p, "src", seqF32(s.R*s.C, 1)), s.R, s.C)
-			return []any{dst}
-		}),
-		toAd("PackSignBitsRow", toN(), func(p *kernreg.Placer, s toShape) []any {
-			dst := kernreg.Put(p, "dst", make([]uint64, PackedWords(s.C)))
-			PackSignBitsRow(dst, kernreg.Put(p, "v", seqF32(s.C, 1)))
-			return []any{dst}
-		}),
-		toAd("PackedWords", toN(), func(_ *kernreg.Placer, s toShape) []any { return []any{PackedWords(s.C)} }),
 		toAd("Q4KRowBytes", toQK(), func(_ *kernreg.Placer, s toShape) []any { return []any{Q4KRowBytes(s.C)} }),
 		toAd("Q5KRowBytes", toQK(), func(_ *kernreg.Placer, s toShape) []any { return []any{Q5KRowBytes(s.C)} }),
 		toAd("Q6KRowBytes", toQK(), func(_ *kernreg.Placer, s toShape) []any { return []any{Q6KRowBytes(s.C)} }),
-		toAd("Int4Row4Usable", toRCG(), func(_ *kernreg.Placer, s toShape) []any { return []any{Int4Row4Usable(s.R, s.C, s.G)} }),
-		toAd("Int4SplitHalfUsable", toRCG(), func(_ *kernreg.Placer, s toShape) []any { return []any{Int4SplitHalfUsable(s.C, s.G)} }),
-		toAd("NewFusedAttnScratch", toRC(), func(_ *kernreg.Placer, s toShape) []any {
-			f := NewFusedAttnScratch(s.R, s.C)
-			return []any{len(f.SBlk), len(f.Tmp), len(f.Acc), len(f.MRun), len(f.LRun), f.Fits(s.R, s.C)}
+		toAd("PreferredInt4Layout", toRCG(), func(_ *kernreg.Placer, s toShape) []any {
+			return []any{PreferredInt4Layout(s.R, s.C, s.G)}
 		}),
 	)
 	return append(ads, toArchAdapters()...)
@@ -360,37 +301,17 @@ func toRepacked(w WeightMat, ok bool, in ...any) []any {
 	return out
 }
 
-// toHamming crosses words (R is n, C is words) over the kernels' 4-word blocks with row
-// counts over tinyDims.
-func toHamming() []toShape {
-	var out []toShape
-	for _, w := range []int{0, 1, 2, 3, 4, 5, 7, 8, 9, 12, 13, 16, 17} {
-		for _, n := range []int{0, 1, 2, 3, 4, 5, 8, 9, 17} {
-			out = append(out, toShape{R: n, C: w})
-		}
-	}
-	return out
-}
-
-func toU64(n, seed int) []uint64 {
-	x := make([]uint64, n)
-	for i := range x {
-		x[i] = uint64(i+1)*0x9E3779B97F4A7C15 ^ uint64(seed)*0xBF58476D1CE4E5B9
-	}
-	return x
-}
-
 var tinyOtherExempt = func() map[string]string {
 	scalar := "a scalar function of one value; no shape"
 	config := "process-wide configuration; no shape (and setting it in a test races every other test)"
 	report := "a report of this CPU's kernels or self-check; no shape"
 	m := map[string]string{
-		"BF16ToF32": scalar, "ErfF32": scalar, "ExpF32": scalar, "F16ToF32": scalar, "F32ToBF16": scalar,
-		"F32ToF16": scalar, "GELUF32": scalar, "GELUTanhF32": scalar, "SiLUF32": scalar, "TanhF32": scalar,
-		"Int4WeightScheme": config, "ParallelThreshold": config, "ParallelWidth": config, "W4A8RowFold": config,
-		"SetActQuantGroup": config, "SetInt4WeightScheme": config, "SetParallelThreshold": config,
-		"SetParallelWidth": config, "SetW4A8RowFold": config,
-		"ActiveKernels": report, "ForcedFallbacks": report, "KQuantNative": report, "MeasuredFMAPeakGFLOPS": report,
+		"BF16ToF32": scalar, "F16ToF32": scalar, "F32ToBF16": scalar, "F32ToF16": scalar,
+		"ParallelThreshold": config, "ParallelWidth": config, "W4A8RowFoldForTest": config,
+		"SetActQuantGroup": config, "SetParallelThreshold": config,
+		"SetParallelWidth": config, "SetW4A8RowFoldForTest": config,
+		"Kind.String": scalar, "Layout.String": scalar,
+		"ActiveKernels": report, "ForcedFallbacks": report, "KQuantNative": report,
 		"SelfCheck": report, "SelfCheckReport.OK": report, "Mismatch.String": report,
 	}
 	maps.Copy(m, toArchExempt)
