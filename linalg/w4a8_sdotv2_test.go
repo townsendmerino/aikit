@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestDotW4A8FoldSDOTv2_matchesOracle checks the new kernel (uncentered nibbles
@@ -16,7 +18,7 @@ import (
 // dotW4A8FoldSDOTv2's contract (whole groups only; the ragged-K mop-up stays
 // in dotW4A8's Go dispatch, unchanged, and isn't this kernel's concern).
 func TestDotW4A8FoldSDOTv2_matchesOracle(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	rng := rand.New(rand.NewSource(11))
@@ -55,7 +57,7 @@ func TestDotW4A8FoldSDOTv2_matchesOracle(t *testing.T) {
 // pass, since it processes exactly one group per loop iteration like the
 // original dotW4A8FoldSDOT).
 func TestDotW4A8SplitHalfSDOT_matchesOracle(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	rng := rand.New(rand.NewSource(13))
@@ -89,7 +91,7 @@ func TestDotW4A8SplitHalfSDOT_matchesOracle(t *testing.T) {
 // nGroups must be even (the kernel's contract); this covers every even value
 // 2..40.
 func TestDotW4A8FoldSDOT2Acc_matchesOracle(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	rng := rand.New(rand.NewSource(17))
@@ -120,7 +122,7 @@ func TestDotW4A8FoldSDOT2Acc_matchesOracle(t *testing.T) {
 // TestDotW4A8FoldSDOT4Acc_matchesOracle checks the four-accumulator probe
 // kernel against dotW4A8Scalar. nGroups must be a multiple of 4.
 func TestDotW4A8FoldSDOT4Acc_matchesOracle(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	rng := rand.New(rand.NewSource(19))
@@ -152,7 +154,7 @@ func TestDotW4A8FoldSDOT4Acc_matchesOracle(t *testing.T) {
 // split-half-layout + 2-accumulator kernel against dotW4A8SplitHalfScalar.
 // nGroups must be even.
 func TestDotW4A8SplitHalf2Acc_matchesOracle(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	rng := rand.New(rand.NewSource(23))
@@ -185,7 +187,7 @@ func TestDotW4A8SplitHalf2Acc_matchesOracle(t *testing.T) {
 // split-half-layout + 4-accumulator kernel against dotW4A8SplitHalfScalar.
 // nGroups must be a multiple of 4.
 func TestDotW4A8SplitHalf4Acc_matchesOracle(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	rng := rand.New(rand.NewSource(29))
@@ -220,7 +222,7 @@ func TestDotW4A8SplitHalf4Acc_matchesOracle(t *testing.T) {
 // outer loop iteration, unlike the artificial-lane kernels' mod-2/mod-4
 // requirement).
 func TestDotW4A8SplitHalf4Row_matchesOracle(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	rng := rand.New(rand.NewSource(41))
@@ -275,7 +277,7 @@ func TestDotW4A8SplitHalf4Row_matchesOracle(t *testing.T) {
 // over unchanged, because the per-output arithmetic literally didn't change,
 // only which bytes it reads from and which rows share an activation load.
 func TestDotW4A8SplitHalf4Row_bitIdenticalToCanonical(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	rng := rand.New(rand.NewSource(97))

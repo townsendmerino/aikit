@@ -40,13 +40,15 @@ func TestOutputContract_dequantWritersOverwrite(t *testing.T) {
 		rng.Read(b)
 		return b
 	}
-	types := map[string]uint32{"F32": ggmlTypeF32, "F16": ggmlTypeF16, "BF16": ggmlTypeBF16, "Q8_0": ggmlTypeQ8_0, "Q4_0": ggmlTypeQ4_0, "Q5_0": ggmlTypeQ5_0, "Q2_K": ggmlTypeQ2_K, "Q3_K": ggmlTypeQ3_K,
-		"Q4_K": ggmlTypeQ4_K, "Q5_K": ggmlTypeQ5_K, "Q6_K": ggmlTypeQ6_K, "IQ4_NL": ggmlTypeIQ4NL, "IQ4_XS": ggmlTypeIQ4XS, "IQ2_S": ggmlTypeIQ2S, "IQ3_S": ggmlTypeIQ3S, "MXFP4": ggmlTypeMXFP4}
-	for name, typ := range types {
+	// Every type the reader admits, so a newly added dequantizer is covered without a list to update.
+	covered := 0
+	for typ := range uint32(256) {
 		be, ok := ggmlBlockElems(typ)
 		if !ok {
-			t.Fatalf("%s: ggmlBlockElems does not know the type", name)
+			continue
 		}
+		covered++
+		name := fmt.Sprintf("type%d", typ)
 		n := 3 * max(be, 1) * 2 // several blocks, and a non-zero start below
 		raw := rnd(64 * 1024)
 		start := 0
@@ -54,6 +56,9 @@ func TestOutputContract_dequantWritersOverwrite(t *testing.T) {
 			start = be // block-aligned, not zero
 		}
 		runDstIndependent(t, "dequantRange/"+name, n, func(dst []float32) { dequantRange(typ, raw, start, dst, be) })
+	}
+	if covered < 17 {
+		t.Fatalf("only %d ggml types admitted; the reader knows at least 17", covered)
 	}
 	for _, nb := range []int{1, 3} {
 		raw := rnd(nb * MXFP4BlockBytes)

@@ -5,18 +5,20 @@ package linalg
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestDotI8SDOT_matchesScalar validates the ARMv8.2 DotProd kernel directly
 // (bit-exact vs the scalar reference — integer arithmetic, so equality is exact).
 // It only runs when this CPU advertises DotProd: the SDOT opcode would trap on a
 // core without it, and dotI8 would never dispatch here anyway. Under
-// qemu-aarch64 with a DotProd-capable -cpu (e.g. `max`), hasDotProd is true and
+// qemu-aarch64 with a DotProd-capable -cpu (e.g. `max`), cpufeat.HasDotProd is true and
 // this covers the WORD-encoded SDOT block + 64-wide main loop + 16-wide tail +
 // reduction. TestDotI8_matchesScalar already covers whichever kernel dotI8
 // actually selects on the host.
 func TestDotI8SDOT_matchesScalar(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("CPU has no DotProd (ASIMDDP); SDOT kernel not exercisable here")
 	}
 	rng := rand.New(rand.NewSource(11))

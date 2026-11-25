@@ -17,6 +17,45 @@ excluded from that promise and may change in any release until it graduates.
   `mmap` and `vision` join its apidiff packages, and `encoder.Backend`, `RegisterBackend` and `NewBackend` leave its exemption list
   (`tools/releasegate`, `TestReadmeTiers_matchGate` holds the README's Hard list and the gate's lists equal).
 
+- **`linalg`'s CPU-feature flags, their detection and the `aikit_no*` fallback tags live in one internal package,
+  `internal/cpufeat`** (from `linalg`'s `has*`/`detect*` variables, its `cpuid`/`xgetbv` probes and its `force_no*` files). Every
+  dispatcher reads the one copy, so `SelfCheck`'s repair and each forced fallback keep governing a kernel package split out of
+  `linalg` later. No exported name changes: `ActiveKernels` and `ForcedFallbacks` report the same strings under each tag
+  (compared on linux/amd64 for the untagged build and each amd64 tag), and the forced-fallback tests pass under each tag.
+
+### Added
+
+- **`embed` reads GGUF type 40, NVFP4** (`dequantNVFP4Block`): 64-element blocks of four 16-element sub-blocks, each with an
+  unsigned e4m3 scale and 8 bytes of e2m1 nibbles, low nibble to element `j` and high to `j+8`, as ggml's `dequantize_row_nvfp4`
+  reads them. The scale decodes as ggml's `ggml_ue4m3_to_fp32` does: the top bit is ignored and `0x00` and `0x7F` are zero. The
+  per-tensor scale is a separate GGUF tensor, which the caller applies. Held bit-exact against gguf-py's `gguf.quants` on every
+  scale byte against every code (`TestIQDequant_matchesReference/NVFP4`); a wrong e2m1 entry, ModelOpt's sequential nibble order
+  or an honored scale sign bit each turns it red (`TestNVFP4Dequant_goldenCatchesPlants`).
+- **`embed` reads GGUF types 16, 17 and 18: IQ2_XXS, IQ2_XS and IQ3_XXS** (`dequantIQ2XXSBlock`, `dequantIQ2XSBlock`,
+  `dequantIQ3XXSBlock`), as ggml's `dequantize_row_iq2_xxs`, `_iq2_xs` and `_iq3_xxs` read them. Their grids and the shared
+  sign table `ksigns_iq2xs` are dumped from gguf-py into `embed/iq_grids.go`, and `gen_iq_grids.py --ggml-common` proves each
+  table byte-equal to `ggml-common.h`'s. The golden uses every grid entry and sign index of each type, bit-exact against
+  gguf-py; one wrong grid magnitude, one wrong sign-table entry, or a misread field order turns it red
+  (`TestIQXXSDequant_goldenCatchesPlants`).
+- **`embed` reads GGUF types 3, 7, 19, 29, 34 and 35: Q4_1, Q5_1, IQ1_S, IQ1_M, TQ1_0 and TQ2_0**, as ggml's
+  `dequantize_row_*` read them. IQ1_S and IQ1_M share `iq1s_grid` (2048 × 8 values in {-1, 0, 1}, plus a ±0.125 delta per
+  group), dumped from gguf-py and proven byte-equal to `ggml-common.h`'s. IQ1_M's f16 super-scale is assembled from the top
+  nibbles of its four scale words. TQ1_0 packs five trits a byte as a fraction of 243. All six types are bit-exact against
+  gguf-py, IQ1_S on every grid entry. A misread field order or (for IQ1) one wrong grid value turns the golden red
+  (`TestLowBitDequant_goldenCatchesPlants`).
+
+### Fixed
+
+- **`embed` refused a legitimate tensor of a type denser than 0.25 bytes per element when it filled the data section.**
+  `RowDequantizer` bounds an untrusted tensor's element count by the data section's size before multiplying its dims; the
+  bound assumed at most 4 elements a byte, and IQ1_S stores 5.12 (TQ1_0 4.7, IQ1_M 4.6). It is now 6.
+  `TestIQDequant_goldenThroughGGUF` reads a section-filling tensor of every type the reader admits.
+
+- **The dequant golden is compared bit for bit**, where it allowed a relative 1e-4: every type in it already matched exactly. Each
+  case is also read through a one-tensor GGUF, so each type's byte size is checked with its kernel
+  (`TestIQDequant_goldenThroughGGUF`), and `TestOutputContract_dequantWritersOverwrite` covers every type the reader admits
+  rather than a list.
+
 ## [1.79.0] — 2026-11-24
 
 `perfgate` VERDICT: FAIL — 3 regression(s) vs v1.78.0 across 47 shapes, confirmed on a second measurement

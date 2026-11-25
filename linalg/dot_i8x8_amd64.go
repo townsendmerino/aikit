@@ -2,6 +2,8 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 // dotI8x8AVX2 computes eight int8 dot products of one a-row against eight b-rows,
 // sharing the a-side widening across all eight. n must be a multiple of 16.
 //
@@ -24,7 +26,7 @@ func dotI8x8AVX2(a, b0, b1, b2, b3, b4, b5, b6, b7 *int8, n int, out *[8]int32)
 // exactly equal to the unsplit one.
 func dotI8x8(a, b0, b1, b2, b3, b4, b5, b6, b7 []int8, out *[8]int32) {
 	n := len(a)
-	if !hasAVX2 || n < 16 {
+	if !cpufeat.HasAVX2 || n < 16 {
 		dotI8x8Generic(a, b0, b1, b2, b3, b4, b5, b6, b7, out)
 		return
 	}

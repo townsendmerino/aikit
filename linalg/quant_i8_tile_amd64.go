@@ -2,6 +2,8 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 // dotI8Tile4x1AVX2 computes 4 int8 dot products in one call — four activation
 // rows (actStride bytes apart) against ONE weight row — into dst[0..3] as int32.
 // n must be a multiple of 16; the caller mops up the remainder, as dotI8 already
@@ -26,7 +28,7 @@ func dotI8Tile4x1AVX2(act *int8, actStride int, w *int8, dst *int32, n int)
 // regression there, and neither project box has VNNI to measure it on. Building
 // the VNNI tile is S-08.3's "file, do not build" case: it needs a host first.
 func w8a8TileRect(aq []int8, aScales []float32, bQ []int8, bScales, dst []float32, M, K, N, j0, j1 int) (mTiled, jTiled int) {
-	if !hasAVX2 || hasAVX512VNNI || M < 4 || K < 16 {
+	if !cpufeat.HasAVX2 || cpufeat.HasAVX512VNNI || M < 4 || K < 16 {
 		return 0, j0
 	}
 	mFull := M &^ 3

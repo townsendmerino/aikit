@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // repackSplitHalfRowAMD64 mirrors arm64's repackSplitHalfRow (which lives behind //go:build
@@ -38,7 +40,7 @@ func repackSplitHalfRowAMD64(packed []byte, K int) []byte {
 // dot the production path computes. Checking the kernel against a split-half-aware oracle would
 // let a repack bug and a kernel bug cancel.
 func TestDotW4A8SplitHalfAVX2_matchesOracle(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("AVX2 required")
 	}
 	const group = 32
@@ -78,7 +80,7 @@ func TestDotW4A8SplitHalfAVX2_matchesOracle(t *testing.T) {
 // identical weights; only the layout and the two VPUNPCK shuffles differ. The repack is done once
 // outside the timed loop, which is what a load-time repack would do in production.
 func BenchmarkW4A8_CanonicalVsSplitHalf(b *testing.B) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		b.Skip("AVX2 required")
 	}
 	const (
