@@ -56,10 +56,11 @@ large embedded-grammar payload) — is quarantined in the separate
 | `sparse` | learned-sparse (SPLADE) retrieval — inverted index + sparse-dot scoring over vectors from `encoder.SPLADE` (in-process) or precomputed | `topk` |
 | `late` *(Experimental)* | ColBERT-style late-interaction (MaxSim) reranking over pre-computed per-token vectors (`encoder.Model.EncodeTokens`) — a shortlist reranker, not a corpus-scale index | `linalg`, `topk` |
 | `bench` | reproducible recall + latency harness for the dense indexes (Flat / HNSW / FlatI8) — Experimental tooling | `ann` |
-| `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | `mmap` |
+| `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | `linalg/elem`, `mmap` |
+| `linalg/elem` | elementwise kernels: exp, tanh, erf, SiLU, GELU and softmax, scalar and in-place forms, and the contract forms (every multiply-add fused, the same bits on every architecture) | — |
 | `mmap` | read-only file mapping + `madvise` residency hints + a demand-signal-agnostic `SpanCache` (LRU spans under a byte budget) — the substrate the `ann`, `bm25`, `embed` and `linalg` mmap loaders sit on; cgo-free, `!unix` heap fallback | `golang.org/x/sys` *(darwin only)* |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `mmap`, `golang.org/x/text`, `golang.org/x/sys` *(amd64 only)* |
-| `encoder` | BERT/RoBERTa/XLM-R/GTE/nomic-bert(+MoE) embedder family (12 certified models, `docs/embedder-coverage.md`, incl. CodeRankEmbed) + SPLADE expansion + cross-encoder reranker — transformer inference scored by cosine / sparse dot / relevance logit; pluggable matmul `Backend` | `embed`, `linalg`, `sparse` |
+| `encoder` | BERT/RoBERTa/XLM-R/GTE/nomic-bert(+MoE) embedder family (12 certified models, `docs/embedder-coverage.md`, incl. CodeRankEmbed) + SPLADE expansion + cross-encoder reranker — transformer inference scored by cosine / sparse dot / relevance logit; pluggable matmul `Backend` | `embed`, `linalg`, `linalg/elem`, `sparse` |
 | `chunk` | language-aware chunker registry + `regex`, `markdown`, `line` chunkers | — |
 | `gpu` *(Experimental, darwin+linux; separate modules)* | cgo-free native-GPU device substrate — `Device`/`Buffer`/`Queue`/`Pipeline`/`Encoder` over Metal (darwin, runtime MSL compiler) or CUDA (linux, embedded PTX); the GPU analogue of `linalg`'s CPU role. Frozen on `gpu/v0.35.x`, fixes only. 4 one-backend-per-module leaves plug into 2 seams: `anncuda`/`annmetal` → `FlatI8.EnableGPU`; `enccuda`/`encmetal` → `encoder.RegisterBackend("cuda"/"metal", …)`. The tower backends (`qwencuda`/`qwenmetal`, `visioncuda`/`visionmetal`) moved to goinfer and were deleted here; their tags still resolve. Device tests are hand-run (no GPU CI); the default aikit build never imports any of them and stays pure-Go. See [`examples/gpu-ann`](examples/gpu-ann) for the `FlatI8.EnableGPU` seam end to end. | `github.com/ebitengine/purego` *(darwin)*, `github.com/eitamring/gocudrv` *(linux)* |
 | `chunk/treesitter` *(submodule)* | tree-sitter-backed syntactic chunker | `gotreesitter`, `…/aikit` |
@@ -410,7 +411,7 @@ no such consumer has surfaced yet.
   (7.56× over a `Score` loop at 50 documents, bit-identical scores). Covered by
   `CrossEncoder`'s existing Experimental status; listed here so the batch API is
   not read as a separate promise.
-- `linalg`'s v1.15.0 additions — the elementwise math kernels (`ExpF32`, `TanhF32`,
+- `linalg`'s v1.15.0 additions — the elementwise math kernels (now `linalg/elem`: `ExpF32`, `TanhF32`,
   `ErfF32`, `GELUF32`, `GELUTanhF32`, `SiLUF32` and their `*Into` forms,
   `SoftmaxRowInto`), the fused Q8 matmul (`MatmulBTQ8Fused{,Into}`,
   `HasFusedQ8Kernel`, `FusedQ8Applies`), W8A8 activation quantization

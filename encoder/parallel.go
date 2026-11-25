@@ -193,7 +193,7 @@ func softmaxRows(scores []float32, rows, cols int) {
 // softmaxRowsScaled is softmaxRows fused with the attention score scale —
 // replaces a caller's own `for i := range scores { scores[i] *= scale }`
 // pass immediately before calling softmaxRows, bit-identically in both
-// builds (see linalg.SoftmaxRowScaledInto), and genuinely eliminates that
+// builds (see elem.SoftmaxRowScaledInto), and genuinely eliminates that
 // separate O(L²) pass under GOEXPERIMENT=simd (dead-ends §4.4).
 func softmaxRowsScaled(scores []float32, scale float32, rows, cols int) {
 	parallelRows(rows, rows*cols, func(start, end int) {

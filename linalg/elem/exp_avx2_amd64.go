@@ -1,6 +1,6 @@
 //go:build amd64
 
-package linalg
+package elem
 
 // expF32ContractAVX2 computes e^src[i] into dst[i] for n elements (n a multiple
 // of 8), implementing the exp_contract.go numeric contract exactly. Only safe

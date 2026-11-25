@@ -2,12 +2,11 @@ package encoder
 
 import (
 	"fmt"
+	"github.com/townsendmerino/aikit/linalg/elem"
 	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
-
-	"github.com/townsendmerino/aikit/linalg"
 )
 
 // crossencoder.go — a BERT cross-encoder reranker (BertForSequenceClassification),
@@ -232,7 +231,7 @@ func (ce *CrossEncoder) scoreIDs(ids, segs []int32) []float32 {
 	// kit rather than for speed: this is the pooler, [1,D] = 384 elements per
 	// Score against a ~10 ms forward, so the ~15 µs it costs is below anything
 	// the benchmarks can resolve. Same accuracy contract as the rest (≤2 ULP).
-	linalg.TanhInto(pooled, pooled)
+	elem.TanhInto(pooled, pooled)
 	out := matmulBT(pooled, ce.classifierW, 1, D, ce.labels) // pooled · classifierWᵀ
 	addBias(out, ce.classifierB, 1, ce.labels)
 	return out

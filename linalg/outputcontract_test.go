@@ -90,26 +90,6 @@ func outputContractCases() []outputcontract.Case {
 		cs = append(cs, outputcontract.Case{Name: name, Setup: setup})
 	}
 
-	// ---- elementwise and row kernels: dst <- f(src); they may alias, which is one more reason a pre-zero of dst is harmful.
-	type ew struct {
-		name string
-		f    func(dst, src []float32)
-	}
-	for _, k := range []ew{
-		{"ExpF32Into", ExpF32Into}, {"SoftmaxRowInto", SoftmaxRowInto}, {"GELUInto", GELUInto}, {"SiLUInto", SiLUInto}, {"GELUTanhInto", GELUTanhInto}, {"TanhInto", TanhInto},
-		{"ExpContractInto", ExpContractInto}, {"GELUContractInto", GELUContractInto}, {"GELUTanhContractInto", GELUTanhContractInto}, {"SiLUContractInto", SiLUContractInto}, {"SoftmaxRowContractInto", SoftmaxRowContractInto},
-		{"SoftmaxRowScaledInto", func(d, s []float32) { SoftmaxRowScaledInto(d, s, 0.35) }}, {"SoftmaxRowScaledContractInto", func(d, s []float32) { SoftmaxRowScaledContractInto(d, s, 0.35) }},
-	} {
-		for _, n := range []int{1, 5, 37, 130} {
-			k, n := k, n
-			add(fmt.Sprintf("%s/n=%d", k.name, n), func() (func(), []*outputcontract.OutBuf) {
-				src := rf32(int64(n), n)
-				dst, o := outputcontract.MkOut[float32]("dst", n)
-				return func() { k.f(dst, src) }, []*outputcontract.OutBuf{o}
-			})
-		}
-	}
-
 	// ---- conversions and quantizers
 	for _, n := range []int{5, 37, 130} {
 		add(fmt.Sprintf("F32ToF16Slice/n=%d", n), func() (func(), []*outputcontract.OutBuf) {

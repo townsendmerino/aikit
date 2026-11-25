@@ -13,7 +13,6 @@ func kernelAdapters() []kernreg.Adapter {
 		dotAdapters(),
 		kquantAdapters(),
 		attnAdapters(),
-		expAdapters(),
 		widenAdapters(),
 		f16scaleAdapters(),
 		hammingAdapters(),

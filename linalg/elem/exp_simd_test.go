@@ -1,6 +1,6 @@
 //go:build goexperiment.simd
 
-package linalg
+package elem
 
 import (
 	"math"

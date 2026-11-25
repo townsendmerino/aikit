@@ -1,14 +1,13 @@
 package encoder
 
 import (
+	"github.com/townsendmerino/aikit/linalg/elem"
 	"testing"
-
-	"github.com/townsendmerino/aikit/linalg"
 )
 
 // TestConfig_geluTanh pins the activation-name → erf-vs-tanh split. "gelu_new",
 // "gelu_fast", and "gelu_pytorch_tanh" are three HF names for the identical tanh
-// formula (linalg.GELUTanhF32) — a different function from plain "gelu"'s erf
+// formula (elem.GELUTanhF32) — a different function from plain "gelu"'s erf
 // form, not a safe collapse. All four still route to the dense (non-gated) MLP
 // via gatedMLP(); geluTanh() picks which GELU that dense MLP applies.
 func TestConfig_geluTanh(t *testing.T) {
@@ -45,7 +44,7 @@ func TestConfig_geluTanh(t *testing.T) {
 // and erf branches back into one — the bug this pair of functions fixes. A
 // dense-GELU checkpoint whose activation_function is "gelu_pytorch_tanh" (e.g.
 // any Gemma-family MLP) must produce numerically different output than "gelu"
-// would, and must match linalg.GELUTanhF32 applied by hand.
+// would, and must match elem.GELUTanhF32 applied by hand.
 func TestGeluMLP_tanhDispatch(t *testing.T) {
 	const D, inter, L = 8, 16, 3
 	rng := []float32{
@@ -89,11 +88,11 @@ func TestGeluMLP_tanhDispatch(t *testing.T) {
 	}
 
 	// geluTanh (the elementwise function geluMLP dispatches to) must match
-	// linalg.GELUTanhF32 exactly — it's a thin chunked wrapper, not a new formula.
+	// elem.GELUTanhF32 exactly — it's a thin chunked wrapper, not a new formula.
 	x := append([]float32(nil), rng...)
 	want := make([]float32, len(x))
 	for i, v := range x {
-		want[i] = linalg.GELUTanhF32(v)
+		want[i] = elem.GELUTanhF32(v)
 	}
 	geluTanh(x)
 	for i := range x {

@@ -1,6 +1,10 @@
 package linalg
 
-import "math"
+import (
+	"math"
+
+	"github.com/townsendmerino/aikit/linalg/elem"
+)
 
 // Fused (FlashAttention-style) attention over one query tile, keeping the score block resident.
 //
@@ -211,7 +215,7 @@ func attendTileFused(
 				for j := range seg {
 					seg[j] -= mNew
 				}
-				ExpContractInto(seg, seg)
+				elem.ExpContractInto(seg, seg)
 				for _, e := range seg {
 					sum += float64(e)
 				}

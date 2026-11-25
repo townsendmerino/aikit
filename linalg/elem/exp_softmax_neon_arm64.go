@@ -1,6 +1,6 @@
 //go:build arm64
 
-package linalg
+package elem
 
 // expBiasSumF32NEON computes dst[i] = exp(src[i]+bias) for n elements (n a
 // multiple of 4) and accumulates them into four float64 lane partials: element i

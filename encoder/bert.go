@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/townsendmerino/aikit/embed"
-	"github.com/townsendmerino/aikit/linalg"
+	"github.com/townsendmerino/aikit/linalg/elem"
 )
 
 // bert.go — a MiniLM-class BERT encoder (roadmap §2.2), separate from the
@@ -416,7 +416,7 @@ func gelu(x []float32) {
 	// cores; each chunk is expensive enough (math.Erf-class transcendental) that
 	// this is one of the largest serial stages once the matmuls are parallel.
 	// Elementwise and in place, so the split is numerically inert. Each chunk
-	// routes through linalg.GELUInto (vectorized under GOEXPERIMENT=simd — T1,
+	// routes through elem.GELUInto (vectorized under GOEXPERIMENT=simd — T1,
 	// autoresearch round 2) instead of a per-element scalar loop, so this now
 	// layers SIMD-within-a-chunk under the existing core-level parallelism —
 	// this was the encoder's own gap the autoresearch loop found: GELUInto had
@@ -425,22 +425,22 @@ func gelu(x []float32) {
 	chunks := (len(x) + chunk - 1) / chunk
 	parallelRows(chunks, len(x), func(start, end int) {
 		lo, hi := start*chunk, min(end*chunk, len(x))
-		linalg.GELUContractInto(x[lo:hi], x[lo:hi])
+		elem.GELUContractInto(x[lo:hi], x[lo:hi])
 	})
 }
 
 // geluTanh applies the tanh-approximation GELU in place — HF's "gelu_new" /
 // "gelu_fast" / "gelu_pytorch_tanh", a different function from the exact erf
-// form gelu applies (see Config.geluTanh and linalg.GELUTanhF32). Same chunking
+// form gelu applies (see Config.geluTanh and elem.GELUTanhF32). Same chunking
 // as gelu, for the same reason: elementwise and in place, so splitting is
 // numerically inert. Same SIMD-under-parallelism fix as gelu (T1, autoresearch
-// round 3): each chunk routes through linalg.GELUTanhInto instead of a
+// round 3): each chunk routes through elem.GELUTanhInto instead of a
 // per-element scalar loop.
 func geluTanh(x []float32) {
 	const chunk = 4096
 	chunks := (len(x) + chunk - 1) / chunk
 	parallelRows(chunks, len(x), func(start, end int) {
 		lo, hi := start*chunk, min(end*chunk, len(x))
-		linalg.GELUTanhContractInto(x[lo:hi], x[lo:hi])
+		elem.GELUTanhContractInto(x[lo:hi], x[lo:hi])
 	})
 }

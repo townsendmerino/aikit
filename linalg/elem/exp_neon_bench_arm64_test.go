@@ -1,6 +1,6 @@
 //go:build arm64
 
-package linalg
+package elem
 
 import (
 	"math"

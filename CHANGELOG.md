@@ -9,6 +9,14 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
+
+- **The elementwise kernels move from `linalg` to `linalg/elem`**: `ExpF32`, `TanhF32`, `ErfF32`, `GELUF32`, `GELUTanhF32`,
+  `SiLUF32` and their `*Into` forms, the contract forms (`ExpContractInto`, `GELUContractInto`, `GELUTanhContractInto`,
+  `SiLUContractInto`, `SoftmaxRowContractInto`, `SoftmaxRowScaledContractInto`) and `SoftmaxRowInto`/`SoftmaxRowScaledInto`:
+  19 names, unchanged but for the package. A caller replaces `linalg.X` with `elem.X`; goinfer's rewrite rules list them.
+  The package carries its own output-contract cases, kernel-registry rows and over-read adapters.
+
 ### Removed
 
 - **`vision` and `examples/vision`, the one removal from the Hard tier** (decided 2026-11-24). The SigLIP/ViT towers moved into

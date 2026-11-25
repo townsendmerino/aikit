@@ -1,6 +1,6 @@
 //go:build arm64
 
-package linalg
+package elem
 
 // expF32ContractNEON computes e^src[i] into dst[i] for the first n elements, four
 // lanes at a time, implementing the exp_contract.go numeric contract exactly.
