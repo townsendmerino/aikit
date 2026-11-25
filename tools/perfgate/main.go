@@ -38,6 +38,12 @@
 //	go run -C tools ./perfgate [previous-tag]      # default: the latest vX.Y.Z tag
 //	go run -C tools ./perfgate --visits 8 --benchtime 300ms v1.17.1
 //	go run -C tools ./perfgate --allow-dirty       # measure uncommitted kernel work; verdict is marked, not release evidence
+//	go run -C tools ./perfgate --bench BenchmarkQ56KvsInt8 --pkg ./linalg   # one family, one package
+//
+// The families judged and the packages searched for them are defaultFamilies and
+// defaultPackages. A family is matched across the two arms by its benchmark name, whichever
+// package holds it; a family listed for this arch that no package of the working tree defines
+// fails the gate before anything is measured (exit 6).
 //
 // Its "`perfgate` VERDICT: …" line goes into the release's CHANGELOG section as printed.
 // A tree dirty only in CHANGELOG.md is measured as release evidence; see dirtOutsideChangelog.
@@ -45,11 +51,13 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -58,37 +66,10 @@ import (
 	"github.com/townsendmerino/aikit/tools/gpumod"
 )
 
-const (
-	// The gate's coverage (audit G-01). It used to be the two W8A8 M=1 families
-	// alone, which left the production int4 decode kernel, BOTH M>1 tiles, the
-	// acc64 attention kernels, the activation quantiser, the S-06 contract
-	// kernels and AttendTileFused with no performance gate at all — every one of
-	// them a path a release has changed. Each family below is here because a
-	// regression in it would otherwise ship green:
-	//
-	//	W8A8SpanShapes            W8A8 M=1, the original two
-	//	GEMV_W8A8_baseline        W8A8 M=1 through the f32 entry
-	//	MatmulBTW8A8Batch_prefill W8A8 M>1 — the batched tile, goinfer's prefill
-	//	W4A8_CanonicalVsSplitHalf W4A8 M=1 — the int4 decode kernel
-	//	MatmulBTW4A8SplitHalfTile W4A8 M>1 on amd64 split-half-only — the tile
-	//	                          this gate exists to protect (audit M-22 follow-up:
-	//	                          split-half M>1)
-	//	MatmulQKAcc64/AVAcc64     the f64 attention kernels at depth
-	//	AttendTileFused_expKind   the fused ViT attention schedule
-	//	SoftmaxRowKernels/SiLUKernels  the S-06 contract transcendentals
-	//	QuantizeRowInt8           the activation quantiser
-	defaultBench = `^(BenchmarkW8A8SpanShapes|BenchmarkGEMV_W8A8_baseline|` +
-		`BenchmarkMatmulBTW8A8Batch_prefill|BenchmarkW4A8_CanonicalVsSplitHalf|` +
-		`BenchmarkMatmulBTW4A8SplitHalfTile|` +
-		`BenchmarkMatmulQKAcc64|BenchmarkMatmulAVAcc64|BenchmarkAttendTileFused_expKind|` +
-		`BenchmarkSoftmaxRowKernels|BenchmarkSiLUKernels|BenchmarkQuantizeRowInt8)$`
-	defaultPkg = "./linalg"
-)
-
 type config struct {
 	prevTag     string
-	pkg         string
-	benchRe     string
+	pkgs        []string // the packages built in each arm (defaultPackages)
+	families    []family // the benchmarks judged (defaultFamilies)
 	benchtime   string
 	visits      int
 	floorK      float64
@@ -156,7 +137,7 @@ func ignoredByGo(path string) bool {
 }
 
 func run(args []string) int {
-	cfg := config{pkg: defaultPkg, benchRe: defaultBench, benchtime: "200ms", visits: 6, floorK: 3.0, minFloor: 2.0, targetClass: 5.0}
+	cfg := config{pkgs: defaultPackages, families: defaultFamilies, benchtime: "200ms", visits: 6, floorK: 3.0, minFloor: 2.0, targetClass: 5.0}
 	var pos []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -175,10 +156,24 @@ func run(args []string) int {
 			cfg.benchtime = args[i]
 		case "--bench":
 			i++
-			cfg.benchRe = args[i]
+			fams, err := parseFamilies(args[i])
+			if err != nil {
+				fmt.Printf("perfgate: INCONCLUSIVE — --bench wants benchmark names separated by commas: %v\n", err)
+				return 2
+			}
+			cfg.families = fams
 		case "--pkg":
 			i++
-			cfg.pkg = args[i]
+			cfg.pkgs = nil
+			for p := range strings.SplitSeq(args[i], ",") {
+				if p = strings.TrimSpace(p); p != "" {
+					cfg.pkgs = append(cfg.pkgs, p)
+				}
+			}
+			if len(cfg.pkgs) == 0 {
+				fmt.Printf("perfgate: INCONCLUSIVE — --pkg wants package paths separated by commas, got %q\n", args[i])
+				return 2
+			}
 		case "--target":
 			i++
 			f, err := strconv.ParseFloat(args[i], 64)
@@ -225,17 +220,22 @@ func run(args []string) int {
 		fmt.Println("perfgate: the tree is dirty only in CHANGELOG.md or in paths the go tool ignores (the release section is written before this step): measured as release evidence")
 	}
 	fmt.Printf("aikit perf gate — %s%s vs %s — %s/%s — %s\n", p.Commit, p.Dirty, cfg.prevTag, p.OSName, p.Arch, p.Date)
-	fmt.Printf("instrument: %s %s   visits: %d   benchtime: %s   floor: max(%.1f%%, %.1f·σ)   targets: %.1f%% regressions\n\n",
-		cfg.pkg, cfg.benchRe, cfg.visits, cfg.benchtime, cfg.minFloor, cfg.floorK, cfg.targetClass)
+	wanted := familyNames(cfg.families, runtime.GOARCH)
+	fmt.Printf("instrument: %s, %d families   visits: %d   benchtime: %s   floor: max(%.1f%%, %.1f·σ)   targets: %.1f%% regressions\n\n",
+		strings.Join(cfg.pkgs, ","), len(wanted), cfg.visits, cfg.benchtime, cfg.minFloor, cfg.floorK, cfg.targetClass)
 
-	// Build both arms. The working tree (uncommitted changes included — that is how the
-	// acceptance reconstruction is measured) and the previous tag in a detached worktree.
-	curBin, err := buildBench(root, cfg.pkg, "cur")
+	// Build both arms: the working tree (uncommitted changes included) and the previous tag in a
+	// detached worktree. Each arm finds every family by name among its own packages.
+	cur, cleanCur, err := buildArm(root, cfg.pkgs, "cur", wanted, false)
+	defer cleanCur()
 	if err != nil {
-		fmt.Println("perfgate: INCONCLUSIVE — could not build the working-tree benchmark: " + err.Error())
+		fmt.Println(verdict(cfg, gate.Inconclusive, "the working tree: "+err.Error()))
 		return 2
 	}
-	defer os.Remove(curBin) //nolint:errcheck // a temp benchmark binary: nothing to report
+	if line, rc := missingVerdict(cfg, cur.res.missing, runtime.GOARCH); rc != 0 {
+		fmt.Println(line)
+		return rc
+	}
 
 	wt, cleanup, err := worktreeAt(root, cfg.prevTag)
 	if err != nil {
@@ -243,12 +243,15 @@ func run(args []string) int {
 		return 2
 	}
 	defer cleanup()
-	prevBin, err := buildBench(wt, cfg.pkg, "prev")
+	prev, cleanPrev, err := buildArm(wt, cfg.pkgs, "prev", wanted, true)
+	defer cleanPrev()
 	if err != nil {
-		fmt.Println("perfgate: INCONCLUSIVE — could not build the " + cfg.prevTag + " benchmark: " + err.Error())
+		fmt.Println(verdict(cfg, gate.Inconclusive, cfg.prevTag+": "+err.Error()))
 		return 2
 	}
-	defer os.Remove(prevBin) //nolint:errcheck // a temp benchmark binary: nothing to report
+	if len(prev.res.missing) > 0 {
+		fmt.Printf("not in %s (judged from the next release on): %s\n\n", cfg.prevTag, strings.Join(prev.res.missing, ", "))
+	}
 
 	// CHARACTERIZATION — the current binary against itself, interleaved exactly as the
 	// comparison will be, to derive the per-shape floor BEFORE any comparison sample exists.
@@ -256,12 +259,12 @@ func run(args []string) int {
 	charA := make([]map[string]float64, 0, cfg.visits)
 	charB := make([]map[string]float64, 0, cfg.visits)
 	for v := 0; v < cfg.visits; v++ {
-		a, err := runVisit(curBin, cfg)
+		a, err := runVisit(cur, cfg)
 		if err != nil {
 			fmt.Println(verdict(cfg, gate.Inconclusive, "characterization: "+err.Error()))
 			return 4
 		}
-		b, err := runVisit(curBin, cfg)
+		b, err := runVisit(cur, cfg)
 		if err != nil {
 			fmt.Println(verdict(cfg, gate.Inconclusive, "characterization: "+err.Error()))
 			return 4
@@ -281,9 +284,9 @@ func run(args []string) int {
 	// is the single bias the interleave exists to remove. Alternating the order
 	// each visit puts half of any drift on each arm.
 	for v := 0; v < cfg.visits; v++ {
-		first, second := curBin, prevBin
+		first, second := cur, prev
 		if v%2 == 1 {
-			first, second = prevBin, curBin
+			first, second = prev, cur
 		}
 		r1, err := runVisit(first, cfg)
 		if err != nil {
@@ -315,6 +318,9 @@ func run(args []string) int {
 	}
 	for _, sh := range onlyCur {
 		fmt.Printf("  %-40s new — no baseline in %s (not judged)\n", sh, cfg.prevTag)
+	}
+	for _, name := range silentFamilies(wanted, curV) {
+		fmt.Printf("  %-40s produced no rows on this host (the benchmark skipped; not judged)\n", name)
 	}
 	rep := gate.ReconcileWith(cells, gate.FailWins)
 
@@ -361,9 +367,9 @@ func run(args []string) int {
 		curV2 := make([]map[string]float64, 0, cfg.visits)
 		prevV2 := make([]map[string]float64, 0, cfg.visits)
 		for v := 0; v < cfg.visits; v++ {
-			first, second := curBin, prevBin
+			first, second := cur, prev
 			if v%2 == 1 {
-				first, second = prevBin, curBin
+				first, second = prev, cur
 			}
 			r1, err := runVisit(first, cfg)
 			if err != nil {
@@ -424,6 +430,18 @@ func run(args []string) int {
 	fmt.Println(verdict(cfg, gate.OK, fmt.Sprintf("no regression vs %s above each shape's floor — %d/%d shapes resolve the %.1f%% class",
 		cfg.prevTag, below, rep.Total, cfg.targetClass)))
 	return 0
+}
+
+// missingVerdict is the gate's result when listed families resolve to no benchmark in the
+// working tree: a FAIL (exit 6), since a release would otherwise be green on kernels it never
+// compared. rc is 0 when nothing is missing.
+func missingVerdict(cfg config, missing []string, goarch string) (line string, rc int) {
+	if len(missing) == 0 {
+		return "", 0
+	}
+	return verdict(cfg, gate.Fail, fmt.Sprintf(
+		"%d listed famil(ies) resolve to no benchmark in the working tree on %s (%s), so the gate would not judge them: restore the benchmark, or fix the family table",
+		len(missing), goarch, strings.Join(missing, ", "))), 6
 }
 
 // shortShape trims the family prefix for the blind-list, keeping the K/N that identifies it.
@@ -495,25 +513,23 @@ func deriveFloors(a, b []map[string]float64, cfg config) map[string]float64 {
 	return floors
 }
 
-// runVisit runs the compiled benchmark once and parses ns/op per shape key.
-// runVisit runs the benchmark binary once and parses its rows.
+// runVisit runs each of an arm's benchmark binaries once and merges their rows.
 //
-// It returns an error when the binary FAILS or when it produced no parseable
-// benchmark lines (audit G-06). Both used to be swallowed — `outB, _ :=` and
-// then an empty map — so a panic, a regex typo or a missing fixture in the
-// prev-tag worktree produced zero rows, zero shapes, and a green "PASS — 0/0".
-// A gate whose instrument did not run must not report on the thing it was
-// meant to measure.
-func runVisit(bin string, cfg config) (map[string]float64, error) {
-	cmd := exec.Command(bin, "-test.run=^$", "-test.bench="+cfg.benchRe, "-test.benchtime="+cfg.benchtime, "-test.count=1")
-	outB, err := cmd.CombinedOutput()
-	rows := parseBench(string(outB))
-	if err != nil {
-		return rows, fmt.Errorf("benchmark binary %s failed: %w\n%s", filepath.Base(bin), err, tail(string(outB), 20))
+// It returns an error when a binary FAILS or when the arm produced no parseable benchmark lines
+// (audit G-06): a gate whose instrument did not run must not report on the thing it was meant to
+// measure.
+func runVisit(a arm, cfg config) (map[string]float64, error) {
+	rows := map[string]float64{}
+	for _, r := range a.runs {
+		cmd := exec.Command(r.bin, "-test.run=^$", "-test.bench="+r.bench, "-test.benchtime="+cfg.benchtime, "-test.count=1")
+		outB, err := cmd.CombinedOutput()
+		if err != nil {
+			return rows, fmt.Errorf("benchmark binary %s failed: %w\n%s", filepath.Base(r.bin), err, tail(string(outB), 20))
+		}
+		maps.Copy(rows, parseBench(string(outB)))
 	}
 	if len(rows) == 0 {
-		return rows, fmt.Errorf("benchmark binary %s produced no parseable rows for %s\n%s",
-			filepath.Base(bin), cfg.benchRe, tail(string(outB), 20))
+		return rows, fmt.Errorf("the %s arm produced no parseable benchmark rows", a.label)
 	}
 	return rows, nil
 }
@@ -628,16 +644,78 @@ func defaultTag(root string, pos []string) string {
 	return ""
 }
 
-// buildBench compiles the benchmark package in `dir` into a temp binary named for the arm. The
-// binary is what is run and re-run; compiling once per arm keeps the compiler out of the
+// arm is one side of the comparison: a test binary per package that defines a family, each run
+// with a pattern naming exactly its families.
+type arm struct {
+	label string
+	runs  []benchRun
+	res   resolution
+}
+
+type benchRun struct {
+	bin, bench string
+}
+
+// buildArm compiles each package's test binary in dir, lists its benchmarks and resolves the
+// wanted families among them. skipAbsent skips a package directory dir does not have (a package
+// added since the previous tag). The returned cleanup removes the binaries, on error too.
+func buildArm(dir string, pkgs []string, label string, wanted []string, skipAbsent bool) (arm, func(), error) {
+	a := arm{label: label}
+	var bins []string
+	cleanup := func() {
+		for _, b := range bins {
+			os.Remove(b) //nolint:errcheck // a temp benchmark binary: nothing to report
+		}
+	}
+	binOf := map[string]string{}
+	listed := map[string][]string{}
+	for i, pkg := range pkgs {
+		if skipAbsent {
+			if fi, err := os.Stat(filepath.Join(dir, pkg)); err != nil || !fi.IsDir() {
+				continue
+			}
+		}
+		bin, err := buildBench(dir, pkg, fmt.Sprintf("%s-%d", label, i))
+		if err != nil {
+			return a, cleanup, fmt.Errorf("could not build %s's benchmarks: %w", pkg, err)
+		}
+		if bin == "" {
+			continue // a package with no test files
+		}
+		bins = append(bins, bin)
+		out, err := exec.Command(bin, "-test.list=^Benchmark").Output()
+		if err != nil {
+			return a, cleanup, fmt.Errorf("could not list %s's benchmarks: %w", pkg, err)
+		}
+		binOf[pkg], listed[pkg] = bin, parseTestList(string(out))
+	}
+	res, err := resolveFamilies(wanted, listed)
+	if err != nil {
+		return a, cleanup, err
+	}
+	a.res = res
+	for _, pkg := range pkgs {
+		if names := res.byPkg[pkg]; len(names) > 0 {
+			a.runs = append(a.runs, benchRun{bin: binOf[pkg], bench: benchRegex(names)})
+		}
+	}
+	return a, cleanup, nil
+}
+
+// buildBench compiles the test binary of pkg in dir into a temp file named for the arm, or
+// returns "" when pkg has no test files. Compiling once per arm keeps the compiler out of the
 // measured loop. GOWORK=off so the arm resolves its own module graph, not the dev workspace.
 func buildBench(dir, pkg, label string) (string, error) {
 	out := filepath.Join(os.TempDir(), "perfgate-"+label+".test")
+	os.Remove(out) //nolint:errcheck // a stale binary from an earlier run, if any
 	cmd := exec.Command("go", "test", "-c", "-o", out, pkg)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GOWORK=off")
 	if b, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("%v: %s", err, firstLine(string(b)))
+	}
+	if _, err := os.Stat(out); err != nil {
+		return "", nil
 	}
 	return out, nil
 }
