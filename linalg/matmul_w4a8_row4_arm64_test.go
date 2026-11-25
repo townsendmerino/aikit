@@ -12,8 +12,8 @@ import (
 // TestMatmulBTW4A8Row4Into_bitIdenticalToMatmulBTW4A8Into is the production
 // entry point's end-to-end proof, one level above
 // TestDotW4A8SplitHalf4Row_bitIdenticalToCanonical's raw-kernel check:
-// RepackW4A8Row4/repackW4A8Row4Scales followed by MatmulBTW4A8Row4Into must
-// produce EXACTLY the same dst as MatmulBTW4A8Into on the unrepacked
+// RepackW4A8Row4/repackW4A8Row4Scales followed by matmulBTW4A8Row4Into must
+// produce EXACTLY the same dst as matmulBTW4A8Into on the unrepacked
 // canonical data, for the same logical weight matrix. Covers several
 // (N, K) shapes, all satisfying the entry point's N%4==0/K%32==0 contract,
 // including N not a multiple of the parallel-fanout width so the serial and
@@ -43,11 +43,11 @@ func TestMatmulBTW4A8Row4Into_bitIdenticalToMatmulBTW4A8Into(t *testing.T) {
 
 		var ws Workspace
 		want := make([]float32, N)
-		MatmulBTW4A8Into(&ws, a, packed, scales, want, 1, K, N, group)
+		matmulBTW4A8Into(&ws, a, packed, scales, want, 1, K, N, group)
 
 		var ws2 Workspace
 		got := make([]float32, N)
-		MatmulBTW4A8Row4Into(&ws2, a, packed4, scales4, got, 1, K, N, group)
+		matmulBTW4A8Row4Into(&ws2, a, packed4, scales4, got, 1, K, N, group)
 
 		for j := range N {
 			if got[j] != want[j] {
@@ -61,7 +61,7 @@ func TestMatmulBTW4A8Row4Into_bitIdenticalToMatmulBTW4A8Into(t *testing.T) {
 // parallel fan-out (ws.SetThreshold(0)) gives the identical result to the
 // serial fast path, at a real shape with several worker counts — the
 // parallel branch partitions output QUADS, not individual rows, so this is
-// a genuinely different code path from MatmulBTW4A8Into's own
+// a genuinely different code path from matmulBTW4A8Into's own
 // column-partitioned parallel branch and needs its own proof.
 func TestMatmulBTW4A8Row4Into_parallelMatchesSerial(t *testing.T) {
 	if !cpufeat.HasDotProd {
@@ -88,14 +88,14 @@ func TestMatmulBTW4A8Row4Into_parallelMatchesSerial(t *testing.T) {
 	var wsSerial Workspace
 	wsSerial.SetThreshold(1 << 30) // force serial
 	serial := make([]float32, N)
-	MatmulBTW4A8Row4Into(&wsSerial, a, packed4, scales4, serial, 1, K, N, group)
+	matmulBTW4A8Row4Into(&wsSerial, a, packed4, scales4, serial, 1, K, N, group)
 
 	for _, workers := range []int{2, 4, 6, 8} {
 		var ws Workspace
 		ws.SetWorkers(workers)
 		ws.SetThreshold(0)
 		got := make([]float32, N)
-		MatmulBTW4A8Row4Into(&ws, a, packed4, scales4, got, 1, K, N, group)
+		matmulBTW4A8Row4Into(&ws, a, packed4, scales4, got, 1, K, N, group)
 		for j := range N {
 			if got[j] != serial[j] {
 				t.Fatalf("workers=%d j=%d: parallel %v != serial %v (bit mismatch)", workers, j, got[j], serial[j])

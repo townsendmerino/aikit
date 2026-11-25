@@ -27,7 +27,7 @@ func tmArchAdapters() []kernreg.Adapter {
 		})
 	}
 	return []kernreg.Adapter{
-		row4("MatmulBTW4A8Row4Into", MatmulBTW4A8Row4Into),
+		row4("matmulBTW4A8Row4Into", matmulBTW4A8Row4Into),
 		row4("matmulBTW4A8Row4TileInto", matmulBTW4A8Row4TileInto),
 		row4("matmulBTW4A8Row4PrefetchInto", func(ws *Workspace, a []float32, w4 []byte, wS, dst []float32, M, K, N, g int) {
 			matmulBTW4A8Row4PrefetchInto(ws, a, w4, wS, dst, M, K, N, g, 256)

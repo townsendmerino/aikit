@@ -13,11 +13,11 @@ import (
 )
 
 // TestW4A8BatchVsPerOpAB is matmulBTW4A8Batch's decision-rule harness. The
-// do-nothing arm is deliberately NOT MatmulBTW4A8Into: goinfer's decode reaches
+// do-nothing arm is deliberately NOT matmulBTW4A8Into: goinfer's decode reaches
 // these projections through WeightMat.MatmulBTW4A8Into, which at M=1 dispatches
 // the row4 kernel, so comparing against the canonical kernel would credit the
 // batch with a layout win it did not earn. The arm here is N separate
-// MatmulBTW4A8Row4Into calls — exactly what ships today.
+// matmulBTW4A8Row4Into calls — exactly what ships today.
 //
 // Shapes are the two real fusions on the 1.5B: q‖k‖v (12 q heads and 2 kv heads
 // at head dim 128) and gate‖up.
@@ -99,7 +99,7 @@ func TestW4A8BatchVsPerOpAB(t *testing.T) {
 
 			perOp := func() {
 				for i, op := range ops {
-					MatmulBTW4A8Row4Into(wsA, a, op.Row4, op.Row4Scales, perOpDst[i], M, K, op.N, group)
+					matmulBTW4A8Row4Into(wsA, a, op.Row4, op.Row4Scales, perOpDst[i], M, K, op.N, group)
 				}
 			}
 			batch := func() { matmulBTW4A8Batch(wsB, a, M, K, group, ops) }

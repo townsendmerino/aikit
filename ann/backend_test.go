@@ -24,14 +24,14 @@ type fakeBatchIndex struct {
 }
 
 func (b *fakeBatchIndex) Score(q []float32, dst []float32) error {
-	linalg.MatmulBTW8A8(q, b.f.bq, b.f.scales, dst, 1, b.f.dim, b.f.n)
+	refW8A8(q, b.f.bq, b.f.scales, dst, 1, b.f.dim, b.f.n)
 	return nil
 }
 func (b *fakeBatchIndex) Close() error { return nil }
 func (b *fakeBatchIndex) ScoreBatch(queries [][]float32, dst []float32) error {
 	b.calls++
 	for m, q := range queries {
-		linalg.MatmulBTW8A8(q, b.f.bq, b.f.scales, dst[m*b.f.n:(m+1)*b.f.n], 1, b.f.dim, b.f.n)
+		refW8A8(q, b.f.bq, b.f.scales, dst[m*b.f.n:(m+1)*b.f.n], 1, b.f.dim, b.f.n)
 	}
 	return nil
 }
@@ -156,7 +156,7 @@ func (s *fakeShardIndex) Score(q []float32, dst []float32) error {
 	if s.fail {
 		return errFakeShard
 	}
-	linalg.MatmulBTW8A8(q, s.bq, s.scales, dst, 1, s.dim, s.n)
+	refW8A8(q, s.bq, s.scales, dst, 1, s.dim, s.n)
 	return nil
 }
 func (s *fakeShardIndex) Close() error { return nil }
@@ -166,7 +166,7 @@ func (s *fakeShardIndex) ScoreBatch(queries [][]float32, dst []float32) error {
 	}
 	s.batchCalls++
 	for m, q := range queries {
-		linalg.MatmulBTW8A8(q, s.bq, s.scales, dst[m*s.n:(m+1)*s.n], 1, s.dim, s.n)
+		refW8A8(q, s.bq, s.scales, dst[m*s.n:(m+1)*s.n], 1, s.dim, s.n)
 	}
 	return nil
 }
@@ -178,7 +178,7 @@ func (s *fakeShardIndex) TopKBatch(queries [][]float32, k int) ([][]Hit, error) 
 	out := make([][]Hit, len(queries))
 	dst := make([]float32, s.n)
 	for m, q := range queries {
-		linalg.MatmulBTW8A8(q, s.bq, s.scales, dst, 1, s.dim, s.n)
+		refW8A8(q, s.bq, s.scales, dst, 1, s.dim, s.n)
 		out[m] = s.f.topHits(dst, k, nil)
 	}
 	return out, nil
@@ -381,3 +381,10 @@ func (fakeBackendForShardTest) NewI8Index(bq []int8, scales []float32, n, dim in
 	return shardWrapper{&fakeShardIndex{bq: bq, scales: scales, n: n, dim: dim}, false}, nil
 }
 func (fakeBackendForShardTest) Name() string { return "fake-shard-test" }
+
+// refW8A8 is the CPU W8A8 reference: dst[M, N] = q[M, K] · codesᵀ through a WeightMat over the codes, the kernel
+// FlatI8's CPU scan runs.
+func refW8A8(q []float32, codes []int8, scales, dst []float32, M, K, N int) {
+	w := linalg.WrapInt8(codes, scales, N, K, true)
+	w.MatmulBT(q, dst, M)
+}

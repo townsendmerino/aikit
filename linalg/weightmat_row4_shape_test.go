@@ -11,7 +11,7 @@ import (
 // TestWrapInt4Row4_declinesBadShapeAtWrap covers task-simd-audit.md S-10's hardening item for the door a
 // prebuilt row4 blob comes through: a blob with the right byte count and a shape the row4 kernel cannot
 // express (rows%4 != 0, a ragged final group) must be refused at the wrap, which names the blob, and not
-// reach MatmulBTW4A8Row4Into, which would panic far from it. WrapInt4 reports it as ok=false, the same
+// reach matmulBTW4A8Row4Into, which would panic far from it. WrapInt4 reports it as ok=false, the same
 // answer PreferredInt4Layout gives for that shape.
 func TestWrapInt4Row4_declinesBadShapeAtWrap(t *testing.T) {
 	if !cpufeat.HasDotProd {

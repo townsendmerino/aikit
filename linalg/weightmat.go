@@ -17,7 +17,7 @@ import (
 //
 //   - aikit encoder.LayerWeightsQ8 — per-row int8 projection weights (storage only;
 //     the encoder keeps its own baked-scale blocked matmul for large-M prefill, fed
-//     from Int8()/Scales(), since that path is numerically distinct from MatmulBTQ8).
+//     from Int8()/Scales(), since that path is numerically distinct from matmulBTQ8).
 //   - goinfer decoder.weightMat — the richest: f32 / per-row int8 / group int4 / W8A8,
 //     with the matmul dispatch and tied-embedding Row lookup.
 //   - aikit vision.qmat (was goinfer's, before §2.9 moved the tower) — f32 / W8A8
@@ -252,9 +252,9 @@ func (w *WeightMat) MatmulBT(a, dst []float32, M int) {
 		var ws Workspace
 		w.MatmulBTW4A8Into(&ws, a, dst, M)
 	case w.q8 != nil && w.w8a8:
-		MatmulBTW8A8(a, w.q8, w.scales, dst, M, w.cols, w.rows)
+		matmulBTW8A8(a, w.q8, w.scales, dst, M, w.cols, w.rows)
 	case w.q8 != nil:
-		MatmulBTQ8(a, w.q8, w.scales, dst, M, w.cols, w.rows)
+		matmulBTQ8(a, w.q8, w.scales, dst, M, w.cols, w.rows)
 	case w.h16 != nil:
 		w.matmulHalf16(nil, a, dst, M)
 	default:
@@ -265,7 +265,7 @@ func (w *WeightMat) MatmulBT(a, dst []float32, M int) {
 // MatmulBTInto is MatmulBT through a Workspace: the W8A8 and W4A8 paths quantize
 // the activation once into the Workspace's reusable scratch (zero per-call alloc
 // — the steady-state decode win), the weight-only Q8 path takes its widened-row
-// scratch from the Workspace too (MatmulBTQ8Into), and the f32 path runs the
+// scratch from the Workspace too (matmulBTQ8Into), and the f32 path runs the
 // Workspace-scoped parallel matmul honoring its SetThreshold/SetWorkers. So every
 // storage kind is now zero-alloc on the serial decode path.
 //
@@ -290,9 +290,9 @@ func (w *WeightMat) MatmulBTInto(ws *Workspace, a, dst []float32, M int) {
 		// the q4 != nil branch above is untouched.
 		w.MatmulBTW4A8Into(ws, a, dst, M)
 	case w.q8 != nil && w.w8a8:
-		MatmulBTW8A8Into(ws, a, w.q8, w.scales, dst, M, w.cols, w.rows)
+		matmulBTW8A8Into(ws, a, w.q8, w.scales, dst, M, w.cols, w.rows)
 	case w.q8 != nil:
-		MatmulBTQ8Into(ws, a, w.q8, w.scales, dst, M, w.cols, w.rows)
+		matmulBTQ8Into(ws, a, w.q8, w.scales, dst, M, w.cols, w.rows)
 	case w.h16 != nil:
 		w.matmulHalf16(ws, a, dst, M)
 	default:

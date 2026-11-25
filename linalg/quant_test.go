@@ -196,7 +196,7 @@ func benchInt8(b *testing.B, simd bool) {
 	b.ResetTimer()
 	for range b.N {
 		if simd {
-			MatmulBTQ8(a, q, scales, dst, M, K, N)
+			matmulBTQ8(a, q, scales, dst, M, K, N)
 		} else {
 			matmulBTQ8Scalar(a, q, scales, dst, M, K, N)
 		}
@@ -207,7 +207,7 @@ func BenchmarkMatmulBTQ8(b *testing.B)       { benchInt8(b, true) }
 func BenchmarkMatmulBTQ8Scalar(b *testing.B) { benchInt8(b, false) }
 
 // BenchmarkMatmulBTW8A8 measures the full int8×int8 (W8A8) matmul — dynamic
-// activation quant + the AVX2 int8 dot — against MatmulBTQ8 (weight-only int8,
+// activation quant + the AVX2 int8 dot — against matmulBTQ8 (weight-only int8,
 // f32-widen + dotFMA) on the same decode-step shape.
 func BenchmarkMatmulBTW8A8(b *testing.B) {
 	const M, K, N = 1, 2048, 2048
@@ -224,7 +224,7 @@ func BenchmarkMatmulBTW8A8(b *testing.B) {
 	dst := make([]float32, M*N)
 	b.ResetTimer()
 	for range b.N {
-		MatmulBTW8A8(a, q, scales, dst, M, K, N)
+		matmulBTW8A8(a, q, scales, dst, M, K, N)
 	}
 }
 
@@ -295,7 +295,7 @@ func TestMatmulBTW8A8_closeToF32(t *testing.T) {
 		MatmulBT(a, b, want, s.M, s.K, s.N)
 		q, scales := QuantizeRowsInt8(b, s.N, s.K)
 		got := make([]float32, s.M*s.N)
-		MatmulBTW8A8(a, q, scales, got, s.M, s.K, s.N)
+		matmulBTW8A8(a, q, scales, got, s.M, s.K, s.N)
 		e := relL2(got, want)
 		t.Logf("shape %+v: W8A8 relL2 = %.4f", s, e)
 		if e > 5e-2 {
@@ -324,7 +324,7 @@ func TestMatmulBTQ8_closeToF32(t *testing.T) {
 		// int8-weight matmul.
 		q, scales := QuantizeRowsInt8(b, s.N, s.K)
 		got := make([]float32, s.M*s.N)
-		MatmulBTQ8(a, q, scales, got, s.M, s.K, s.N)
+		matmulBTQ8(a, q, scales, got, s.M, s.K, s.N)
 		if e := relL2(got, want); e > 2e-2 {
 			t.Errorf("shape %+v: int8 matmul relL2 = %.4f, want ≤ 2e-2", s, e)
 		}

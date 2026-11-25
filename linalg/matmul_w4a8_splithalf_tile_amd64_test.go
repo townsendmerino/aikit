@@ -60,7 +60,7 @@ var splitHalfTileShapes = []struct{ K, N int }{
 }
 
 // TestMatmulBTW4A8SplitHalfTile_bitIdenticalToCanonical is the split-half
-// tile's own gate, held against the canonical M>1 path (MatmulBTW4A8Into
+// tile's own gate, held against the canonical M>1 path (matmulBTW4A8Into
 // over the SAME logical weights in canonical packing) — the same
 // construction TestMatmulBTW4A8Row4TileInto_bitIdenticalToCanonical uses
 // for row4, so it proves the thing callers care about: swapping the
@@ -89,7 +89,7 @@ func TestMatmulBTW4A8SplitHalfTile_bitIdenticalToCanonical(t *testing.T) {
 			var wsWant, wsGot Workspace
 			want := make([]float32, M*N)
 			got := make([]float32, M*N)
-			MatmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
+			matmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
 			matmulBTW4A8SplitHalfMultiInto(&wsGot, a, splitHalf, q4s, got, M, K, N, group)
 			for i := range got {
 				if got[i] != want[i] {

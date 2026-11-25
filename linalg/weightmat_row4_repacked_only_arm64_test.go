@@ -13,7 +13,7 @@ import (
 // RepackInt4InPlace(LayoutRow4) — audit M-22, step 3 of the brief. Same cases, same M
 // sweep, same decode==prefill==verify guarantee, this time with no
 // canonical bytes behind it at all: a repacked-only tensor must be exactly
-// as M-consistent as a "both" one, since MatmulBTW4A8Into's row4/tile
+// as M-consistent as a "both" one, since matmulBTW4A8Into's row4/tile
 // dispatch is the SAME code path for both — the only difference is whether
 // w.q4 is nil.
 func TestWeightMatW4A8_MConsistentRepackedOnly(t *testing.T) {

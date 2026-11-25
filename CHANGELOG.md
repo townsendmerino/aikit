@@ -11,6 +11,12 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **The raw-slice int8 and int4 matmuls goinfer reached are unexported** (LS6, step 4, second part): `MatmulBTQ8`,
+  `MatmulBTQ8Into`, `MatmulBTW8A8`, `MatmulBTW8A8Into`, `MatmulBTW4A8Into` and `MatmulBTW4A8Row4Into`. A caller wraps
+  its rows in a `WeightMat` (`WrapInt8`, `WrapInt4`, which copy nothing) and calls `MatmulBT`/`MatmulBTInto`, which
+  dispatch to the same kernels. Five raw-slice forms stay exported until the decision on their callers: the encoder's
+  `MatmulBTQ8Fused` and `MatmulBTQ8FusedInto`, `ann`'s `MatmulBTW8A8Pre`, and goinfer's `MatmulBTW4A8F16Into` and
+  `MatmulBTW4A8F16Pre`.
 - **The int4 repack helpers and the f32-widening int4 accessors are unexported** (LS2, part 2): `RepackInt4Row4Quad`,
   `RepackInt4Row4ScalesQuad`, `RepackInt4Row4ScalesQuadF16`, `RepackInt4SplitHalfRow`, `RepackW4A8SplitHalf`,
   `RepackW4A8Row4Scales`, `RepackW4A8Row4Deshared`, `RepackW4A8Row4DesharedScales`, and the Deprecated `WeightMat.Int4`

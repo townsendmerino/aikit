@@ -72,7 +72,7 @@ code calls says why instead. "Oracle" is the test that holds it, or its dispatch
 | arm64 | `quantizeF32NEON` | quant_act_arm64.s | `quantizeRowScaled` | `TestQuantActNEONKernels_matchScalar` |
 | arm64 | `quantizeInt4F32NEON` | quant_int4_arm64.s | `quantizeInt4Block` | `TestQuantizeInt4Block_matchesScalar` |
 | arm64 | `sdotIssuePeak` | sdot_peak_arm64.s | none (a register-only SDOT issue-rate probe (takes an iteration count)) | none (not swept: a register-only SDOT issue-rate probe (takes an iteration count)) |
-| arm64 | `w4a8LaneCorrNeg8` | dot_w4a8_fold_arm64.s | `MatmulBTW4A8Row4Into` | `TestW4A8LaneCorrNeg8_matchesScalar` |
+| arm64 | `w4a8LaneCorrNeg8` | dot_w4a8_fold_arm64.s | `matmulBTW4A8Row4Into` | `TestW4A8LaneCorrNeg8_matchesScalar` |
 
 ## linalg/attn (12)
 

@@ -7,7 +7,7 @@ import "fmt"
 // RepackW4A8Row4 converts a canonical group-int4 packed weight matrix
 // (QuantizeGroupsInt4's layout: [N,K] row-major, interleaved even/odd
 // nibbles per row) into the split-half + 4-row-interleaved layout
-// MatmulBTW4A8Row4Into consumes, for use as a one-time arm64 CPU load-time
+// matmulBTW4A8Row4Into consumes, for use as a one-time arm64 CPU load-time
 // repack (docs/task-w4a8-neon-bandwidth.md's item-3+4 harness result — GO,
 // 2026-08-23/24). The canonical packer, the .giw on-disk format, the scalar
 // oracle, and amd64 are all untouched by this: this produces a SECOND,
@@ -15,10 +15,10 @@ import "fmt"
 // canonical one.
 //
 // N must be a multiple of 4 and K a multiple of group (32, the only group
-// size MatmulBTW4A8Row4Into accepts) — both are the interleave's own
+// size matmulBTW4A8Row4Into accepts) — both are the interleave's own
 // contract, not negotiable per-call. A caller whose tensor doesn't meet
 // both should not call this at all; route that tensor through the
-// unmodified MatmulBTW4A8Into/canonical packing instead. Output is the same
+// unmodified matmulBTW4A8Into/canonical packing instead. Output is the same
 // total byte count as the input (repacking, not re-quantizing), so this
 // costs one extra O(N*K) pass at load time and briefly doubles the
 // CPU-resident bytes for the tensor (both copies exist until the caller
@@ -81,45 +81,45 @@ func repackW4A8Row4Scales(scales []float32, N, K, group int) []float32 {
 	return out
 }
 
-// MatmulBTW4A8Row4Into computes dst[N] = a[K]·bᵀ where b is [N,K] stored
+// matmulBTW4A8Row4Into computes dst[N] = a[K]·bᵀ where b is [N,K] stored
 // group-int4 in RepackW4A8Row4/repackW4A8Row4Scales's layout — a drop-in
-// PERFORMANCE replacement for MatmulBTW4A8Into at M=1 (bit-identical given
+// PERFORMANCE replacement for matmulBTW4A8Into at M=1 (bit-identical given
 // the same logical weights: docs/task-w4a8-neon-bandwidth.md's
 // TestDotW4A8SplitHalf4Row_bitIdenticalToCanonical), not a numerics change.
 //
 // Hard contract, checked and panicking (caller decides per-tensor whether it
-// holds, mirroring how MatmulBTW4A8Into's own ragged-K tail is handled by
+// holds, mirroring how matmulBTW4A8Into's own ragged-K tail is handled by
 // falling back rather than growing hybrid logic here): M must be 1 (this
 // kernel fuses one activation row's quantization with 4-row weight
 // processing — M>1/batched prefill gets nothing from this optimization and
-// should keep routing through MatmulBTW4A8Into, matching the harness
+// should keep routing through matmulBTW4A8Into, matching the harness
 // brief's own "no M>1-specific work" scoping), N a multiple of 4, K a
 // multiple of group=32. A tensor that doesn't meet all three should never
 // have been repacked with RepackW4A8Row4 in the first place — route its
-// whole matmul through MatmulBTW4A8Into with the canonical layout instead
+// whole matmul through matmulBTW4A8Into with the canonical layout instead
 // of mixing layouts within one call.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTW4A8Row4Into(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []float32, dst []float32, M, K, N, group int) {
-	requireRow4DotProd("MatmulBTW4A8Row4Into")
+func matmulBTW4A8Row4Into(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []float32, dst []float32, M, K, N, group int) {
+	requireRow4DotProd("matmulBTW4A8Row4Into")
 	checkMatmulW4A8("MatmulBTW4A8Row4", len(a), len(w4Row4), len(wScales4), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTW4A8Row4", len(a), w4Row4, wScales4, len(dst), M, K, N, group)
 	if M != 1 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires M=1, got M=%d — use MatmulBTW4A8Into for M>1", M))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4Into requires M=1, got M=%d — use WeightMat.MatmulBTInto for M>1", M))
 	}
 	if group != 32 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires group=32, got %d", group))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4Into requires group=32, got %d", group))
 	}
 	if N%4 != 0 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires N a multiple of 4, got %d", N))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4Into requires N a multiple of 4, got %d", N))
 	}
 	// The 4-row layout stores 16 bytes per 32-wide group, so a ragged K has no valid
 	// layout on either path below; K=0 passes K%group and then indexes an empty block.
 	if K%group != 0 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires K a multiple of group=%d, got %d", group, K))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4Into requires K a multiple of group=%d, got %d", group, K))
 	}
 	if K < group {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4Into requires K >= group=%d, got %d", group, K))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4Into requires K >= group=%d, got %d", group, K))
 	}
 	if g := actGroupFor(ws); g > 0 {
 		if g == 32 {
@@ -159,7 +159,7 @@ func MatmulBTW4A8Row4Into(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []
 }
 
 // w4a8Row4Span computes output quads [q0,q1) — 4 real rows each — of
-// MatmulBTW4A8Row4Into's dst, given the already-quantized activation row and,
+// matmulBTW4A8Row4Into's dst, given the already-quantized activation row and,
 // when corr is non-nil, its S-05 lane-sum correction (w4a8LaneCorrNeg8).
 func w4a8Row4Span(aq []int8, corr []int32, aScale float32, w4Row4 []byte, wScales4 []float32, dst []float32, nGroups, bpr, q0, q1 int) {
 	var out [4]float32
@@ -178,7 +178,7 @@ func w4a8Row4Span(aq []int8, corr []int32, aScale float32, w4Row4 []byte, wScale
 	}
 }
 
-// matmulBTW4A8Row4GroupedInto is MatmulBTW4A8Row4Into (M=1) with per-32 ACTIVATION scales, on the
+// matmulBTW4A8Row4GroupedInto is matmulBTW4A8Row4Into (M=1) with per-32 ACTIVATION scales, on the
 // unchanged row4 kernels. They return sum_g int32dot_g * sblk[4g+r] for four rows; handed the combined
 // scale sblk[4g+r]*aS[g] and without the final per-row activation multiply, they compute the per-group
 // product exactly. The S-05 fold's -8 correction is integer per group and is unaffected. Matches

@@ -36,7 +36,7 @@ func vnniDeclineCheck(t *testing.T) bool {
 // RepackInt4InPlace(LayoutSplitHalf), must produce the same output as canonical at
 // EVERY M in the sweep — M=1 through the decode kernel, M>=4 through the
 // new tile, 2<=M<4 through the tile's own per-row remainder path — with no
-// panic, closing the M>1 gap MatmulBTW4A8Into used to guard against.
+// panic, closing the M>1 gap matmulBTW4A8Into used to guard against.
 func TestWeightMatSplitHalf_repackedOnlyMatchesCanonical(t *testing.T) {
 	if !vnniDeclineCheck(t) {
 		return

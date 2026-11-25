@@ -63,7 +63,7 @@ func BenchmarkActGroupW8A8(b *testing.B) {
 				b.SetBytes(int64(N * K))
 				b.ResetTimer()
 				for range b.N {
-					MatmulBTW8A8Into(&ws, a, q8, s8, dst, 1, K, N)
+					matmulBTW8A8Into(&ws, a, q8, s8, dst, 1, K, N)
 				}
 			})
 		}

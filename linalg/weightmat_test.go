@@ -45,7 +45,7 @@ func TestWeightMat_bitIdenticalToKernels(t *testing.T) {
 		got := make([]float32, M*N)
 		wm.MatmulBT(a, got, M)
 		want := make([]float32, M*N)
-		MatmulBTQ8(a, q, s, want, M, K, N)
+		matmulBTQ8(a, q, s, want, M, K, N)
 		eq("int8_q8", got, want)
 		// accessors expose the same arrays for GPU export / a consumer's own matmul
 		gq, gs, gw8a8, ok := wm.Int8()
@@ -61,7 +61,7 @@ func TestWeightMat_bitIdenticalToKernels(t *testing.T) {
 		got := make([]float32, M*N)
 		wm.MatmulBT(a, got, M)
 		want := make([]float32, M*N)
-		MatmulBTW8A8(a, q, s, want, M, K, N)
+		matmulBTW8A8(a, q, s, want, M, K, N)
 		eq("w8a8", got, want)
 		if _, _, w8a8, _ := wm.Int8(); !w8a8 {
 			t.Fatal("Int8() should report w8a8=true")

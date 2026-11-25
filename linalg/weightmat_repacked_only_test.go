@@ -250,7 +250,7 @@ func TestWeightMatInt4_existingPoliciesUnchanged(t *testing.T) {
 			got := make([]float32, 8)
 			w.MatmulBTInto(&ws, a, got, 1)
 			wantOut := make([]float32, 8)
-			MatmulBTW4A8Into(&ws, a, q4, q4s, wantOut, 1, 1536, 8, group)
+			matmulBTW4A8Into(&ws, a, q4, q4s, wantOut, 1, 1536, 8, group)
 			for i := range got {
 				if got[i] != wantOut[i] {
 					t.Errorf("MatmulBTInto[%d] = %v, want %v (bit-identical to the free function)", i, got[i], wantOut[i])

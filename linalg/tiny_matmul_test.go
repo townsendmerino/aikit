@@ -127,9 +127,9 @@ func tmQ8Adapters() []kernreg.Adapter {
 		})
 	}
 	return []kernreg.Adapter{
-		q8("MatmulBTQ8", MatmulBTQ8),
-		q8("MatmulBTQ8Into", func(a []float32, bQ []int8, bS, dst []float32, M, K, N int) {
-			MatmulBTQ8Into(new(Workspace), a, bQ, bS, dst, M, K, N)
+		q8("matmulBTQ8", matmulBTQ8),
+		q8("matmulBTQ8Into", func(a []float32, bQ []int8, bS, dst []float32, M, K, N int) {
+			matmulBTQ8Into(new(Workspace), a, bQ, bS, dst, M, K, N)
 		}),
 		q8("MatmulBTQ8Fused", func(a []float32, bQ []int8, bS, dst []float32, M, K, N int) {
 			MatmulBTQ8Fused(dst, a, bQ, bS, M, K, N)
@@ -137,9 +137,9 @@ func tmQ8Adapters() []kernreg.Adapter {
 		q8("MatmulBTQ8FusedInto", func(a []float32, bQ []int8, bS, dst []float32, M, K, N int) {
 			MatmulBTQ8FusedInto(dst, a, bQ, bS, M, K, N)
 		}),
-		q8("MatmulBTW8A8", MatmulBTW8A8),
-		q8("MatmulBTW8A8Into", func(a []float32, bQ []int8, bS, dst []float32, M, K, N int) {
-			MatmulBTW8A8Into(new(Workspace), a, bQ, bS, dst, M, K, N)
+		q8("matmulBTW8A8", matmulBTW8A8),
+		q8("matmulBTW8A8Into", func(a []float32, bQ []int8, bS, dst []float32, M, K, N int) {
+			matmulBTW8A8Into(new(Workspace), a, bQ, bS, dst, M, K, N)
 		}),
 		tmMKNAdapter("MatmulBTW8A8Pre", shapes, func(p *kernreg.Placer, s tmMKN) any {
 			a, bQ, bS, dst := weights(p, s)
@@ -240,7 +240,7 @@ func tmInt4Adapters() []kernreg.Adapter {
 		plain("matmulBTW4A8", func(_ *Workspace, a []float32, w4 []byte, wS, dst []float32, M, K, N, g int) {
 			matmulBTW4A8(a, w4, wS, dst, M, K, N, g)
 		}),
-		plain("MatmulBTW4A8Into", MatmulBTW4A8Into),
+		plain("matmulBTW4A8Into", matmulBTW4A8Into),
 		tmGroupAdapter("MatmulBTW4A8F16Into", shapes, func(p *kernreg.Placer, s tmG) any {
 			a, w4, _, dst := inputs(p, s)
 			wS16 := f16(p, s)

@@ -38,7 +38,7 @@ func TestWeightMat_RepackInt4Row4_dispatchMatchesCanonical(t *testing.T) {
 
 		var wsWant Workspace
 		want := make([]float32, M*N)
-		MatmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
+		matmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
 
 		repacked := wm.RepackInt4Row4()
 		if N%4 != 0 {

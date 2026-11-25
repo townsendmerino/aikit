@@ -117,9 +117,9 @@ func censusInt8(M int, w8a8 bool) func(*rand.Rand, int) censusCase {
 		for i := range s {
 			s[i] = 0.01
 		}
-		run := func() { MatmulBTQ8Into(ws, a, q, s, dst, M, K, N) }
+		run := func() { matmulBTQ8Into(ws, a, q, s, dst, M, K, N) }
 		if w8a8 {
-			run = func() { MatmulBTW8A8Into(ws, a, q, s, dst, M, K, N) }
+			run = func() { matmulBTW8A8Into(ws, a, q, s, dst, M, K, N) }
 		}
 		return censusCase{run, int64(N*K + 4*N + 4*M*K), int64(M * K * N), fmt.Sprintf("M%d_K%d_N%d", M, K, N)}
 	}

@@ -2,7 +2,7 @@
 
 package linalg
 
-// NOTE: MatmulBTW4A8Into is NOT defined here. amd64 has its own split-half-aware version
+// NOTE: matmulBTW4A8Into is NOT defined here. amd64 has its own split-half-aware version
 // (weightmat_splithalf_amd64.go); every other non-arm64 target gets the canonical one
 // (weightmat_canonical_other.go). Splitting it this way keeps the row4 no-ops below shared.
 

@@ -9,13 +9,6 @@ func wrapInt4F32(q4 []byte, q4s []float32, rows, cols, group int) WeightMat {
 	return wrapInt4Canonical(q4, F32ToF16Scales(q4s), rows, cols, group)
 }
 
-func wrapInt4SplitHalfOnlyF32(q4SplitHalf []byte, q4s []float32, rows, cols, group int) (WeightMat, bool) {
-	if !int4SplitHalfUsable(cols, group) {
-		return WeightMat{}, false
-	}
-	return wrapInt4SplitHalfOnly(q4SplitHalf, F32ToF16Scales(q4s), rows, cols, group)
-}
-
 // repackInt4Row4InPlaceF32 permutes q4 in place; the scales it returns are a binary16 copy of q4s, so q4s
 // itself is left as it was.
 func repackInt4Row4InPlaceF32(q4 []byte, q4s []float32, rows, cols, group int) (WeightMat, bool) {

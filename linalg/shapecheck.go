@@ -33,7 +33,7 @@ func checkMatmulBT(kernel string, aLen, bLen, dstLen, M, K, N int) {
 }
 
 // checkMatmulQ8 validates the int8-weight dst[M,N] contract (bQ is N×K int8, one
-// f32 scale per output row) before the fan-out — shared by MatmulBTQ8, W8A8, and
+// f32 scale per output row) before the fan-out — shared by matmulBTQ8, W8A8, and
 // the W8A8 Into/Batch variants.
 func checkMatmulQ8(kernel string, aLen, bQLen, bScalesLen, dstLen, M, K, N int) {
 	if M < 0 || K < 0 || N < 0 {

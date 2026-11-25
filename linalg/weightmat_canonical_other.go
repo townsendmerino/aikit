@@ -4,7 +4,7 @@ package linalg
 
 import "fmt"
 
-// MatmulBTW4A8Into takes the canonical path on every target with no repacked layout of its own:
+// matmulBTW4A8Into takes the canonical path on every target with no repacked layout of its own:
 // q4Row4 is never set here (RepackInt4Row4 is a no-op) and neither is q4SplitHalf
 // (RepackInt4SplitHalf likewise), so there is nothing to dispatch on.
 //
@@ -21,10 +21,10 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 	w.matmulBTW4A8Q(ws, &q, dst, M)
 }
 
-// w4a8ActGroup is the activation group MatmulBTW4A8Into quantizes with (R-13).
+// w4a8ActGroup is the activation group matmulBTW4A8Into quantizes with (R-13).
 func (w *WeightMat) w4a8ActGroup(ws *Workspace, _ int) int { return w.groupFor(ws) }
 
-// matmulBTW4A8Q is MatmulBTW4A8Into after its activation quantization: the dispatch it and MatmulBTW4A8PreInto
+// matmulBTW4A8Q is matmulBTW4A8Into after its activation quantization: the dispatch it and MatmulBTW4A8PreInto
 // share (R-13).
 func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) {
 	if q.Group > 0 {

@@ -4,7 +4,7 @@ package linalg
 
 // The eight-column form of q8Span for arm64 (task-simd-audit.md S-07).
 //
-// Weight-only int8 (MatmulBTQ8: `--quant int8` in goinfer, and the LM head before
+// Weight-only int8 (matmulBTQ8: `--quant int8` in goinfer, and the LM head before
 // it moved to W8A8) ran every output through dotNEON4 — one FMLA accumulator, so
 // one lane-vector per ~4-cycle FMLA latency: 1 MAC per cycle, 3.2 GMAC/s per
 // core. That single chain, not bandwidth and not allocation, was the mechanism
@@ -35,7 +35,7 @@ package linalg
 // So each dst[i,j] is the same float32 expression as before; only which
 // accumulators share a loop changes. TestQ8Span8Cols_bitIdenticalToColumnForm
 // holds it against q8SpanColumn over the tails and remainders; the older
-// TestQ8Span_bitIdenticalToScalarWiden holds MatmulBTQ8 against the scalar
+// TestQ8Span_bitIdenticalToScalarWiden holds matmulBTQ8 against the scalar
 // definition and stays green unchanged.
 
 // q8SpanScratchLen: the span widens eight weight rows at a time.

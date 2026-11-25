@@ -32,7 +32,7 @@ func TestDotI8Scaled32_matchesGo(t *testing.T) {
 	}
 }
 
-// TestActGroup_w8a8KernelMatchesReference: MatmulBTW8A8Into and matmulBTW8A8Batch under per-32
+// TestActGroup_w8a8KernelMatchesReference: matmulBTW8A8Into and matmulBTW8A8Batch under per-32
 // activations (the dotI8Scaled32 path) agree with the Go reference, at M=2 with an outlier.
 func TestActGroup_w8a8KernelMatchesReference(t *testing.T) {
 	r := rand.New(rand.NewPCG(23, 24))
@@ -45,7 +45,7 @@ func TestActGroup_w8a8KernelMatchesReference(t *testing.T) {
 	ref := make([]float32, M*N)
 	matmulW8A8GroupedRef(new(Workspace), 32, a, q8, s8, ref, M, K, N)
 	got := make([]float32, M*N)
-	MatmulBTW8A8Into(new(Workspace), a, q8, s8, got, M, K, N)
+	matmulBTW8A8Into(new(Workspace), a, q8, s8, got, M, K, N)
 	batch := make([]float32, M*N)
 	matmulBTW8A8Batch(new(Workspace), a, M, K, []w8a8Op{{BQ: q8, Scales: s8, Dst: batch, N: N}})
 	for name, v := range map[string][]float32{"Into": got, "Batch": batch} {

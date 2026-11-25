@@ -253,12 +253,12 @@ func dotQ4KQ8K(w []byte, q8 *q8K, row, nb int) float32 {
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func matmulBTGGUFQ6K(a []float32, w []byte, dst []float32, M, K, N int) {
 	if K%qkK != 0 {
-		panic(fmt.Sprintf("MatmulBTGGUFQ6K: K=%d not a multiple of %d", K, qkK))
+		panic(fmt.Sprintf("matmulBTGGUFQ6K: K=%d not a multiple of %d", K, qkK))
 	}
 	nb := K / qkK
 	rowBytes := nb * q6kBlockB
-	shape.RequireExactLen("MatmulBTGGUFQ6K", "w", len(w), shape.Mul(N, rowBytes))
-	shape.RequireExactLen("MatmulBTGGUFQ6K", "dst", len(dst), shape.Mul(M, N))
+	shape.RequireExactLen("matmulBTGGUFQ6K", "w", len(w), shape.Mul(N, rowBytes))
+	shape.RequireExactLen("matmulBTGGUFQ6K", "dst", len(dst), shape.Mul(M, N))
 	q8 := quantizeActQ8K(a, M, K)
 	for m := range M {
 		for n := range N {
@@ -272,12 +272,12 @@ func matmulBTGGUFQ6K(a []float32, w []byte, dst []float32, M, K, N int) {
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
 func matmulBTGGUFQ4K(a []float32, w []byte, dst []float32, M, K, N int) {
 	if K%qkK != 0 {
-		panic(fmt.Sprintf("MatmulBTGGUFQ4K: K=%d not a multiple of %d", K, qkK))
+		panic(fmt.Sprintf("matmulBTGGUFQ4K: K=%d not a multiple of %d", K, qkK))
 	}
 	nb := K / qkK
 	rowBytes := nb * q4kBlockB
-	shape.RequireExactLen("MatmulBTGGUFQ4K", "w", len(w), shape.Mul(N, rowBytes))
-	shape.RequireExactLen("MatmulBTGGUFQ4K", "dst", len(dst), shape.Mul(M, N))
+	shape.RequireExactLen("matmulBTGGUFQ4K", "w", len(w), shape.Mul(N, rowBytes))
+	shape.RequireExactLen("matmulBTGGUFQ4K", "dst", len(dst), shape.Mul(M, N))
 	q8 := quantizeActQ8K(a, M, K)
 	for m := range M {
 		for n := range N {
