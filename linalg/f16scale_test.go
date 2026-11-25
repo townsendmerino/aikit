@@ -117,7 +117,7 @@ func TestW4A8F16_everyPathMatchesF32(t *testing.T) {
 
 				// Batch ops carrying only binary16 scales.
 				gb := make([]float32, M*N)
-				MatmulBTW4A8Batch(&ws, a, M, K, 32, []W4A8Op{{W4: q4, ScalesF16: s16, Dst: gb, N: N}})
+				matmulBTW4A8Batch(&ws, a, M, K, 32, []w4a8Op{{W4: q4, ScalesF16: s16, Dst: gb, N: N}})
 				eqF32(t, "MatmulBTW4A8Batch(ScalesF16)", gb, want)
 
 				// WeightMat: canonical, then whichever repacked layout this arch has.
@@ -142,7 +142,7 @@ func TestW4A8F16_everyPathMatchesF32(t *testing.T) {
 					if layout == "repacked" {
 						if r4, r4s, ok := wm.Int4Row4F16(); ok {
 							gr := make([]float32, M*N)
-							MatmulBTW4A8Batch(&ws, a, M, K, 32, []W4A8Op{{W4: q4, ScalesF16: s16, Row4: r4, Row4ScalesF16: r4s, Dst: gr, N: N}})
+							matmulBTW4A8Batch(&ws, a, M, K, 32, []w4a8Op{{W4: q4, ScalesF16: s16, Row4: r4, Row4ScalesF16: r4s, Dst: gr, N: N}})
 							eqF32(t, "MatmulBTW4A8Batch(Row4ScalesF16)", gr, batchRow4RefF32(&ws, a, q4, s32, &wm, M, K, N))
 						}
 					}

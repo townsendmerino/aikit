@@ -8,7 +8,7 @@ import (
 
 // BenchmarkMatmulBTW4A8Canonical exercises the CANONICAL-layout W4A8 span —
 // the path taken by paged MoE experts, any tensor that declined the row4
-// repack (K%32, N%4), MatmulBTW4A8Batch at M>1 and the uniform
+// repack (K%32, N%4), matmulBTW4A8Batch at M>1 and the uniform
 // WeightMat.MatmulBTInto. Audit M-02: arm64 had no tile here, so each output
 // was one M=1 GEMV per (row, column) pair.
 //

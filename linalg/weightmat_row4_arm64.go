@@ -125,7 +125,7 @@ func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) 
 func row4Usable() bool { return cpufeat.HasDotProd }
 
 // w4a8BatchRow4Span is w4a8Row4Span reached from the portable batch span. It
-// exists only so MatmulBTW4A8Batch can name the row4 kernel from quant.go,
+// exists only so matmulBTW4A8Batch can name the row4 kernel from quant.go,
 // which is compiled on every architecture; the non-arm64 twin is unreachable
 // behind row4Usable().
 func w4a8BatchRow4Span(aq []int8, aScale float32, row4 []byte, row4Scales, dst []float32, nGroups, bpr, q0, q1 int) {

@@ -215,7 +215,7 @@ func row4SpanProbe(l forkJoinLayer, aq []int8, aScale float32, dst []float32, nG
 }
 
 // TestW4A8WorkPerBarrier is the second and decisive half of S-02's "measure
-// first", and it is a direct simulation of MatmulBTW4A8Batch rather than an
+// first", and it is a direct simulation of matmulBTW4A8Batch rather than an
 // analogy: the batch form's entire mechanism is "put several matrices under ONE
 // fork/join", and that is exactly what the matsPerBarrier axis varies. The
 // global quad index is mapped back to (matrix, local quad) the same way a batch
@@ -223,7 +223,7 @@ func row4SpanProbe(l forkJoinLayer, aq []int8, aScale float32, dst []float32, nG
 //
 // S-02's own reading of the outcome, pre-registered there: "if GB/s climbs
 // toward 100+ the barrier is the limiter, if it stays ~60 the memory system is."
-// So this decides whether MatmulBTW4A8Batch is worth building AT ALL, before any
+// So this decides whether matmulBTW4A8Batch is worth building AT ALL, before any
 // of its API surface exists. matsPerBarrier=3 is the q‖k‖v case and 2 is
 // gate‖up — the two shapes goinfer would actually call.
 func TestW4A8WorkPerBarrier(t *testing.T) {
@@ -296,7 +296,7 @@ func TestW4A8WorkPerBarrier(t *testing.T) {
 		}
 		// The competing remedy, at ONE matrix per barrier — i.e. with no API
 		// change and no batched caller. If this reaches what mats/barrier=3 reaches,
-		// MatmulBTW4A8Batch's extra surface buys nothing that the scheduler fix
+		// matmulBTW4A8Batch's extra surface buys nothing that the scheduler fix
 		// does not already give for free.
 		for _, chunk := range []int{8, 32, 128} {
 			bestDyn := 0.0

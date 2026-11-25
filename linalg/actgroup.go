@@ -350,9 +350,9 @@ func matmulW8A8Grouped(ws *Workspace, g int, a []float32, bQ []int8, bScales, ds
 	parallelFor(ws, M*N*K, N, span)
 }
 
-// matmulW8A8GroupedBatch is MatmulBTW8A8Batch with per-group activation scales: quantizes activations
+// matmulW8A8GroupedBatch is matmulBTW8A8Batch with per-group activation scales: quantizes activations
 // ONCE for the whole batch and executes all ops under ONE parallel fan-out across totalN columns.
-func matmulW8A8GroupedBatch(ws *Workspace, g int, a []float32, ops []W8A8Op, M, K, totalN int) {
+func matmulW8A8GroupedBatch(ws *Workspace, g int, a []float32, ops []w8a8Op, M, K, totalN int) {
 	if g != 32 || K%32 != 0 {
 		for _, op := range ops {
 			matmulW8A8GroupedRef(ws, g, a, op.BQ, op.Scales, op.Dst, M, K, op.N)

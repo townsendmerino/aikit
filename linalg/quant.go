@@ -494,17 +494,17 @@ func w8a8SpanRows(aq []int8, aScales []float32, bQ []int8, bScales, dst []float3
 	}
 }
 
-// W8A8Op is one weight matrix in a batched W8A8 matmul: BQ is the [N,K] int8
+// w8a8Op is one weight matrix in a batched W8A8 matmul: BQ is the [N,K] int8
 // weights (row-major, used in place — NOT copied), Scales the [N] per-row
 // weight scales, Dst the [M,N] output. N is the column count.
-type W8A8Op struct {
+type w8a8Op struct {
 	BQ     []int8
 	Scales []float32
 	Dst    []float32
 	N      int
 }
 
-// MatmulBTW8A8Batch runs several W8A8 matmuls that share the SAME activation
+// matmulBTW8A8Batch runs several W8A8 matmuls that share the SAME activation
 // a[M,K] — fused q/k/v or gate/up — in ONE parallel region: the activation is
 // quantized once and the goroutine fork/join is amortized across every op's
 // columns (the concatenated [0, ΣN) column space is split across workers),
@@ -515,7 +515,7 @@ type W8A8Op struct {
 // Numerically identical to calling MatmulBTW8A8Into once per op.
 //
 // Output contract: overwrites each op's Dst; do not pre-zero. Covers Dst[:M*op.N] of every op.
-func MatmulBTW8A8Batch(ws *Workspace, a []float32, M, K int, ops []W8A8Op) {
+func matmulBTW8A8Batch(ws *Workspace, a []float32, M, K int, ops []w8a8Op) {
 	if len(ops) == 0 {
 		return
 	}
@@ -525,7 +525,7 @@ func MatmulBTW8A8Batch(ws *Workspace, a []float32, M, K int, ops []W8A8Op) {
 	// caller-side panic — same as the non-batch W8A8 path.
 	totalN := 0
 	for _, op := range ops {
-		checkMatmulQ8("MatmulBTW8A8Batch", len(a), len(op.BQ), len(op.Scales), len(op.Dst), M, K, op.N)
+		checkMatmulQ8("MatmulBTBatchInto", len(a), len(op.BQ), len(op.Scales), len(op.Dst), M, K, op.N)
 		totalN += op.N
 	}
 	if g := actGroupFor(ws); g > 0 {
@@ -547,7 +547,7 @@ func MatmulBTW8A8Batch(ws *Workspace, a []float32, M, K int, ops []W8A8Op) {
 // w8a8BatchSpan computes the [g0,g1) slice of the ops' concatenated column
 // space, mapping each global column back to its op and local column. Named
 // (not a closure) so the serial caller pays no allocation.
-func w8a8BatchSpan(aq []int8, aScales []float32, ops []W8A8Op, M, K, g0, g1 int) {
+func w8a8BatchSpan(aq []int8, aScales []float32, ops []w8a8Op, M, K, g0, g1 int) {
 	base := 0
 	for _, op := range ops {
 		lo, hi := max(g0, base), min(g1, base+op.N) // this op's slice of [g0,g1)
@@ -915,12 +915,12 @@ func w4a8SpanRows(aq []int8, aScales []float32, w4 []byte, wScales, dst []float3
 	}
 }
 
-// W4A8Op is one weight matrix in a batched W4A8 matmul. W4 is the [N,K] packed
+// w4a8Op is one weight matrix in a batched W4A8 matmul. W4 is the [N,K] packed
 // int4 weights in QuantizeGroupsInt4's layout (used in place — NOT copied),
 // Scales the per-group f32 scales, Dst the [M,N] output, N the column count.
 //
 // Row4/Row4Scales are OPTIONAL and are the reason this struct is not simply
-// W8A8Op with different field names. On arm64 an int4 tensor that has been
+// w8a8Op with different field names. On arm64 an int4 tensor that has been
 // through RepackInt4Row4 or WrapInt4(LayoutRow4) runs the split-half 4-row kernel, which
 // measures ~42 GB/s against the canonical kernel's ~24. A batch form that
 // accepted only the canonical layout would hand a row4-resident caller a 1.75×
@@ -940,7 +940,7 @@ func w4a8SpanRows(aq []int8, aScales []float32, w4 []byte, wScales, dst []float3
 // group and never repacks scales (RepackW4A8SplitHalf's own doc), so Scales
 // serves double duty: canonical's per-group scales when W4 != nil, or the
 // same shared per-group scales when only SplitHalf is set.
-type W4A8Op struct {
+type w4a8Op struct {
 	W4         []byte
 	Scales     []float32
 	Row4       []byte
@@ -954,27 +954,27 @@ type W4A8Op struct {
 	Row4ScalesF16 []uint16
 }
 
-func (op *W4A8Op) scalesLen() int {
+func (op *w4a8Op) scalesLen() int {
 	if op.ScalesF16 != nil {
 		return len(op.ScalesF16)
 	}
 	return len(op.Scales)
 }
 
-func (op *W4A8Op) row4ScalesLen() int {
+func (op *w4a8Op) row4ScalesLen() int {
 	if op.Row4ScalesF16 != nil {
 		return len(op.Row4ScalesF16)
 	}
 	return len(op.Row4Scales)
 }
 
-// MatmulBTW4A8Batch runs several W4A8 matmuls that share the SAME activation
+// matmulBTW4A8Batch runs several W4A8 matmuls that share the SAME activation
 // a[M,K] — fused q/k/v or gate/up — in ONE parallel region: the activation is
 // quantized once and the goroutine fork/join is amortized across every op's
 // columns (the concatenated [0, ΣN) column space is split across workers),
 // instead of one quantize + one fork/join per matmul. The weights stay in place,
 // so a caller that aliases int4 weights zero-copy gets the dispatch reduction
-// with no concat copy. Mirrors MatmulBTW8A8Batch.
+// with no concat copy. Mirrors matmulBTW8A8Batch.
 //
 // group is one scalar for the whole batch, matching MatmulBTW4A8Into's own
 // signature: q/k/v share a group size within a layer, and so do gate/up.
@@ -993,7 +993,7 @@ func (op *W4A8Op) row4ScalesLen() int {
 // Numerically identical to calling MatmulBTW4A8Into once per op.
 //
 // Output contract: overwrites each op's Dst; do not pre-zero. Covers Dst[:M*op.N] of every op.
-func MatmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []W4A8Op) {
+func matmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []w4a8Op) {
 	if len(ops) == 0 {
 		return
 	}
@@ -1023,9 +1023,9 @@ func MatmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []W4A8Op
 			w4Len, scalesLen = len(op.SplitHalf), op.scalesLen()
 			checkPacked, checkScales = op.SplitHalf, op.Scales
 		}
-		checkMatmulW4A8("MatmulBTW4A8Batch", len(a), w4Len, scalesLen, len(op.Dst), M, K, op.N, group)
+		checkMatmulW4A8("MatmulBTBatchInto", len(a), w4Len, scalesLen, len(op.Dst), M, K, op.N, group)
 		if op.ScalesF16 == nil && op.Row4ScalesF16 == nil {
-			checkGroupMatmul("MatmulBTW4A8Batch", len(a), checkPacked, checkScales, len(op.Dst), M, K, op.N, group)
+			checkGroupMatmul("MatmulBTBatchInto", len(a), checkPacked, checkScales, len(op.Dst), M, K, op.N, group)
 		}
 		totalN += op.N
 	}
@@ -1066,7 +1066,7 @@ func MatmulBTW4A8Batch(ws *Workspace, a []float32, M, K, group int, ops []W4A8Op
 // Each op's slice is handed to w4a8Span unchanged, which is what keeps this
 // bit-identical for free and keeps amd64's M>=4 row tiling (w4a8TileRows, called
 // inside w4a8Span) working on the batched shape rather than being bypassed.
-func w4a8BatchSpan(aq []int8, aScales []float32, ops []W4A8Op, M, K, group, nGroups, bpr, g0, g1 int) {
+func w4a8BatchSpan(aq []int8, aScales []float32, ops []w4a8Op, M, K, group, nGroups, bpr, g0, g1 int) {
 	base := 0
 	for _, op := range ops {
 		lo, hi := max(g0, base), min(g1, base+op.N)
@@ -1102,14 +1102,14 @@ func w4a8BatchSpan(aq []int8, aScales []float32, ops []W4A8Op, M, K, group, nGro
 // is 4-aligned), so this is the narrow, mixed-shape case: PANIC rather than pass
 // nil into w4a8Span's length checks three calls down, naming what a repacked-only
 // tensor cannot do here instead of an unattributed nil-slice fault.
-func w4a8BatchOp(aq []int8, aScales []float32, op W4A8Op, M, K, group, nGroups, bpr, j0, j1 int) {
+func w4a8BatchOp(aq []int8, aScales []float32, op w4a8Op, M, K, group, nGroups, bpr, j0, j1 int) {
 	canonical := func(c0, c1 int) {
 		if c0 >= c1 {
 			return
 		}
 		if op.W4 == nil {
 			panic(fmt.Sprintf("linalg: w4a8BatchOp: repacked-only op (N=%d) needs the canonical "+
-				"fallback for columns [%d,%d) at M=%d — MatmulBTW4A8Batch only serves row4/split-half "+
+				"fallback for columns [%d,%d) at M=%d — the fused int4 batch only serves row4/split-half "+
 				"at M=1 (row4 additionally needs whole-quad boundaries); a repacked-only WeightMat "+
 				"cannot be used in a batch whose shard boundaries split one of its row4 quads, or at "+
 				"M>1", op.N, c0, c1, M))

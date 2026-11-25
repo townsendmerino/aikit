@@ -12,7 +12,7 @@ import (
 	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
-// TestW4A8BatchVsPerOpAB is MatmulBTW4A8Batch's decision-rule harness. The
+// TestW4A8BatchVsPerOpAB is matmulBTW4A8Batch's decision-rule harness. The
 // do-nothing arm is deliberately NOT MatmulBTW4A8Into: goinfer's decode reaches
 // these projections through WeightMat.MatmulBTW4A8Into, which at M=1 dispatches
 // the row4 kernel, so comparing against the canonical kernel would credit the
@@ -66,7 +66,7 @@ func TestW4A8BatchVsPerOpAB(t *testing.T) {
 			for i := range a {
 				a[i] = float32(rng.NormFloat64())
 			}
-			ops := make([]W4A8Op, len(f.Ns))
+			ops := make([]w4a8Op, len(f.Ns))
 			for i, N := range f.Ns {
 				w := make([]float32, N*K)
 				for j := range w {
@@ -78,7 +78,7 @@ func TestW4A8BatchVsPerOpAB(t *testing.T) {
 				if !wm.RepackInt4Row4() {
 					t.Fatalf("N=%d did not repack to row4 — the arm would not be representative", N)
 				}
-				ops[i] = W4A8Op{
+				ops[i] = w4a8Op{
 					W4: q4, Scales: q4s,
 					Row4: wm.q4Row4, Row4ScalesF16: wm.q4Row4Scales16,
 					Dst: make([]float32, M*N), N: N,
@@ -102,7 +102,7 @@ func TestW4A8BatchVsPerOpAB(t *testing.T) {
 					MatmulBTW4A8Row4Into(wsA, a, op.Row4, op.Row4Scales, perOpDst[i], M, K, op.N, group)
 				}
 			}
-			batch := func() { MatmulBTW4A8Batch(wsB, a, M, K, group, ops) }
+			batch := func() { matmulBTW4A8Batch(wsB, a, M, K, group, ops) }
 
 			perOp()
 			batch()

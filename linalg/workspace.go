@@ -30,9 +30,13 @@ type Workspace struct {
 	// is: it must never alias the activation scales in f32. Also the Q4_K matmul's
 	// per-group activation sums (q4k.go), a different call, so never live at once.
 	i32 []int32
-	// batchQ holds MatmulBTW4A8Batch's activation, quantized once for every op (R-14), apart from the scratch the
+	// batchQ holds matmulBTW4A8Batch's activation, quantized once for every op (R-14), apart from the scratch the
 	// kernels draw on.
 	batchQ ActQ
+	// batchW8 and batchW4 are MatmulBTBatchInto's per-op descriptors, rebuilt from the WeightMats on every call and
+	// cleared after it, so a steady-state batch allocates nothing and the workspace keeps no weight alive.
+	batchW8 []w8a8Op
+	batchW4 []w4a8Op
 	// q4kSum is the Q4_K matmul's per-group aS·Σaq (q4k.go): its own buffer, since f32
 	// holds that call's activation scales.
 	q4kSum       []float32

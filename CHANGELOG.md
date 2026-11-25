@@ -11,6 +11,16 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **One batch call through `WeightMat`** (LS6, step 2): `MatmulBTBatchInto(ws, a, M, ops []BatchOp)` with
+  `BatchOp{W *WeightMat; Dst []float32}` replaces `MatmulBTW8A8Batch`, `MatmulBTW4A8Batch`, `W8A8Op` and `W4A8Op`. A batch of
+  W8A8 weights, or of int4 weights with one group, sharing K and the activation-group stamp, quantizes the activation once
+  and runs under one fork/join through the same kernels, each op through the layouts its weight holds (row4 when present;
+  split-half only for a weight without canonical bytes). Any other batch runs `MatmulBTInto` per op, and so does an int4
+  batch whose repacked-only weight the fused kernel cannot serve (M > 1, or a row count not a multiple of 4), where the old
+  call panicked. Each op's output is the bits `MatmulBTInto` gives it. The op descriptors live in the `Workspace`, so a
+  steady-state batch allocates nothing. In goinfer: `W8A8Op{BQ: wmInt8(w), Scales: wmScales(w), Dst: d, N: n}` and the
+  `W4A8Op` built by `wmW4A8Op(w, d)` both become `BatchOp{W: w, Dst: d}`.
+
 - **One int4 constructor with a layout** (LS6, step 1): `WrapInt4(q, scales16, rows, cols, group, layout) (WeightMat, bool)`
   with `type Layout` (`LayoutCanonical`, `LayoutRow4`, `LayoutSplitHalf`; `String()` returns the names
   `WeightMat.Int4Layout` reports), `RepackInt4InPlace` with the same arguments for canonical bytes permuted in place, and

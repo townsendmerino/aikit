@@ -85,7 +85,7 @@ func TestActGroup_layoutsAgree(t *testing.T) {
 	MatmulBTW4A8Into(new(Workspace), a, q4, s4, canon, M, K, N, 32)
 	sh := RepackW4A8SplitHalf(q4, N, K, 32)
 	batch := make([]float32, M*N)
-	MatmulBTW4A8Batch(new(Workspace), a, M, K, 32, []W4A8Op{{SplitHalf: sh, Scales: s4, Dst: batch, N: N}})
+	matmulBTW4A8Batch(new(Workspace), a, M, K, 32, []w4a8Op{{SplitHalf: sh, Scales: s4, Dst: batch, N: N}})
 	method := make([]float32, M*N)
 	wm.MatmulBTW4A8Into(new(Workspace), a, method, M)
 	for name, got := range map[string][]float32{"canonical": canon, "batch split-half": batch, "method": method} {

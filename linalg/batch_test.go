@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// TestW8A8Batch_bitIdenticalToPerOp: MatmulBTW8A8Batch must produce EXACTLY the
+// TestW8A8Batch_bitIdenticalToPerOp: matmulBTW8A8Batch must produce EXACTLY the
 // same bytes as calling MatmulBTW8A8Into once per op — the whole point is a
 // dispatch optimization with zero numeric change (so goinfer's HF-logit parity
 // is untouched). Checked under both the serial and parallel thresholds, since
@@ -31,12 +31,12 @@ func TestW8A8Batch_bitIdenticalToPerOp(t *testing.T) {
 		const K = 896
 		ns := []int{896, 128, 128} // qkv-like, uneven so spans cross op boundaries
 		a := randF(M * K)
-		ops := make([]W8A8Op, len(ns))
-		ref := make([]W8A8Op, len(ns))
+		ops := make([]w8a8Op, len(ns))
+		ref := make([]w8a8Op, len(ns))
 		for i, N := range ns {
 			bq, bs := randQ(N*K), randF(N)
-			ops[i] = W8A8Op{BQ: bq, Scales: bs, Dst: make([]float32, M*N), N: N}
-			ref[i] = W8A8Op{BQ: bq, Scales: bs, Dst: make([]float32, M*N), N: N}
+			ops[i] = w8a8Op{BQ: bq, Scales: bs, Dst: make([]float32, M*N), N: N}
+			ref[i] = w8a8Op{BQ: bq, Scales: bs, Dst: make([]float32, M*N), N: N}
 		}
 
 		for _, serial := range []bool{true, false} {
@@ -47,7 +47,7 @@ func TestW8A8Batch_bitIdenticalToPerOp(t *testing.T) {
 					MatmulBTW8A8Into(&ws, a, op.BQ, op.Scales, op.Dst, M, K, op.N)
 				}
 				// Batched.
-				MatmulBTW8A8Batch(&ws, a, M, K, ops)
+				matmulBTW8A8Batch(&ws, a, M, K, ops)
 				for i := range ops {
 					for j := range ops[i].Dst {
 						if ops[i].Dst[j] != ref[i].Dst[j] {

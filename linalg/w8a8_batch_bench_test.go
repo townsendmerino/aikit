@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// Baseline for audit M-01 (docs/audit-2026-09-10.md §1.A): MatmulBTW8A8Batch's
+// Baseline for audit M-01 (docs/audit-2026-09-10.md §1.A): matmulBTW8A8Batch's
 // span runs its own per-(row, column) dotI8 loop and never reaches the S-01b
 // W8A8 tile that w8a8Span dispatches to at M>=4. These are goinfer's actual
 // batched prefill shapes on Qwen2.5-Coder-1.5B (hidden 1536, inter 8960,
@@ -29,14 +29,14 @@ func BenchmarkMatmulBTW8A8Batch_prefill(b *testing.B) {
 	}
 	rng := rand.New(rand.NewSource(11))
 	for _, g := range groups {
-		ops := make([]W8A8Op, len(g.ns))
+		ops := make([]w8a8Op, len(g.ns))
 		for i, n := range g.ns {
 			w := make([]float32, n*K)
 			for j := range w {
 				w[j] = float32(rng.NormFloat64())
 			}
 			q, scales := QuantizeRowsInt8(w, n, K)
-			ops[i] = W8A8Op{BQ: q, Scales: scales, N: n}
+			ops[i] = w8a8Op{BQ: q, Scales: scales, N: n}
 		}
 		for _, m := range []int{1, 4, 8, 32, 128} {
 			a := make([]float32, m*K)
@@ -44,7 +44,7 @@ func BenchmarkMatmulBTW8A8Batch_prefill(b *testing.B) {
 				a[j] = float32(rng.NormFloat64())
 			}
 			// Dst is per-M, so rebuild the op slice with correctly sized dsts.
-			cur := make([]W8A8Op, len(ops))
+			cur := make([]w8a8Op, len(ops))
 			copy(cur, ops)
 			var macs int64
 			for i := range cur {
@@ -55,7 +55,7 @@ func BenchmarkMatmulBTW8A8Batch_prefill(b *testing.B) {
 				var ws Workspace
 				b.ResetTimer()
 				for range b.N {
-					MatmulBTW8A8Batch(&ws, a, m, K, cur)
+					matmulBTW8A8Batch(&ws, a, m, K, cur)
 				}
 				// GMAC/s is the comparable number across M and group.
 				b.ReportMetric(float64(macs)/(float64(b.Elapsed().Nanoseconds())/float64(b.N)), "GMAC/s")

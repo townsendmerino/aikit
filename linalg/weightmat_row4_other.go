@@ -15,7 +15,7 @@ func (w *WeightMat) RepackInt4Row4() bool { return false }
 // NEON-only. See the arm64 file's comment for why WrapInt4 needs this.
 func row4Usable() bool { return false }
 
-// w4a8BatchRow4Span is unreachable off arm64: MatmulBTW4A8Batch only calls it
+// w4a8BatchRow4Span is unreachable off arm64: matmulBTW4A8Batch only calls it
 // behind row4Usable(), which is a constant false here. It exists to satisfy the
 // portable batch span's reference to the row4 kernel. Panicking rather than
 // silently computing nothing means a future caller that reaches it past the

@@ -26,9 +26,9 @@ func layoutRefF32(ws *Workspace, a []float32, wm *WeightMat, q4 []byte, s32 []fl
 	return out
 }
 
-// batchRow4RefF32 is MatmulBTW4A8Batch over the same row4 op with f32 interleaved scales.
+// batchRow4RefF32 is matmulBTW4A8Batch over the same row4 op with f32 interleaved scales.
 func batchRow4RefF32(ws *Workspace, a []float32, q4 []byte, s32 []float32, wm *WeightMat, M, K, N int) []float32 {
 	out := make([]float32, M*N)
-	MatmulBTW4A8Batch(ws, a, M, K, 32, []W4A8Op{{W4: q4, Scales: s32, Row4: wm.q4Row4, Row4Scales: RepackW4A8Row4Scales(s32, N, K, 32), Dst: out, N: N}})
+	matmulBTW4A8Batch(ws, a, M, K, 32, []w4a8Op{{W4: q4, Scales: s32, Row4: wm.q4Row4, Row4Scales: RepackW4A8Row4Scales(s32, N, K, 32), Dst: out, N: N}})
 	return out
 }

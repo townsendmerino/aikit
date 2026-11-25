@@ -71,9 +71,9 @@ func runLayerInto(ws *Workspace, acts map[string][]float32, p map[string]*proj, 
 // runLayerBatch is the goinfer-style fused dispatch: qkv in one parallel
 // region, gate+up in one, o and down on their own — 4 dispatches, not 7.
 func runLayerBatch(ws *Workspace, acts map[string][]float32, p map[string]*proj, M int) {
-	opOf := func(name string) W8A8Op { o := p[name]; return W8A8Op{BQ: o.bq, Scales: o.bs, Dst: o.dst, N: o.N} }
-	MatmulBTW8A8Batch(ws, acts["attn"], M, qHidden, []W8A8Op{opOf("q_proj"), opOf("k_proj"), opOf("v_proj")})
-	MatmulBTW8A8Batch(ws, acts["mlp"], M, qHidden, []W8A8Op{opOf("gate"), opOf("up")})
+	opOf := func(name string) w8a8Op { o := p[name]; return w8a8Op{BQ: o.bq, Scales: o.bs, Dst: o.dst, N: o.N} }
+	matmulBTW8A8Batch(ws, acts["attn"], M, qHidden, []w8a8Op{opOf("q_proj"), opOf("k_proj"), opOf("v_proj")})
+	matmulBTW8A8Batch(ws, acts["mlp"], M, qHidden, []w8a8Op{opOf("gate"), opOf("up")})
 	o := p["o_proj"]
 	MatmulBTW8A8Into(ws, acts["attn"], o.bq, o.bs, o.dst, M, o.K, o.N)
 	d := p["down"]
