@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""pin_iq_dequant.py — parity-gate the Go IQ4_NL / IQ4_XS dequant against the
-canonical llama.cpp `gguf` Python reference.
+"""pin_iq_dequant.py — parity-gate the Go codebook and FP4 GGUF dequant (IQ4_NL,
+IQ4_XS, IQ2_S, IQ3_S, NVFP4, IQ2_XXS, IQ2_XS, IQ3_XXS) against the canonical llama.cpp `gguf` Python reference.
 
 The IQ* GGUF quants are codebook-based (a 4-bit code indexes a fixed non-linear
 level table), so unlike the Q*_K block quants there is no widely-hosted small
@@ -66,6 +66,72 @@ def build_grid_blocks(rng: np.random.Generator, nblocks: int, type_size: int) ->
     return bytes(out)
 
 
+def build_nvfp4(rng: np.random.Generator, nrandom: int) -> bytes:
+    # NVFP4 (64 elems, 36 bytes: 4 ue4m3 sub-block scales, then 8 nibble bytes per
+    # sub-block). The first 64 blocks are exhaustive: their 256 scale bytes are
+    # 0x00..0xFF in order (0x7F, 0x80 and 0xFF included), and every sub-block's
+    # bytes are k | (k+8)<<4 for k = 0..7, so each of the 16 e2m1 codes meets each
+    # scale byte once, and the low and high nibbles land in different halves of the
+    # sub-block. Then `nrandom` fully random blocks.
+    out = bytearray()
+    sub = bytes(k | ((k + 8) << 4) for k in range(8))
+    for b in range(64):
+        out += bytes(range(4 * b, 4 * b + 4))
+        out += sub * 4
+    for _ in range(nrandom):
+        out += bytes(rng.integers(0, 256, 36, dtype=np.uint8).tolist())
+    return bytes(out)
+
+
+def u32le(x: int) -> bytes:
+    return int(x).to_bytes(4, "little")
+
+
+def build_iq2xxs(rng: np.random.Generator, nrandom: int) -> bytes:
+    # IQ2_XXS (66 bytes): d, then per 32-element sub-block a u32 of four grid bytes
+    # and a u32 of four 7-bit sign indices and a 4-bit scale. The first 8 blocks use
+    # grid entry k = 0..255 once each, sign index k%128 and scale (sub-block)%16.
+    out = bytearray()
+    for b in range(8):
+        out += f16le(CLEAN_D[b % len(CLEAN_D)])
+        for ib in range(8):
+            ks = [32 * b + 4 * ib + l for l in range(4)]
+            out += bytes(k % 256 for k in ks)
+            out += u32le(sum((k % 128) << (7 * l) for l, k in enumerate(ks)) | ((8 * b + ib) % 16) << 28)
+    out += build_grid_blocks(rng, nrandom, 66)
+    return bytes(out)
+
+
+def build_iq2xs(rng: np.random.Generator, nrandom: int) -> bytes:
+    # IQ2_XS (74 bytes): d, qs[32] u16 (9-bit grid index | 7-bit sign index << 9),
+    # scales[8]. The first 16 blocks use grid entry k = 0..511 once each with sign
+    # index k%128; their scale bytes run through every value of both nibbles.
+    out = bytearray()
+    for b in range(16):
+        out += f16le(CLEAN_D[b % len(CLEAN_D)])
+        for l in range(32):
+            k = 32 * b + l
+            out += (k % 512 | (k % 128) << 9).to_bytes(2, "little")
+        out += bytes(((8 * b + i) % 16) | ((15 - (8 * b + i)) % 16) << 4 for i in range(8))
+    out += build_grid_blocks(rng, nrandom, 74)
+    return bytes(out)
+
+
+def build_iq3xxs(rng: np.random.Generator, nrandom: int) -> bytes:
+    # IQ3_XXS (98 bytes): d, qs[64] grid bytes, then per 32-element sub-block a u32
+    # of four 7-bit sign indices and a 4-bit scale. The first 4 blocks use grid
+    # entry k = 0..255 once each; sign indices run k%128 and scales (sub-block)%16.
+    out = bytearray()
+    for b in range(4):
+        out += f16le(CLEAN_D[b % len(CLEAN_D)])
+        out += bytes(range(64 * b, 64 * b + 64))
+        for ib in range(8):
+            ks = [32 * b + 4 * ib + l for l in range(4)]
+            out += u32le(sum((k % 128) << (7 * l) for l, k in enumerate(ks)) | ((8 * b + ib) % 16) << 28)
+    out += build_grid_blocks(rng, nrandom, 98)
+    return bytes(out)
+
+
 def main() -> int:
     rng = np.random.default_rng(42)
     specs = [
@@ -73,6 +139,10 @@ def main() -> int:
         ("IQ4_XS", Q.IQ4_XS, 136, 256, build_iq4xs(rng, 3)),
         ("IQ2_S", Q.IQ2_S, 82, 256, build_grid_blocks(rng, 3, 82)),
         ("IQ3_S", Q.IQ3_S, 110, 256, build_grid_blocks(rng, 3, 110)),
+        ("NVFP4", Q.NVFP4, 36, 64, build_nvfp4(rng, 4)),
+        ("IQ2_XXS", Q.IQ2_XXS, 66, 256, build_iq2xxs(rng, 2)),
+        ("IQ2_XS", Q.IQ2_XS, 74, 256, build_iq2xs(rng, 2)),
+        ("IQ3_XXS", Q.IQ3_XXS, 98, 256, build_iq3xxs(rng, 2)),
     ]
     cases = []
     for name, qtype, blk, nper, raw in specs:
@@ -92,9 +162,10 @@ def main() -> int:
     out_path = REPO_ROOT / "testdata" / "iq_dequant_golden.json"
     payload = {
         "note": (
-            "IQ4_NL / IQ4_XS dequant oracle from llama.cpp's gguf Python reference "
+            "IQ4_NL / IQ4_XS / IQ2_S / IQ3_S / NVFP4 / IQ2_XXS / IQ2_XS / IQ3_XXS dequant oracle from llama.cpp's gguf Python reference "
             "(gguf.quants.dequantize). Deterministic raw super-blocks (fixed clean "
-            "f16 scale, randomized codes/sub-scales); the Go dequantRange must "
+            "f16 scale, randomized codes/sub-scales; NVFP4 also every ue4m3 scale byte "
+            "against every e2m1 code; the IQ*_XXS / IQ2_XS cases every grid entry and sign index); the Go dequantRange must "
             "reproduce `expected` from `raw_hex`."
         ),
         "cases": cases,

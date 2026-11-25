@@ -2,12 +2,16 @@
 
 package linalg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+)
 
 // dotW4A8SplitHalfTile4RowAVX2 computes four W4A8 outputs in one call — four
 // activation rows, actStride bytes apart, against ONE split-half-packed
 // weight row — into dst[0..3], the split-half twin of dotW4A8Tile4RowAVX2.
-// Only safe when hasAVX2. See dot_w4a8_splithalf_tile_amd64.s.
+// Only safe when cpufeat.HasAVX2. See dot_w4a8_splithalf_tile_amd64.s.
 //
 //go:noescape
 func dotW4A8SplitHalfTile4RowAVX2(act *int8, actStride int, packed *byte, scales *float32, dst *float32, nGroups int)
@@ -59,14 +63,14 @@ func w4a8SplitHalfSpanMulti(aq []int8, aScales []float32, w4sh []byte, wScales, 
 // this span, returning how many rows it took. The leftover M%4 rows are
 // the caller's (w4a8SplitHalfSpanRows below).
 //
-// The hasAVX512VNNIVL exclusion mirrors w4a8TileRows' own for the same
+// The cpufeat.HasAVX512VNNIVL exclusion mirrors w4a8TileRows' own for the same
 // reason (M-04/M-consistency): a VNNI host runs the canonical dispatch at
 // every M (splitHalfUsable() is false there — see weightmat_splithalf_
 // amd64.go — so a split-half-only WeightMat cannot exist on such a host at
 // all), but this function is checked defensively rather than assumed safe,
 // the same posture w4a8TileRows takes.
 func w4a8SplitHalfTileRows(aq []int8, aScales []float32, w4sh []byte, wScales, dst []float32, M, K, N, nGroups, bpr, j0, j1 int) int {
-	if !hasAVX2 || hasAVX512VNNIVL || M < 4 || K < 32 {
+	if !cpufeat.HasAVX2 || cpufeat.HasAVX512VNNIVL || M < 4 || K < 32 {
 		return 0
 	}
 	mFull := M &^ 3

@@ -403,7 +403,7 @@ func TestRepoRoot_linkedWorktreeUnderHookEnv(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, _ = filepath.EvalSymlinks(got); got != wantRoot {
+	if got := resolved(t, got); got != wantRoot {
 		t.Fatalf("RepoRoot() with the hook's GIT_DIR = %s, want the worktree root %s", got, wantRoot)
 	}
 }
@@ -423,8 +423,17 @@ func TestRepoRoot_walkUpStopsAtGitFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RepoRoot() error = %v", err)
 	}
-	want, _ := filepath.EvalSymlinks(base)
-	if got, _ = filepath.EvalSymlinks(got); got != want {
+	if got, want := resolved(t, got), resolved(t, base); got != want {
 		t.Fatalf("RepoRoot() = %s, want %s", got, want)
 	}
+}
+
+// resolved is p with its symlinks resolved (t.TempDir sits under a symlink on macOS).
+func resolved(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
 }

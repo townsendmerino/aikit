@@ -5,6 +5,8 @@ package linalg
 import (
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestAVX2_dotFMA_matchesGeneric directly compares the AVX2 asm kernel
@@ -13,7 +15,7 @@ import (
 // SIGILL). On an AVX2 box this is the real proof the asm is correct:
 // it hits the 32-wide body, the 8-wide tail, and the scalar tail.
 func TestAVX2_dotFMA_matchesGeneric(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("CPU lacks AVX2/FMA; dotFMA asm path not exercised")
 	}
 	// Cover multiples of 4 (the only n callers pass) that exercise all
@@ -60,7 +62,7 @@ func TestAVX2_dotFMA_matchesGeneric(t *testing.T) {
 // dropping the loop's partials). Pre-fix this fails for every odd n4; the
 // single-row dotFMA (TestAVX2_dotFMA_matchesGeneric) was unaffected and hid it.
 func TestAVX2_blockedKernels_oddN4(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("CPU lacks AVX2/FMA; blocked asm path not exercised")
 	}
 	rng := rand.New(rand.NewPCG(7, 11))
@@ -113,9 +115,9 @@ func TestAVX2_blockedKernels_oddN4(t *testing.T) {
 // any real amd64). It does not assert AVX2 presence — that's host-
 // dependent — only that the probe machinery itself works.
 func TestAVX2_detection(t *testing.T) {
-	maxLeaf, _, _, _ := cpuid(0, 0)
+	maxLeaf, _, _, _ := cpufeat.CPUID(0, 0)
 	if maxLeaf < 1 {
 		t.Fatalf("CPUID leaf 0 reported maxLeaf=%d; probe is broken", maxLeaf)
 	}
-	t.Logf("hasAVX2=%v (maxLeaf=%d)", hasAVX2, maxLeaf)
+	t.Logf("cpufeat.HasAVX2=%v (maxLeaf=%d)", cpufeat.HasAVX2, maxLeaf)
 }

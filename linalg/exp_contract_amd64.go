@@ -2,8 +2,10 @@
 
 package linalg
 
-// amd64 impls. The AVX2 kernels require FMA3, which hasAVX2 already checks (see
-// detectAVX2), because the contract needs a TRUE fused multiply-add and AVX2
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
+// amd64 impls. The AVX2 kernels require FMA3, which cpufeat.HasAVX2 already checks (see
+// cpufeat.DetectAVX2), because the contract needs a TRUE fused multiply-add and AVX2
 // alone cannot provide one. Without it the scalar contract runs — and since the
 // two are bit-identical, that is a speed fallback and never a numeric one.
 //
@@ -12,7 +14,7 @@ package linalg
 // produce identical output. Nothing has to be mandated on consumers.
 
 func expContractImpl(dst, src []float32) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		expContractScalarInto(dst, src)
 		return
 	}
@@ -45,7 +47,7 @@ func expContractImpl(dst, src []float32) {
 // kernel surface.
 
 func siluContractImpl(dst, src []float32) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		siluContractScalarInto(dst, src)
 		return
 	}
@@ -89,7 +91,7 @@ func softmaxContractImpl(dst, src []float32) {
 }
 
 func softmaxContractWithMaxImpl(dst, src []float32, m float32) {
-	if !hasAVX2 || len(src) == 0 {
+	if !cpufeat.HasAVX2 || len(src) == 0 {
 		softmaxRowContractWithMax(dst, src, m)
 		return
 	}
@@ -149,7 +151,7 @@ func softmaxContractWithMaxImpl(dst, src []float32, m float32) {
 // their turn, so in-place use is safe.
 
 func geluTanhContractImpl(dst, src []float32) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		geluTanhScalarInto(dst, src)
 		return
 	}
@@ -175,7 +177,7 @@ func geluTanhContractImpl(dst, src []float32) {
 }
 
 func geluContractImpl(dst, src []float32) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		geluScalarInto(dst, src)
 		return
 	}

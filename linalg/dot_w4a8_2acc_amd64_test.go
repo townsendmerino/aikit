@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestDotW4A8Fold2AccAVX2_matchesOracle gates the two-accumulator kernel on correctness before
@@ -17,7 +19,7 @@ import (
 // is a relative one, and the delta against the single-chain kernel is reported so the size of
 // that reassociation is on record rather than assumed small.
 func TestDotW4A8Fold2AccAVX2_matchesOracle(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("AVX2 required")
 	}
 	const group = 32
@@ -61,7 +63,7 @@ func TestDotW4A8Fold2AccAVX2_matchesOracle(t *testing.T) {
 // citing this exact mechanism as the fix a mistrusted reading would have argued against building.
 // Order-alternated within one process so a session-level drift cannot land on one arm.
 func BenchmarkW4A8_1AccVs2Acc(b *testing.B) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		b.Skip("AVX2 required")
 	}
 	const (

@@ -1,33 +1,65 @@
 #!/usr/bin/env python3
-"""gen_iq_grids.py — emit embed/iq_grids.go: the IQ2_S / IQ3_S dequant grid
-codebooks, dumped verbatim from llama.cpp's gguf Python reference so they are
-byte-exact (no hand transcription of the ggml constant tables).
+"""gen_iq_grids.py — emit embed/iq_grids.go: the IQ* dequant codebooks and the
+shared sign table, dumped verbatim from llama.cpp's gguf Python reference so they
+are byte-exact (no hand transcription of the ggml constant tables).
 
-IQ2_S uses a 1024×8 int8 grid (magnitudes in {8,25,43}); IQ3_S a 512×4 int8 grid
-(odd magnitudes 1..15). Both are sign-free here — the per-element sign comes from
-the block's packed sign bits at dequant time. Stored base64 (values fit in a byte)
-and decoded once at package init.
+Grids (sign-free magnitudes; the per-element sign comes from the block at dequant
+time):
+  IQ2_XXS 256×8   (magnitudes in {8,25,43})
+  IQ2_XS  512×8   (magnitudes in {8,25,43})
+  IQ2_S   1024×8  (magnitudes in {8,25,43})
+  IQ3_XXS 256×4   (magnitudes in {4,12,...,52,62})
+  IQ3_S   512×4   (odd magnitudes 1..15)
+and ksigns_iq2xs, 128 bytes: a 7-bit sign index to 8 sign bits, the 8th bit making
+the count of set bits even (IQ2_XXS, IQ2_XS and IQ3_XXS read signs through it).
 
-Usage:  .venv/bin/python scripts/oracle/gen_iq_grids.py
+Each table is stored base64 and decoded once at package init.
+
+With --ggml-common PATH (llama.cpp's ggml/src/ggml-common.h), every table is also
+compared byte for byte against the C table of the same name, so gguf-py's packed
+form and ggml's own constants are proven to agree.
+
+Usage:  .venv/bin/python scripts/oracle/gen_iq_grids.py [--ggml-common PATH]
 """
 from __future__ import annotations
 
+import argparse
 import base64
+import re
 import textwrap
 from pathlib import Path
 
 import numpy as np
-from gguf.quants import dequantize, IQ2_S, IQ3_S
-from gguf.constants import GGMLQuantizationType as T
+from gguf.quants import dequantize, IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S
+from gguf.constants import GGMLQuantizationType as T, GGML_QUANT_SIZES
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
+# (Go name, gguf-py class, qtype, ggml-common.h table, C element type, entries × width)
+GRIDS = [
+    ("iq2xxsGrid", IQ2_XXS, T.IQ2_XXS, "iq2xxs_grid", "uint64_t", (256, 8)),
+    ("iq2xsGrid", IQ2_XS, T.IQ2_XS, "iq2xs_grid", "uint64_t", (512, 8)),
+    ("iq2sGrid", IQ2_S, T.IQ2_S, "iq2s_grid", "uint64_t", (1024, 8)),
+    ("iq3xxsGrid", IQ3_XXS, T.IQ3_XXS, "iq3xxs_grid", "uint32_t", (256, 4)),
+    ("iq3sGrid", IQ3_S, T.IQ3_S, "iq3s_grid", "uint32_t", (512, 4)),
+]
 
-def grid_bytes(cls, qtype, type_size: int) -> bytes:
+
+def grid_bytes(cls, qtype, shape) -> bytes:
+    type_size = GGML_QUANT_SIZES[qtype][1]
     dequantize(np.zeros(type_size, dtype=np.uint8), qtype)  # populate cls.grid
     g = np.asarray(cls.grid).reshape(-1).astype(np.int64)
+    assert g.size == shape[0] * shape[1], (cls.__name__, g.size, shape)
     assert g.min() >= 0 and g.max() <= 127, (int(g.min()), int(g.max()))
     return bytes(int(x) for x in g)
+
+
+def c_table(src: str, name: str, ctype: str) -> bytes:
+    m = re.search(r"GGML_TABLE_BEGIN\(\s*%s\s*,\s*%s\s*,[^)]*\)(.*?)GGML_TABLE_END\(\)" % (re.escape(ctype), re.escape(name)), src, re.S)
+    assert m, f"{name} not found in ggml-common.h"
+    width = {"uint8_t": 1, "uint32_t": 4, "uint64_t": 8}[ctype]
+    vals = [int(v, 0) for v in re.findall(r"0x[0-9a-fA-F]+|\d+", m.group(1))]
+    return b"".join(v.to_bytes(width, "little") for v in vals)
 
 
 def wrap_b64(b: bytes) -> str:
@@ -36,30 +68,52 @@ def wrap_b64(b: bytes) -> str:
 
 
 def main() -> int:
-    iq2 = grid_bytes(IQ2_S, T.IQ2_S, 82)   # 1024*8 = 8192
-    iq3 = grid_bytes(IQ3_S, T.IQ3_S, 110)  # 512*4  = 2048
-    assert len(iq2) == 8192 and len(iq3) == 2048, (len(iq2), len(iq3))
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--ggml-common", type=Path, help="llama.cpp ggml/src/ggml-common.h to cross-check against")
+    args = ap.parse_args()
+
+    tables = [(go, grid_bytes(cls, qt, shape), cname, ctype, shape) for go, cls, qt, cname, ctype, shape in GRIDS]
+    ksigns = bytes(IQ2_XXS.ksigns)
+    assert len(ksigns) == 128, len(ksigns)
+    assert all(bin(b).count("1") % 2 == 0 and (b & 0x7F) == i for i, b in enumerate(ksigns)), "ksigns is not i | parity(i)<<7"
+
+    if args.ggml_common:
+        src = args.ggml_common.read_text()
+        for go, b, cname, ctype, _ in tables:
+            assert c_table(src, cname, ctype) == b, f"{go}: gguf-py and ggml-common.h {cname} disagree"
+        assert c_table(src, "ksigns_iq2xs", "uint8_t") == ksigns, "ksigns: gguf-py and ggml-common.h disagree"
+        print(f"cross-checked {len(tables) + 1} tables against {args.ggml_common}")
+
+    decls = []
+    consts = []
+    for go, b, cname, _, (n, w) in tables:
+        decls.append(f"// {go} is ggml's {cname}: {n} entries of {w} int8 magnitudes.\nvar {go} = decodeGrid({go}B64)\n")
+        consts.append(f'const {go}B64 = "" +\n{wrap_b64(b)}\n')
 
     out = f'''// Code generated by scripts/oracle/gen_iq_grids.py; DO NOT EDIT.
-// IQ2_S / IQ3_S dequant codebooks, dumped byte-exact from llama.cpp's gguf
-// Python reference (gguf.quants). Values are sign-free magnitudes; the per-element
-// sign is applied from each block's packed sign bits at dequant time.
+// IQ* dequant codebooks and the shared sign table, dumped byte-exact from llama.cpp's
+// gguf Python reference (gguf.quants). Grid values are sign-free magnitudes; the
+// per-element sign is applied from each block's sign bits at dequant time.
 
 package embed
 
 import "encoding/base64"
 
-// iq2sGrid is the IQ2_S codebook: 1024 entries of 8 int8 magnitudes ({{8,25,43}}).
-var iq2sGrid = decodeGrid(iq2sGridB64)
+{chr(10).join(decls)}
+// ksignsIQ2XS is ggml's ksigns_iq2xs: a 7-bit sign index to 8 sign bits (bit j negates element j);
+// bit 7 makes the count of set bits even.
+var ksignsIQ2XS = decodeBytes(ksignsIQ2XSB64)
 
-// iq3sGrid is the IQ3_S codebook: 512 entries of 4 int8 magnitudes (odd 1..15).
-var iq3sGrid = decodeGrid(iq3sGridB64)
-
-func decodeGrid(s string) []int8 {{
+func decodeBytes(s string) []byte {{
 \tb, err := base64.StdEncoding.DecodeString(s)
 \tif err != nil {{
-\t\tpanic("embed: bad IQ grid: " + err.Error())
+\t\tpanic("embed: bad IQ table: " + err.Error())
 \t}}
+\treturn b
+}}
+
+func decodeGrid(s string) []int8 {{
+\tb := decodeBytes(s)
 \tg := make([]int8, len(b))
 \tfor i, v := range b {{
 \t\tg[i] = int8(v)
@@ -67,15 +121,14 @@ func decodeGrid(s string) []int8 {{
 \treturn g
 }}
 
-const iq2sGridB64 = "" +
-{wrap_b64(iq2)}
-
-const iq3sGridB64 = "" +
-{wrap_b64(iq3)}
+{chr(10).join(consts)}
+const ksignsIQ2XSB64 = "" +
+{wrap_b64(ksigns)}
 '''
     dst = REPO_ROOT / "embed" / "iq_grids.go"
     dst.write_text(out)
-    print(f"wrote {dst.relative_to(REPO_ROOT)} (iq2s {len(iq2)} bytes, iq3s {len(iq3)} bytes)")
+    sizes = ", ".join(f"{go} {len(b)}" for go, b, *_ in tables)
+    print(f"wrote {dst.relative_to(REPO_ROOT)} ({sizes}, ksignsIQ2XS {len(ksigns)} bytes)")
     return 0
 
 

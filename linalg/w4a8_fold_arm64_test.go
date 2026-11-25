@@ -6,6 +6,8 @@ import (
 	"math/rand"
 	"testing"
 	"time"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // S-05 (docs/task-simd-audit.md): gates and harness for the centering fold.
@@ -71,7 +73,7 @@ func foldTestActivations(rng *rand.Rand, K int, trials int) [][]int8 {
 }
 
 func TestW4A8LaneCorrNeg8_matchesScalar(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	rng := rand.New(rand.NewSource(505))
@@ -92,7 +94,7 @@ func TestW4A8LaneCorrNeg8_matchesScalar(t *testing.T) {
 }
 
 func TestDotW4A8SplitHalf4RowFold_bitIdenticalToSplitHalf4Row(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	rng := rand.New(rand.NewSource(97))
@@ -125,7 +127,7 @@ func TestDotW4A8SplitHalf4RowFold_bitIdenticalToSplitHalf4Row(t *testing.T) {
 }
 
 func TestMatmulBTW4A8Row4Into_foldBitIdenticalToUnfolded(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	prev := w4a8RowFold
@@ -177,7 +179,7 @@ func TestMatmulBTW4A8Row4Into_foldBitIdenticalToUnfolded(t *testing.T) {
 // because the fold is only free if that is small.
 func TestW4A8RowFold_hotAB(t *testing.T) {
 	harnessOnly(t)
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	rng := rand.New(rand.NewSource(101))
@@ -233,7 +235,7 @@ func TestW4A8RowFold_hotAB(t *testing.T) {
 // single-core number in its streamed regime; the parallel row is what decode sees.
 func TestW4A8RowFold_streamedAB(t *testing.T) {
 	harnessOnly(t)
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	prev := w4a8RowFold

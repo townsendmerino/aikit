@@ -5,6 +5,8 @@ package linalg
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestW4A8VNNIOpsPerByte is TestW4A8OpsPerByte's exact hot/cold methodology
@@ -28,10 +30,10 @@ import (
 // Only meaningful on a real AVX-512 VNNI+VL host — skips otherwise.
 func TestW4A8VNNIOpsPerByte(t *testing.T) {
 	harnessOnly(t)
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("AVX2 required")
 	}
-	if !hasAVX512VNNIVL {
+	if !cpufeat.HasAVX512VNNIVL {
 		t.Skip("AVX-512 VNNI+VL required")
 	}
 	const (

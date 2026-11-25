@@ -6,7 +6,7 @@
 // rather than one per sub-block.
 //
 // SDOT has no Go arm64 mnemonic; it is the same raw WORD used in dot_i8dp_arm64.s —
-// SDOT V4.4S, V0.16B, V1.16B = 0x4E819404 — reached only when detectDotProd() is true, so the
+// SDOT V4.4S, V0.16B, V1.16B = 0x4E819404 — reached only when cpufeat.DetectDotProd() is true, so the
 // opcode never hits a core that would trap. Output is pure integer, so it is bit-identical to the
 // scalar dotPartials16Scalar reference (TestKQuantDotPartials_matchesScalar).
 

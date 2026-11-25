@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestW4A8BatchVsPerOpAB is MatmulBTW4A8Batch's decision-rule harness. The
@@ -37,7 +39,7 @@ func medOf3(v []float64) float64 {
 
 func TestW4A8BatchVsPerOpAB(t *testing.T) {
 	harnessOnly(t)
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required")
 	}
 	const (

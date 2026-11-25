@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestAccAcc64AVX_isLoadBearing is the first thing to check about a new kernel:
@@ -14,7 +16,7 @@ import (
 // would leave every acc64 test passing against the pure-Go path while proving
 // nothing about the assembly.
 func TestAccAcc64AVX_isLoadBearing(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2 on this CPU — the kernels decline by design")
 	}
 	const nKeys, hd = 6, 64
@@ -48,7 +50,7 @@ func TestAccAcc64AVX_isLoadBearing(t *testing.T) {
 // kernel use FMA where the Go reference does a separate multiply and add — so
 // equality, not a tolerance, is the right assertion.
 func TestAvAcc64AVX32_matchesGo(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2 on this CPU")
 	}
 	rng := rand.New(rand.NewPCG(7, 11))
@@ -85,7 +87,7 @@ func TestAvAcc64AVX32_matchesGo(t *testing.T) {
 // TestQkAcc64AVX4_matchesGo is the QK sibling: one key per f64 lane, dims
 // ascending, compared bit-for-bit against the scalar f64 dot.
 func TestQkAcc64AVX4_matchesGo(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2 on this CPU")
 	}
 	rng := rand.New(rand.NewPCG(13, 17))
@@ -123,7 +125,7 @@ func TestQkAcc64AVX4_matchesGo(t *testing.T) {
 // ascending d, so every key's sum is today's sum bit for bit. Shapes cover K at the production head dims and a key stride wider than
 // K (a head slice of a kvDim-wide row).
 func TestQkAcc64AVX16_matchesAVX4AndGo(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2 on this CPU")
 	}
 	rng := rand.New(rand.NewPCG(19, 23))
@@ -162,7 +164,7 @@ func TestQkAcc64AVX16_matchesAVX4AndGo(t *testing.T) {
 // 16-key kernel takes the whole 16-key groups and the 4-key kernel the rest: N = 16·3 + 4·2 + 3 keys come back as 48 + 8 written, at a
 // non-zero head offset, each score equal to the Go loop's, and the N%4 tail left as it was.
 func TestQkAcc64Keys_takesAVX16(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2 on this CPU")
 	}
 	rng := rand.New(rand.NewPCG(29, 31))
@@ -203,7 +205,7 @@ func TestQkAcc64Keys_takesAVX16(t *testing.T) {
 // TestAcc64F16AVX_isLoadBearing checks the f16 kernels RUN on an AVX2+F16C host: a declining dispatcher would leave the f16 tests
 // passing against the Go loops while proving nothing about the assembly.
 func TestAcc64F16AVX_isLoadBearing(t *testing.T) {
-	if !hasAVX2 || !hasF16C {
+	if !cpufeat.HasAVX2 || !cpufeat.HasF16C {
 		t.Skip("no AVX2+F16C on this CPU: the kernels decline by design")
 	}
 	rng := rand.New(rand.NewPCG(53, 59))
@@ -242,7 +244,7 @@ func TestAcc64F16AVX_isLoadBearing(t *testing.T) {
 // (3,072 floats, 12 KiB) its sixteen live rows share L1 sets and it declines, leaving the 4-key kernel to take the call; one 64 B line
 // off (3,088 floats) it engages. Either way the scores equal the Go loop's.
 func TestQkAcc64Keys16_declinesAtAnAliasingStride(t *testing.T) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		t.Skip("no AVX2 on this CPU")
 	}
 	rng := rand.New(rand.NewPCG(61, 67))
@@ -281,7 +283,7 @@ func TestQkAcc64Keys16_declinesAtAnAliasingStride(t *testing.T) {
 // kernel declines and the 4-key f16 kernel takes the call; one 64 B line off (2,080 halves) the 16-key kernel engages. The scores equal
 // the f32 kernel's on the widened cache either way.
 func TestQkAcc64KeysF16_strideGuard(t *testing.T) {
-	if !hasAVX2 || !hasF16C {
+	if !cpufeat.HasAVX2 || !cpufeat.HasF16C {
 		t.Skip("no AVX2+F16C on this CPU")
 	}
 	rng := rand.New(rand.NewPCG(71, 73))
@@ -310,7 +312,7 @@ func TestQkAcc64KeysF16_strideGuard(t *testing.T) {
 
 // TestQkAcc64AVX4F16_matchesAVX4OnWidened pins the 4-key f16 kernel to the 4-key f32 kernel on the widened cache, bit for bit.
 func TestQkAcc64AVX4F16_matchesAVX4OnWidened(t *testing.T) {
-	if !hasAVX2 || !hasF16C {
+	if !cpufeat.HasAVX2 || !cpufeat.HasF16C {
 		t.Skip("no AVX2+F16C on this CPU")
 	}
 	rng := rand.New(rand.NewPCG(79, 83))
