@@ -2,8 +2,10 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 // dotPartials16SDOT is the DotProd (SDOT) implementation in kquant_dp_arm64.s; only safe on a
-// DotProd-capable core (gated by hasDotProd).
+// DotProd-capable core (gated by cpufeat.HasDotProd).
 //
 //go:noescape
 func dotPartials16SDOT(codes *int8, qs *int8, nsub int, out *int32)
@@ -12,7 +14,7 @@ func dotPartials16SDOT(codes *int8, qs *int8, nsub int, out *int32)
 // SDOT on hardware that has it (Apple Silicon always), else the scalar reference. Integer-exact
 // either way. len(codes) == len(qs) == 16·len(out) is the caller's contract.
 func dotPartials16(codes, qs []int8, out []int32) {
-	if hasDotProd && len(out) > 0 {
+	if cpufeat.HasDotProd && len(out) > 0 {
 		dotPartials16SDOT(&codes[0], &qs[0], len(out), &out[0])
 		return
 	}

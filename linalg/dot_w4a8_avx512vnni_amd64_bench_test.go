@@ -5,6 +5,8 @@ package linalg
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // BenchmarkW4A8_AVX512VNNIvsAVX2 compares the two SIMD tiers directly (not
@@ -36,7 +38,7 @@ func BenchmarkW4A8_AVX512VNNIvsAVX2(b *testing.B) {
 	}
 
 	b.Run("AVX2/dotW4A8FoldAVX2", func(b *testing.B) {
-		if !hasAVX2 {
+		if !cpufeat.HasAVX2 {
 			b.Skip("no AVX2")
 		}
 		var acc float32
@@ -49,7 +51,7 @@ func BenchmarkW4A8_AVX512VNNIvsAVX2(b *testing.B) {
 	})
 
 	b.Run("AVX512VNNI/dotW4A8FoldAVX512VNNI", func(b *testing.B) {
-		if !hasAVX512VNNIVL {
+		if !cpufeat.HasAVX512VNNIVL {
 			b.Skip("no AVX-512 VNNI+VL")
 		}
 		var acc float32
@@ -87,7 +89,7 @@ func BenchmarkW4A8_AVX512VNNIvsAVX2_K3072(b *testing.B) {
 	}
 
 	b.Run("AVX2/dotW4A8FoldAVX2", func(b *testing.B) {
-		if !hasAVX2 {
+		if !cpufeat.HasAVX2 {
 			b.Skip("no AVX2")
 		}
 		var acc float32
@@ -100,7 +102,7 @@ func BenchmarkW4A8_AVX512VNNIvsAVX2_K3072(b *testing.B) {
 	})
 
 	b.Run("AVX512VNNI/dotW4A8FoldAVX512VNNI", func(b *testing.B) {
-		if !hasAVX512VNNIVL {
+		if !cpufeat.HasAVX512VNNIVL {
 			b.Skip("no AVX-512 VNNI+VL")
 		}
 		var acc float32

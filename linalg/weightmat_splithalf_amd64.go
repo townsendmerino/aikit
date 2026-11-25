@@ -2,7 +2,11 @@
 
 package linalg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
+)
 
 // RepackInt4SplitHalf builds the amd64 split-half layout for this int4-resident WeightMat and
 // returns whether it did. OPT-IN by design: nothing calls it implicitly, because it allocates a
@@ -17,7 +21,7 @@ import "fmt"
 // Scales are shared, not repacked: split-half permutes nibbles within a group and never reorders
 // groups, so w.q4s serves both layouts (unlike row4, which needs RepackW4A8Row4Scales).
 func (w *WeightMat) RepackInt4SplitHalf() bool {
-	// !hasAVX512VNNIVL is not caution, it is correctness in both currencies.
+	// !cpufeat.HasAVX512VNNIVL is not caution, it is correctness in both currencies.
 	//
 	// The canonical W4A8 dot (quant_w4a8_amd64.go) prefers the AVX-512 VNNI
 	// tier whenever the host has it and only falls back to AVX2 otherwise,
@@ -39,7 +43,7 @@ func (w *WeightMat) RepackInt4SplitHalf() bool {
 	// A split-half VNNI kernel would lift this, and is the obvious follow-up
 	// if the layout ever earns its memory. Until then, declining here means
 	// the repack is a no-op on VNNI hosts rather than a silent pessimization.
-	if w.q4 == nil || !hasAVX2 || hasAVX512VNNIVL {
+	if w.q4 == nil || !cpufeat.HasAVX2 || cpufeat.HasAVX512VNNIVL {
 		return false
 	}
 	if w.group != 32 || w.cols%32 != 0 {
@@ -149,12 +153,12 @@ func w4a8SplitHalfSpan(aq []int8, aScale float32, w4sh []byte, wScales, dst []fl
 }
 
 // splitHalfUsable reports whether this CPU can safely dispatch the
-// split-half AVX2 kernel — the same hasAVX2 && !hasAVX512VNNIVL gate
+// split-half AVX2 kernel — the same cpufeat.HasAVX2 && !cpufeat.HasAVX512VNNIVL gate
 // RepackInt4SplitHalf's own body applies (see its comment for why a VNNI
 // host declines rather than downgrading). Exported via Int4SplitHalfUsable
 // (weightmat.go, audit M-22) for a caller building a repacked-only
 // WeightMat, which has no canonical to fall back to if this is false.
-func splitHalfUsable() bool { return hasAVX2 && !hasAVX512VNNIVL }
+func splitHalfUsable() bool { return cpufeat.HasAVX2 && !cpufeat.HasAVX512VNNIVL }
 
 // w4a8BatchSplitHalfSpan is w4a8SplitHalfSpan reached from the portable batch
 // span (quant.go's w4a8BatchOp), which is compiled on every architecture —

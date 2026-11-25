@@ -11,7 +11,7 @@
 // library build gets the SWAR fallback — ~12 arithmetic ops per word instead of
 // one instruction — and that is the difference between the binary prefilter
 // beating an exact float32 scan and losing to it. The feature is detected at
-// init (hasPOPCNT) rather than at compile time, so the packaged binary stays
+// init (cpufeat.HasPOPCNT) rather than at compile time, so the packaged binary stays
 // GOAMD64=v1-portable and still runs the fast kernel wherever the CPU has it.
 //
 // The inner loop keeps FOUR independent accumulators. POPCNTQ is 1-cycle

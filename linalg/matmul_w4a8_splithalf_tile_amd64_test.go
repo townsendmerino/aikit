@@ -5,11 +5,13 @@ package linalg
 import (
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // assertSplitHalfTileEngages is the "did the fast path actually run" gate
-// every split-half M>1 test opens with (audit M-22 follow-up). hasAVX2 &&
-// !hasAVX512VNNIVL is necessary but not sufficient — a shape or dispatch
+// every split-half M>1 test opens with (audit M-22 follow-up). cpufeat.HasAVX2 &&
+// !cpufeat.HasAVX512VNNIVL is necessary but not sufficient — a shape or dispatch
 // bug could still route everything through the scalar per-row remainder
 // and every bit-identity test would still pass, since both paths compute
 // the same right answer (the same trap goinfer's w4a8SplitHalfRepacked
@@ -25,7 +27,7 @@ import (
 // nothing about the tile at all.
 func assertSplitHalfTileEngages(t *testing.T, M, K int) {
 	t.Helper()
-	if !hasAVX2 || hasAVX512VNNIVL {
+	if !cpufeat.HasAVX2 || cpufeat.HasAVX512VNNIVL {
 		t.Skip("split-half tile requires AVX2 without AVX512VNNIVL on this core")
 	}
 	const group = 32
@@ -41,7 +43,7 @@ func assertSplitHalfTileEngages(t *testing.T, M, K int) {
 	mFull := w4a8SplitHalfTileRows(aq, aScales, w4sh, wScales, dst, M, K, 1, nGroups, bpr, 0, 1)
 	if want := M &^ 3; mFull != want {
 		t.Fatalf("split-half tile did not engage: w4a8SplitHalfTileRows returned %d rows at M=%d K=%d, want %d "+
-			"(hasAVX2=%v hasAVX512VNNIVL=%v)", mFull, M, K, want, hasAVX2, hasAVX512VNNIVL)
+			"(cpufeat.HasAVX2=%v cpufeat.HasAVX512VNNIVL=%v)", mFull, M, K, want, cpufeat.HasAVX2, cpufeat.HasAVX512VNNIVL)
 	}
 }
 
@@ -64,7 +66,7 @@ var splitHalfTileShapes = []struct{ K, N int }{
 // for row4, so it proves the thing callers care about: swapping the
 // dispatch changes no bit of any logit.
 func TestMatmulBTW4A8SplitHalfTile_bitIdenticalToCanonical(t *testing.T) {
-	if !hasAVX2 || hasAVX512VNNIVL {
+	if !cpufeat.HasAVX2 || cpufeat.HasAVX512VNNIVL {
 		t.Skip("split-half tile requires AVX2 without AVX512VNNIVL on this core")
 	}
 	const group = 32
@@ -108,7 +110,7 @@ func TestMatmulBTW4A8SplitHalfTile_bitIdenticalToCanonical(t *testing.T) {
 // test does.
 func TestWeightMatW4A8_MConsistentAcrossSplitHalfDispatch(t *testing.T) {
 	const group = 32
-	if !hasAVX2 || hasAVX512VNNIVL {
+	if !cpufeat.HasAVX2 || cpufeat.HasAVX512VNNIVL {
 		t.Skip("split-half tile requires AVX2 without AVX512VNNIVL on this core")
 	}
 	rng := rand.New(rand.NewPCG(0xd1ce, 0x5817))

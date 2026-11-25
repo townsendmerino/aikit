@@ -1,5 +1,4 @@
-// AVX2 + FMA f32 dot product for amd64, plus the CPUID/XGETBV probes
-// the Go-side feature detection in dot_amd64.go calls once at init.
+// AVX2 + FMA f32 dot product for amd64.
 //
 //   dotFMA  — single-row dot product, Σ a[i]*b[i] over n elements,
 //             returned as a float32. Four YMM accumulators (32 floats
@@ -15,8 +14,6 @@
 //             contract); an 8-wide main loop + one 4-wide step covers it.
 //   dotFMA8 — same, EIGHT rows (a·b0 … a·b7 → out[0..7]); one a-load
 //             feeds 8 FMA chains, the matmul workhorse.
-//   cpuid   — raw CPUID leaf/subleaf probe.
-//   xgetbv  — XCR0 read (OS extended-state mask), subleaf 0.
 //
 // The horizontal reduction is done here in-asm (unlike the arm64 path)
 // because amd64 has cheap VHADDPS.
@@ -384,23 +381,4 @@ dotI8_reduce:
 	MOVD         X0, AX
 	MOVL         AX, ret+24(FP)
 	VZEROUPPER
-	RET
-
-// func cpuid(eaxIn, ecxIn uint32) (eax, ebx, ecx, edx uint32)
-TEXT ·cpuid(SB), NOSPLIT, $0-24
-	MOVL eaxIn+0(FP), AX
-	MOVL ecxIn+4(FP), CX
-	CPUID
-	MOVL AX, eax+8(FP)
-	MOVL BX, ebx+12(FP)
-	MOVL CX, ecx+16(FP)
-	MOVL DX, edx+20(FP)
-	RET
-
-// func xgetbv() (eax, edx uint32)
-TEXT ·xgetbv(SB), NOSPLIT, $0-8
-	MOVL $0, CX
-	XGETBV
-	MOVL AX, eax+0(FP)
-	MOVL DX, edx+4(FP)
 	RET

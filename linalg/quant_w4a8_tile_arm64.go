@@ -2,11 +2,13 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 // dotW4A8Tile4RowSDOT computes four W4A8 outputs — four activation rows,
 // actStride bytes apart, against ONE weight row — into dst[0..3], before the
 // activation scale, exactly as dotW4A8FoldSDOT returns it. nGroups is K/32; any
 // ragged final group is the caller's, as it already is for dotW4A8FoldSDOT.
-// Only safe when hasDotProd. See dot_w4a8_tile4row_arm64.s.
+// Only safe when cpufeat.HasDotProd. See dot_w4a8_tile4row_arm64.s.
 //
 //go:noescape
 func dotW4A8Tile4RowSDOT(act *int8, actStride int, packed *byte, scales *float32, dst *float32, nGroups int)
@@ -34,9 +36,9 @@ func dotW4A8Tile4RowSDOT(act *int8, actStride int, packed *byte, scales *float32
 // built on the AVX2 fold would make the result depend on M. On arm64 there is
 // one canonical kernel — dotW4A8FoldSDOT — and this tile reproduces its
 // instruction sequence exactly, so M-invariance holds by construction.
-// hasDotProd is still required: SDOT is ARMv8.2 FEAT_DotProd.
+// cpufeat.HasDotProd is still required: SDOT is ARMv8.2 FEAT_DotProd.
 func w4a8TileRows(aq []int8, aScales []float32, w4 []byte, wScales, dst []float32, M, K, N, group, nGroups, bpr, j0, j1 int) int {
-	if !hasDotProd || M < 4 || group != 32 || K < 32 {
+	if !cpufeat.HasDotProd || M < 4 || group != 32 || K < 32 {
 		return 0
 	}
 	mFull := M &^ 3

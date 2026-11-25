@@ -3,6 +3,8 @@ package linalg
 import (
 	"math/rand"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
 // TestWrapInt4Row4_matchesRepackInt4Row4 proves the two ways of getting q4Row4/
@@ -111,7 +113,7 @@ func TestWrapInt4Row4_nilIsPlainWrapInt4(t *testing.T) {
 // must panic rather than silently alias a mismatched span the kernel would
 // read out of bounds.
 func TestWrapInt4Row4_panicsOnBadLength(t *testing.T) {
-	if !hasDotProd {
+	if !cpufeat.HasDotProd {
 		t.Skip("DotProd required: the row4 layout declines without it (WrapInt4Row4Only reports false, WrapInt4Row4 returns the plain int4 matrix)")
 	}
 	const group, K, N = 32, 64, 8

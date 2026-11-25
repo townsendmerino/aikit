@@ -2,6 +2,8 @@
 
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/cpufeat"
+
 // dot8ColsInto computes the eight dot products of a against b0..b7 straight into
 // out, bypassing Dot8x4's [32]float32 partial-sum interface.
 //
@@ -23,7 +25,7 @@ package linalg
 // could differ, and that the new form is the more faithful of the two (it preserves
 // the sign the kernel actually produced).
 func dot8ColsInto(a, b0, b1, b2, b3, b4, b5, b6, b7 *float32, n4 int, out *[8]float32) {
-	if !hasAVX2 {
+	if !cpufeat.HasAVX2 {
 		dot8ColsGeneric(a, b0, b1, b2, b3, b4, b5, b6, b7, n4, out)
 		return
 	}
