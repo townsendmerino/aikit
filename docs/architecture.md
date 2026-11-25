@@ -17,16 +17,17 @@ Four rules generate most of the structure:
    [`internal/importrules`](../internal/importrules/importrules_test.go) holds
    the exact list of aikit and external packages each core package imports,
    and fails, naming the edge, when the tree and the list disagree
-   (§ Package DAG). Seven packages import nothing but the stdlib and
+   (§ Package DAG). Eight packages import nothing but the stdlib and
    `golang.org/x`; the longest chain in the library is three imports
-   (`hybrid` → `ann` → `linalg` → `mmap`). Three Go-internal packages
+   (`hybrid` → `ann` → `linalg` → `mmap`). Four Go-internal packages
    (invisible to importers) hold what several packages must share: `bm25` and
    `sparse` share `internal/accum` (a pooled scoring accumulator); `ann`, `bm25`
    and `embed` share `internal/cursor` (the bounds-checked little-endian reader
    behind the HNSW/FlatI8 and BM25 blob formats and GGUF's container format);
    and `linalg` reads its CPU-feature flags from `internal/cpufeat`, one copy
    that `SelfCheck`'s repair and the `aikit_no*` tags write, so every kernel
-   package dispatches on the same answer.
+   package dispatches on the same answer. `linalg` and `embed` share `internal/half`, the one
+   binary16 decode, so an f16 weight widens the same in both.
 3. **Numerics are parity-pinned.** Every model-touching path (`embed`,
    `encoder`, the `linalg` quant kernels) is tested against golden fixtures
    produced by Python references in [`scripts/`](../scripts/) — see
@@ -76,6 +77,7 @@ graph TD
             cursor["internal/cursor<br/><i>bounds-checked LE reader</i>"]
             cpufeat["internal/cpufeat<br/><i>CPU-feature flags + forced fallbacks</i>"]
             shape["linalg/internal/shape<br/><i>overflow-safe length checks</i>"]
+            half["internal/half<br/><i>binary16 decode</i>"]
         end
         chunkers["chunk/regex, chunk/markdown<br/><i>chunkers</i>"]
         linalg["linalg<br/><i>SIMD f32/int8/int4 kernels</i>"]
@@ -92,8 +94,10 @@ graph TD
         linalg --> mmap
         linalg --> cpufeat
         linalg --> shape
+        linalg --> half
         embed --> mmap
         embed --> cursor
+        embed --> half
         bm25 --> topk
         bm25 --> mmap
         bm25 --> accum
@@ -134,13 +138,13 @@ imports it). Test-only imports are not in the table either
 importer's build pulls in.
 
 **Leaves.** `topk`, `fuse`, `chunk`, `mmap`, `internal/accum`,
-`internal/cursor` and `internal/cpufeat` import no aikit package. `mmap` is the newest of them and
+`internal/cursor`, `internal/cpufeat` and `internal/half` import no aikit package. `mmap` is the newest of them and
 the one most of the tree now rests on: it is the read-only file mapping under
 every loader that maps a blob from disk instead of copying it.
 
-**One step up.** `linalg` imports `mmap`, `internal/cpufeat` and
+**One step up.** `linalg` imports `mmap`, `internal/cpufeat`, `internal/half` and
 `linalg/internal/shape` (the length checks its kernel packages share) and nothing
-else, so it is no longer a leaf. `embed` imports `mmap` and `internal/cursor`. `sparse` imports `topk`
+else, so it is no longer a leaf. `embed` imports `mmap`, `internal/cursor` and `internal/half`. `sparse` imports `topk`
 and `internal/accum`. `bm25` imports `topk`, `internal/accum`,
 `internal/cursor` and `mmap`: its postings arena maps from disk and its blob
 format is read through the shared cursor. `chunk/regex` and `chunk/markdown`

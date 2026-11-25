@@ -5,6 +5,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/half"
 )
 
 // dequantQ6KBlockPreHoist is the exact pre-M-24 body: d·scale recomputed per
@@ -14,7 +16,7 @@ func dequantQ6KBlockPreHoist(raw []byte, sb int, out []float32) {
 	ql := raw[base : base+128]
 	qh := raw[base+128 : base+192]
 	sc := raw[base+192 : base+208]
-	d := halfBitsToF32(binary.LittleEndian.Uint16(raw[base+208:]))
+	d := half.ToF32(binary.LittleEndian.Uint16(raw[base+208:]))
 	for chunk := range 2 {
 		n0 := chunk * 128
 		qlo := ql[chunk*64:]

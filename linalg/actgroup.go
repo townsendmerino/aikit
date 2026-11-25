@@ -1,6 +1,10 @@
 package linalg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/internal/half"
+)
 
 // PER-GROUP ACTIVATION QUANTIZATION — the Go reference (goinfer
 // docs/tasks/task-actquant-pergroup-2026-09.md, goinfer queue H2).
@@ -171,7 +175,7 @@ func (l int4Layout) scaleAt(i int) float32 {
 	if l.wS != nil {
 		return l.wS[i]
 	}
-	return f16ToF32(l.wS16[i])
+	return half.ToF32(l.wS16[i])
 }
 
 // row4ScaleAt is the f32 value of row4-interleaved scale i.
@@ -179,7 +183,7 @@ func (l int4Layout) row4ScaleAt(i int) float32 {
 	if l.r4S != nil {
 		return l.r4S[i]
 	}
-	return f16ToF32(l.r4S16[i])
+	return half.ToF32(l.r4S16[i])
 }
 
 func (l int4Layout) row(n int, codes []int8, scales []float32) {

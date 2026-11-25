@@ -4,6 +4,8 @@ import (
 	"math"
 	"math/rand/v2"
 	"testing"
+
+	"github.com/townsendmerino/aikit/internal/half"
 )
 
 // q4kTestRows builds rows×cols of valid Q4_K super-blocks: d and dmin are normal f16 values in
@@ -41,7 +43,7 @@ func q4kTruth(raw []byte, a []float32, M, K, N int) []float64 {
 		row := raw[n*rb : (n+1)*rb]
 		for b := range K / qkK {
 			blk := row[b*q4kBlockB : (b+1)*q4kBlockB]
-			d, dmin := float64(f16ToF32(u16le(blk[0:]))), float64(f16ToF32(u16le(blk[2:])))
+			d, dmin := float64(half.ToF32(u16le(blk[0:]))), float64(half.ToF32(u16le(blk[2:])))
 			for j := range 4 {
 				sc1, m1 := q4kScaleMin(2*j, blk[4:16])
 				sc2, m2 := q4kScaleMin(2*j+1, blk[4:16])
