@@ -2,6 +2,7 @@ package main
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 	"path/filepath"
 	"strings"
@@ -195,15 +196,32 @@ func (c *census) record(w *world, l *loaded, plainTarget *types.Package, cfg str
 	if plainTarget == nil {
 		return
 	}
-	// An interface declared here that a target type satisfies could dispatch to that type's methods.
+	// An interface declared here that a target type satisfies could dispatch to that type's methods: a named
+	// interface type, or an interface literal written in place (a parameter's interface{ M() }), which is how a
+	// test often takes a *linalg.WeightMat without naming it.
 	sc := plainTarget.Scope()
+	type ifaceAt struct {
+		it  *types.Interface
+		pos token.Pos
+	}
+	var ifaces []ifaceAt
 	for id, obj := range l.info.Defs {
-		tn, ok := obj.(*types.TypeName)
-		if !ok {
-			continue
+		if tn, ok := obj.(*types.TypeName); ok {
+			if it, ok := tn.Type().Underlying().(*types.Interface); ok {
+				ifaces = append(ifaces, ifaceAt{it, id.Pos()})
+			}
 		}
-		it, ok := tn.Type().Underlying().(*types.Interface)
-		if !ok || it.NumMethods() == 0 {
+	}
+	for e, tv := range l.info.Types {
+		if _, lit := e.(*ast.InterfaceType); lit && tv.IsType() {
+			if it, ok := tv.Type.Underlying().(*types.Interface); ok {
+				ifaces = append(ifaces, ifaceAt{it, e.Pos()})
+			}
+		}
+	}
+	for _, ia := range ifaces {
+		it := ia.it
+		if it.NumMethods() == 0 {
 			continue
 		}
 		for _, nm := range sc.Names() {
@@ -216,7 +234,7 @@ func (c *census) record(w *world, l *loaded, plainTarget *types.Package, cfg str
 					continue
 				}
 				for m := range it.Methods() {
-					add(nm+"."+m.Name(), w.fset.Position(id.Pos()).Filename, iface)
+					add(nm+"."+m.Name(), w.fset.Position(ia.pos).Filename, iface)
 				}
 				break
 			}

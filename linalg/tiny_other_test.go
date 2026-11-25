@@ -250,14 +250,14 @@ func tinyOtherAdapters() []kernreg.Adapter {
 		toAd("QuantizeF16", toRC(), func(p *kernreg.Placer, s toShape) []any {
 			return toWM(QuantizeF16(kernreg.Put(p, "w", seqF32(s.R*s.C, 1)), s.R, s.C))
 		}),
-		toAd("RepackInt4SplitHalfRow", toN(), func(p *kernreg.Placer, s toShape) []any {
+		toAd("repackInt4SplitHalfRow", toN(), func(p *kernreg.Placer, s toShape) []any {
 			dst := kernreg.Put(p, "dst", make([]byte, s.C/2))
-			RepackInt4SplitHalfRow(dst, kernreg.Put(p, "src", seqU8(s.C/2, 1)), s.C)
+			repackInt4SplitHalfRow(dst, kernreg.Put(p, "src", seqU8(s.C/2, 1)), s.C)
 			return []any{dst}
 		}),
-		toAd("RepackW4A8SplitHalf", toRCG(), func(p *kernreg.Placer, s toShape) []any {
+		toAd("repackW4A8SplitHalf", toRCG(), func(p *kernreg.Placer, s toShape) []any {
 			packed, _ := toInt4(s)
-			return []any{RepackW4A8SplitHalf(kernreg.Put(p, "packed", packed), s.R, s.C, s.G)}
+			return []any{repackW4A8SplitHalf(kernreg.Put(p, "packed", packed), s.R, s.C, s.G)}
 		}),
 		// Both repacked layouts through the one in-place repack; a layout this CPU does not
 		// run is declined with its input untouched, which toRepacked records.

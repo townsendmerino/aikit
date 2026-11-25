@@ -11,6 +11,16 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **The int4 repack helpers and the f32-widening int4 accessors are unexported** (LS2, part 2): `RepackInt4Row4Quad`,
+  `RepackInt4Row4ScalesQuad`, `RepackInt4Row4ScalesQuadF16`, `RepackInt4SplitHalfRow`, `RepackW4A8SplitHalf`,
+  `RepackW4A8Row4Scales`, `RepackW4A8Row4Deshared`, `RepackW4A8Row4DesharedScales`, and the Deprecated `WeightMat.Int4`
+  and `WeightMat.Int4Row4` (read `Int4F16` and `Int4Row4F16`). Only linalg's own code and tests called them; goinfer's
+  three tests that took `Int4` through an interface read `Int4F16`. The names only tests outside linalg reach stay: the
+  policy setters and their getters, the A/B test hooks, `SelfCheck`'s report fields, and the quantizers and reference
+  kernels other packages' tests compare against (`QuantizeGroupsInt4`, `F32ToF16Scales`, `DequantizeRowInt4`,
+  `MatmulBTAcc64`, `MatmulBTAcc64Strided`, `QuantizeActivationsGroupedInto`; in `linalg/elem` `GELUTanhF32` and
+  `GELUTanhInto`). `MatmulBTW4A8Into` and `MatmulBTW4A8Row4Into` go with LS6 step 4.
+
 - **Raw-slice matmuls nothing outside `linalg` calls are unexported** (LS6, step 4, first part): `MatmulBTGGUFQ4K`,
   `MatmulBTGGUFQ6K`, `MatmulBTQ4`, `MatmulBTQ4Into`, `MatmulBTW4A8`, `MatmulBTW4A8Row4DesharedInto`,
   `MatmulBTW4A8Row4PrefetchInto` and `MatmulBTW4A8Row4TileInto`. Each is reached through `WeightMat` (the K-quant kinds,

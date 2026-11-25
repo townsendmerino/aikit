@@ -63,7 +63,7 @@ func dequantizeRowFromRow4(q4Row4 []byte, q4Row4Scales []uint16, cols, i int, ds
 }
 
 // dequantizeRowFromSplitHalf dequantizes row i's cols elements from the
-// amd64 split-half layout (RepackW4A8SplitHalf — no row interleave, so
+// amd64 split-half layout (repackW4A8SplitHalf — no row interleave, so
 // unlike row4 this is one row's OWN bpr-byte slice, byte-arrangement-only
 // changed within it) — audit M-22. scales is q4s, shared with canonical
 // (split-half permutes nibbles within a group and never reorders groups, so

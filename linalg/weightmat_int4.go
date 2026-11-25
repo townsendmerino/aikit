@@ -14,7 +14,7 @@ const (
 	// cols%group == 0.
 	LayoutRow4
 	// LayoutSplitHalf is the amd64 AVX2 kernel's: each 32-column group's nibbles split in halves
-	// (RepackW4A8SplitHalf's order), the scales canonical. It needs group 32 and cols%32 == 0.
+	// (repackW4A8SplitHalf's order), the scales canonical. It needs group 32 and cols%32 == 0.
 	LayoutSplitHalf
 )
 

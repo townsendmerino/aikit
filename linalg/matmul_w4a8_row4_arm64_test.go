@@ -12,7 +12,7 @@ import (
 // TestMatmulBTW4A8Row4Into_bitIdenticalToMatmulBTW4A8Into is the production
 // entry point's end-to-end proof, one level above
 // TestDotW4A8SplitHalf4Row_bitIdenticalToCanonical's raw-kernel check:
-// RepackW4A8Row4/RepackW4A8Row4Scales followed by MatmulBTW4A8Row4Into must
+// RepackW4A8Row4/repackW4A8Row4Scales followed by MatmulBTW4A8Row4Into must
 // produce EXACTLY the same dst as MatmulBTW4A8Into on the unrepacked
 // canonical data, for the same logical weight matrix. Covers several
 // (N, K) shapes, all satisfying the entry point's N%4==0/K%32==0 contract,
@@ -39,7 +39,7 @@ func TestMatmulBTW4A8Row4Into_bitIdenticalToMatmulBTW4A8Into(t *testing.T) {
 		}
 		packed, scales := QuantizeGroupsInt4(w, N, K, group)
 		packed4 := RepackW4A8Row4(packed, N, K, group)
-		scales4 := RepackW4A8Row4Scales(scales, N, K, group)
+		scales4 := repackW4A8Row4Scales(scales, N, K, group)
 
 		var ws Workspace
 		want := make([]float32, N)
@@ -83,7 +83,7 @@ func TestMatmulBTW4A8Row4Into_parallelMatchesSerial(t *testing.T) {
 	}
 	packed, scales := QuantizeGroupsInt4(w, N, K, group)
 	packed4 := RepackW4A8Row4(packed, N, K, group)
-	scales4 := RepackW4A8Row4Scales(scales, N, K, group)
+	scales4 := repackW4A8Row4Scales(scales, N, K, group)
 
 	var wsSerial Workspace
 	wsSerial.SetThreshold(1 << 30) // force serial

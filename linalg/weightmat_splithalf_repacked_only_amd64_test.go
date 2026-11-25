@@ -86,12 +86,12 @@ func TestWeightMatSplitHalf_repackedOnlyMatchesCanonical(t *testing.T) {
 	}
 }
 
-// oldRepackSplitHalfReference reimplements RepackW4A8SplitHalf's documented
+// oldRepackSplitHalfReference reimplements repackW4A8SplitHalf's documented
 // transform independently ("byte i holds weight i (low nibble) and weight
 // i+16 (high), within each 32-wide group") rather than by calling
-// RepackInt4SplitHalfRow — audit M-22's refactor (9b8defd) factored
-// RepackW4A8SplitHalf's own row body OUT into RepackInt4SplitHalfRow, the
-// same function RepackInt4InPlace(LayoutSplitHalf) now calls, so RepackW4A8SplitHalf
+// repackInt4SplitHalfRow — audit M-22's refactor (9b8defd) factored
+// repackW4A8SplitHalf's own row body OUT into repackInt4SplitHalfRow, the
+// same function RepackInt4InPlace(LayoutSplitHalf) now calls, so repackW4A8SplitHalf
 // alone is no longer an independent reference (unlike row4's
 // repackSplitHalf4RowBlock, which stayed a separate, untouched function —
 // split-half had no such surviving twin to fall back on, so this rebuilds
@@ -120,11 +120,11 @@ func oldRepackSplitHalfReference(packed []byte, rows, cols, group int) []byte {
 }
 
 // TestRepackInt4SplitHalfInPlace_matchesOutOfPlace is step 3's byte-for-byte
-// gate: the in-place result must equal RepackW4A8SplitHalf's out-of-place
+// gate: the in-place result must equal repackW4A8SplitHalf's out-of-place
 // output AND an independent reference (oldRepackSplitHalfReference) built
 // from the layout's own documented description rather than shared code —
-// RepackW4A8SplitHalf alone is not a sufficient reference since audit M-22
-// refactored it to share RepackInt4SplitHalfRow with
+// repackW4A8SplitHalf alone is not a sufficient reference since audit M-22
+// refactored it to share repackInt4SplitHalfRow with
 // RepackInt4InPlace(LayoutSplitHalf) itself.
 func TestRepackInt4SplitHalfInPlace_matchesOutOfPlace(t *testing.T) {
 	if !vnniDeclineCheck(t) {
@@ -137,7 +137,7 @@ func TestRepackInt4SplitHalfInPlace_matchesOutOfPlace(t *testing.T) {
 	rng := rand.New(rand.NewPCG(22, 12))
 	q4, q4s := quantizeInt4Random(rng, 8, 1536, group)
 
-	want := RepackW4A8SplitHalf(cloneBytes(q4), 8, 1536, group)
+	want := repackW4A8SplitHalf(cloneBytes(q4), 8, 1536, group)
 	oldWant := oldRepackSplitHalfReference(cloneBytes(q4), 8, 1536, group)
 
 	w, ok := repackInt4SplitHalfInPlaceF32(q4, cloneFloats(q4s), 8, 1536, group)
@@ -167,7 +167,7 @@ func TestRepackInt4SplitHalfInPlace_matchesOutOfPlace(t *testing.T) {
 // TestRepackInt4SplitHalfRow_streamedMatchesInPlace mirrors
 // TestRepackInt4Row4Quad_streamedMatchesInPlace for the row-granularity
 // (non-interleaved) split-half layout: assembling a tensor's split-half
-// bytes row-by-row via the exported RepackInt4SplitHalfRow primitive into a
+// bytes row-by-row via the exported repackInt4SplitHalfRow primitive into a
 // FRESH destination buffer must match RepackInt4InPlace(LayoutSplitHalf)'s result.
 func TestRepackInt4SplitHalfRow_streamedMatchesInPlace(t *testing.T) {
 	if !vnniDeclineCheck(t) {
@@ -183,7 +183,7 @@ func TestRepackInt4SplitHalfRow_streamedMatchesInPlace(t *testing.T) {
 
 	streamed := make([]byte, len(q4))
 	for r := range 8 {
-		RepackInt4SplitHalfRow(streamed[r*bpr:(r+1)*bpr], q4[r*bpr:(r+1)*bpr], 1536)
+		repackInt4SplitHalfRow(streamed[r*bpr:(r+1)*bpr], q4[r*bpr:(r+1)*bpr], 1536)
 	}
 
 	w, ok := repackInt4SplitHalfInPlaceF32(cloneBytes(q4), cloneFloats(q4s), 8, 1536, group)
@@ -200,7 +200,7 @@ func TestRepackInt4SplitHalfRow_streamedMatchesInPlace(t *testing.T) {
 	if !ok {
 		t.Fatal("WrapInt4(LayoutSplitHalf): ok=false on a shape int4SplitHalfUsable already accepted")
 	}
-	if _, _, _, canonOK := wStream.Int4(); canonOK {
+	if _, _, _, canonOK := wStream.int4Widened(); canonOK {
 		t.Error("WrapInt4(LayoutSplitHalf) WeightMat reports Int4() ok=true")
 	}
 }

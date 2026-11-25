@@ -64,7 +64,7 @@ func TestWeightMatInt4_truthTable(t *testing.T) {
 		if got := w.IsInt4(); got != wantIsInt4 {
 			t.Errorf("IsInt4() = %v, want %v", got, wantIsInt4)
 		}
-		if _, _, _, ok := w.Int4(); ok != wantInt4OK {
+		if _, _, _, ok := w.int4Widened(); ok != wantInt4OK {
 			t.Errorf("Int4() ok = %v, want %v", ok, wantInt4OK)
 		}
 		if l := w.Int4Layout(); l != wantLayout {
@@ -142,7 +142,7 @@ func TestWeightMatInt4_repackedOnlyHoldsNoCanonical(t *testing.T) {
 		if !ok {
 			t.Fatal("RepackInt4InPlace(LayoutRow4): ok=false")
 		}
-		if q4got, q4sgot, _, ok := w.Int4(); ok || len(q4got) != 0 || len(q4sgot) != 0 {
+		if q4got, q4sgot, _, ok := w.int4Widened(); ok || len(q4got) != 0 || len(q4sgot) != 0 {
 			t.Errorf("row4-only: Int4() = (%d bytes, %d scales, ok=%v), want (0, 0, false)",
 				len(q4got), len(q4sgot), ok)
 		}
@@ -155,7 +155,7 @@ func TestWeightMatInt4_repackedOnlyHoldsNoCanonical(t *testing.T) {
 		// split-half-only DOES retain q4s (shared scales, see the q4SplitHalf
 		// field comment) but never the packed canonical NIBBLES — Int4()'s ok
 		// is false either way, since ok means "q4 (nibbles) present".
-		if q4got, _, _, ok := w.Int4(); ok || len(q4got) != 0 {
+		if q4got, _, _, ok := w.int4Widened(); ok || len(q4got) != 0 {
 			t.Errorf("splithalf-only: Int4() q4 = %d bytes ok=%v, want (0, false)", len(q4got), ok)
 		}
 	}
@@ -233,7 +233,7 @@ func TestWeightMatInt4_existingPoliciesUnchanged(t *testing.T) {
 			if k := w.Kind(); k != "int4" {
 				t.Errorf("Kind() = %q, want int4", k)
 			}
-			if _, _, _, ok := w.Int4(); !ok {
+			if _, _, _, ok := w.int4Widened(); !ok {
 				t.Error("Int4() ok = false, want true — canonical must still be present")
 			}
 			dst := make([]float32, 1536)
@@ -316,8 +316,8 @@ func TestWeightMatRow_repackedMatchesCanonical(t *testing.T) {
 // TestRepackInt4Row4InPlace_matchesOutOfPlace and
 // TestRepackInt4Row4Quad_streamedMatchesInPlace live in
 // weightmat_row4_repacked_only_arm64_test.go (arm64-tagged): both call
-// RepackW4A8Row4/RepackW4A8Row4Scales/RepackInt4Row4Quad/
-// RepackInt4Row4ScalesQuad, which — unlike split-half — have no amd64 or
+// RepackW4A8Row4/repackW4A8Row4Scales/repackInt4Row4Quad/
+// repackInt4Row4ScalesQuad, which — unlike split-half — have no amd64 or
 // portable twin at all (row4 is NEON-only, matmul_w4a8_row4_arm64.go /
 // repack_w4a8_row4_arm64.go).
 
