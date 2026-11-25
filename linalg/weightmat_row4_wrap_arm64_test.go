@@ -11,7 +11,7 @@ import (
 // q4Row4Scales onto a WeightMat produce byte-identical results: computing them
 // internally at load time (RepackInt4Row4, the arm64 in-RAM path) vs.
 // handing back already-repacked bytes computed elsewhere (WrapInt4 with LayoutRow4,
-// the goinfer .giw kind-4 loader's path, where RepackW4A8Row4/RepackW4A8Row4Scales
+// the goinfer .giw kind-4 loader's path, where RepackW4A8Row4/repackW4A8Row4Scales
 // ran once at prequant time and the bytes were written to disk). Both derive
 // from the same pure functions, so this is a construction-path equivalence
 // check, not a numerics one — but it's the correctness anchor kind 4 depends on:
@@ -36,7 +36,7 @@ func TestWrapInt4Row4_matchesRepackInt4Row4(t *testing.T) {
 		if !wmA.RepackInt4Row4() {
 			t.Skipf("K=%d N=%d: RepackInt4Row4 declined (no DotProd on this build/core) — nothing to compare", K, N)
 		}
-		gotRow4A, gotScalesA, ok := wmA.Int4Row4()
+		gotRow4A, gotScalesA, ok := wmA.int4Row4Widened()
 		if !ok {
 			t.Fatalf("K=%d N=%d: RepackInt4Row4 reported success but Int4Row4 ok=false", K, N)
 		}
@@ -45,12 +45,12 @@ func TestWrapInt4Row4_matchesRepackInt4Row4(t *testing.T) {
 		// does once, ahead of time), then hand the result to WrapInt4 with LayoutRow4 (what a
 		// .giw kind-4 loader does, mmap-aliasing bytes read off disk).
 		row4B := RepackW4A8Row4(q4, N, K, group)
-		scalesB := RepackW4A8Row4Scales(q4s, N, K, group)
+		scalesB := repackW4A8Row4Scales(q4s, N, K, group)
 		wmB, ok := wrapInt4Row4OnlyF32(row4B, scalesB, N, K, group)
 		if !ok {
 			t.Fatalf("K=%d N=%d: WrapInt4(LayoutRow4) declined a shape RepackInt4Row4 accepted", K, N)
 		}
-		gotRow4B, gotScalesB, ok := wmB.Int4Row4()
+		gotRow4B, gotScalesB, ok := wmB.int4Row4Widened()
 		if !ok {
 			t.Fatalf("K=%d N=%d: WrapInt4(LayoutRow4) did not populate Int4Row4", K, N)
 		}

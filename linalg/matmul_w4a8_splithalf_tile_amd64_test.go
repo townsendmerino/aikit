@@ -79,7 +79,7 @@ func TestMatmulBTW4A8SplitHalfTile_bitIdenticalToCanonical(t *testing.T) {
 			w[i] = float32(rng.NormFloat64())
 		}
 		q4, q4s := QuantizeGroupsInt4(w, N, K, group)
-		splitHalf := RepackW4A8SplitHalf(cloneBytes(q4), N, K, group)
+		splitHalf := repackW4A8SplitHalf(cloneBytes(q4), N, K, group)
 
 		for _, M := range []int{4, 5, 7, 8, 16, 64} {
 			a := make([]float32, M*K)

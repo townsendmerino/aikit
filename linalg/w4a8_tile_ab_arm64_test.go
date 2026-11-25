@@ -56,7 +56,7 @@ func TestW4A8TileVsCanonicalAB(t *testing.T) {
 	}
 	q4, q4s := QuantizeGroupsInt4(w, N, K, group)
 	row4 := RepackW4A8Row4(q4, N, K, group)
-	row4s := RepackW4A8Row4Scales(q4s, N, K, group)
+	row4s := repackW4A8Row4Scales(q4s, N, K, group)
 	fmt.Fprintf(os.Stderr, "[tile-ab] weights ready (%.1f MB packed + %.1f MB scales) at +%v\n",
 		float64(len(row4))/(1<<20), float64(len(row4s)*4)/(1<<20), time.Since(start).Round(time.Millisecond))
 

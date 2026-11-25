@@ -50,12 +50,12 @@ func TestW4A8Row4ColdFix_warmIntact(t *testing.T) {
 	s0 := scales[0:nGroups]
 
 	packed4 := RepackW4A8Row4(packed, N, K, group)
-	scales4 := RepackW4A8Row4Scales(scales, N, K, group)
+	scales4 := repackW4A8Row4Scales(scales, N, K, group)
 	blk0 := packed4[0 : 4*bpr]
 	sblk0 := scales4[0 : 4*nGroups]
 
-	w0, w1, w2, w3 := RepackW4A8Row4Deshared(packed[0:4*bpr], 4, K, group)
-	ds0, ds1, ds2, ds3 := RepackW4A8Row4DesharedScales(scales[0:4*nGroups], 4, K, group)
+	w0, w1, w2, w3 := repackW4A8Row4Deshared(packed[0:4*bpr], 4, K, group)
+	ds0, ds1, ds2, ds3 := repackW4A8Row4DesharedScales(scales[0:4*nGroups], 4, K, group)
 
 	var dst [4]float32
 

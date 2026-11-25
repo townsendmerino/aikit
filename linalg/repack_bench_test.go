@@ -30,7 +30,7 @@ func BenchmarkRepackW4A8SplitHalf(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		_ = RepackW4A8SplitHalf(packed, N, K, group)
+		_ = repackW4A8SplitHalf(packed, N, K, group)
 	}
 }
 
@@ -46,7 +46,7 @@ func BenchmarkRepackInt4Row4Quad(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		RepackInt4Row4Quad(dst, src, K)
+		repackInt4Row4Quad(dst, src, K)
 	}
 }
 
@@ -62,6 +62,6 @@ func BenchmarkRepackInt4SplitHalfRow(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for b.Loop() {
-		RepackInt4SplitHalfRow(dst, src, K)
+		repackInt4SplitHalfRow(dst, src, K)
 	}
 }

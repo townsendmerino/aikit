@@ -156,7 +156,7 @@ func TestWeightMat_wrapConstructors(t *testing.T) {
 		eq("wrapint4_row", rGot, rWant)
 		// The scales are stored as binary16: WrapInt4 converts them, so only the nibbles alias. WrapInt4
 		// aliases both, and Int4F16 returns them as stored.
-		gq4, gq4s, ggroup, ok := wm.Int4()
+		gq4, gq4s, ggroup, ok := wm.int4Widened()
 		if !ok || ggroup != group || &gq4[0] != &q4[0] || len(gq4s) != len(q4s) {
 			t.Fatalf("WrapInt4 accessor: ok=%v group=%d aliased(q4)=%v len(q4s) %d != %d", ok, ggroup, &gq4[0] == &q4[0], len(gq4s), len(q4s))
 		}

@@ -380,14 +380,14 @@ func outputContractCases() []outputcontract.Case {
 
 	// ---- the split-half row repack is portable Go (and the arm64 quad repack is built from it).
 	for _, K := range []int{32, 96} {
-		add(fmt.Sprintf("RepackInt4SplitHalfRow/K=%d", K), func() (func(), []*outputcontract.OutBuf) {
+		add(fmt.Sprintf("repackInt4SplitHalfRow/K=%d", K), func() (func(), []*outputcontract.OutBuf) {
 			src := ri8(int64(K), K/2)
 			sb := make([]byte, len(src))
 			for i, v := range src {
 				sb[i] = byte(v)
 			}
 			dst, o := outputcontract.MkOut[byte]("dst", K/2)
-			return func() { RepackInt4SplitHalfRow(dst, sb, K) }, []*outputcontract.OutBuf{o}
+			return func() { repackInt4SplitHalfRow(dst, sb, K) }, []*outputcontract.OutBuf{o}
 		})
 	}
 

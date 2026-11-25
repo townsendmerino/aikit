@@ -175,7 +175,7 @@ func int4SplitHalfUsable(cols, group int) bool {
 
 // wrapInt4Row4Only is WrapInt4's LayoutRow4 form: already-repacked row4 bytes (RepackW4A8Row4 and
 // RepackW4A8Row4ScalesF16's output order: a .giw kind-4 file, or a loader that streamed canonical bytes into
-// row4 order with RepackInt4Row4Quad as it copied them off a mapping), so canonical bytes never exist in this
+// row4 order with repackInt4Row4Quad as it copied them off a mapping), so canonical bytes never exist in this
 // process at all. ok=false, nothing retained, when int4Row4Usable is false: this core cannot run the kernel
 // these bytes are shaped for, and there is no canonical to fall back to. The shape check comes first, so a
 // blob with the right byte count but a shape the row4 kernel cannot express (rows%4 != 0, a ragged group)
@@ -191,9 +191,9 @@ func wrapInt4Row4Only(q4Row4 []byte, q4Row4Scales []uint16, rows, cols, group in
 }
 
 // repackInt4SplitHalfInPlace is RepackInt4InPlace's LayoutSplitHalf form: q4 is permuted in place row by row
-// (split-half does not interleave rows, so the scratch is one row, bpr bytes), with RepackInt4SplitHalfRow
+// (split-half does not interleave rows, so the scratch is one row, bpr bytes), with repackInt4SplitHalfRow
 // reading from the scratch copy. q4s is kept unchanged: split-half shares the canonical scale order (see the
-// q4SplitHalf field comment), so Int4()'s ok is still false, since ok means canonical nibbles are present.
+// q4SplitHalf field comment), so Int4F16's ok is still false, since ok means canonical nibbles are present.
 func repackInt4SplitHalfInPlace(q4 []byte, q4s []uint16, rows, cols, group int) (WeightMat, bool) {
 	if !int4SplitHalfUsable(cols, group) {
 		return WeightMat{}, false
@@ -205,7 +205,7 @@ func repackInt4SplitHalfInPlace(q4 []byte, q4s []uint16, rows, cols, group int) 
 	for r := range rows {
 		row := q4[r*bpr : (r+1)*bpr]
 		copy(rowScratch, row)
-		RepackInt4SplitHalfRow(row, rowScratch, cols)
+		repackInt4SplitHalfRow(row, rowScratch, cols)
 	}
 	return WeightMat{q4SplitHalf: q4, q4s16: q4s, group: group, rows: rows, cols: cols}, true
 }
@@ -391,26 +391,11 @@ func (w *WeightMat) Int8() (q8 []int8, scales []float32, w8a8, ok bool) {
 	return w.q8, w.scales, w.w8a8, w.q8 != nil
 }
 
-// Int4 returns the packed CANONICAL nibbles, per-group scales, and group
-// size — ok iff canonical bytes are present, NOT iff this WeightMat is
-// int4-resident (audit M-22 made those two questions different: a
-// repacked-only WeightMat is int4 — Kind()/IsInt4() say so — but ok is
-// false here, deliberately, because there is nothing to return). This is
-// the accessor a staged GPU consult uploads from (the row4/split-half
-// layouts are CPU-SIMD-specific interleaves, not valid input for a GPU
-// kernel expecting canonical bytes), so ok=true with nil q4 would be the
-// worst outcome — a caller trusting ok and dereferencing nil. Use IsInt4()
-// to ask "is this tensor int4 at all" and Int4Layout() to ask "in which
-// form".
-//
-// Deprecated: the scales are stored as binary16; this returns them widened into a NEW slice on every call
-// (an allocation of rows·nGroups floats), so it is not for a hot path. Use Int4F16.
-func (w *WeightMat) Int4() (q4 []byte, q4s []float32, group int, ok bool) {
-	return w.q4, widenScalesCopy(w.q4s16), w.group, w.q4 != nil
-}
-
-// Int4F16 is Int4 with the scales as stored: binary16 bit patterns (F16ToF32 widens one exactly), aliased,
-// not copied. The accessor a GPU upload or a serializer reads.
+// Int4F16 returns the canonical int4 bytes: packed nibbles, per-group scales as stored (binary16 bit patterns,
+// F16ToF32 widens one exactly) and the group size, aliased, not copied. ok is true iff canonical bytes are present,
+// not iff the weight is int4: a repacked-only WeightMat is int4 (Kind and IsInt4 say so) but has nothing to return
+// here. The accessor a GPU upload or a serializer reads, since the row4 and split-half layouts are CPU-SIMD
+// interleaves no GPU kernel takes.
 func (w *WeightMat) Int4F16() (q4 []byte, q4s16 []uint16, group int, ok bool) {
 	return w.q4, w.q4s16, w.group, w.q4 != nil
 }
@@ -420,9 +405,9 @@ func (w *WeightMat) Int4F16() (q4 []byte, q4s16 []uint16, group int, ok bool) {
 func (w *WeightMat) Int4ScalesF16() []uint16 { return w.q4s16 }
 
 // IsInt4 reports whether this WeightMat is int4-resident in ANY layout —
-// canonical, row4, or split-half (audit M-22). Unlike Int4()'s ok, this is
+// canonical, row4, or split-half (audit M-22). Unlike Int4F16's ok, this is
 // true for a repacked-only WeightMat. The question a caller choosing which
-// matmul branch to take should ask; Int4()'s ok is the narrower "do I have
+// matmul branch to take should ask; Int4F16's ok is the narrower "do I have
 // canonical bytes to hand somewhere that needs them" question.
 func (w *WeightMat) IsInt4() bool {
 	return w.q4 != nil || w.q4Row4 != nil || w.q4SplitHalf != nil
@@ -452,22 +437,10 @@ func (w *WeightMat) Int4Layout() string {
 	}
 }
 
-// Int4Row4 returns the split-half + 4-row-interleaved layout (RepackW4A8Row4/
-// RepackW4A8Row4Scales) if RepackInt4Row4 has populated it (ok=false
-// otherwise — the zero value on non-arm64 builds, on int4-less WeightMats,
-// and on any int4 WeightMat that hasn't been repacked, e.g. a paged-MoE
-// tensor built transient over an mmap span). Pure performance cache: use
-// (w *WeightMat) matmulBTW4A8Into for the M=1 dispatch decision rather than
-// branching on this directly, unless you specifically need the raw bytes
-// (e.g. measuring the repack's resident-memory delta).
-//
-// Deprecated: the scales are stored as binary16; this returns them widened into a NEW slice on every call.
-// Use Int4Row4F16.
-func (w *WeightMat) Int4Row4() (packed4 []byte, scales4 []float32, ok bool) {
-	return w.q4Row4, widenScalesCopy(w.q4Row4Scales16), w.q4Row4 != nil
-}
-
-// Int4Row4F16 is Int4Row4 with the interleaved scales as stored (binary16, aliased).
+// Int4Row4F16 returns the row4 layout (split-half within each group, four rows interleaved) and its scales as stored
+// (binary16, aliased), or ok=false when the weight holds none: off arm64, without DotProd, or before
+// RepackInt4Row4 or WrapInt4(LayoutRow4) put one there. A matmul does not need it: MatmulBTInto and
+// MatmulBTW4A8Into choose the layout.
 func (w *WeightMat) Int4Row4F16() (packed4 []byte, scales4 []uint16, ok bool) {
 	return w.q4Row4, w.q4Row4Scales16, w.q4Row4 != nil
 }

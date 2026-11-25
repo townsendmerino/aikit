@@ -19,7 +19,7 @@ import "fmt"
 // prefetch hint, prefetchDistance BYTES ahead of each quad's own read
 // position, threaded down to dotW4A8SplitHalf4RowPrefetch. Same
 // w4Row4/wScales4 layout as matmulBTW4A8Row4Into (RepackW4A8Row4/
-// RepackW4A8Row4Scales, or a .giw kind-4 tensor's on-disk bytes) — this is
+// repackW4A8Row4Scales, or a .giw kind-4 tensor's on-disk bytes) — this is
 // the SAME data, just dispatched through a kernel with one added PRFM per
 // iteration. Same M/N/K/group contract as matmulBTW4A8Row4Into.
 //
@@ -62,14 +62,14 @@ func matmulBTW4A8Row4PrefetchInto(ws *Workspace, a []float32, w4Row4 []byte, wSc
 	}
 }
 
-// RepackW4A8Row4Deshared is RepackW4A8Row4's non-interleaved counterpart:
+// repackW4A8Row4Deshared is RepackW4A8Row4's non-interleaved counterpart:
 // same canonical-packed input, same N/K/group contract, but returns 4
 // SEPARATE byte arrays instead of one interleaved block — b0[q*bpr:(q+1)*bpr]
 // holds quad q's "row-position-0" bytes, b1 quad q's "row-position-1" bytes,
 // and so on, each role's bytes contiguous across every quad but the 4 roles
 // living in 4 entirely separate allocations (de-sharing the cache line 4
 // concurrent chains would otherwise contend on a cold miss).
-func RepackW4A8Row4Deshared(packed []byte, N, K, group int) (b0, b1, b2, b3 []byte) {
+func repackW4A8Row4Deshared(packed []byte, N, K, group int) (b0, b1, b2, b3 []byte) {
 	if group != 32 {
 		panic(fmt.Sprintf("linalg: RepackW4A8Row4Deshared requires group=32, got %d", group))
 	}
@@ -99,10 +99,10 @@ func RepackW4A8Row4Deshared(packed []byte, N, K, group int) (b0, b1, b2, b3 []by
 	return b0, b1, b2, b3
 }
 
-// RepackW4A8Row4DesharedScales is RepackW4A8Row4Deshared's counterpart for
+// repackW4A8Row4DesharedScales is repackW4A8Row4Deshared's counterpart for
 // the per-group f32 scales: no repacking needed per row (scales are already
 // separable), just split into 4 per-role arrays the same way.
-func RepackW4A8Row4DesharedScales(scales []float32, N, K, group int) (s0, s1, s2, s3 []float32) {
+func repackW4A8Row4DesharedScales(scales []float32, N, K, group int) (s0, s1, s2, s3 []float32) {
 	if group != 32 {
 		panic(fmt.Sprintf("linalg: RepackW4A8Row4DesharedScales requires group=32, got %d", group))
 	}
@@ -129,7 +129,7 @@ func RepackW4A8Row4DesharedScales(scales []float32, N, K, group int) (s0, s1, s2
 }
 
 // matmulBTW4A8Row4DesharedInto computes dst[N] = a[K]·bᵀ from
-// RepackW4A8Row4Deshared/RepackW4A8Row4DesharedScales's 4-array layout —
+// repackW4A8Row4Deshared/repackW4A8Row4DesharedScales's 4-array layout —
 // bit-identical to matmulBTW4A8Row4Into/matmulBTW4A8Into for the same
 // logical weights. Same M/N/K/group contract.
 //

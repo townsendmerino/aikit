@@ -38,10 +38,10 @@ func RepackW4A8Row4(packed []byte, N, K, group int) []byte {
 	if len(packed) < N*bpr {
 		panic(fmt.Sprintf("linalg: RepackW4A8Row4 packed len %d < N*bytesPerRow = %d", len(packed), N*bpr))
 	}
-	// Zero-alloc-per-quad (audit M-22): RepackInt4Row4Quad writes directly
+	// Zero-alloc-per-quad (audit M-22): repackInt4Row4Quad writes directly
 	// into out's own quad slice — src (packed's quad, canonical, untouched)
 	// and dst (out's quad, being built) never overlap here, so this is
-	// exactly RepackInt4Row4Quad's contract, not the aliased case
+	// exactly repackInt4Row4Quad's contract, not the aliased case
 	// RepackInt4InPlace(LayoutRow4)'s scratch dance is for. Used to call
 	// repackSplitHalf4RowBlock, which does the same transform via 5 per-quad
 	// allocations (4 per-row split-half temporaries + 1 output); that
@@ -49,14 +49,14 @@ func RepackW4A8Row4(packed []byte, N, K, group int) []byte {
 	out := make([]byte, N*bpr)
 	for q := 0; q < N/4; q++ {
 		base := q * 4 * bpr
-		RepackInt4Row4Quad(out[base:base+4*bpr], packed[base:base+4*bpr], K)
+		repackInt4Row4Quad(out[base:base+4*bpr], packed[base:base+4*bpr], K)
 	}
 	return out
 }
 
-// RepackW4A8Row4Scales is RepackW4A8Row4's counterpart for the per-group f32
+// repackW4A8Row4Scales is RepackW4A8Row4's counterpart for the per-group f32
 // scales array: same interleaving, same N/K/group contract.
-func RepackW4A8Row4Scales(scales []float32, N, K, group int) []float32 {
+func repackW4A8Row4Scales(scales []float32, N, K, group int) []float32 {
 	if group != 32 {
 		panic(fmt.Sprintf("linalg: RepackW4A8Row4Scales requires group=32, got %d", group))
 	}
@@ -76,13 +76,13 @@ func RepackW4A8Row4Scales(scales []float32, N, K, group int) []float32 {
 	out := make([]float32, N*nGroups)
 	for q := 0; q < N/4; q++ {
 		base := q * 4 * nGroups
-		RepackInt4Row4ScalesQuad(out[base:base+4*nGroups], scales[base:base+4*nGroups], nGroups)
+		repackInt4Row4ScalesQuad(out[base:base+4*nGroups], scales[base:base+4*nGroups], nGroups)
 	}
 	return out
 }
 
 // matmulBTW4A8Row4Into computes dst[N] = a[K]·bᵀ where b is [N,K] stored
-// group-int4 in RepackW4A8Row4/RepackW4A8Row4Scales's layout — a drop-in
+// group-int4 in RepackW4A8Row4/repackW4A8Row4Scales's layout — a drop-in
 // PERFORMANCE replacement for matmulBTW4A8Into at M=1 (bit-identical given
 // the same logical weights: docs/task-w4a8-neon-bandwidth.md's
 // TestDotW4A8SplitHalf4Row_bitIdenticalToCanonical), not a numerics change.

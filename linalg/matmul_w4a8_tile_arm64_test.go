@@ -41,7 +41,7 @@ func TestMatmulBTW4A8Row4TileInto_bitIdenticalToCanonical(t *testing.T) {
 		}
 		q4, q4s := QuantizeGroupsInt4(w, N, K, group)
 		row4 := RepackW4A8Row4(q4, N, K, group)
-		row4s := RepackW4A8Row4Scales(q4s, N, K, group)
+		row4s := repackW4A8Row4Scales(q4s, N, K, group)
 
 		for _, M := range []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13} {
 			a := make([]float32, M*K)
@@ -83,7 +83,7 @@ func TestMatmulBTW4A8Row4TileInto_parallelMatchesSerial(t *testing.T) {
 	}
 	q4, q4s := QuantizeGroupsInt4(w, N, K, group)
 	row4 := RepackW4A8Row4(q4, N, K, group)
-	row4s := RepackW4A8Row4Scales(q4s, N, K, group)
+	row4s := repackW4A8Row4Scales(q4s, N, K, group)
 
 	var wsSerial Workspace
 	wsSerial.SetThreshold(1 << 62) // never parallelize
@@ -121,7 +121,7 @@ func TestMatmulBTW4A8Row4TileInto_zeroActivationRow(t *testing.T) {
 	}
 	q4, q4s := QuantizeGroupsInt4(w, N, K, group)
 	row4 := RepackW4A8Row4(q4, N, K, group)
-	row4s := RepackW4A8Row4Scales(q4s, N, K, group)
+	row4s := repackW4A8Row4Scales(q4s, N, K, group)
 
 	for _, zeroRow := range []int{2, 5} {
 		const M = 7

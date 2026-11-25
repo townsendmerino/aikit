@@ -25,3 +25,13 @@ func repackInt4SplitHalfInPlaceF32(q4 []byte, q4s []float32, rows, cols, group i
 	}
 	return repackInt4SplitHalfInPlace(q4, F32ToF16Scales(q4s), rows, cols, group)
 }
+
+// int4Widened and int4Row4Widened are the int4 accessors with the scales widened to f32 in a new slice, for tests
+// written against f32 scales. Production reads WeightMat.Int4F16 and Int4Row4F16.
+func (w *WeightMat) int4Widened() (q4 []byte, q4s []float32, group int, ok bool) {
+	return w.q4, widenScalesCopy(w.q4s16), w.group, w.q4 != nil
+}
+
+func (w *WeightMat) int4Row4Widened() (packed4 []byte, scales4 []float32, ok bool) {
+	return w.q4Row4, widenScalesCopy(w.q4Row4Scales16), w.q4Row4 != nil
+}

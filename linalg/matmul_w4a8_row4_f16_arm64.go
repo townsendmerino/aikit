@@ -12,12 +12,12 @@ import (
 // buffer and the existing f32-scale kernel runs on them, so every result is bit-identical to the f32 path
 // fed the widened values.
 
-// RepackInt4Row4ScalesQuadF16 is RepackInt4Row4ScalesQuad over binary16 scales.
+// repackInt4Row4ScalesQuadF16 is repackInt4Row4ScalesQuad over binary16 scales.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:4*nGroups].
-func RepackInt4Row4ScalesQuadF16(dst, src []uint16, nGroups int) {
-	shape.RequireLen("RepackInt4Row4ScalesQuadF16", "dst", len(dst), 4*nGroups)
-	shape.RequireLen("RepackInt4Row4ScalesQuadF16", "src", len(src), 4*nGroups)
+func repackInt4Row4ScalesQuadF16(dst, src []uint16, nGroups int) {
+	shape.RequireLen("repackInt4Row4ScalesQuadF16", "dst", len(dst), 4*nGroups)
+	shape.RequireLen("repackInt4Row4ScalesQuadF16", "src", len(src), 4*nGroups)
 	for g := range nGroups {
 		for r := range 4 {
 			dst[4*g+r] = src[r*nGroups+g]
@@ -25,7 +25,7 @@ func RepackInt4Row4ScalesQuadF16(dst, src []uint16, nGroups int) {
 	}
 }
 
-// RepackW4A8Row4ScalesF16 is RepackW4A8Row4Scales over binary16 scales.
+// RepackW4A8Row4ScalesF16 is repackW4A8Row4Scales over binary16 scales.
 func RepackW4A8Row4ScalesF16(scales []uint16, N, K, group int) []uint16 {
 	if group != 32 || N%4 != 0 || K%group != 0 {
 		panic(fmt.Sprintf("linalg: RepackW4A8Row4ScalesF16 requires group=32, N%%4==0, K%%group==0 (N=%d K=%d group=%d)", N, K, group))
@@ -37,7 +37,7 @@ func RepackW4A8Row4ScalesF16(scales []uint16, N, K, group int) []uint16 {
 	out := make([]uint16, N*nGroups)
 	for q := 0; q < N/4; q++ {
 		base := q * 4 * nGroups
-		RepackInt4Row4ScalesQuadF16(out[base:base+4*nGroups], scales[base:base+4*nGroups], nGroups)
+		repackInt4Row4ScalesQuadF16(out[base:base+4*nGroups], scales[base:base+4*nGroups], nGroups)
 	}
 	return out
 }

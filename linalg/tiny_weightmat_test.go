@@ -160,7 +160,7 @@ func twKinds() []twKind {
 		}},
 		{name: "WrapInt4.splithalf", shapes: grouped, int4: true, build: func(p *kernreg.Placer, s twShape) (WeightMat, bool, string) {
 			q4, q4s := twQuantInt4(s)
-			sh := RepackW4A8SplitHalf(q4, s.rows, s.cols, s.group)
+			sh := repackW4A8SplitHalf(q4, s.rows, s.cols, s.group)
 			w, ok := WrapInt4(kernreg.Put(p, "q4SplitHalf", sh), kernreg.Put(p, "q4s16", F32ToF16Scales(q4s)), s.rows, s.cols, s.group, LayoutSplitHalf)
 			return w, ok, declined(ok, "WrapInt4(LayoutSplitHalf)")
 		}},
@@ -251,16 +251,16 @@ func twMethods() []twMethod {
 			})
 			return twOutcome{msg, dst}
 		}},
-		{name: "WeightMat.Int4", int4: true, run: func(p *kernreg.Placer, w *WeightMat, s twShape) twOutcome {
+		{name: "WeightMat.int4Widened", int4: true, run: func(p *kernreg.Placer, w *WeightMat, s twShape) twOutcome {
 			var q4s []float32
 			var ok bool
-			msg := kernreg.Refused(func() { _, q4s, _, ok = w.Int4() })
+			msg := kernreg.Refused(func() { _, q4s, _, ok = w.int4Widened() })
 			return twOutcome{fmt.Sprintf("%s ok=%v", msg, ok), q4s}
 		}},
-		{name: "WeightMat.Int4Row4", int4: true, run: func(p *kernreg.Placer, w *WeightMat, s twShape) twOutcome {
+		{name: "WeightMat.int4Row4Widened", int4: true, run: func(p *kernreg.Placer, w *WeightMat, s twShape) twOutcome {
 			var s4 []float32
 			var ok bool
-			msg := kernreg.Refused(func() { _, s4, ok = w.Int4Row4() })
+			msg := kernreg.Refused(func() { _, s4, ok = w.int4Row4Widened() })
 			return twOutcome{fmt.Sprintf("%s ok=%v", msg, ok), s4}
 		}},
 		{name: "WeightMat.RepackInt4SplitHalf", int4: true, run: func(p *kernreg.Placer, w *WeightMat, s twShape) twOutcome {

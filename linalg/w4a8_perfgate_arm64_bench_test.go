@@ -43,7 +43,7 @@ func BenchmarkW4A8_CanonicalVsSplitHalf(b *testing.B) {
 	}
 	packed, scales := QuantizeGroupsInt4(w, 4, K, group)
 	row4 := RepackW4A8Row4(packed, 4, K, group)
-	row4s := RepackW4A8Row4Scales(scales, 4, K, group)
+	row4s := repackW4A8Row4Scales(scales, 4, K, group)
 	corr := make([]int32, 4*nGroups)
 	w4a8LaneCorrNeg8(&act[0], &corr[0], nGroups)
 
@@ -80,7 +80,7 @@ func BenchmarkW4A8_CanonicalVsSplitHalf(b *testing.B) {
 			wm[j] = float32(rng.NormFloat64())
 		}
 		p, s := QuantizeGroupsInt4(wm, N, K, group)
-		mats[i] = mat{p, s, RepackW4A8Row4(p, N, K, group), RepackW4A8Row4Scales(s, N, K, group)}
+		mats[i] = mat{p, s, RepackW4A8Row4(p, N, K, group), repackW4A8Row4Scales(s, N, K, group)}
 	}
 	a := make([]float32, K)
 	for i := range a {

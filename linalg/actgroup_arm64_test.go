@@ -19,11 +19,11 @@ func TestActGroup_row4LayoutAgrees(t *testing.T) {
 	const K, N = 128, 16
 	a := agRandMat(r, K)
 	wm := QuantizeInt4(agRandMat(r, N*K), N, K, 32)
-	q4, s4, _, _ := wm.Int4()
+	q4, s4, _, _ := wm.int4Widened()
 	withActGroup(t, 32)
 	canon := make([]float32, N)
 	matmulBTW4A8Into(new(Workspace), a, q4, s4, canon, 1, K, N, 32)
-	r4, r4s := RepackW4A8Row4(q4, N, K, 32), RepackW4A8Row4Scales(s4, N, K, 32)
+	r4, r4s := RepackW4A8Row4(q4, N, K, 32), repackW4A8Row4Scales(s4, N, K, 32)
 	viaFree := make([]float32, N)
 	matmulBTW4A8Row4Into(new(Workspace), a, r4, r4s, viaFree, 1, K, N, 32)
 	only, ok := wrapInt4Row4OnlyF32(r4, r4s, N, K, 32)
@@ -54,11 +54,11 @@ func TestActGroup_row4KernelMatchesReference(t *testing.T) {
 	a := agRandMat(r, K)
 	a[77] = 400
 	wm := QuantizeInt4(agRandMat(r, N*K), N, K, 32)
-	q4, s4, _, _ := wm.Int4()
+	q4, s4, _, _ := wm.int4Widened()
 	withActGroup(t, 32)
 	ref := make([]float32, N)
 	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, 1, N)
-	r4, r4s := RepackW4A8Row4(q4, N, K, 32), RepackW4A8Row4Scales(s4, N, K, 32)
+	r4, r4s := RepackW4A8Row4(q4, N, K, 32), repackW4A8Row4Scales(s4, N, K, 32)
 	for _, fold := range []bool{true, false} {
 		prev := W4A8RowFoldForTest()
 		SetW4A8RowFoldForTest(fold)
@@ -86,7 +86,7 @@ func TestActGroup_row4MultiRow(t *testing.T) {
 	withActGroup(t, 32)
 	ref := make([]float32, M*N)
 	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, M, N)
-	only, ok := wrapInt4Row4OnlyF32(RepackW4A8Row4(q4, N, K, 32), RepackW4A8Row4Scales(s4, N, K, 32), N, K, 32)
+	only, ok := wrapInt4Row4OnlyF32(RepackW4A8Row4(q4, N, K, 32), repackW4A8Row4Scales(s4, N, K, 32), N, K, 32)
 	if !ok {
 		t.Fatal("WrapInt4(LayoutRow4) declined")
 	}

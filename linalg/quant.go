@@ -937,7 +937,7 @@ func w4a8SpanRows(aq []int8, aScales []float32, w4 []byte, wScales, dst []float3
 // interleave rows, so there is no quad-alignment carve-out: a SplitHalf op
 // serves its ENTIRE requested column range directly, whole or not at all.
 // It has no Scales twin of its own — split-half permutes nibbles within a
-// group and never repacks scales (RepackW4A8SplitHalf's own doc), so Scales
+// group and never repacks scales (repackW4A8SplitHalf's own doc), so Scales
 // serves double duty: canonical's per-group scales when W4 != nil, or the
 // same shared per-group scales when only SplitHalf is set.
 type w4a8Op struct {
