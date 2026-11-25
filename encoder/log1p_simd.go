@@ -35,9 +35,7 @@ func log1pPoolInto(pooled []float32) {
 		log1pF32CoreVec(simd.LoadFloat32s(pooled[i:i+L]), &c).Store(pooled[i : i+L])
 	}
 	if i < len(pooled) {
-		v, n := simd.LoadFloat32sPart(pooled[i:])
-		r := log1pF32CoreVec(v, &c)
-		r.StorePart(pooled[i : i+n])
+		storeF32Part(log1pF32CoreVec(loadF32Part(pooled[i:]), &c), pooled[i:])
 	}
 }
 

@@ -11,12 +11,21 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed
 
+- **`perfgate` judges seventeen benchmark families, finds each by name in a list of packages, and fails on a listed family it
+  cannot find** (`tools/perfgate/families.go`). New: the K-quant kinds (`BenchmarkQ56KvsInt8`, `BenchmarkQ4KvsSplitHalf`), the f16
+  acc64 attention kernels (`BenchmarkMatmulQKAcc64F16`, `BenchmarkMatmulAVAcc64F16`, added beside their f32 twins) and amd64's
+  contract transcendentals (`BenchmarkExpF32KernelsAMD64`, `BenchmarkSiLUAMD64`). Each family names the arches whose build defines
+  it: the old list ran `BenchmarkSoftmaxRowKernels` and `BenchmarkSiLUKernels`, which exist on arm64 only, on amd64 too, and
+  `BenchmarkMatmulBTW4A8SplitHalfTile`, amd64 only, on arm64, where nothing defined them and nothing said so.
+  `TestDefaultFamilies_resolveInSource` holds the table to the source on linux and darwin arm64 and linux and windows amd64.
+  A family is matched across the tag boundary by benchmark name, so one that moves package is still compared; a listed family
+  no package of the working tree defines fails the gate before anything is measured (exit 6). `--pkg` takes a comma-separated
+  package list and `--bench` a comma-separated list of benchmark names (it took a regex).
 - **`linalg` is Experimental as a whole from 2026-11-24 until its surface rework lands** (README § "Stability tiers"): the rework
   removes and moves exported names, so `linalg.Dot`, `linalg.MatmulBT` and the int8/int4 quant kernels leave the Hard tier meanwhile;
   the names that survive return to it as an explicit list in the release gate. The gate now checks what the README calls Hard:
   `mmap` and `vision` join its apidiff packages, and `encoder.Backend`, `RegisterBackend` and `NewBackend` leave its exemption list
   (`tools/releasegate`, `TestReadmeTiers_matchGate` holds the README's Hard list and the gate's lists equal).
-
 - **`linalg`'s CPU-feature flags, their detection and the `aikit_no*` fallback tags live in one internal package,
   `internal/cpufeat`** (from `linalg`'s `has*`/`detect*` variables, its `cpuid`/`xgetbv` probes and its `force_no*` files). Every
   dispatcher reads the one copy, so `SelfCheck`'s repair and each forced fallback keep governing a kernel package split out of
@@ -57,6 +66,12 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Fixed
 
+- **Under `GOEXPERIMENT=simd`, the element-wise and softmax kernels no longer read past a short tail** (`linalg`: `ExpF32Into`,
+  `SiLUInto`, `GELUInto`, `GELUTanhInto`, `TanhInto` and the `SoftmaxRow*Into` family, with their `Contract` forms; `encoder`'s
+  log1p pooling). Their last partial vector went through `simd.LoadFloat32sPart` and `StorePart`, which on amd64 read a whole vector,
+  past the end of the slice: a fault when the input ends at a mapping, and a read of the next bytes otherwise. The tails now stage
+  through a zeroed stack buffer (`loadF32Part`, `storeF32Part`); outputs are bit-identical. The default build is unaffected
+  (`TestElementwise_noReadPastShortTail`, `TestLog1pPoolInto_noReadPastShortTail`, which place each input against a guard page).
 - **`embed` refused a legitimate tensor of a type denser than 0.25 bytes per element when it filled the data section.**
   `RowDequantizer` bounds an untrusted tensor's element count by the data section's size before multiplying its dims; the
   bound assumed at most 4 elements a byte, and IQ1_S stores 5.12 (TQ1_0 4.7, IQ1_M 4.6). It is now 6.
