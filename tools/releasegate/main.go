@@ -26,9 +26,12 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/townsendmerino/aikit/tools/canary"
@@ -40,6 +43,26 @@ const rootMod = "github.com/townsendmerino/aikit"
 
 // hardPkgs are the packages README § "Stability tiers" lists as Hard; TestReadmeTiers_matchGate holds the two equal.
 var hardPkgs = []string{"topk", "ann", "bm25", "fuse", "embed", "encoder", "chunk", "mmap"}
+
+// hardSyms: packages that are Hard only in part. apidiff judges just the listed symbols (a type covers its members);
+// every other change in the package is Experimental. README § "Stability tiers" lists the same names, and
+// TestReadmeTiers_matchGate holds the two equal.
+var hardSyms = map[string][]string{
+	"linalg": {
+		"WeightMat", "Workspace", "Kind", "Layout", "BatchOp", "ActQ", "Kernels",
+		"Dot", "MatmulBT", "MatmulBTInto", "MatmulBTBatchInto",
+		"WrapF32", "WrapF16", "WrapBF16", "WrapInt8", "WrapInt4", "WrapQ4K", "WrapQ5K", "WrapQ6K",
+		"QuantizeInt8", "QuantizeInt4", "QuantizeF16", "QuantizeBF16", "RepackInt4InPlace", "PreferredInt4Layout",
+		"ActiveKernels", "SetParallelThreshold", "SetParallelWidth", "SetActQuantGroup",
+		"KindNone", "KindF32", "KindF16", "KindBF16", "KindInt8", "KindInt4", "KindQ4K", "KindQ5K", "KindQ6K",
+		"LayoutCanonical", "LayoutRow4", "LayoutSplitHalf",
+	},
+}
+
+// hardFrom is the first release a package's Hard list binds: a release whose previous tag is older is compared without
+// it. linalg's surface rework broke it inside v1 (2026-11-24), so its list binds from the release after v1.80.0's
+// break, whose previous tag is then v1.80.0.
+var hardFrom = map[string]string{"linalg": "v1.80.0"}
 
 // experimentalSyms: symbols documented Experimental that LIVE INSIDE a Hard-tier package —
 // their leading symbol name is the whole match, so an apidiff line led by one is exempt.
@@ -177,7 +200,12 @@ func checkAPIDiff(root, ver string) gate.Cell {
 	}()
 
 	var broken []string
-	for _, p := range hardPkgs {
+	partial := slices.Sorted(maps.Keys(hardSyms))
+	for _, p := range slices.Concat(hardPkgs, partial) {
+		if from := hardFrom[p]; from != "" && semverLess(prev, from) {
+			fmt.Printf("release-gate: apidiff: %s's Hard list binds from %s; the previous tag %s predates it\n", p, from, prev)
+			continue
+		}
 		base := filepath.Join(os.TempDir(), "gate-"+p+".api")
 		// apidiff exits non-zero only on a TOOL/LOAD error (it cannot build itself, or
 		// cannot load the package) — reporting API changes is exit 0. So a non-zero here is
@@ -191,6 +219,9 @@ func checkAPIDiff(root, ver string) gate.Cell {
 			return inconMsg("apidiff", "apidiff could not compare "+p+" against "+prev+": "+firstLine(inc))
 		}
 		inc = filterExperimental(inc, p)
+		if syms, ok := hardSyms[p]; ok {
+			inc = keepHard(inc, syms)
+		}
 		if strings.TrimSpace(inc) != "" {
 			fmt.Printf("::error::release-gate: apidiff: incompatible change in Hard-tier '%s' vs %s:\n%s\n", p, prev, strings.TrimRight(inc, "\n"))
 			broken = append(broken, p)
@@ -284,6 +315,51 @@ func filterExperimental(inc, pkg string) string {
 		}
 	}
 	return strings.Join(kept, "\n")
+}
+
+// keepHard keeps the apidiff incompatible lines whose leading symbol is one of syms (a method or field line is led by
+// its type), dropping the rest of a package that is Hard only in part.
+func keepHard(inc string, syms []string) string {
+	quoted := make([]string, len(syms))
+	for i, s := range syms {
+		quoted[i] = regexp.QuoteMeta(s)
+	}
+	re := regexp.MustCompile(`^- \(?\*?(` + strings.Join(quoted, "|") + `)[).: ]`)
+	var kept []string
+	for ln := range strings.SplitSeq(inc, "\n") {
+		if re.MatchString(ln) {
+			kept = append(kept, ln)
+		}
+	}
+	return strings.Join(kept, "\n")
+}
+
+// semverLess reports whether tag a (vX.Y.Z) is older than tag b. A tag that does not parse sorts first, so an
+// unreadable previous tag never skips a Hard list.
+func semverLess(a, b string) bool {
+	pa, oka := semverParts(a)
+	pb, okb := semverParts(b)
+	if !oka || !okb {
+		return false
+	}
+	return slices.Compare(pa, pb) < 0
+}
+
+func semverParts(t string) ([]int, bool) {
+	core, _, _ := strings.Cut(strings.TrimPrefix(t, "v"), "-")
+	fs := strings.Split(core, ".")
+	if len(fs) != 3 {
+		return nil, false
+	}
+	out := make([]int, 3)
+	for i, f := range fs {
+		n, err := strconv.Atoi(f)
+		if err != nil {
+			return nil, false
+		}
+		out[i] = n
+	}
+	return out, true
 }
 
 // runIn runs a command in dir with the ambient environment (release-gate, like its shell,

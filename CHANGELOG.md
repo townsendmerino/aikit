@@ -11,6 +11,15 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **`linalg`'s `WeightMat` door is Hard again, as an explicit list** (LS8): the types `WeightMat` (with its methods),
+  `Workspace`, `Kind`, `Layout`, `BatchOp`, `ActQ` and `Kernels`; `Dot`, `MatmulBT`, `MatmulBTInto` and
+  `MatmulBTBatchInto`; the `Wrap*` and `Quantize*` constructors, `RepackInt4InPlace` and `PreferredInt4Layout`; the
+  `Kind*` and `Layout*` constants; `ActiveKernels` and the three process defaults. README § "Stability tiers" and
+  `tools/releasegate`'s new `hardSyms` list the same names (a test holds them equal, and each to a declaration); apidiff
+  judges only those names in `linalg`, from the release after this one (`hardFrom`: the previous tag must be v1.80.0 or
+  later), so this release's own breaks are not judged against v1.79.0. The rest of `linalg`, and `linalg/attn`,
+  `linalg/elem` and `linalg/bitvec`, stay Experimental.
+
 - **Five raw-slice matmuls stay exported as documented exceptions** (LS6, step 4, decided 2026-11-25):
   `MatmulBTQ8Fused` and `MatmulBTQ8FusedInto` (the encoder), `MatmulBTW8A8Pre` (ann) and `MatmulBTW4A8F16Into` and
   `MatmulBTW4A8F16Pre` (goinfer's fused gate‖up). linalg's package doc lists each with its caller and the WeightMat form
