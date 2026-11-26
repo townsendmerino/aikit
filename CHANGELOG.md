@@ -11,6 +11,15 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **`linalg`'s `WeightMat` door is Hard again, as an explicit list** (LS8): the types `WeightMat` (with its methods),
+  `Workspace`, `Kind`, `Layout`, `BatchOp`, `ActQ` and `Kernels`; `Dot`, `MatmulBT`, `MatmulBTInto` and
+  `MatmulBTBatchInto`; the `Wrap*` and `Quantize*` constructors, `RepackInt4InPlace` and `PreferredInt4Layout`; the
+  `Kind*` and `Layout*` constants; `ActiveKernels` and the three process defaults. README § "Stability tiers" and
+  `tools/releasegate`'s new `hardSyms` list the same names (a test holds them equal, and each to a declaration); apidiff
+  judges only those names in `linalg`, from the release after this one (`hardFrom`: the previous tag must be v1.80.0 or
+  later), so this release's own breaks are not judged against v1.79.0. The rest of `linalg`, and `linalg/attn`,
+  `linalg/elem` and `linalg/bitvec`, stay Experimental.
+
 - **The raw-slice int8 and int4 matmuls goinfer reached are unexported** (LS6, step 4, second part): `MatmulBTQ8`,
   `MatmulBTQ8Into`, `MatmulBTW8A8`, `MatmulBTW8A8Into`, `MatmulBTW4A8Into` and `MatmulBTW4A8Row4Into`. A caller wraps
   its rows in a `WeightMat` (`WrapInt8`, `WrapInt4`, which copy nothing) and calls `MatmulBT`/`MatmulBTInto`, which

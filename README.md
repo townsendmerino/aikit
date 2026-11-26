@@ -274,6 +274,22 @@ No breaking change before a v2.0. This is the API to build on.
   **Graduated 2026-08-18.**
 - `mmap` — the whole package. In aikit since v1.9.0 (12 minors survived);
   goinfer imports it in 4 non-test files. **Graduated 2026-08-18.**
+- `linalg`'s `WeightMat` door, from v1.80.0 (the release that carries the
+  surface rework, a break inside v1): the types `linalg.WeightMat` (its methods
+  with it), `linalg.Workspace`, `linalg.Kind`, `linalg.Layout`, `linalg.BatchOp`,
+  `linalg.ActQ` and `linalg.Kernels`; `linalg.Dot`, `linalg.MatmulBT`,
+  `linalg.MatmulBTInto` and `linalg.MatmulBTBatchInto`; the constructors
+  `linalg.WrapF32`, `linalg.WrapF16`, `linalg.WrapBF16`, `linalg.WrapInt8`,
+  `linalg.WrapInt4`, `linalg.WrapQ4K`, `linalg.WrapQ5K`, `linalg.WrapQ6K`,
+  `linalg.QuantizeInt8`, `linalg.QuantizeInt4`, `linalg.QuantizeF16`,
+  `linalg.QuantizeBF16`, `linalg.RepackInt4InPlace` and
+  `linalg.PreferredInt4Layout`; the constants `linalg.KindNone`, `linalg.KindF32`,
+  `linalg.KindF16`, `linalg.KindBF16`, `linalg.KindInt8`, `linalg.KindInt4`,
+  `linalg.KindQ4K`, `linalg.KindQ5K`, `linalg.KindQ6K`, `linalg.LayoutCanonical`,
+  `linalg.LayoutRow4` and `linalg.LayoutSplitHalf`; and `linalg.ActiveKernels` and
+  the process defaults `linalg.SetParallelThreshold`, `linalg.SetParallelWidth`
+  and `linalg.SetActQuantGroup`. The gate checks exactly these names
+  (`tools/releasegate`'s `hardSyms`), from the release after v1.80.0.
 
 ### Experimental — outside the semver promise
 
@@ -287,13 +303,13 @@ fixed schedule. Age alone doesn't graduate a surface: several entries below
 have shipped since v0.4.0/v1.x with no reported break, but stay here because
 no such consumer has surfaced yet.
 
-- `linalg` — **the whole package, from 2026-11-24 until its surface rework
-  lands.** Its exported surface is being cut down and split into sub-packages,
-  which removes and moves names, so no part of it is promised meanwhile;
-  `linalg.Dot`, `linalg.MatmulBT` and the int8/int4 quant kernels were Hard from
-  2026-08-18 to 2026-11-24. The names that survive the rework return to the Hard
-  tier as an explicit list in `tools/releasegate`. The `linalg` entries below
-  record when each group was added.
+- `linalg` outside the Hard list above, and the kernel packages `linalg/attn`,
+  `linalg/elem` and `linalg/bitvec`: the kernels themselves, the reference and
+  conversion functions, and the five raw-slice matmuls `linalg`'s package doc
+  lists as exceptions. The whole of `linalg` was Experimental from 2026-11-24 to
+  v1.80.0, while its surface rework removed and moved names; `linalg.Dot`,
+  `linalg.MatmulBT` and the int8/int4 quant kernels had been Hard from
+  2026-08-18. The `linalg` entries below record when each group was added.
 - `ann.HNSW` / `ann.NewHNSW` / `ann.BuildHNSW` / `ann.Config` — the `Hit`/`Query`
   surface is stable, but graph internals and `Config` defaults may tune. Neighbor
   selection defaults to the diversity heuristic (Algorithm 4) for high recall on
