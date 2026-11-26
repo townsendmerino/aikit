@@ -70,7 +70,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/townsendmerino/aikit/tools/canary"
 	"github.com/townsendmerino/aikit/tools/gate"
@@ -99,7 +101,14 @@ func buildChecks(root string, fast bool) []gate.Check {
 		{Name: "cross-vet linux", Run: func() gate.Cell {
 			return goStep(root, "cross-vet linux", []string{"GOOS=linux", "GOARCH=amd64"}, "vet", "./...")
 		}},
-		{Name: "golangci-lint", Run: func() gate.Cell { return checkLint(root) }},
+		{Name: "golangci-lint", Run: func() gate.Cell { return checkLint(root, "golangci-lint", "", nil) }},
+		// Not core-job steps either. CI lints the root module on amd64 only, so an arm64-only
+		// finding (an unused helper the arm64 build does not call) reached nobody; and the tools
+		// module is linted by CI's separate tools job, so its findings arrived only after a push.
+		{Name: "golangci-lint (arm64)", Run: func() gate.Cell {
+			return checkLint(root, "golangci-lint (arm64)", "", []string{"GOARCH=arm64"})
+		}},
+		{Name: "golangci-lint (tools)", Run: func() gate.Cell { return checkLint(root, "golangci-lint (tools)", "tools", nil) }},
 		{Name: "no cgo deps in core graph", Run: func() gate.Cell { return checkNoCgoDeps(root) }},
 		// Redundant with "build" above now that gpumod.Exec pins CGO_ENABLED=0 for every
 		// step — kept as its own labeled cell so the report names the specific ci.yml
@@ -257,27 +266,65 @@ func goTest(root string) gate.Cell {
 	return c
 }
 
-// checkLint runs the pinned golangci-lint on the ROOT module. A preflight `version` run
-// separates "the linter could not be built/run" (INCONCLUSIVE — an external tool the check
-// depends on) from "the linter found issues" (FAIL). Build-pinned via `go run @v2.14.0`.
-func checkLint(root string) gate.Cell {
-	if _, rc := gpumod.Exec(root, "", nil, "go", "run", gpumod.GolangciLint, "version"); rc != 0 {
-		return cell("golangci-lint", gate.Inconclusive, "GOWORK=off CGO_ENABLED=0")
+// checkLint runs the pinned golangci-lint in relDir of the repository (the root module, or
+// tools/, which CI lints in its own job) with extraEnv added (GOARCH=arm64 lints the arm64
+// file set). The linter is built once, for this host, by lintBinary: `go run` would build it
+// for GOARCH too, and an arm64 binary does not run here. A run of its `version` separates
+// "the linter could not be built/run" (INCONCLUSIVE — an external tool the check depends on)
+// from "the linter found issues" (FAIL).
+func checkLint(root, name, relDir string, extraEnv []string) gate.Cell {
+	env := strings.TrimSpace("GOWORK=off CGO_ENABLED=0 " + strings.Join(extraEnv, " "))
+	bin, err := lintBinary(root)
+	if err != nil {
+		c := cell(name, gate.Inconclusive, env)
+		c.Fields = append(c.Fields, gate.Field{Key: "line", State: "CANNOT-EVALUATE — " + err.Error()})
+		return c
+	}
+	if _, rc := gpumod.Exec(root, "", nil, bin, "version"); rc != 0 {
+		return cell(name, gate.Inconclusive, env)
 	}
 	// CANARY: a "clean" is trusted only after the linter flags its fixture (see tools/canary).
-	cout, _ := gpumod.Exec(filepath.Join(root, canary.FixturesDir), "", nil, "go", "run", gpumod.GolangciLint, "run", "--build-tags", "canaryfixture")
+	cout, _ := gpumod.Exec(filepath.Join(root, canary.FixturesDir), "", extraEnv, bin, "run", "--build-tags", "canaryfixture")
 	if res := canary.CheckGolangci(cout); !res.Fired {
-		c := cell("golangci-lint", gate.Inconclusive, "GOWORK=off CGO_ENABLED=0")
+		c := cell(name, gate.Inconclusive, env)
 		c.Fields = append(c.Fields, gate.Field{Key: "line", State: "CANNOT-EVALUATE — " + res.Reason})
 		return c
 	}
-	out, rc := gpumod.Exec(root, "", nil, "go", "run", gpumod.GolangciLint, "run")
+	out, rc := gpumod.Exec(root, relDir, extraEnv, bin, "run", "./...")
 	if rc != 0 {
-		c := cell("golangci-lint", gate.Fail, "GOWORK=off CGO_ENABLED=0")
+		c := cell(name, gate.Fail, env)
 		c.Fields = append(c.Fields, headLines(out, 12)...)
 		return c
 	}
-	return cell("golangci-lint", gate.OK, "GOWORK=off CGO_ENABLED=0")
+	return cell(name, gate.OK, env)
+}
+
+var (
+	lintOnce sync.Once
+	lintBin  string
+	lintErr  error
+)
+
+// lintBinary installs the pinned golangci-lint (gpumod.GolangciLint) for this host into a
+// temporary directory, once per run, with the same Go toolchain `go run` would use, so it is
+// the binary CI's `go run` builds.
+func lintBinary(root string) (string, error) {
+	lintOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "preflight-golangci-")
+		if err != nil {
+			lintErr = err
+			return
+		}
+		if out, rc := gpumod.Exec(root, "", []string{"GOBIN=" + dir}, "go", "install", gpumod.GolangciLint); rc != 0 {
+			lintErr = fmt.Errorf("go install %s: %s", gpumod.GolangciLint, strings.TrimSpace(out))
+			return
+		}
+		lintBin = filepath.Join(dir, "golangci-lint")
+		if runtime.GOOS == "windows" {
+			lintBin += ".exe"
+		}
+	})
+	return lintBin, lintErr
 }
 
 func cell(name string, o gate.Outcome, env string) gate.Cell {
