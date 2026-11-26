@@ -11,9 +11,9 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [1.80.0] — 2026-11-25
 
-PERFGATE-VERDICT-LINE-HERE
+`perfgate` VERDICT: PASS — no regression vs v1.79.0 above each shape's floor — 19/69 shapes resolve the 5.0% class
 
-PERFGATE-SENSITIVITY-LINE-HERE
+sensitivity: 19/69 shapes have a floor ≤ 5.0% (the class this gate targets) Ryzen 7 3700X (linux/amd64), 2123a84 vs v1.79.0, 2026-11-25 (19:34–19:46 PST), under the exclusive timing lock, Go 1.27.4.
 
 STATEMENT: no reachable vulnerabilities in 11/11 modules at 2123a84 (2026-11-26T03:33:02Z). Intel Core i5-8257U (linux/amd64), Go 1.27.4 (GOTOOLCHAIN=go1.27.4), govulncheck v1.10.0.
 
