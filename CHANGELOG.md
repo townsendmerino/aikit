@@ -9,6 +9,25 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.80.0] — 2026-11-25
+
+`perfgate` VERDICT: PASS — no regression vs v1.79.0 above each shape's floor — 19/69 shapes resolve the 5.0% class
+
+sensitivity: 19/69 shapes have a floor ≤ 5.0% (the class this gate targets) Ryzen 7 3700X (linux/amd64), 2123a84 vs v1.79.0, 2026-11-25 (19:34–19:46 PST), under the exclusive timing lock, Go 1.27.4.
+
+STATEMENT: no reachable vulnerabilities in 11/11 modules at 2123a84 (2026-11-26T03:33:02Z). Intel Core i5-8257U (linux/amd64), Go 1.27.4 (GOTOOLCHAIN=go1.27.4), govulncheck v1.10.0.
+
+This release carries `linalg`'s surface rework, a **breaking change inside v1** (no v2 module path): `linalg` had been
+Experimental as a whole since 2026-11-24 for it. The attention, element-wise and binary-vector kernels move to
+`linalg/attn`, `linalg/elem` and `linalg/bitvec`; `vision` is removed (it moved into goinfer on 2026-10-26); and the
+quantized matmuls are reached through `WeightMat` (`WrapInt4` with a `Layout`, `MatmulBTInto`, `MatmulBTBatchInto`)
+instead of raw slices, except five documented exceptions. `linalg`'s `WeightMat` door returns to the Hard tier as an
+explicit list, which the release gate checks from the next release. The numerics do not change: goinfer's kernel
+fingerprint table is byte-identical through the rework. Each change is listed below; consumers port with goinfer's
+committed rewrite (`scripts/aikit_surface` in goinfer).
+
+RETRIEVAL: yes — vs v1.79.0, 147 of 606 changed files are in the retrieval zone (ann/backend.go, ann/flat_binary.go, ann/flat_binary_i8.go, ann/flat_binary_prefilter.go, and 143 more)
+
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
 - **`linalg`'s `WeightMat` door is Hard again, as an explicit list** (LS8): the types `WeightMat` (with its methods),
@@ -6252,7 +6271,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.79.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.80.0...HEAD
+[1.80.0]: https://github.com/townsendmerino/aikit/compare/v1.79.0...v1.80.0
 [1.79.0]: https://github.com/townsendmerino/aikit/compare/v1.78.0...v1.79.0
 [1.78.0]: https://github.com/townsendmerino/aikit/compare/v1.77.0...v1.78.0
 [1.77.0]: https://github.com/townsendmerino/aikit/compare/v1.76.0...v1.77.0
