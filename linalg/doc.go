@@ -55,6 +55,21 @@
 // reference are listed in aikit's docs/internal/kernel-inventory.md, generated from the kernel registry each package
 // keeps beside its tests (go run -C tools ./kernelinventory --write; a test fails when the two differ).
 //
+// # Raw-slice exceptions
+//
+// Five quantized matmuls still take raw slices instead of a WeightMat, each because its caller needs something the door
+// does not offer yet. Each goes when that WeightMat form exists:
+//
+//   - [MatmulBTQ8Fused], [MatmulBTQ8FusedInto]: aikit's encoder, for its int8 weights at large M. A blocked GEMM that
+//     widens the int8 rows inside the panel pack, bit-identical to dequantize-then-f32 MatmulBT; WeightMat's
+//     weight-only Q8 path is a per-row dequant-dot with another accumulation order, so routing the encoder through it
+//     would change its numerics. Waiting for: a blocked-GEMM option on a weight-only Q8 WeightMat.
+//   - [MatmulBTW8A8Pre]: aikit's ann, for a paged int8 index's scan, which quantizes the query once and scores every
+//     block against it (re-quantizing per block cost about 52 ms a query at 10M vectors). Waiting for: an int8
+//     pre-quantized path on WeightMat, as [WeightMat.QuantizeActW4A8] and [WeightMat.MatmulBTW4A8PreInto] are for int4.
+//   - [MatmulBTW4A8F16Into], [MatmulBTW4A8F16Pre]: goinfer's fused gate‖up, which hands each worker a range of one
+//     weight's rows and applies SwiGLU in the same pass. Waiting for: a row-range view of a WeightMat.
+//
 // # Related packages
 //
 // The attention kernels (the f64-accumulating QK and AV products and the fused tile) are in linalg/attn, the
