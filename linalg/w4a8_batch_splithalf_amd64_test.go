@@ -9,7 +9,7 @@ import (
 
 // TestMatmulBTW4A8Batch_splitHalfOnlyMatchesCanonical is the batch-path
 // twin of TestMatmulBTW4A8Batch_repackedOnlyMatchesCanonical (audit M-22
-// follow-up): a W4A8Op with only SplitHalf set (W4/Row4 both nil) must
+// follow-up): a w4a8Op with only SplitHalf set (W4/Row4 both nil) must
 // match the canonical batch result bit-for-bit at M=1 — split-half has no
 // quad-alignment carve-out (unlike row4), so unlike that test there is no
 // separate "aligned interior vs edge" case to construct: the whole
@@ -25,7 +25,7 @@ func TestMatmulBTW4A8Batch_splitHalfOnlyMatchesCanonical(t *testing.T) {
 	a := mconsistentRand(rng, M*K)
 
 	shapes := []int{256, 512}
-	var canonOps, splitOps []W4A8Op
+	var canonOps, splitOps []w4a8Op
 	var wantDst, gotDst [][]float32
 	for _, n := range shapes {
 		q4, q4s := quantizeInt4Random(rng, n, K, group)
@@ -33,16 +33,16 @@ func TestMatmulBTW4A8Batch_splitHalfOnlyMatchesCanonical(t *testing.T) {
 		gD := make([]float32, n)
 		wantDst = append(wantDst, wD)
 		gotDst = append(gotDst, gD)
-		canonOps = append(canonOps, W4A8Op{W4: q4, Scales: q4s, Dst: wD, N: n})
+		canonOps = append(canonOps, w4a8Op{W4: q4, Scales: q4s, Dst: wD, N: n})
 
-		splitHalf := RepackW4A8SplitHalf(cloneBytes(q4), n, K, group)
-		splitOps = append(splitOps, W4A8Op{SplitHalf: splitHalf, Scales: q4s, Dst: gD, N: n})
+		splitHalf := repackW4A8SplitHalf(cloneBytes(q4), n, K, group)
+		splitOps = append(splitOps, w4a8Op{SplitHalf: splitHalf, Scales: q4s, Dst: gD, N: n})
 	}
 
 	var wsCanon Workspace
-	MatmulBTW4A8Batch(&wsCanon, a, M, K, group, canonOps)
+	matmulBTW4A8Batch(&wsCanon, a, M, K, group, canonOps)
 	var wsSplit Workspace
-	MatmulBTW4A8Batch(&wsSplit, a, M, K, group, splitOps)
+	matmulBTW4A8Batch(&wsSplit, a, M, K, group, splitOps)
 
 	for opIdx := range wantDst {
 		for i := range wantDst[opIdx] {
@@ -58,7 +58,7 @@ func TestMatmulBTW4A8Batch_splitHalfOnlyMatchesCanonical(t *testing.T) {
 // op and range, rather than silently produce a wrong answer or dereference
 // a nil W4/Scales three calls into w4a8Span. There is no batch-path tile
 // for split-half (or row4) at M>1 — WeightMat.MatmulBTW4A8Into's own M>1
-// tile is a method-level dispatch, not something MatmulBTW4A8Batch reaches.
+// tile is a method-level dispatch, not something matmulBTW4A8Batch reaches.
 func TestMatmulBTW4A8Batch_splitHalfOnlyM2Panics(t *testing.T) {
 	if !vnniDeclineCheck(t) {
 		return
@@ -67,12 +67,12 @@ func TestMatmulBTW4A8Batch_splitHalfOnlyM2Panics(t *testing.T) {
 	rng := rand.New(rand.NewPCG(22, 16))
 	const n = 8
 	q4, q4s := quantizeInt4Random(rng, n, K, group)
-	splitHalf := RepackW4A8SplitHalf(cloneBytes(q4), n, K, group)
+	splitHalf := repackW4A8SplitHalf(cloneBytes(q4), n, K, group)
 
 	const M = 2
 	a := mconsistentRand(rng, M*K)
 	dst := make([]float32, M*n)
-	op := W4A8Op{SplitHalf: splitHalf, Scales: q4s, Dst: dst, N: n}
+	op := w4a8Op{SplitHalf: splitHalf, Scales: q4s, Dst: dst, N: n}
 
 	defer func() {
 		r := recover()
@@ -82,5 +82,5 @@ func TestMatmulBTW4A8Batch_splitHalfOnlyM2Panics(t *testing.T) {
 		t.Logf("panicked as expected: %v", r)
 	}()
 	var ws Workspace
-	MatmulBTW4A8Batch(&ws, a, M, K, group, []W4A8Op{op})
+	matmulBTW4A8Batch(&ws, a, M, K, group, []w4a8Op{op})
 }

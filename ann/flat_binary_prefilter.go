@@ -1,12 +1,11 @@
 package ann
 
 import (
+	"github.com/townsendmerino/aikit/linalg/bitvec"
+	"github.com/townsendmerino/aikit/topk"
 	"runtime"
 	"slices"
 	"sync"
-
-	"github.com/townsendmerino/aikit/linalg"
-	"github.com/townsendmerino/aikit/topk"
 )
 
 // binaryPrefilter is the SimHash/sign-bit prefilter FlatBinary and FlatBinaryI8
@@ -60,7 +59,7 @@ func newBinaryPrefilter(vecs [][]float32, overquery int, center bool) binaryPref
 		return pf
 	}
 	pf.dim = len(vecs[0])
-	pf.words = linalg.PackedWords(pf.dim)
+	pf.words = bitvec.PackedWords(pf.dim)
 	if center {
 		// float64 accumulation: at n in the millions a float32 running sum loses
 		// the low bits of the mean, which is exactly the quantity the sign test
@@ -90,7 +89,7 @@ func newBinaryPrefilter(vecs [][]float32, overquery int, center bool) binaryPref
 		if len(v) != pf.dim {
 			continue
 		}
-		linalg.PackSignBitsRow(pf.codes[i*pf.words:(i+1)*pf.words], pf.centered(row, v))
+		bitvec.PackSignBitsRow(pf.codes[i*pf.words:(i+1)*pf.words], pf.centered(row, v))
 	}
 	return pf
 }
@@ -213,7 +212,7 @@ func (pf *binaryPrefilter) scanHist(qc []uint64, dists []uint16, hist []int32, l
 	for base := lo; base < hi; base += binBlockRows {
 		end := min(base+binBlockRows, hi)
 		blk := dists[base:end]
-		linalg.HammingRows(qc, pf.codes[base*pf.words:end*pf.words], pf.words, end-base, blk)
+		bitvec.HammingRows(qc, pf.codes[base*pf.words:end*pf.words], pf.words, end-base, blk)
 		for _, d := range blk {
 			hist[d]++
 		}
@@ -284,7 +283,7 @@ func (pf *binaryPrefilter) scanShard(qc []uint64, sc *binPrefilterScratch, lo, h
 	for base := lo; base < hi; base += binBlockRows {
 		end := min(base+binBlockRows, hi)
 		rows := end - base
-		linalg.HammingRows(qc, pf.codes[base*pf.words:end*pf.words], pf.words, rows, sc.dists[:rows])
+		bitvec.HammingRows(qc, pf.codes[base*pf.words:end*pf.words], pf.words, rows, sc.dists[:rows])
 		for j, d := range sc.dists[:rows] {
 			s := -float64(d)
 			if s > th && (keep == nil || keep(base+j)) {

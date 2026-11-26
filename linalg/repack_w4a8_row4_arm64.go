@@ -2,14 +2,18 @@
 
 package linalg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
+)
 
 // docs/task-w4a8-neon-bandwidth.md's item-3+4 harness (GO, 2026-08-23/24) —
 // promoted from harness-only test code to production once the grid recorded
 // GO. Repacks canonical int4-packed weights (QuantizeGroupInt4Row's
 // interleaved even/odd-nibble layout) into split-half + 4-row-interleaved:
 // no change to quant.go's canonical packer, no .giw/WeightMat change here —
-// RepackW4A8Row4/RepackW4A8Row4Scales (matmul_w4a8_row4_arm64.go) are the
+// RepackW4A8Row4/repackW4A8Row4Scales (matmul_w4a8_row4_arm64.go) are the
 // public entry points a caller's load-time repack should use; these are
 // their per-row/per-quad internals.
 //
@@ -42,7 +46,7 @@ func repackSplitHalfRow(packed []byte, K int) []byte {
 		panic("repackSplitHalfRow: K must be a multiple of 32")
 	}
 	out := make([]byte, len(packed))
-	RepackInt4SplitHalfRow(out, packed, K)
+	repackInt4SplitHalfRow(out, packed, K)
 	return out
 }
 
@@ -71,10 +75,10 @@ func repackSplitHalf4RowBlock(row0, row1, row2, row3 []byte, K int) []byte {
 	}
 	nGroups := K / 32
 	bpr := K / 2
-	requireLen("repackSplitHalf4RowBlock", "row0", len(row0), bpr)
-	requireLen("repackSplitHalf4RowBlock", "row1", len(row1), bpr)
-	requireLen("repackSplitHalf4RowBlock", "row2", len(row2), bpr)
-	requireLen("repackSplitHalf4RowBlock", "row3", len(row3), bpr)
+	shape.RequireLen("repackSplitHalf4RowBlock", "row0", len(row0), bpr)
+	shape.RequireLen("repackSplitHalf4RowBlock", "row1", len(row1), bpr)
+	shape.RequireLen("repackSplitHalf4RowBlock", "row2", len(row2), bpr)
+	shape.RequireLen("repackSplitHalf4RowBlock", "row3", len(row3), bpr)
 	out := make([]byte, 4*bpr)
 	for g := range nGroups {
 		base := g * 16
@@ -114,7 +118,7 @@ func interleaveScales4Row(s0, s1, s2, s3 []float32, nGroups int) []float32 {
 	return out
 }
 
-// RepackInt4Row4Quad writes ONE quad's worth of canonical int4 nibbles (src,
+// repackInt4Row4Quad writes ONE quad's worth of canonical int4 nibbles (src,
 // 4*bpr bytes: row0's bpr canonical bytes, then row1's, row2's, row3's,
 // contiguous — QuantizeGroupsInt4's own row-major layout) into dst (4*bpr
 // bytes) in row4 order: group g's 64-byte block at dst[g*64:g*64+64], row
@@ -123,28 +127,28 @@ func interleaveScales4Row(s0, s1, s2, s3 []float32, nGroups int) []float32 {
 // caller-supplied-buffer primitive (audit M-22) so a loader can drive it
 // without repackSplitHalf4RowBlock's 5 per-quad allocations (4 per-row
 // split-half temporaries + 1 output). RepackW4A8Row4 (the existing
-// out-of-place entry point) and RepackInt4Row4InPlace both call this now;
+// out-of-place entry point) and RepackInt4InPlace(LayoutRow4) both call this now;
 // repackSplitHalf4RowBlock itself is untouched — several existing tests and
 // repackSplitHalf4RowDeshared still exercise it directly.
 //
-// bpr = K/2 (K a multiple of 32, group=32 — Int4Row4Usable's own gate, the
+// bpr = K/2 (K a multiple of 32, group=32 — int4Row4Usable's own gate, the
 // row4 kernel's only supported shape).
 //
 // dst and src MUST NOT OVERLAP. The row4 and canonical layouts are
 // different permutations of the same bytes, so a same-buffer call would
 // read a source byte AFTER an earlier group's write had already overwritten
-// it — see RepackInt4Row4InPlace, which snapshots the live quad into
+// it — see RepackInt4InPlace(LayoutRow4), which snapshots the live quad into
 // scratch BEFORE calling this with dst=the live array, src=the scratch, so
 // that hazard never arises.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:4*K/2].
-func RepackInt4Row4Quad(dst, src []byte, K int) {
+func repackInt4Row4Quad(dst, src []byte, K int) {
 	if K%32 != 0 {
 		panic(fmt.Sprintf("linalg: RepackInt4Row4Quad requires K a multiple of 32, got %d", K))
 	}
 	bpr := K / 2
-	requireLen("RepackInt4Row4Quad", "dst", len(dst), 4*bpr)
-	requireLen("RepackInt4Row4Quad", "src", len(src), 4*bpr)
+	shape.RequireLen("repackInt4Row4Quad", "dst", len(dst), 4*bpr)
+	shape.RequireLen("repackInt4Row4Quad", "src", len(src), 4*bpr)
 	nGroups := K / 32
 	r0 := src[0*bpr : 1*bpr]
 	r1 := src[1*bpr : 2*bpr]
@@ -160,17 +164,17 @@ func RepackInt4Row4Quad(dst, src []byte, K int) {
 	}
 }
 
-// RepackInt4Row4ScalesQuad is RepackInt4Row4Quad's counterpart for the
+// repackInt4Row4ScalesQuad is repackInt4Row4Quad's counterpart for the
 // per-group f32 scales: src is 4*nGroups floats (row0's nGroups canonical
 // scales, then row1's, row2's, row3's), dst is 4*nGroups floats interleaved
 // — group g's 4 scales (row0..row3) at dst[4*g:4*g+4] — matching
-// RepackW4A8Row4Scales/interleaveScales4Row's existing layout. dst and src
-// must not overlap, same reason as RepackInt4Row4Quad.
+// repackW4A8Row4Scales/interleaveScales4Row's existing layout. dst and src
+// must not overlap, same reason as repackInt4Row4Quad.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:4*nGroups].
-func RepackInt4Row4ScalesQuad(dst, src []float32, nGroups int) {
-	requireLen("RepackInt4Row4ScalesQuad", "dst", len(dst), 4*nGroups)
-	requireLen("RepackInt4Row4ScalesQuad", "src", len(src), 4*nGroups)
+func repackInt4Row4ScalesQuad(dst, src []float32, nGroups int) {
+	shape.RequireLen("repackInt4Row4ScalesQuad", "dst", len(dst), 4*nGroups)
+	shape.RequireLen("repackInt4Row4ScalesQuad", "src", len(src), 4*nGroups)
 	for g := range nGroups {
 		for r := range 4 {
 			dst[4*g+r] = src[r*nGroups+g]

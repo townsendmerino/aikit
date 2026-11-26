@@ -38,11 +38,11 @@ import "sync"
 // threshold here; the parallel axis, chosen upstream, is what keeps it a win.
 func FusedQ8Applies(K, N int) bool {
 	if has2x8Kernel {
-		return HasFusedQ8Kernel && N%8 == 0
+		return hasFusedQ8Kernel && N%8 == 0
 	}
 	// Off arm64 the fusion is the N-STRIP form (fusedQ8Strip), which reuses
 	// blockedFill unchanged and so places no constraint on N (audit M-23).
-	return HasFusedQ8Kernel
+	return hasFusedQ8Kernel
 }
 
 // kBlockFusedQ8 picks the k-tile so the fused reduction order matches the reference

@@ -11,7 +11,7 @@ import (
 )
 
 // TestMatmulBTW4A8Row4TileInto_bitIdenticalToCanonical is the S-01 tile's own
-// gate, held against the canonical M>1 path (MatmulBTW4A8Into over the SAME
+// gate, held against the canonical M>1 path (matmulBTW4A8Into over the SAME
 // logical weights in their canonical packing) rather than against the row4 M=1
 // kernel — so it proves the thing callers care about, which is that swapping the
 // dispatch changes no bit of any logit.
@@ -41,7 +41,7 @@ func TestMatmulBTW4A8Row4TileInto_bitIdenticalToCanonical(t *testing.T) {
 		}
 		q4, q4s := QuantizeGroupsInt4(w, N, K, group)
 		row4 := RepackW4A8Row4(q4, N, K, group)
-		row4s := RepackW4A8Row4Scales(q4s, N, K, group)
+		row4s := repackW4A8Row4Scales(q4s, N, K, group)
 
 		for _, M := range []int{1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13} {
 			a := make([]float32, M*K)
@@ -51,8 +51,8 @@ func TestMatmulBTW4A8Row4TileInto_bitIdenticalToCanonical(t *testing.T) {
 			var wsWant, wsGot Workspace
 			want := make([]float32, M*N)
 			got := make([]float32, M*N)
-			MatmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
-			MatmulBTW4A8Row4TileInto(&wsGot, a, row4, row4s, got, M, K, N, group)
+			matmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
+			matmulBTW4A8Row4TileInto(&wsGot, a, row4, row4s, got, M, K, N, group)
 			for i := range got {
 				if got[i] != want[i] {
 					t.Fatalf("K=%d N=%d M=%d idx=%d (row %d, col %d): tile %v != canonical %v (diff %v)",
@@ -83,19 +83,19 @@ func TestMatmulBTW4A8Row4TileInto_parallelMatchesSerial(t *testing.T) {
 	}
 	q4, q4s := QuantizeGroupsInt4(w, N, K, group)
 	row4 := RepackW4A8Row4(q4, N, K, group)
-	row4s := RepackW4A8Row4Scales(q4s, N, K, group)
+	row4s := repackW4A8Row4Scales(q4s, N, K, group)
 
 	var wsSerial Workspace
 	wsSerial.SetThreshold(1 << 62) // never parallelize
 	serial := make([]float32, M*N)
-	MatmulBTW4A8Row4TileInto(&wsSerial, a, row4, row4s, serial, M, K, N, group)
+	matmulBTW4A8Row4TileInto(&wsSerial, a, row4, row4s, serial, M, K, N, group)
 
 	for _, workers := range []int{1, 2, 3, 4, 8} {
 		var ws Workspace
 		ws.SetThreshold(1)
 		ws.SetWorkers(workers)
 		got := make([]float32, M*N)
-		MatmulBTW4A8Row4TileInto(&ws, a, row4, row4s, got, M, K, N, group)
+		matmulBTW4A8Row4TileInto(&ws, a, row4, row4s, got, M, K, N, group)
 		for i := range got {
 			if got[i] != serial[i] {
 				t.Fatalf("workers=%d idx=%d: %v != serial %v", workers, i, got[i], serial[i])
@@ -121,7 +121,7 @@ func TestMatmulBTW4A8Row4TileInto_zeroActivationRow(t *testing.T) {
 	}
 	q4, q4s := QuantizeGroupsInt4(w, N, K, group)
 	row4 := RepackW4A8Row4(q4, N, K, group)
-	row4s := RepackW4A8Row4Scales(q4s, N, K, group)
+	row4s := repackW4A8Row4Scales(q4s, N, K, group)
 
 	for _, zeroRow := range []int{2, 5} {
 		const M = 7
@@ -135,8 +135,8 @@ func TestMatmulBTW4A8Row4TileInto_zeroActivationRow(t *testing.T) {
 		var wsWant, wsGot Workspace
 		want := make([]float32, M*N)
 		got := make([]float32, M*N)
-		MatmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
-		MatmulBTW4A8Row4TileInto(&wsGot, a, row4, row4s, got, M, K, N, group)
+		matmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
+		matmulBTW4A8Row4TileInto(&wsGot, a, row4, row4s, got, M, K, N, group)
 		for i := range got {
 			if got[i] != want[i] {
 				t.Fatalf("zeroRow=%d idx=%d (row %d): tile %v != canonical %v", zeroRow, i, i/N, got[i], want[i])
@@ -171,11 +171,11 @@ func TestMatmulBTW4A8Row4_rejectsTooSmallKAtEntry(t *testing.T) {
 		want string
 	}{
 		{"tile_M4", func(ws *Workspace) {
-			MatmulBTW4A8Row4TileInto(ws, nil, nil, nil, make([]float32, 4*N), 4, 0, N, group)
-		}, "MatmulBTW4A8Row4TileInto requires K >= group=32"},
+			matmulBTW4A8Row4TileInto(ws, nil, nil, nil, make([]float32, 4*N), 4, 0, N, group)
+		}, "matmulBTW4A8Row4TileInto requires K >= group=32"},
 		{"row4_M1", func(ws *Workspace) {
-			MatmulBTW4A8Row4Into(ws, nil, nil, nil, make([]float32, N), 1, 0, N, group)
-		}, "MatmulBTW4A8Row4Into requires K >= group=32"},
+			matmulBTW4A8Row4Into(ws, nil, nil, nil, make([]float32, N), 1, 0, N, group)
+		}, "matmulBTW4A8Row4Into requires K >= group=32"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			defer func() {

@@ -8,7 +8,7 @@ import (
 
 // BenchmarkMatmulBTW4A8Canonical exercises the CANONICAL-layout W4A8 span —
 // the path taken by paged MoE experts, any tensor that declined the row4
-// repack (K%32, N%4), MatmulBTW4A8Batch at M>1 and the uniform
+// repack (K%32, N%4), matmulBTW4A8Batch at M>1 and the uniform
 // WeightMat.MatmulBTInto. Audit M-02: arm64 had no tile here, so each output
 // was one M=1 GEMV per (row, column) pair.
 //
@@ -31,7 +31,7 @@ func BenchmarkMatmulBTW4A8Canonical(b *testing.B) {
 			var ws Workspace
 			b.ResetTimer()
 			for b.Loop() {
-				MatmulBTW4A8Into(&ws, a, packed, wScales, dst, M, K, N, 32)
+				matmulBTW4A8Into(&ws, a, packed, wScales, dst, M, K, N, 32)
 			}
 			macs := int64(M) * int64(K) * int64(N)
 			b.ReportMetric(float64(macs)/(float64(b.Elapsed().Nanoseconds())/float64(b.N)), "GMAC/s")

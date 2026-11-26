@@ -1,6 +1,10 @@
 package linalg
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/townsendmerino/aikit/internal/half"
+)
 
 // PER-GROUP ACTIVATION QUANTIZATION — the Go reference (goinfer
 // docs/tasks/task-actquant-pergroup-2026-09.md, goinfer queue H2).
@@ -24,7 +28,7 @@ import "fmt"
 var actQuantGroup int
 
 // SetActQuantGroup selects per-group activation scales for every W8A8/W4A8 matmul entry point
-// (MatmulBTW8A8Into/Batch, MatmulBTW4A8Into/Batch, MatmulBTW4A8Row4Into and
+// (matmulBTW8A8Into/Batch, matmulBTW4A8Into/Batch, matmulBTW4A8Row4Into and
 // WeightMat.MatmulBTW4A8Into): 0 restores the per-row kernels, g > 0 routes those calls through
 // the Go reference with one int8 scale per g inputs. For W4A8, g and the weight group must divide
 // one another.
@@ -48,9 +52,6 @@ func (w *Workspace) SetActQuantGroup(g int) {
 	}
 	w.actGroup = g
 }
-
-// ActQuantGroup reports this workspace's own activation group size (0 = defer to the process-wide one).
-func (w *Workspace) ActQuantGroup() int { return w.actGroup }
 
 // actGroupFor is the activation group size a matmul through ws uses: the workspace's own when set,
 // else the process-wide one.
@@ -140,7 +141,7 @@ func quantizeActGrouped(ws *Workspace, g int, a []float32, M, K int) ([]int8, []
 	return aq, aS, nG
 }
 
-// matmulW8A8GroupedRef is MatmulBTW8A8Into with per-group activation scales:
+// matmulW8A8GroupedRef is matmulBTW8A8Into with per-group activation scales:
 // dst[m,n] = bScales[n] · Σ_g aS[m,g] · Σ_{k∈g} aq[m,k]·bQ[n,k].
 func matmulW8A8GroupedRef(ws *Workspace, g int, a []float32, bQ []int8, bScales, dst []float32, M, K, N int) {
 	aq, aS, nG := quantizeActGrouped(ws, g, a, M, K)
@@ -171,7 +172,7 @@ func (l int4Layout) scaleAt(i int) float32 {
 	if l.wS != nil {
 		return l.wS[i]
 	}
-	return f16ToF32(l.wS16[i])
+	return half.ToF32(l.wS16[i])
 }
 
 // row4ScaleAt is the f32 value of row4-interleaved scale i.
@@ -179,7 +180,7 @@ func (l int4Layout) row4ScaleAt(i int) float32 {
 	if l.r4S != nil {
 		return l.r4S[i]
 	}
-	return f16ToF32(l.r4S16[i])
+	return half.ToF32(l.r4S16[i])
 }
 
 func (l int4Layout) row(n int, codes []int8, scales []float32) {
@@ -349,9 +350,9 @@ func matmulW8A8Grouped(ws *Workspace, g int, a []float32, bQ []int8, bScales, ds
 	parallelFor(ws, M*N*K, N, span)
 }
 
-// matmulW8A8GroupedBatch is MatmulBTW8A8Batch with per-group activation scales: quantizes activations
+// matmulW8A8GroupedBatch is matmulBTW8A8Batch with per-group activation scales: quantizes activations
 // ONCE for the whole batch and executes all ops under ONE parallel fan-out across totalN columns.
-func matmulW8A8GroupedBatch(ws *Workspace, g int, a []float32, ops []W8A8Op, M, K, totalN int) {
+func matmulW8A8GroupedBatch(ws *Workspace, g int, a []float32, ops []w8a8Op, M, K, totalN int) {
 	if g != 32 || K%32 != 0 {
 		for _, op := range ops {
 			matmulW8A8GroupedRef(ws, g, a, op.BQ, op.Scales, op.Dst, M, K, op.N)

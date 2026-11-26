@@ -19,7 +19,7 @@ func dotW4A8SplitHalfTile4RowAVX2(act *int8, actStride int, packed *byte, scales
 // matmulBTW4A8SplitHalfMultiInto is matmulBTW4A8SplitHalfInto's M>1 sibling
 // (audit M-22 follow-up: split-half M>1, the prerequisite for a split-half-
 // only WeightMat to serve prefill). Structured exactly like
-// MatmulBTW4A8Into/w4a8Span: quantize all M activation rows once, then for
+// matmulBTW4A8Into/w4a8Span: quantize all M activation rows once, then for
 // each column span run the tile over the M&^3 tile-eligible rows and the
 // per-row split-half kernel over the M%4 remainder — the SAME shape
 // w4a8Span uses for canonical, just with w4a8TileRows/w4a8SpanRows'
@@ -28,7 +28,7 @@ func dotW4A8SplitHalfTile4RowAVX2(act *int8, actStride int, packed *byte, scales
 // K%32==0 is a hard guard, not an assumption: unlike the canonical kernel,
 // neither the tile nor the M=1 split-half kernel has a ragged-tail path
 // (see matmulBTW4A8SplitHalfInto's own comment) — a split-half-only
-// WeightMat can only exist when Int4SplitHalfUsable already enforced this,
+// WeightMat can only exist when int4SplitHalfUsable already enforced this,
 // but a future caller could reach this function directly, so it is checked
 // again here rather than assumed.
 func matmulBTW4A8SplitHalfMultiInto(ws *Workspace, a []float32, w4sh []byte, wScales, dst []float32, M, K, N, group int) {

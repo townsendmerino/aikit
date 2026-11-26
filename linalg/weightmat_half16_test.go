@@ -91,7 +91,7 @@ func TestWeightMat_half16_rowKindAccessors(t *testing.T) {
 		if bf {
 			wm, wantKind = WrapBF16(bits, N, K), "bf16"
 		}
-		if wm.Kind() != wantKind || wm.Rows() != N || wm.Cols() != K {
+		if wm.Kind().String() != wantKind || wm.Rows() != N || wm.Cols() != K {
 			t.Fatalf("Kind/Rows/Cols = %q %d %d", wm.Kind(), wm.Rows(), wm.Cols())
 		}
 		if _, ok := wm.F32(); ok {
@@ -199,4 +199,14 @@ func BenchmarkWeightMat_half16_cold(b *testing.B) {
 			bfs[i%copies].MatmulBT(a, dst, 1)
 		}
 	})
+}
+
+// TestKind_stringsAreStable: each Kind's String is the name consumers compare, byte for byte.
+func TestKind_stringsAreStable(t *testing.T) {
+	for k, want := range map[Kind]string{KindNone: "", KindF32: "f32", KindF16: "f16", KindBF16: "bf16", KindInt8: "int8",
+		KindInt4: "int4", KindQ4K: "q4k", KindQ5K: "q5k", KindQ6K: "q6k"} {
+		if got := k.String(); got != want {
+			t.Errorf("%q.String() = %q, want %q", string(k), got, want)
+		}
+	}
 }

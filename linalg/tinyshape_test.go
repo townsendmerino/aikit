@@ -1,8 +1,10 @@
 package linalg
 
 import (
+	"go/token"
 	"maps"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/townsendmerino/aikit/internal/kernreg"
@@ -41,9 +43,13 @@ func TestTinyShapes_everyExportedEntryPoint(t *testing.T) {
 // TestTinyShapes_complete fails on an exported name of linalg with neither a tiny-shape
 // adapter nor a listed reason, and on a listed name that no longer exists.
 func TestTinyShapes_complete(t *testing.T) {
+	// An adapter of an unexported function (one LS2 or LS6 unexported, still swept for the
+	// kernel it reaches) is not part of the completeness check.
 	var swept []string
 	for _, ad := range tinyAdapters() {
-		swept = append(swept, ad.Symbol)
+		if i := strings.LastIndexByte(ad.Symbol, '.'); token.IsExported(ad.Symbol[i+1:]) {
+			swept = append(swept, ad.Symbol)
+		}
 	}
 	probs, err := kernreg.ExportedProblems(".", swept, tinyExempt())
 	if err != nil {
@@ -65,4 +71,13 @@ var tinyGroups = []int{0, 1, 2, 31, 32, 33, 63, 64, 65, 127, 128, 129}
 // shapeLabels returns a Label for an adapter whose n indexes shapes.
 func shapeLabels[S interface{ String() string }](shapes []S) func(int) string {
 	return func(i int) string { return shapes[i].String() }
+}
+
+// shapeIndices is 0..n-1, the Lengths of an adapter whose n indexes a list of shapes.
+func shapeIndices(n int) []int {
+	out := make([]int, n)
+	for i := range out {
+		out[i] = i
+	}
+	return out
 }

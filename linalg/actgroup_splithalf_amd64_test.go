@@ -18,11 +18,11 @@ func TestActGroup_splitHalfKernelMatchesReference(t *testing.T) {
 	a := agRandMat(r, K)
 	a[77] = 400 // an outlier, so per-group and per-row genuinely differ
 	wm := QuantizeInt4(agRandMat(r, N*K), N, K, 32)
-	q4, s4, _, _ := wm.Int4()
+	q4, s4, _, _ := wm.int4Widened()
 	withActGroup(t, 32)
 	ref := make([]float32, N)
 	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, 1, N)
-	sh, ok := RepackInt4SplitHalfInPlace(append([]byte(nil), q4...), s4, N, K, 32)
+	sh, ok := repackInt4SplitHalfInPlaceF32(append([]byte(nil), q4...), s4, N, K, 32)
 	if !ok {
 		t.Skip("split-half repack declined")
 	}
@@ -48,7 +48,7 @@ func TestActGroup_splitHalfMultiRow(t *testing.T) {
 	withActGroup(t, 32)
 	ref := make([]float32, M*N)
 	matmulW4A8GroupedRef(new(Workspace), 32, a, int4Layout{w4: q4, wS: s4, group: 32, K: K}, ref, M, N)
-	sh, ok := RepackInt4SplitHalfInPlace(append([]byte(nil), q4...), s4, N, K, 32)
+	sh, ok := repackInt4SplitHalfInPlaceF32(append([]byte(nil), q4...), s4, N, K, 32)
 	if !ok {
 		t.Skip("split-half repack declined")
 	}
@@ -77,7 +77,7 @@ func TestActGroup_splitHalfScaledKernelOddGroups(t *testing.T) {
 		QuantizeActivationsGroupedInto(aq, aS, a, 1, K, 32)
 		q4, s4 := QuantizeGroupsInt4(agRandMat(r, K), 1, K, 32)
 		f16RoundScales(s4) // the WeightMat stores binary16 scales
-		sh := RepackW4A8SplitHalf(q4, 1, K, 32)
+		sh := repackW4A8SplitHalf(q4, 1, K, 32)
 		got := dotW4A8SplitHalfScaledAVX2(&aq[0], &sh[0], &s4[0], &aS[0], nG)
 		var want float64
 		for k := range K {

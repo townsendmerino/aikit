@@ -37,7 +37,7 @@ func TestDotW4A8FoldSDOTv2_matchesOracle(t *testing.T) {
 			}
 			packed, scales := QuantizeGroupsInt4(w, 1, K, group)
 			sumAct := make([]int32, nGroups)
-			SumActGroupsInto(sumAct, act, 1, K, group)
+			sumActGroupsInto(sumAct, act, 1, K, group)
 
 			want := dotW4A8UncenteredScalar(act, packed, scales, sumAct, group, K)
 			got := dotW4A8FoldSDOTv2(&act[0], &packed[0], &scales[0], &sumAct[0], nGroups)
@@ -290,7 +290,7 @@ func TestDotW4A8SplitHalf4Row_bitIdenticalToCanonical(t *testing.T) {
 	// The structural argument says a group-count-dependent residue cannot exist —
 	// the kernel's accumulator layout does not vary with nGroups — and the
 	// production-shaped sibling gate (TestMatmulBTW4A8Row4Into_bitIdenticalTo-
-	// MatmulBTW4A8Into, which already runs {1536, 8960} and {8960, 1536}) covers
+	// matmulBTW4A8Into, which already runs {1536, 8960} and {8960, 1536}) covers
 	// the same ground one level up. This adds the two production counts to the RAW
 	// KERNEL gate anyway, because "an argument plus a different test" is weaker
 	// than the same test executing the shape, and it costs two iterations.

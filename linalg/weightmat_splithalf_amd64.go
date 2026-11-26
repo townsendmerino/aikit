@@ -16,10 +16,10 @@ import (
 //
 // Returns false — not an error, just "this tensor or this core does not qualify" — when w is not
 // int4-resident, AVX2 is unavailable, the group size is not 32, or cols is not a multiple of 32.
-// MatmulBTW4A8Into below then keeps using the canonical path transparently.
+// matmulBTW4A8Into below then keeps using the canonical path transparently.
 //
 // Scales are shared, not repacked: split-half permutes nibbles within a group and never reorders
-// groups, so w.q4s serves both layouts (unlike row4, which needs RepackW4A8Row4Scales).
+// groups, so w.q4s serves both layouts (unlike row4, which needs repackW4A8Row4Scales).
 func (w *WeightMat) RepackInt4SplitHalf() bool {
 	// !cpufeat.HasAVX512VNNIVL is not caution, it is correctness in both currencies.
 	//
@@ -49,7 +49,7 @@ func (w *WeightMat) RepackInt4SplitHalf() bool {
 	if w.group != 32 || w.cols%32 != 0 {
 		return false
 	}
-	w.q4SplitHalf = RepackW4A8SplitHalf(w.q4, w.rows, w.cols, w.group)
+	w.q4SplitHalf = repackW4A8SplitHalf(w.q4, w.rows, w.cols, w.group)
 	return true
 }
 
@@ -79,10 +79,10 @@ func (w *WeightMat) MatmulBTW4A8Into(ws *Workspace, a, dst []float32, M int) {
 	w.matmulBTW4A8Q(ws, &q, dst, M)
 }
 
-// w4a8ActGroup is the activation group MatmulBTW4A8Into quantizes with (R-13).
+// w4a8ActGroup is the activation group matmulBTW4A8Into quantizes with (R-13).
 func (w *WeightMat) w4a8ActGroup(ws *Workspace, _ int) int { return w.groupFor(ws) }
 
-// matmulBTW4A8Q is MatmulBTW4A8Into after its activation quantization: the dispatch it and MatmulBTW4A8PreInto
+// matmulBTW4A8Q is matmulBTW4A8Into after its activation quantization: the dispatch it and MatmulBTW4A8PreInto
 // share (R-13).
 func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) {
 	if q.Group > 0 {
@@ -96,7 +96,7 @@ func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) 
 	// audit M-22: structurally unreachable for a successfully-constructed
 	// split-half-only WeightMat — the branch above now catches q4SplitHalf !=
 	// nil at every M, so this is reached only by a hand-built WeightMat{} that
-	// bypasses RepackInt4SplitHalfInPlace/WrapInt4SplitHalfOnly's validation
+	// bypasses RepackInt4InPlace(LayoutSplitHalf)/WrapInt4(LayoutSplitHalf)'s validation
 	// (no split-half AND no canonical). A canonical-only or "both" WeightMat
 	// never reaches this: q4SplitHalf is nil for canonical-only, and w.q4 is
 	// non-nil for "both", so the call below is identical to before this check
@@ -108,10 +108,10 @@ func (w *WeightMat) matmulBTW4A8Q(ws *Workspace, q *ActQ, dst []float32, M int) 
 	matmulBTW4A8F16Q(ws, q, w.q4, w.q4s16, dst, M, w.cols, w.rows, w.group)
 }
 
-// matmulBTW4A8SplitHalfInto is MatmulBTW4A8Into's M=1 split-half twin. It mirrors that function's
+// matmulBTW4A8SplitHalfInto is matmulBTW4A8Into's M=1 split-half twin. It mirrors that function's
 // structure deliberately — same activation quantization, same serial/parallel split on ws.thr(),
 // same span shape — so the two stay comparable when either is changed; arm64's
-// MatmulBTW4A8Row4Into duplicates the same skeleton for the same reason.
+// matmulBTW4A8Row4Into duplicates the same skeleton for the same reason.
 func matmulBTW4A8SplitHalfInto(ws *Workspace, a []float32, w4sh []byte, wScales, dst []float32, K, N, group int) {
 	const M = 1
 	checkMatmulW4A8("MatmulBTW4A8SplitHalf", len(a), len(w4sh), len(wScales), len(dst), M, K, N, group)
@@ -155,9 +155,9 @@ func w4a8SplitHalfSpan(aq []int8, aScale float32, w4sh []byte, wScales, dst []fl
 // splitHalfUsable reports whether this CPU can safely dispatch the
 // split-half AVX2 kernel — the same cpufeat.HasAVX2 && !cpufeat.HasAVX512VNNIVL gate
 // RepackInt4SplitHalf's own body applies (see its comment for why a VNNI
-// host declines rather than downgrading). Exported via Int4SplitHalfUsable
-// (weightmat.go, audit M-22) for a caller building a repacked-only
-// WeightMat, which has no canonical to fall back to if this is false.
+// host declines rather than downgrading). A caller sees it through
+// PreferredInt4Layout (via int4SplitHalfUsable), which a repacked-only
+// WeightMat needs, having no canonical to fall back to if this is false.
 func splitHalfUsable() bool { return cpufeat.HasAVX2 && !cpufeat.HasAVX512VNNIVL }
 
 // w4a8BatchSplitHalfSpan is w4a8SplitHalfSpan reached from the portable batch

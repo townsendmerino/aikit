@@ -7,6 +7,10 @@ import (
 	"math/rand/v2"
 	"testing"
 	"time"
+
+	"github.com/townsendmerino/aikit/linalg/attn"
+	"github.com/townsendmerino/aikit/linalg/bitvec"
+	"github.com/townsendmerino/aikit/linalg/elem"
 )
 
 // The roofline census: each kernel perfgate or goinfer's kernelprint names, at one cache-resident
@@ -113,9 +117,9 @@ func censusInt8(M int, w8a8 bool) func(*rand.Rand, int) censusCase {
 		for i := range s {
 			s[i] = 0.01
 		}
-		run := func() { MatmulBTQ8Into(ws, a, q, s, dst, M, K, N) }
+		run := func() { matmulBTQ8Into(ws, a, q, s, dst, M, K, N) }
 		if w8a8 {
-			run = func() { MatmulBTW8A8Into(ws, a, q, s, dst, M, K, N) }
+			run = func() { matmulBTW8A8Into(ws, a, q, s, dst, M, K, N) }
 		}
 		return censusCase{run, int64(N*K + 4*N + 4*M*K), int64(M * K * N), fmt.Sprintf("M%d_K%d_N%d", M, K, N)}
 	}
@@ -138,14 +142,14 @@ func censusInt4(M int, repacked bool) func(*rand.Rand, int) censusCase {
 			return c
 		}
 		layout := "row4"
-		wm, ok := RepackInt4Row4InPlaceF16(q4, s16, N, K, g)
+		wm, ok := repackInt4Row4InPlace(q4, s16, N, K, g)
 		if !ok {
 			layout = "splithalf"
-			wm, ok = RepackInt4SplitHalfInPlaceF16(q4, s16, N, K, g)
+			wm, ok = repackInt4SplitHalfInPlace(q4, s16, N, K, g)
 		}
 		if !ok {
 			layout = "canonical"
-			wm = WrapInt4F16(q4, s16, N, K, g)
+			wm = wrapInt4Canonical(q4, s16, N, K, g)
 		}
 		c.run = func() { wm.MatmulBTW4A8Into(ws, a, dst, M) }
 		c.shape += "_" + layout
@@ -209,22 +213,22 @@ func censusAttn(qk, f16 bool, G int) func(*rand.Rand, int) censusCase {
 		switch {
 		case qk && f16:
 			dst := make([]float32, G*depth)
-			c.run = func() { MatmulQKAcc64F16(q, cache16, dst, G, hd, depth, 0, hd) }
+			c.run = func() { attn.MatmulQKAcc64F16(q, cache16, dst, G, hd, depth, 0, hd) }
 		case !qk && f16:
 			dst := make([]float32, G*hd)
-			c.run = func() { MatmulAVAcc64F16(scores, cache16, dst, acc, G, depth, hd, 0, hd) }
+			c.run = func() { attn.MatmulAVAcc64F16(scores, cache16, dst, acc, G, depth, hd, 0, hd) }
 		case qk && G > 1:
 			dst := make([]float32, G*depth)
-			c.run = func() { MatmulQKAcc64Group(q, cache32, dst, G, hd, depth, 0, hd) }
+			c.run = func() { attn.MatmulQKAcc64Group(q, cache32, dst, G, hd, depth, 0, hd) }
 		case !qk && G > 1:
 			dst := make([]float32, G*hd)
-			c.run = func() { MatmulAVAcc64Group(scores, cache32, dst, acc, G, depth, hd, 0, hd) }
+			c.run = func() { attn.MatmulAVAcc64Group(scores, cache32, dst, acc, G, depth, hd, 0, hd) }
 		case qk:
 			dst := make([]float32, depth)
-			c.run = func() { MatmulQKAcc64(q, cache32, dst, 1, hd, depth, 0, hd) }
+			c.run = func() { attn.MatmulQKAcc64(q, cache32, dst, 1, hd, depth, 0, hd) }
 		default:
 			dst := make([]float32, hd)
-			c.run = func() { MatmulAVAcc64(scores, cache32, dst, acc, 1, depth, hd, 0, hd) }
+			c.run = func() { attn.MatmulAVAcc64(scores, cache32, dst, acc, 1, depth, hd, 0, hd) }
 		}
 		if G > 1 {
 			c.bytes += int64(4 * G * depth)
@@ -238,14 +242,14 @@ func censusFused(contract bool) func(*rand.Rand, int) censusCase {
 		const hd = 80
 		np := max(16, budget/(3*hd*4))
 		qh, kh, vBlk, ch := censusF32(r, np*hd), censusF32(r, np*hd), censusF32(r, np*hd), make([]float32, np*hd)
-		sc := NewFusedAttnScratch(np, hd)
+		sc := attn.NewFusedAttnScratch(np, hd)
 		lo, hi := make([]int, np), make([]int, np)
 		for i := range np {
 			hi[i] = np - 1
 		}
-		fn := AttendTileFused
+		fn := attn.AttendTileFused
 		if contract {
-			fn = AttendTileFusedContractExp
+			fn = attn.AttendTileFusedContractExp
 		}
 		return censusCase{func() { fn(MatmulBT, qh, kh, vBlk, ch, sc, np, hd, np, 1/8.944, lo, hi) }, int64(3 * np * hd * 4), int64(2 * np * np * hd), fmt.Sprintf("np%d_hd%d", np, hd)}
 	}
@@ -296,9 +300,9 @@ func censusEntries() []censusEntry {
 		e("f64", "MatmulAVAcc64Group_G4", censusAttn(false, false, 4)),
 		{class: "f32", label: "AttendTileFused", resident: censusFused(false), skip: fusedSkip},
 		{class: "f32", label: "AttendTileFusedContractExp", resident: censusFused(true), skip: fusedSkip},
-		e("stream", "SoftmaxRowContractInto", censusElem(4, f32In(SoftmaxRowContractInto))),
-		e("stream", "SiLUContractInto", censusElem(4, f32In(SiLUContractInto))),
-		e("stream", "GELUContractInto", censusElem(4, f32In(GELUContractInto))),
+		e("stream", "SoftmaxRowContractInto", censusElem(4, f32In(elem.SoftmaxRowContractInto))),
+		e("stream", "SiLUContractInto", censusElem(4, f32In(elem.SiLUContractInto))),
+		e("stream", "GELUContractInto", censusElem(4, f32In(elem.GELUContractInto))),
 		e("stream", "QuantizeRowInt8", censusElem(4, func(r *rand.Rand, n int) func() {
 			src, q := censusF32(r, n), make([]int8, n)
 			return func() { QuantizeRowInt8(src, q) }
@@ -331,7 +335,7 @@ func censusEntries() []censusEntry {
 				}
 			}
 			dst := make([]uint16, rows)
-			return func() { HammingRows(u[:words], u[words:], words, rows, dst) }
+			return func() { bitvec.HammingRows(u[:words], u[words:], words, rows, dst) }
 		})),
 	}
 }

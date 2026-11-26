@@ -30,7 +30,7 @@ func TestWeightMatSplitHalf_matchesCanonical(t *testing.T) {
 	// hide it. (This is how the VNNI problem was found: before the gate existed,
 	// this test passed on Zen 2 and failed on a VNNI runner at rel 1.09e-4.)
 	if cpufeat.HasAVX512VNNIVL {
-		probe := WrapInt4(make([]byte, 32*16), make([]float32, 32), 32, 32, 32)
+		probe := wrapInt4F32(make([]byte, 32*16), make([]float32, 32), 32, 32, 32)
 		if probe.RepackInt4SplitHalf() {
 			t.Fatal("VNNI host: RepackInt4SplitHalf ACCEPTED, but canonical dispatches to the VNNI tier here — the layout would downgrade the kernel and diverge numerically")
 		}
@@ -49,8 +49,8 @@ func TestWeightMatSplitHalf_matchesCanonical(t *testing.T) {
 		}
 		packed, scales := QuantizeGroupsInt4(w, sh.rows, sh.cols, group)
 
-		canon := WrapInt4(packed, scales, sh.rows, sh.cols, group)
-		split := WrapInt4(packed, scales, sh.rows, sh.cols, group)
+		canon := wrapInt4F32(packed, scales, sh.rows, sh.cols, group)
+		split := wrapInt4F32(packed, scales, sh.rows, sh.cols, group)
 		if !split.RepackInt4SplitHalf() {
 			t.Fatalf("rows=%d cols=%d: RepackInt4SplitHalf declined a qualifying tensor", sh.rows, sh.cols)
 		}
@@ -94,7 +94,7 @@ func TestWeightMatSplitHalf_canonicalUntouched(t *testing.T) {
 	// hide it. (This is how the VNNI problem was found: before the gate existed,
 	// this test passed on Zen 2 and failed on a VNNI runner at rel 1.09e-4.)
 	if cpufeat.HasAVX512VNNIVL {
-		probe := WrapInt4(make([]byte, 32*16), make([]float32, 32), 32, 32, 32)
+		probe := wrapInt4F32(make([]byte, 32*16), make([]float32, 32), 32, 32, 32)
 		if probe.RepackInt4SplitHalf() {
 			t.Fatal("VNNI host: RepackInt4SplitHalf ACCEPTED, but canonical dispatches to the VNNI tier here — the layout would downgrade the kernel and diverge numerically")
 		}
@@ -109,7 +109,7 @@ func TestWeightMatSplitHalf_canonicalUntouched(t *testing.T) {
 	packed, scales := QuantizeGroupsInt4(w, rows, cols, group)
 	before := append([]byte(nil), packed...)
 
-	m := WrapInt4(packed, scales, rows, cols, group)
+	m := wrapInt4F32(packed, scales, rows, cols, group)
 	if !m.RepackInt4SplitHalf() {
 		t.Fatal("RepackInt4SplitHalf declined a qualifying tensor")
 	}

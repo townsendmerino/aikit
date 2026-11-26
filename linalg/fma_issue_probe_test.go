@@ -121,7 +121,7 @@ func TestFMAIssueProbe(t *testing.T) {
 	// §1.2 physical-plausibility sanity check: the alone-loop is scalar,
 	// single-lane math.FMA — it must be slower (higher ns/FMA) than the
 	// SIMD-width-saturating assembly ceiling, or the measurement is bogus.
-	if gflops, ok := MeasuredFMAPeakGFLOPS(); ok {
+	if gflops, ok := measuredFMAPeakGFLOPS(); ok {
 		peakNsPerFMA := 2.0 / gflops // 1 FMA = 2 flops
 		t.Logf("context: measured SIMD FMA peak %.1f GFLOPS = %.4f ns/FMA (vector-width-saturating; scalar alone-loop above should be slower)", gflops, peakNsPerFMA)
 		if aloneSlope < peakNsPerFMA {

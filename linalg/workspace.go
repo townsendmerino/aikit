@@ -26,13 +26,17 @@ type Workspace struct {
 	deq []float32
 	// i32 is the S-05 lane-sum correction for the M=1 row4 W4A8 path
 	// (w4a8LaneCorrNeg8: 4 int32 per 32-k group of one activation row), per call,
-	// consumed within MatmulBTW4A8Row4Into. Its own buffer for the same reason deq
+	// consumed within matmulBTW4A8Row4Into. Its own buffer for the same reason deq
 	// is: it must never alias the activation scales in f32. Also the Q4_K matmul's
 	// per-group activation sums (q4k.go), a different call, so never live at once.
 	i32 []int32
-	// batchQ holds MatmulBTW4A8Batch's activation, quantized once for every op (R-14), apart from the scratch the
+	// batchQ holds matmulBTW4A8Batch's activation, quantized once for every op (R-14), apart from the scratch the
 	// kernels draw on.
 	batchQ ActQ
+	// batchW8 and batchW4 are MatmulBTBatchInto's per-op descriptors, rebuilt from the WeightMats on every call and
+	// cleared after it, so a steady-state batch allocates nothing and the workspace keeps no weight alive.
+	batchW8 []w8a8Op
+	batchW4 []w4a8Op
 	// q4kSum is the Q4_K matmul's per-group aS·Σaq (q4k.go): its own buffer, since f32
 	// holds that call's activation scales.
 	q4kSum       []float32
@@ -148,6 +152,6 @@ func (w *Workspace) q4kSumBuf(n int) []float32 {
 func (w *Workspace) QuantizeActivations(a []float32, M, K int) (aq []int8, scales []float32) {
 	aq = w.int8Buf(M * K)
 	scales = w.f32Buf(M)
-	QuantizeActivationsInto(aq, scales, a, M, K)
+	quantizeActivationsInto(aq, scales, a, M, K)
 	return aq, scales
 }

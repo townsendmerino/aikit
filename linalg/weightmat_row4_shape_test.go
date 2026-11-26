@@ -3,34 +3,21 @@
 package linalg
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/townsendmerino/aikit/internal/cpufeat"
 )
 
-// TestWrapInt4Row4_rejectsBadShapeAtWrap covers task-simd-audit.md S-10's hardening
-// item: WrapInt4Row4 validated the byte LENGTHS of the row4 arrays but not the SHAPE
-// they imply, so a blob with the right count and the wrong shape was stored and
-// panicked later, inside MatmulBTW4A8Row4Into, on the first M=1 matmul.
-//
-// The distinction this test turns on is WHERE it fails, not whether. A panic at the
-// matmul names a kernel; a panic at the wrap names the blob. So each case asserts the
-// message identifies WrapInt4Row4 and reports the offending dimensions — a test that
-// only caught "it panics" would pass against the old behaviour too.
-func TestWrapInt4Row4_rejectsBadShapeAtWrap(t *testing.T) {
+// TestWrapInt4Row4_declinesBadShapeAtWrap covers task-simd-audit.md S-10's hardening item for the door a
+// prebuilt row4 blob comes through: a blob with the right byte count and a shape the row4 kernel cannot
+// express (rows%4 != 0, a ragged final group) must be refused at the wrap, which names the blob, and not
+// reach matmulBTW4A8Row4Into, which would panic far from it. WrapInt4 reports it as ok=false, the same
+// answer PreferredInt4Layout gives for that shape.
+func TestWrapInt4Row4_declinesBadShapeAtWrap(t *testing.T) {
 	if !cpufeat.HasDotProd {
-		t.Skip("DotProd required: the row4 layout declines without it (WrapInt4Row4Only reports false, WrapInt4Row4 returns the plain int4 matrix)")
+		t.Skip("DotProd required: without it the row4 layout is declined for every shape")
 	}
 	const group = 32
-	// Lengths are computed from the caller's OWN rows/cols so requireExactLen is
-	// satisfied. That is the whole point: the old code got this far and stored it.
-	mk := func(rows, cols int) (q4 []byte, q4s []float32, r4 []byte, r4s []float32) {
-		nGroups, bpr := groupsFor(cols, group)
-		return make([]byte, rows*bpr), make([]float32, rows*nGroups),
-			make([]byte, rows*bpr), make([]float32, rows*nGroups)
-	}
-
 	cases := []struct {
 		name       string
 		rows, cols int
@@ -41,62 +28,32 @@ func TestWrapInt4Row4_rejectsBadShapeAtWrap(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			q4, q4s, r4, r4s := mk(c.rows, c.cols)
-			defer func() {
-				r := recover()
-				if r == nil {
-					t.Fatalf("rows=%d cols=%d: want a panic at WrapInt4Row4, got none — "+
-						"the blob would be stored and panic later in the matmul instead", c.rows, c.cols)
-				}
-				msg, _ := r.(string)
-				if !strings.Contains(msg, "WrapInt4Row4") {
-					t.Errorf("panic should name WrapInt4Row4 (it names the blob, not a kernel); got: %v", r)
-				}
-				if !strings.Contains(msg, "rows=") || !strings.Contains(msg, "group=") {
-					t.Errorf("panic should report the offending dimensions; got: %v", r)
-				}
-			}()
-			WrapInt4Row4(q4, q4s, c.rows, c.cols, group, r4, r4s)
+			// Lengths from the caller's own rows/cols, so only the shape is wrong.
+			nGroups, bpr := groupsFor(c.cols, group)
+			if got := PreferredInt4Layout(c.rows, c.cols, group); got != LayoutCanonical {
+				t.Fatalf("PreferredInt4Layout(%d, %d, %d) = %v, want canonical", c.rows, c.cols, group, got)
+			}
+			w, ok := WrapInt4(make([]byte, c.rows*bpr), make([]uint16, c.rows*nGroups), c.rows, c.cols, group, LayoutRow4)
+			if ok || w.IsInt4() {
+				t.Fatalf("rows=%d cols=%d: WrapInt4(LayoutRow4) accepted a shape the row4 kernel cannot express", c.rows, c.cols)
+			}
 		})
 	}
 }
 
-// TestWrapInt4Row4_acceptsValidShape is the other half: the guard must not reject
-// what the row4 kernel can actually handle, or it would silently disable the layout
-// it exists to protect.
+// TestWrapInt4Row4_acceptsValidShape is the other half: the gate must not refuse what the row4 kernel
+// handles, or it would silently disable the layout it protects.
 func TestWrapInt4Row4_acceptsValidShape(t *testing.T) {
+	if !cpufeat.HasDotProd {
+		t.Skip("DotProd required: without it the row4 layout is declined for every shape")
+	}
 	const group, rows, cols = 32, 8, 64
 	nGroups, bpr := groupsFor(cols, group)
-	w := WrapInt4Row4(
-		make([]byte, rows*bpr), make([]float32, rows*nGroups),
-		rows, cols, group,
-		make([]byte, rows*bpr), make([]float32, rows*nGroups),
-	)
-	if w.rows != rows || w.cols != cols {
-		t.Fatalf("wrapped dims rows=%d cols=%d, want %d/%d", w.rows, w.cols, rows, cols)
+	if got := PreferredInt4Layout(rows, cols, group); got != LayoutRow4 {
+		t.Fatalf("PreferredInt4Layout = %v, want row4", got)
 	}
-	// The row4 arrays are only retained when the host can actually use them
-	// (row4Usable gates on DotProd); on a host that cannot, the canonical wrap is
-	// the correct outcome and this assertion would be wrong to make.
-	if row4Usable() && w.q4Row4 == nil {
-		t.Error("valid shape on a row4-capable host: the row4 layout was dropped")
-	}
-}
-
-// TestWrapInt4Row4_nilArraysStillCanonical pins that the shape guard did not change
-// the documented escape hatch: passing nil row4 arrays means "no row4 layout", and
-// must stay legal for ANY shape — including shapes the row4 kernel cannot express.
-// Guarding before that early return would have broken every canonical caller.
-func TestWrapInt4Row4_nilArraysStillCanonical(t *testing.T) {
-	const group, rows, cols = 32, 6, 48 // deliberately a shape the guard rejects
-	nGroups, bpr := groupsFor(cols, group)
-	defer func() {
-		if r := recover(); r != nil {
-			t.Fatalf("nil row4 arrays must be legal at any shape, got panic: %v", r)
-		}
-	}()
-	w := WrapInt4Row4(make([]byte, rows*bpr), make([]float32, rows*nGroups), rows, cols, group, nil, nil)
-	if w.q4Row4 != nil {
-		t.Error("nil row4 arrays should leave the canonical wrap untouched")
+	w, ok := WrapInt4(make([]byte, rows*bpr), make([]uint16, rows*nGroups), rows, cols, group, LayoutRow4)
+	if !ok || w.rows != rows || w.cols != cols || w.q4Row4 == nil {
+		t.Fatalf("valid shape on a row4-capable host: ok=%v rows=%d cols=%d row4=%v", ok, w.rows, w.cols, w.q4Row4 != nil)
 	}
 }

@@ -27,6 +27,9 @@ package linalg
 import (
 	"fmt"
 	"math"
+
+	"github.com/townsendmerino/aikit/internal/half"
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
 )
 
 // u16le reads a little-endian uint16 (linalg avoids encoding/binary for this one spot).
@@ -38,39 +41,12 @@ const (
 	q4kBlockB = 144 // Q4_K bytes per superblock: d(f16) dmin(f16) scales[12] qs[128]
 )
 
-// f16ToF32 decodes an IEEE-754 half. Mirrors embed.halfBitsToF32 (linalg cannot import embed).
-func f16ToF32(h uint16) float32 {
-	sign := uint32(h&0x8000) << 16
-	exp := int32(h>>10) & 0x1f
-	mant := uint32(h & 0x3ff)
-	var bits uint32
-	switch {
-	case exp == 0:
-		if mant == 0 {
-			bits = sign
-			break
-		}
-		exp = 1
-		for mant&0x400 == 0 {
-			mant <<= 1
-			exp--
-		}
-		mant &= 0x3ff
-		bits = sign | uint32(exp+(127-15))<<23 | mant<<13
-	case exp == 0x1f:
-		bits = sign | 0x7f800000 | mant<<13
-	default:
-		bits = sign | uint32(exp+(127-15))<<23 | mant<<13
-	}
-	return math.Float32frombits(bits)
-}
-
 // Q8K is a Q8_K-quantized activation matrix (mirrors llama.cpp block_q8_K): each 256-value block
 // carries a single f32 scale, 256 int8 values, and 16 int16 bsums (the sum of each consecutive-16
 // run). The bsums are computed here, during quantization, because Q4_K's min-offset term needs
 // Σq8 per sub-block and recomputing it in the kernel is a wasted second pass. Rows are independent;
 // K must be a multiple of 256.
-type Q8K struct {
+type q8K struct {
 	M, K  int
 	D     []float32 // [M * K/256]  per-block scale
 	Qs    []int8    // [M * K]      quantized values
@@ -80,20 +56,20 @@ type Q8K struct {
 // QuantizeActQ8K quantizes a[M,K] (row-major f32) to Q8_K. Panics if K is not a multiple of 256.
 // Per-block symmetric scale d = maxAbs/127 (matching quantizeRowInt8's rounding), value =
 // round(x/d) clamped to ±127; an all-zero block yields d=0 and zero values.
-func QuantizeActQ8K(a []float32, M, K int) Q8K {
+func quantizeActQ8K(a []float32, M, K int) q8K {
 	if M < 0 || K < 0 {
 		panic(fmt.Sprintf("QuantizeActQ8K: negative dim (M=%d K=%d)", M, K))
 	}
 	if K%qkK != 0 {
 		panic(fmt.Sprintf("QuantizeActQ8K: K=%d not a multiple of %d", K, qkK))
 	}
-	requireExactLen("QuantizeActQ8K", "a", len(a), mul(M, K))
+	shape.RequireExactLen("QuantizeActQ8K", "a", len(a), shape.Mul(M, K))
 	nb := K / qkK
-	q := Q8K{
+	q := q8K{
 		M: M, K: K,
-		D:     make([]float32, mul(M, nb)),
-		Qs:    make([]int8, mul(M, K)),
-		Bsums: make([]int16, mul(M, K/16)),
+		D:     make([]float32, shape.Mul(M, nb)),
+		Qs:    make([]int8, shape.Mul(M, K)),
+		Bsums: make([]int16, shape.Mul(M, K/16)),
 	}
 	for m := range M {
 		for b := range nb {
@@ -146,7 +122,7 @@ func unpackQ6K(raw []byte, sb int, codes *[qkK]int8) (scales [16]int8, d float32
 	ql := raw[base : base+128]
 	qh := raw[base+128 : base+192]
 	sc := raw[base+192 : base+208]
-	d = f16ToF32(u16le(raw[base+208:]))
+	d = half.ToF32(u16le(raw[base+208:]))
 	for i := range 16 {
 		scales[i] = int8(sc[i])
 	}
@@ -173,8 +149,8 @@ func unpackQ6K(raw []byte, sb int, codes *[qkK]int8) (scales [16]int8, d float32
 // s*32+32]), and the f16 super-scales d, dmin. Mirrors embed.dequantQ4KBlock.
 func unpackQ4K(raw []byte, sb int, codes *[qkK]int8) (scales, mins [8]uint8, d, dmin float32) {
 	base := sb * q4kBlockB
-	d = f16ToF32(u16le(raw[base:]))
-	dmin = f16ToF32(u16le(raw[base+2:]))
+	d = half.ToF32(u16le(raw[base:]))
+	dmin = half.ToF32(u16le(raw[base+2:]))
 	scaleBytes := raw[base+4 : base+16]
 	qs := raw[base+16 : base+144]
 	for s := range 8 {
@@ -207,7 +183,7 @@ func q4kScaleMin(j int, q []byte) (scale, min uint8) {
 // with one Q8_K activation row. Per superblock: 16 sub-block int dot products, weighted by the
 // int8 sub-scales in int32, converted to float once. The recentered codes (q−32) fold Q6_K's
 // offset so no bsums term is needed.
-func dotQ6KQ8K(w []byte, q8 *Q8K, row, nb int) float32 {
+func dotQ6KQ8K(w []byte, q8 *q8K, row, nb int) float32 {
 	var out float32
 	var codes [qkK]int8
 	var partials [16]int32
@@ -245,7 +221,7 @@ func dotPartials16Scalar(codes, qs []int8, out []int32) {
 // Per superblock: 8 sub-block int dot products weighted by the 6-bit scales, plus the min-offset
 // term −dmin·Σ_s min[s]·(Σ_32 q8) folded from the bsums (block_q8_K stores bsums per-16, so a
 // 32-wide sub-block sums an adjacent pair). Two float converts per superblock (scale and min terms).
-func dotQ4KQ8K(w []byte, q8 *Q8K, row, nb int) float32 {
+func dotQ4KQ8K(w []byte, q8 *q8K, row, nb int) float32 {
 	var out float32
 	var codes [qkK]int8
 	var partials [16]int32
@@ -269,21 +245,21 @@ func dotQ4KQ8K(w []byte, q8 *Q8K, row, nb int) float32 {
 	return out
 }
 
-// MatmulBTGGUFQ6K computes dst[M,N] = a[M,K] · Wᵀ where W is N rows of Q6_K weights (row n at
+// matmulBTGGUFQ6K computes dst[M,N] = a[M,K] · Wᵀ where W is N rows of Q6_K weights (row n at
 // w[n*rowBytes : (n+1)*rowBytes], rowBytes = K/256*210). Activations are quantized to Q8_K once,
 // then integer-accum dotted. Standalone (not a WeightMat kind); scalar; the go/no-go benchmark and
 // the SIMD kernel call the per-row dot directly.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTGGUFQ6K(a []float32, w []byte, dst []float32, M, K, N int) {
+func matmulBTGGUFQ6K(a []float32, w []byte, dst []float32, M, K, N int) {
 	if K%qkK != 0 {
-		panic(fmt.Sprintf("MatmulBTGGUFQ6K: K=%d not a multiple of %d", K, qkK))
+		panic(fmt.Sprintf("matmulBTGGUFQ6K: K=%d not a multiple of %d", K, qkK))
 	}
 	nb := K / qkK
 	rowBytes := nb * q6kBlockB
-	requireExactLen("MatmulBTGGUFQ6K", "w", len(w), mul(N, rowBytes))
-	requireExactLen("MatmulBTGGUFQ6K", "dst", len(dst), mul(M, N))
-	q8 := QuantizeActQ8K(a, M, K)
+	shape.RequireExactLen("matmulBTGGUFQ6K", "w", len(w), shape.Mul(N, rowBytes))
+	shape.RequireExactLen("matmulBTGGUFQ6K", "dst", len(dst), shape.Mul(M, N))
+	q8 := quantizeActQ8K(a, M, K)
 	for m := range M {
 		for n := range N {
 			dst[m*N+n] = dotQ6KQ8K(w[n*rowBytes:(n+1)*rowBytes], &q8, m, nb)
@@ -291,18 +267,18 @@ func MatmulBTGGUFQ6K(a []float32, w []byte, dst []float32, M, K, N int) {
 	}
 }
 
-// MatmulBTGGUFQ4K is MatmulBTGGUFQ6K for Q4_K weights (rowBytes = K/256*144).
+// matmulBTGGUFQ4K is matmulBTGGUFQ6K for Q4_K weights (rowBytes = K/256*144).
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTGGUFQ4K(a []float32, w []byte, dst []float32, M, K, N int) {
+func matmulBTGGUFQ4K(a []float32, w []byte, dst []float32, M, K, N int) {
 	if K%qkK != 0 {
-		panic(fmt.Sprintf("MatmulBTGGUFQ4K: K=%d not a multiple of %d", K, qkK))
+		panic(fmt.Sprintf("matmulBTGGUFQ4K: K=%d not a multiple of %d", K, qkK))
 	}
 	nb := K / qkK
 	rowBytes := nb * q4kBlockB
-	requireExactLen("MatmulBTGGUFQ4K", "w", len(w), mul(N, rowBytes))
-	requireExactLen("MatmulBTGGUFQ4K", "dst", len(dst), mul(M, N))
-	q8 := QuantizeActQ8K(a, M, K)
+	shape.RequireExactLen("matmulBTGGUFQ4K", "w", len(w), shape.Mul(N, rowBytes))
+	shape.RequireExactLen("matmulBTGGUFQ4K", "dst", len(dst), shape.Mul(M, N))
+	q8 := quantizeActQ8K(a, M, K)
 	for m := range M {
 		for n := range N {
 			dst[m*N+n] = dotQ4KQ8K(w[n*rowBytes:(n+1)*rowBytes], &q8, m, nb)

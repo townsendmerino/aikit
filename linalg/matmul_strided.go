@@ -1,5 +1,7 @@
 package linalg
 
+import "github.com/townsendmerino/aikit/linalg/internal/shape"
+
 // Strided-second-operand matmul for attention, so a consumer can feed a KV-cache head-block
 // (or its transpose) to the f64-accumulated attention matmul WITHOUT first materialising a
 // packed/transposed copy.
@@ -40,7 +42,7 @@ func MatmulBTAcc64Strided(a, bMat, dst []float32, M, K, N, bOff, bRowStride, bEl
 // the other Workspace matmuls — the shape a steady-state decode stream uses.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func (w *Workspace) MatmulBTAcc64Strided(a, bMat, dst []float32, M, K, N, bOff, bRowStride, bElemStride int) {
+func (w *Workspace) matmulBTAcc64Strided(a, bMat, dst []float32, M, K, N, bOff, bRowStride, bElemStride int) {
 	checkMatmulBTStrided("MatmulBTAcc64Strided", len(a), len(bMat), len(dst), M, K, N, bOff, bRowStride, bElemStride)
 	w.parallelCols(M*N*K, N, func(j0, j1 int) {
 		matmulBTAcc64StridedSpan(a, bMat, dst, M, K, N, bOff, bRowStride, bElemStride, j0, j1)
@@ -74,8 +76,8 @@ func checkMatmulBTStrided(kernel string, aLen, bLen, dstLen, M, K, N, bOff, bRow
 	if bOff < 0 || bRowStride < 0 || bElemStride < 0 {
 		panic("linalg: " + kernel + " negative b stride/offset")
 	}
-	requireLen(kernel, "a", aLen, mul(M, K))
-	requireLen(kernel, "dst", dstLen, mul(M, N))
+	shape.RequireLen(kernel, "a", aLen, shape.Mul(M, K))
+	shape.RequireLen(kernel, "dst", dstLen, shape.Mul(M, N))
 	if M == 0 || N == 0 || K == 0 {
 		return
 	}

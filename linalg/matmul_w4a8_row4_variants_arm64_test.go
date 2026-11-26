@@ -14,7 +14,7 @@ import (
 // numeric result at any swept distance — PRFM never faults and never
 // touches a register any SDOT/FMLA reads, so this should hold trivially, but
 // it's proven the same way every other kernel variant in this file is,
-// across every (K,N) shape MatmulBTW4A8Row4Into itself is tested against
+// across every (K,N) shape matmulBTW4A8Row4Into itself is tested against
 // (every residue this campaign's harness convention checks), not assumed
 // from the assembly alone.
 func TestMatmulBTW4A8Row4PrefetchInto_bitIdenticalToRow4(t *testing.T) {
@@ -39,16 +39,16 @@ func TestMatmulBTW4A8Row4PrefetchInto_bitIdenticalToRow4(t *testing.T) {
 		}
 		packed, scales := QuantizeGroupsInt4(w, N, K, group)
 		packed4 := RepackW4A8Row4(packed, N, K, group)
-		scales4 := RepackW4A8Row4Scales(scales, N, K, group)
+		scales4 := repackW4A8Row4Scales(scales, N, K, group)
 
 		var ws Workspace
 		want := make([]float32, N)
-		MatmulBTW4A8Row4Into(&ws, a, packed4, scales4, want, 1, K, N, group)
+		matmulBTW4A8Row4Into(&ws, a, packed4, scales4, want, 1, K, N, group)
 
 		for _, dist := range distances {
 			var ws2 Workspace
 			got := make([]float32, N)
-			MatmulBTW4A8Row4PrefetchInto(&ws2, a, packed4, scales4, got, 1, K, N, group, dist)
+			matmulBTW4A8Row4PrefetchInto(&ws2, a, packed4, scales4, got, 1, K, N, group, dist)
 			for j := range N {
 				if got[j] != want[j] {
 					t.Fatalf("K=%d N=%d dist=%d j=%d: Prefetch %v != Row4 %v (bit mismatch)", K, N, dist, j, got[j], want[j])
@@ -84,18 +84,18 @@ func TestMatmulBTW4A8Row4DesharedInto_bitIdenticalToRow4(t *testing.T) {
 		}
 		packed, scales := QuantizeGroupsInt4(w, N, K, group)
 		packed4 := RepackW4A8Row4(packed, N, K, group)
-		scales4 := RepackW4A8Row4Scales(scales, N, K, group)
+		scales4 := repackW4A8Row4Scales(scales, N, K, group)
 
 		var ws Workspace
 		want := make([]float32, N)
-		MatmulBTW4A8Row4Into(&ws, a, packed4, scales4, want, 1, K, N, group)
+		matmulBTW4A8Row4Into(&ws, a, packed4, scales4, want, 1, K, N, group)
 
-		w0, w1, w2, w3 := RepackW4A8Row4Deshared(packed, N, K, group)
-		s0, s1, s2, s3 := RepackW4A8Row4DesharedScales(scales, N, K, group)
+		w0, w1, w2, w3 := repackW4A8Row4Deshared(packed, N, K, group)
+		s0, s1, s2, s3 := repackW4A8Row4DesharedScales(scales, N, K, group)
 
 		var ws2 Workspace
 		got := make([]float32, N)
-		MatmulBTW4A8Row4DesharedInto(&ws2, a, w0, w1, w2, w3, s0, s1, s2, s3, got, 1, K, N, group)
+		matmulBTW4A8Row4DesharedInto(&ws2, a, w0, w1, w2, w3, s0, s1, s2, s3, got, 1, K, N, group)
 		for j := range N {
 			if got[j] != want[j] {
 				t.Fatalf("K=%d N=%d j=%d: Deshared %v != Row4 %v (bit mismatch)", K, N, j, got[j], want[j])

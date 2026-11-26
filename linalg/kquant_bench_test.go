@@ -8,7 +8,7 @@ import (
 
 // The A1 go/no-go (docs/internal/archive/task-q8k-integer-accum.md §5.4): does the native Q6_K/Q4_K integer-accum GEMV
 // beat the current decode path — dequant→int8-requant→W8A8, which at decode time is just
-// MatmulBTW8A8 over the already-int8 resident weight — by ≥1.3× at M=1? The native path reads fewer
+// matmulBTW8A8 over the already-int8 resident weight — by ≥1.3× at M=1? The native path reads fewer
 // weight bytes (Q6_K 210 B/256 = 0.82 B/w, Q4_K 144/256 = 0.56 B/w, vs int8's 1 B/w) but pays a
 // per-superblock unpack. Run: go test -bench GEMV -benchmem ./linalg
 //
@@ -36,7 +36,7 @@ func BenchmarkGEMV_Q6K_native(b *testing.B) {
 		b.Run(shapeName(s.K, s.N), func(b *testing.B) {
 			b.SetBytes(int64(s.N * nb * q6kBlockB))
 			for i := 0; i < b.N; i++ {
-				MatmulBTGGUFQ6K(a, w, dst, 1, s.K, s.N)
+				matmulBTGGUFQ6K(a, w, dst, 1, s.K, s.N)
 			}
 		})
 	}
@@ -72,7 +72,7 @@ func BenchmarkGEMV_W8A8_baseline(b *testing.B) {
 		}
 		dst := make([]float32, s.N)
 		// Workspace form, pinned serial (audit G-01, G-08). This called the
-		// ALLOCATING MatmulBTW8A8 wrapper, so every ns/op carried a make of the
+		// ALLOCATING matmulBTW8A8 wrapper, so every ns/op carried a make of the
 		// quantized activation — and at K4096_N4096 the shape clears parThreshold,
 		// so the baseline fanned out while the Q6K kernel it is compared against
 		// runs serial, inflating that comparison by the worker count. Both are
@@ -82,7 +82,7 @@ func BenchmarkGEMV_W8A8_baseline(b *testing.B) {
 		b.Run(shapeName(s.K, s.N)+"_"+regimeTag(s.K, s.N), func(b *testing.B) {
 			b.SetBytes(int64(s.N * s.K)) // int8: 1 byte/weight
 			for i := 0; i < b.N; i++ {
-				MatmulBTW8A8Into(&ws, a, bq, bScales, dst, 1, s.K, s.N)
+				matmulBTW8A8Into(&ws, a, bq, bScales, dst, 1, s.K, s.N)
 			}
 		})
 	}

@@ -59,9 +59,9 @@ func TestMatmulBTQ8Into_serialBlockScratchReused(t *testing.T) {
 	dst := make([]float32, M*N)
 	var ws Workspace
 	ws.SetThreshold(1 << 62)
-	MatmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
+	matmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
 	if allocs := testing.AllocsPerRun(20, func() {
-		MatmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
+		matmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
 	}); allocs != 0 {
 		t.Fatalf("MatmulBTQ8Into serial path: %.1f allocs/call, want 0", allocs)
 	}

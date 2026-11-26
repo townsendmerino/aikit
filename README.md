@@ -26,15 +26,16 @@ large embedded-grammar payload) — is quarantined in the separate
 >
 > | aikit path | frozen at | continues in goinfer as |
 > |---|---|---|
-> | `vision` | `v1.75.0` | `internal/vision` |
+> | `vision` | `v1.75.0`; **removed from aikit with the `linalg` surface rework** | `internal/vision` |
 > | `audio` | `v1.75.0`; **removed from aikit in v1.77.0** | `internal/audio` |
 > | `gpu` (the device module) | `gpu/v0.35.0` | `cuda/internal/gpudev` and `metal/internal/gpudev`; aikit's stays, below |
 > | `gpu/qwencuda`, `gpu/visioncuda` | `gpu/v0.35.0` | the `cuda` module |
 > | `gpu/qwenmetal`, `gpu/visionmetal` | `gpu/v0.35.0` | the `metal` module |
 > | `gpu/webgpu` | `gpu/v0.35.0` | retired, not carried over (owner, 2026-10-26: nothing imported it, and goinfer's `gpu` module has its own WGSL shaders) |
 >
-> `vision` carries a `Deprecated:` notice. It is in the Hard tier, so it stays, frozen, and is removed only
-> at a v2. `audio` was Experimental: it carried its notice in v1.76.0 and is removed in the next minor,
+> `vision` was in the Hard tier and is removed anyway (decided 2026-11-24): it moved into goinfer, was frozen
+> since v1.76.0, and nothing imports it; a build that still imports `aikit/vision` keeps working on the tags
+> before its removal. `audio` was Experimental: it carried its notice in v1.76.0 and is removed in the next minor,
 > v1.77.0. A build that still imports `aikit/audio` keeps working on v1.76.x and earlier. The four tower
 > backends and `gpu/webgpu` are retired, get no further tags, and were deleted from the tree on 2026-11-10.
 > Their existing tags keep resolving, so a build pinned to one is unaffected.
@@ -48,7 +49,7 @@ large embedded-grammar payload) — is quarantined in the separate
 | Package | Purpose | Deps (beyond stdlib) |
 |---|---|---|
 | `topk` | bounded min-heap top-K selector (generic) | — |
-| `ann` | cosine ANN over a dense matrix — exact flat scan + approximate HNSW graph | `linalg`, `mmap`, `topk` |
+| `ann` | cosine ANN over a dense matrix — exact flat scan + approximate HNSW graph | `linalg`, `linalg/bitvec`, `mmap`, `topk` |
 | `bm25` | identifier-aware BM25 lexical index (Lucene-variant); `Tokenize` (code) + `TokenizePlain` (general text) | `mmap`, `topk` |
 | `fuse` | rank fusion (RRF) + relative-score fusion (RSF) — blend lexical + dense rankings for hybrid search | — |
 | `hybrid` *(Experimental)* | thin, opt-in wrapper around "retrieve dense + lexical, then `fuse.RRF`" — composes already-built indices, doesn't build/embed/tokenize/rerank | `ann`, `bm25`, `fuse` |
@@ -56,10 +57,12 @@ large embedded-grammar payload) — is quarantined in the separate
 | `late` *(Experimental)* | ColBERT-style late-interaction (MaxSim) reranking over pre-computed per-token vectors (`encoder.Model.EncodeTokens`) — a shortlist reranker, not a corpus-scale index | `linalg`, `topk` |
 | `bench` | reproducible recall + latency harness for the dense indexes (Flat / HNSW / FlatI8) — Experimental tooling | `ann` |
 | `linalg` | SIMD `f32` dot/matmul (NEON on arm64, AVX2/FMA on amd64) + int8/int4 quant kernels | `mmap` |
+| `linalg/bitvec` | binary vectors: sign-bit packing of f32 rows and Hamming distance over packed rows (POPCNT, NEON) | — |
+| `linalg/attn` | attention kernels: the f64-accumulating QK and AV matmuls (f32 and binary16 caches, per head and grouped) and the fused attention tile | `linalg/elem` |
+| `linalg/elem` | elementwise kernels: exp, tanh, erf, SiLU, GELU and softmax, scalar and in-place forms, and the contract forms (every multiply-add fused, the same bits on every architecture) | — |
 | `mmap` | read-only file mapping + `madvise` residency hints + a demand-signal-agnostic `SpanCache` (LRU spans under a byte budget) — the substrate the `ann`, `bm25`, `embed` and `linalg` mmap loaders sit on; cgo-free, `!unix` heap fallback | `golang.org/x/sys` *(darwin only)* |
 | `embed` | Model2Vec inference: WordPiece tokenizer + safetensors loader + L2-norm | `mmap`, `golang.org/x/text`, `golang.org/x/sys` *(amd64 only)* |
-| `encoder` | BERT/RoBERTa/XLM-R/GTE/nomic-bert(+MoE) embedder family (12 certified models, `docs/embedder-coverage.md`, incl. CodeRankEmbed) + SPLADE expansion + cross-encoder reranker — transformer inference scored by cosine / sparse dot / relevance logit; pluggable matmul `Backend` | `embed`, `linalg`, `sparse` |
-| `vision` *(Deprecated: moved to goinfer)* | SigLIP / ViT image encoder — decode → preprocess → pure-Go transformer forward → image embeddings (f32 or int8 W8A8), parity-pinned to HF `SiglipVisionModel`; stdlib image codecs, no cgo | `embed`, `linalg` |
+| `encoder` | BERT/RoBERTa/XLM-R/GTE/nomic-bert(+MoE) embedder family (12 certified models, `docs/embedder-coverage.md`, incl. CodeRankEmbed) + SPLADE expansion + cross-encoder reranker — transformer inference scored by cosine / sparse dot / relevance logit; pluggable matmul `Backend` | `embed`, `linalg`, `linalg/elem`, `sparse` |
 | `chunk` | language-aware chunker registry + `regex`, `markdown`, `line` chunkers | — |
 | `gpu` *(Experimental, darwin+linux; separate modules)* | cgo-free native-GPU device substrate — `Device`/`Buffer`/`Queue`/`Pipeline`/`Encoder` over Metal (darwin, runtime MSL compiler) or CUDA (linux, embedded PTX); the GPU analogue of `linalg`'s CPU role. Frozen on `gpu/v0.35.x`, fixes only. 4 one-backend-per-module leaves plug into 2 seams: `anncuda`/`annmetal` → `FlatI8.EnableGPU`; `enccuda`/`encmetal` → `encoder.RegisterBackend("cuda"/"metal", …)`. The tower backends (`qwencuda`/`qwenmetal`, `visioncuda`/`visionmetal`) moved to goinfer and were deleted here; their tags still resolve. Device tests are hand-run (no GPU CI); the default aikit build never imports any of them and stays pure-Go. See [`examples/gpu-ann`](examples/gpu-ann) for the `FlatI8.EnableGPU` seam end to end. | `github.com/ebitengine/purego` *(darwin)*, `github.com/eitamring/gocudrv` *(linux)* |
 | `chunk/treesitter` *(submodule)* | tree-sitter-backed syntactic chunker | `gotreesitter`, `…/aikit` |
@@ -106,15 +109,6 @@ index → query → top-K) — the in-process, no-Python pipeline behind the
 "learned-sparse" column in the capability matrix below. It composes into a
 fused hybrid search the same way `examples/rag`'s dense and lexical signals
 do, via `fuse.Keys(sparseHits, func(h sparse.Hit) int { return h.Index })`.
-
-For the "only cgo-free image embedder" claim below,
-[`examples/vision/`](examples/vision) indexes a corpus that mixes code chunks
-and images: each image's caption joins the fused dense+lexical search as just
-another chunk (image-as-document indexing), and landing on an image hit pivots
-into "visually similar images" via its own SigLIP embedding index
-(image→image similarity) — the two capabilities the vision package actually
-provides, deliberately not a cross-modal text→image search (aikit has no
-joint text/image embedding space).
 
 [`examples/colbert/`](examples/colbert) swaps `examples/rag`'s final rerank
 stage for ColBERT-style late interaction: the same fused dense+lexical
@@ -203,7 +197,7 @@ correct distance, full k, finds the right region) — see the
 
 | | cgo-free | model inference | image embed | exact | ANN graph | int8 | persistence | lexical + hybrid | learned-sparse | static binary |
 |---|---|---|---|---|---|---|---|---|---|---|
-| **aikit** | ✅ | ✅ Model2Vec + CodeRankEmbed | ✅ SigLIP/ViT | ✅ Flat | ✅ HNSW (Alg-4) | ✅ FlatI8 | ✅ HNSW | ✅ BM25 + RRF/RSF | ✅ sparse | ✅ **1.8 MB** |
+| **aikit** | ✅ | ✅ Model2Vec + CodeRankEmbed | — (moved to goinfer) | ✅ Flat | ✅ HNSW (Alg-4) | ✅ FlatI8 | ✅ HNSW | ✅ BM25 + RRF/RSF | ✅ sparse | ✅ **1.8 MB** |
 | coder/hnsw | ✅ | — | — | — | ✅ | — | ✅ | — | — | ✅ |
 | chromem-go | ✅ | via external API | — | ✅ | — | — | ✅ | — | — | ✅ |
 | Bleve v2 | dense needs cgo (faiss) | — | — | — | ✅ vector | — | ✅ | ✅ full-text | — | dense: ✗ |
@@ -212,11 +206,8 @@ correct distance, full k, finds the right region) — see the
 aikit is the only one of these that ships the **whole pipeline** — local model
 inference *and* dense + lexical + sparse retrieval *and* fusion — in a single
 **1.8 MB pure-Go static binary** (`CGO_ENABLED=0`, the full `ann`+`bm25`+`fuse`+
-`embed` surface). It's also the only **cgo-free image embedder** here: the `vision`
-SigLIP/ViT tower runs the whole forward in pure Go, so image→image similarity and
-image-as-document indexing need no ONNX runtime or sidecar (hugot can embed images
-but only via the ONNX Runtime native library). hugot otherwise covers inference but
-needs that cgo backend; the vector DBs cover indexing but not inference. The
+`embed` surface). hugot covers inference but needs a cgo backend (the ONNX Runtime
+native library); the vector DBs cover indexing but not inference. The
 `//go:embed`-a-corpus, zero-deploy story is the lane no Python or ONNX stack reaches.
 
 ### Retrieval quality on a standard benchmark
@@ -281,13 +272,24 @@ No breaking change before a v2.0. This is the API to build on.
   (`gpu/backend.go`) and serving path (`internal/serveapp/{embeddings,
   openai,main}.go`) register and dispatch through it in production.
   **Graduated 2026-08-18.**
-- `vision` — the whole package (SigLIP/ViT image encoder). In aikit since
-  v1.7.0 (14 minors survived); goinfer's serving path (`vision_serve.go`),
-  GPU backend registration (`gpu/vision_*.go`), and demo agent all depend on
-  it directly. **Graduated 2026-08-18.** **Deprecated 2026-10:** the towers moved into goinfer; the package
-  stays, frozen at v1.75.0's code, and is removed only at a v2.
 - `mmap` — the whole package. In aikit since v1.9.0 (12 minors survived);
   goinfer imports it in 4 non-test files. **Graduated 2026-08-18.**
+- `linalg`'s `WeightMat` door, from v1.80.0 (the release that carries the
+  surface rework, a break inside v1): the types `linalg.WeightMat` (its methods
+  with it), `linalg.Workspace`, `linalg.Kind`, `linalg.Layout`, `linalg.BatchOp`,
+  `linalg.ActQ` and `linalg.Kernels`; `linalg.Dot`, `linalg.MatmulBT`,
+  `linalg.MatmulBTInto` and `linalg.MatmulBTBatchInto`; the constructors
+  `linalg.WrapF32`, `linalg.WrapF16`, `linalg.WrapBF16`, `linalg.WrapInt8`,
+  `linalg.WrapInt4`, `linalg.WrapQ4K`, `linalg.WrapQ5K`, `linalg.WrapQ6K`,
+  `linalg.QuantizeInt8`, `linalg.QuantizeInt4`, `linalg.QuantizeF16`,
+  `linalg.QuantizeBF16`, `linalg.RepackInt4InPlace` and
+  `linalg.PreferredInt4Layout`; the constants `linalg.KindNone`, `linalg.KindF32`,
+  `linalg.KindF16`, `linalg.KindBF16`, `linalg.KindInt8`, `linalg.KindInt4`,
+  `linalg.KindQ4K`, `linalg.KindQ5K`, `linalg.KindQ6K`, `linalg.LayoutCanonical`,
+  `linalg.LayoutRow4` and `linalg.LayoutSplitHalf`; and `linalg.ActiveKernels` and
+  the process defaults `linalg.SetParallelThreshold`, `linalg.SetParallelWidth`
+  and `linalg.SetActQuantGroup`. The gate checks exactly these names
+  (`tools/releasegate`'s `hardSyms`), from the release after v1.80.0.
 
 ### Experimental — outside the semver promise
 
@@ -301,13 +303,13 @@ fixed schedule. Age alone doesn't graduate a surface: several entries below
 have shipped since v0.4.0/v1.x with no reported break, but stay here because
 no such consumer has surfaced yet.
 
-- `linalg` — **the whole package, from 2026-11-24 until its surface rework
-  lands.** Its exported surface is being cut down and split into sub-packages,
-  which removes and moves names, so no part of it is promised meanwhile;
-  `linalg.Dot`, `linalg.MatmulBT` and the int8/int4 quant kernels were Hard from
-  2026-08-18 to 2026-11-24. The names that survive the rework return to the Hard
-  tier as an explicit list in `tools/releasegate`. The `linalg` entries below
-  record when each group was added.
+- `linalg` outside the Hard list above, and the kernel packages `linalg/attn`,
+  `linalg/elem` and `linalg/bitvec`: the kernels themselves, the reference and
+  conversion functions, and the five raw-slice matmuls `linalg`'s package doc
+  lists as exceptions. The whole of `linalg` was Experimental from 2026-11-24 to
+  v1.80.0, while its surface rework removed and moved names; `linalg.Dot`,
+  `linalg.MatmulBT` and the int8/int4 quant kernels had been Hard from
+  2026-08-18. The `linalg` entries below record when each group was added.
 - `ann.HNSW` / `ann.NewHNSW` / `ann.BuildHNSW` / `ann.Config` — the `Hit`/`Query`
   surface is stable, but graph internals and `Config` defaults may tune. Neighbor
   selection defaults to the diversity heuristic (Algorithm 4) for high recall on
@@ -427,14 +429,16 @@ no such consumer has surfaced yet.
   (7.56× over a `Score` loop at 50 documents, bit-identical scores). Covered by
   `CrossEncoder`'s existing Experimental status; listed here so the batch API is
   not read as a separate promise.
-- `linalg`'s v1.15.0 additions — the elementwise math kernels (`ExpF32`, `TanhF32`,
+- `linalg`'s v1.15.0 additions (the scalar forms, `ExpF32Into`/`GELUInto`/`SiLUInto`/`SoftmaxRowInto`/`SoftmaxRowScaledInto`,
+  `PackSignBits`, `QuantizeActivationsInto` and `HasFusedQ8Kernel` unexported since, as nothing outside their package called
+  them) — the elementwise math kernels (now `linalg/elem`: `ExpF32`, `TanhF32`,
   `ErfF32`, `GELUF32`, `GELUTanhF32`, `SiLUF32` and their `*Into` forms,
   `SoftmaxRowInto`), the fused Q8 matmul (`MatmulBTQ8Fused{,Into}`,
   `HasFusedQ8Kernel`, `FusedQ8Applies`), W8A8 activation quantization
   (`QuantizeActivations{,Into}`, `MatmulBTW8A8Pre`, `DequantizeRowsInt8Into`) and
-  the Hamming/SimHash primitives (`PackSignBits{,Row}`, `PackedWords`,
+  the Hamming/SimHash primitives (now `linalg/bitvec`: `PackSignBits{,Row}`, `PackedWords`,
   `HammingRows`) — new surface.
-- `linalg`'s fused attention (v1.35.0) — `AttendTileFused`, `FusedAttnScratch`,
+- `linalg`'s fused attention (v1.35.0; now `linalg/attn`) — `AttendTileFused`, `FusedAttnScratch`,
   `NewFusedAttnScratch`, `FusedAttnKeyBlock`, `GatherVBlockMajor`. A
   FlashAttention-style single-tile schedule that keeps the score block resident
   rather than materializing `kt × nKeys`. **Deliberately NOT bit-identical to a
@@ -447,7 +451,7 @@ no such consumer has surfaced yet.
   package.
 - The concrete chunker structs (`regex.Chunker`, `markdown.Chunker`,
   `treesitter.Chunker`) and their `New()` — prefer `chunk.Get("regex")`.
-- `linalg.MatmulQKAcc64Group` / `linalg.MatmulAVAcc64Group` (v1.46.0) — grouped
+- `linalg.MatmulQKAcc64Group` / `linalg.MatmulAVAcc64Group` (v1.46.0; now `linalg/attn`) — grouped
   float64-accumulating QK/AV attention kernels that share one KV head's K/V load
   across all `G` query heads instead of reloading it per head (the `Acc64`
   reassociation-error motivation is the same as `MatmulBTAcc64`, above, applied

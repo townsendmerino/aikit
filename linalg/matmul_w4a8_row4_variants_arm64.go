@@ -9,36 +9,36 @@ import "fmt"
 // 4 simultaneous accumulator chains share each cold cache-line region, so
 // one miss stalls 4 rows' in-flight work at once). This file is the
 // full-tensor exported plumbing for the two mechanism-aimed remedies —
-// HARNESS ONLY, mirroring MatmulBTW4A8Row4Into's own shape exactly but never
+// HARNESS ONLY, mirroring matmulBTW4A8Row4Into's own shape exactly but never
 // wired into WeightMat's dispatch (weightmat_row4_arm64.go) or the .giw
 // format. Neither remedy changes any numeric result: both are proven
-// bit-identical to MatmulBTW4A8Row4Into by construction (same per-row math,
+// bit-identical to matmulBTW4A8Row4Into by construction (same per-row math,
 // only the memory access pattern differs).
 
-// MatmulBTW4A8Row4PrefetchInto is MatmulBTW4A8Row4Into plus a software
+// matmulBTW4A8Row4PrefetchInto is matmulBTW4A8Row4Into plus a software
 // prefetch hint, prefetchDistance BYTES ahead of each quad's own read
 // position, threaded down to dotW4A8SplitHalf4RowPrefetch. Same
-// w4Row4/wScales4 layout as MatmulBTW4A8Row4Into (RepackW4A8Row4/
-// RepackW4A8Row4Scales, or a .giw kind-4 tensor's on-disk bytes) — this is
+// w4Row4/wScales4 layout as matmulBTW4A8Row4Into (RepackW4A8Row4/
+// repackW4A8Row4Scales, or a .giw kind-4 tensor's on-disk bytes) — this is
 // the SAME data, just dispatched through a kernel with one added PRFM per
-// iteration. Same M/N/K/group contract as MatmulBTW4A8Row4Into.
+// iteration. Same M/N/K/group contract as matmulBTW4A8Row4Into.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTW4A8Row4PrefetchInto(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []float32, dst []float32, M, K, N, group, prefetchDistance int) {
-	requireRow4DotProd("MatmulBTW4A8Row4PrefetchInto")
+func matmulBTW4A8Row4PrefetchInto(ws *Workspace, a []float32, w4Row4 []byte, wScales4 []float32, dst []float32, M, K, N, group, prefetchDistance int) {
+	requireRow4DotProd("matmulBTW4A8Row4PrefetchInto")
 	checkMatmulW4A8("MatmulBTW4A8Row4Prefetch", len(a), len(w4Row4), len(wScales4), len(dst), M, K, N, group)
 	checkGroupMatmul("MatmulBTW4A8Row4Prefetch", len(a), w4Row4, wScales4, len(dst), M, K, N, group)
 	if M != 1 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4PrefetchInto requires M=1, got M=%d", M))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4PrefetchInto requires M=1, got M=%d", M))
 	}
 	if group != 32 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4PrefetchInto requires group=32, got %d", group))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4PrefetchInto requires group=32, got %d", group))
 	}
 	if N%4 != 0 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4PrefetchInto requires N a multiple of 4, got %d", N))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4PrefetchInto requires N a multiple of 4, got %d", N))
 	}
 	if K%group != 0 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4PrefetchInto requires K a multiple of group=%d, got %d", group, K))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4PrefetchInto requires K a multiple of group=%d, got %d", group, K))
 	}
 	nGroups, bpr := groupsFor(K, group)
 	aq := ws.int8Buf(K)
@@ -62,14 +62,14 @@ func MatmulBTW4A8Row4PrefetchInto(ws *Workspace, a []float32, w4Row4 []byte, wSc
 	}
 }
 
-// RepackW4A8Row4Deshared is RepackW4A8Row4's non-interleaved counterpart:
+// repackW4A8Row4Deshared is RepackW4A8Row4's non-interleaved counterpart:
 // same canonical-packed input, same N/K/group contract, but returns 4
 // SEPARATE byte arrays instead of one interleaved block — b0[q*bpr:(q+1)*bpr]
 // holds quad q's "row-position-0" bytes, b1 quad q's "row-position-1" bytes,
 // and so on, each role's bytes contiguous across every quad but the 4 roles
 // living in 4 entirely separate allocations (de-sharing the cache line 4
 // concurrent chains would otherwise contend on a cold miss).
-func RepackW4A8Row4Deshared(packed []byte, N, K, group int) (b0, b1, b2, b3 []byte) {
+func repackW4A8Row4Deshared(packed []byte, N, K, group int) (b0, b1, b2, b3 []byte) {
 	if group != 32 {
 		panic(fmt.Sprintf("linalg: RepackW4A8Row4Deshared requires group=32, got %d", group))
 	}
@@ -99,10 +99,10 @@ func RepackW4A8Row4Deshared(packed []byte, N, K, group int) (b0, b1, b2, b3 []by
 	return b0, b1, b2, b3
 }
 
-// RepackW4A8Row4DesharedScales is RepackW4A8Row4Deshared's counterpart for
+// repackW4A8Row4DesharedScales is repackW4A8Row4Deshared's counterpart for
 // the per-group f32 scales: no repacking needed per row (scales are already
 // separable), just split into 4 per-role arrays the same way.
-func RepackW4A8Row4DesharedScales(scales []float32, N, K, group int) (s0, s1, s2, s3 []float32) {
+func repackW4A8Row4DesharedScales(scales []float32, N, K, group int) (s0, s1, s2, s3 []float32) {
 	if group != 32 {
 		panic(fmt.Sprintf("linalg: RepackW4A8Row4DesharedScales requires group=32, got %d", group))
 	}
@@ -128,33 +128,33 @@ func RepackW4A8Row4DesharedScales(scales []float32, N, K, group int) (s0, s1, s2
 	return s0, s1, s2, s3
 }
 
-// MatmulBTW4A8Row4DesharedInto computes dst[N] = a[K]·bᵀ from
-// RepackW4A8Row4Deshared/RepackW4A8Row4DesharedScales's 4-array layout —
-// bit-identical to MatmulBTW4A8Row4Into/MatmulBTW4A8Into for the same
+// matmulBTW4A8Row4DesharedInto computes dst[N] = a[K]·bᵀ from
+// repackW4A8Row4Deshared/repackW4A8Row4DesharedScales's 4-array layout —
+// bit-identical to matmulBTW4A8Row4Into/matmulBTW4A8Into for the same
 // logical weights. Same M/N/K/group contract.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func MatmulBTW4A8Row4DesharedInto(ws *Workspace, a []float32, w0, w1, w2, w3 []byte, s0, s1, s2, s3 []float32, dst []float32, M, K, N, group int) {
-	requireRow4DotProd("MatmulBTW4A8Row4DesharedInto")
+func matmulBTW4A8Row4DesharedInto(ws *Workspace, a []float32, w0, w1, w2, w3 []byte, s0, s1, s2, s3 []float32, dst []float32, M, K, N, group int) {
+	requireRow4DotProd("matmulBTW4A8Row4DesharedInto")
 	if M != 1 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4DesharedInto requires M=1, got M=%d", M))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4DesharedInto requires M=1, got M=%d", M))
 	}
 	if group != 32 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4DesharedInto requires group=32, got %d", group))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4DesharedInto requires group=32, got %d", group))
 	}
 	if N%4 != 0 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4DesharedInto requires N a multiple of 4, got %d", N))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4DesharedInto requires N a multiple of 4, got %d", N))
 	}
 	if K%group != 0 {
-		panic(fmt.Sprintf("linalg: MatmulBTW4A8Row4DesharedInto requires K a multiple of group=%d, got %d", group, K))
+		panic(fmt.Sprintf("linalg: matmulBTW4A8Row4DesharedInto requires K a multiple of group=%d, got %d", group, K))
 	}
 	nGroups, bpr := groupsFor(K, group)
 	nQuads := N / 4
 	if len(w0) < nQuads*bpr || len(w1) < nQuads*bpr || len(w2) < nQuads*bpr || len(w3) < nQuads*bpr {
-		panic("linalg: MatmulBTW4A8Row4DesharedInto: a per-role weight array is too short")
+		panic("linalg: matmulBTW4A8Row4DesharedInto: a per-role weight array is too short")
 	}
 	if len(s0) < nQuads*nGroups || len(s1) < nQuads*nGroups || len(s2) < nQuads*nGroups || len(s3) < nQuads*nGroups {
-		panic("linalg: MatmulBTW4A8Row4DesharedInto: a per-role scale array is too short")
+		panic("linalg: matmulBTW4A8Row4DesharedInto: a per-role scale array is too short")
 	}
 	aq := ws.int8Buf(K)
 	aScale := quantizeRowInt8(a[:K], aq)

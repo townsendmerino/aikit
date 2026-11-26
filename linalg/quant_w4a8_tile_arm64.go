@@ -21,7 +21,7 @@ func dotW4A8Tile4RowSDOT(act *int8, actStride int, packed *byte, scales *float32
 // canonical span in S-01 (1.65-1.90x); arm64's half of S-01 was scoped to the
 // ROW4 layout and reached only through WeightMat.MatmulBTW4A8Into, so every
 // caller that does not hold a repacked tensor — paged MoE experts, any tensor
-// that declined the repack (K%32, N%4), MatmulBTW4A8Batch at M>1, and the
+// that declined the repack (K%32, N%4), matmulBTW4A8Batch at M>1, and the
 // uniform WeightMat.MatmulBTInto — kept running the M=1 GEMV once per
 // (row, column) pair at the recorded 24.1 GMAC/s against the tile's 69.5. This
 // closes that gap on the canonical layout, where no repack is needed.

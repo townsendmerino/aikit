@@ -10,4 +10,4 @@ const has2x8Kernel = true
 // HasFusedQ8Kernel reports whether MatmulBTQ8Fused's packed path uses the NEON
 // Dot2x8/Dot8x4 kernels (arm64). Elsewhere the fused pack would run the scalar Dot2x8
 // fallback — slower than amd64's AVX2 dequant-then-GEMM — so the encoder gates on this.
-const HasFusedQ8Kernel = true
+const hasFusedQ8Kernel = true

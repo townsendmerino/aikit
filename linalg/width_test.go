@@ -38,7 +38,7 @@ func TestParallelWidth_bitIdentical(t *testing.T) {
 		SetParallelWidth(0)
 		var ws Workspace
 		refQ := make([]float32, M*N)
-		MatmulBTW8A8Into(&ws, a, bq, bs, refQ, M, K, N)
+		matmulBTW8A8Into(&ws, a, bq, bs, refQ, M, K, N)
 		refF := make([]float32, M*N)
 		MatmulBT(a, af, refF, M, K, N)
 
@@ -49,7 +49,7 @@ func TestParallelWidth_bitIdentical(t *testing.T) {
 			}
 			var ws2 Workspace
 			gotQ := make([]float32, M*N)
-			MatmulBTW8A8Into(&ws2, a, bq, bs, gotQ, M, K, N)
+			matmulBTW8A8Into(&ws2, a, bq, bs, gotQ, M, K, N)
 			gotF := make([]float32, M*N)
 			MatmulBT(a, af, gotF, M, K, N)
 			for i := range refQ {

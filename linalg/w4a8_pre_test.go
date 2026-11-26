@@ -28,7 +28,7 @@ func TestW4A8Pre_bitIdenticalToQuantizingEntry(t *testing.T) {
 		for _, repack := range []bool{false, true} {
 			mk := func() WeightMat {
 				q4, q4s := QuantizeGroupsInt4(rnd(sh.N*sh.K), sh.N, sh.K, wGroup)
-				w := WrapInt4(q4, q4s, sh.N, sh.K, wGroup)
+				w := wrapInt4F32(q4, q4s, sh.N, sh.K, wGroup)
 				if repack {
 					w.RepackInt4Row4()
 					w.RepackInt4SplitHalf()
@@ -88,7 +88,7 @@ func TestW4A8Pre_bitIdenticalToQuantizingEntry(t *testing.T) {
 // (it would silently give another result).
 func TestW4A8Pre_refusesAMismatchedBlock(t *testing.T) {
 	q4, q4s := QuantizeGroupsInt4(make([]float32, 8*64), 8, 64, 32)
-	w := WrapInt4(q4, q4s, 8, 64, 32)
+	w := wrapInt4F32(q4, q4s, 8, 64, 32)
 	var ws Workspace
 	ws.SetActQuantGroup(32)
 	a := make([]float32, 2*64)
@@ -113,7 +113,7 @@ func TestW4A8Pre_refusesAMismatchedBlock(t *testing.T) {
 	}
 }
 
-// TestW4A8Batch_groupedQuantizesOnceBitIdentical is R-14's gate: the grouped MatmulBTW4A8Batch quantizes its
+// TestW4A8Batch_groupedQuantizesOnceBitIdentical is R-14's gate: the grouped matmulBTW4A8Batch quantizes its
 // activation once for every op (Workspace.batchQ) and each op's output is the bits its own MatmulBTW4A8F16Into gives,
 // over three canonical ops of different N, groups 32 (the SIMD kernels) and 64 (the reference), M = 1 and 3.
 func TestW4A8Batch_groupedQuantizesOnceBitIdentical(t *testing.T) {
@@ -142,11 +142,11 @@ func TestW4A8Batch_groupedQuantizesOnceBitIdentical(t *testing.T) {
 			var wsB, wsR Workspace
 			wsB.SetActQuantGroup(g)
 			wsR.SetActQuantGroup(g)
-			ops := make([]W4A8Op, len(ws3))
+			ops := make([]w4a8Op, len(ws3))
 			for i, o := range ws3 {
-				ops[i] = W4A8Op{W4: o.w4, ScalesF16: o.s16, Dst: make([]float32, M*o.N), N: o.N}
+				ops[i] = w4a8Op{W4: o.w4, ScalesF16: o.s16, Dst: make([]float32, M*o.N), N: o.N}
 			}
-			MatmulBTW4A8Batch(&wsB, a, M, K, wGroup, ops)
+			matmulBTW4A8Batch(&wsB, a, M, K, wGroup, ops)
 			for i, o := range ws3 {
 				want := make([]float32, M*o.N)
 				MatmulBTW4A8F16Into(&wsR, a, o.w4, o.s16, want, M, K, o.N, wGroup)

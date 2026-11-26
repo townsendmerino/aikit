@@ -1,6 +1,9 @@
 package main
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"maps"
 	"os"
 	"path/filepath"
@@ -121,8 +124,26 @@ func TestReadmeTiers_matchGate(t *testing.T) {
 	}
 	tr := parseTiers(t, string(b), rootPackages(t, root))
 
-	if got, want := slices.Sorted(maps.Keys(tr.hardPkgs)), slices.Sorted(slices.Values(hardPkgs)); !slices.Equal(got, want) {
-		t.Errorf("README's Hard bullets name packages %v; the gate's hardPkgs is %v", got, want)
+	if got, want := slices.Sorted(maps.Keys(tr.hardPkgs)), slices.Sorted(slices.Values(slices.Concat(hardPkgs, slices.Collect(maps.Keys(hardSyms))))); !slices.Equal(got, want) {
+		t.Errorf("README's Hard bullets name packages %v; the gate's hardPkgs and hardSyms name %v", got, want)
+	}
+	// A package Hard only in part: its README Hard names are exactly the gate's list.
+	for p, syms := range hardSyms {
+		var got, want []string
+		for n := range tr.hardNames {
+			if rest, ok := strings.CutPrefix(n, p+"."); ok {
+				got = append(got, rest)
+			}
+		}
+		want = append(want, syms...)
+		slices.Sort(got)
+		slices.Sort(want)
+		if !slices.Equal(got, want) {
+			t.Errorf("README's Hard bullets name %s symbols %v; the gate's hardSyms[%q] is %v", p, got, p, want)
+		}
+		if slices.Contains(hardPkgs, p) {
+			t.Errorf("%s is in both hardPkgs (whole) and hardSyms (in part)", p)
+		}
 	}
 	for _, p := range hardPkgs {
 		if !tr.hardPkgs[p] {
@@ -175,5 +196,75 @@ func TestParseTiers_planted(t *testing.T) {
 	}
 	if got := memberName("(*SafetensorsFile).ReleaseTensors"); got != "SafetensorsFile.ReleaseTensors" {
 		t.Errorf("memberName = %q", got)
+	}
+}
+
+// TestKeepHard keeps only the lines a partial package's Hard list leads, methods with their type.
+func TestKeepHard(t *testing.T) {
+	inc := "- WrapInt4: changed from func(a) to func(a, b)\n- (*WeightMat).Int4: removed\n- MatmulBTQ8: removed\n- KindInt4: value changed\n- WeightMatrix: removed\n"
+	got := keepHard(inc, []string{"WrapInt4", "WeightMat", "KindInt4"})
+	want := "- WrapInt4: changed from func(a) to func(a, b)\n- (*WeightMat).Int4: removed\n- KindInt4: value changed"
+	if got != want {
+		t.Errorf("keepHard =\n%s\nwant\n%s", got, want)
+	}
+}
+
+func TestSemverLess(t *testing.T) {
+	for _, c := range []struct {
+		a, b string
+		want bool
+	}{
+		{"v1.79.0", "v1.80.0", true}, {"v1.80.0", "v1.80.0", false}, {"v1.80.1", "v1.80.0", false},
+		{"v1.9.0", "v1.80.0", true}, {"v2.0.0", "v1.80.0", false}, {"junk", "v1.80.0", false},
+	} {
+		if got := semverLess(c.a, c.b); got != c.want {
+			t.Errorf("semverLess(%s, %s) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
+
+// TestHardSyms_exist fails on a hardSyms name the package does not declare, so a typo cannot leave the list checking
+// nothing.
+func TestHardSyms_exist(t *testing.T) {
+	for p, syms := range hardSyms {
+		fset := token.NewFileSet()
+		names, err := filepath.Glob(filepath.Join("..", "..", p, "*.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		declared := map[string]bool{}
+		for _, n := range names {
+			if strings.HasSuffix(n, "_test.go") {
+				continue
+			}
+			f, err := parser.ParseFile(fset, n, nil, parser.SkipObjectResolution)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, d := range f.Decls {
+				switch d := d.(type) {
+				case *ast.FuncDecl:
+					if d.Recv == nil {
+						declared[d.Name.Name] = true
+					}
+				case *ast.GenDecl:
+					for _, sp := range d.Specs {
+						switch sp := sp.(type) {
+						case *ast.TypeSpec:
+							declared[sp.Name.Name] = true
+						case *ast.ValueSpec:
+							for _, n := range sp.Names {
+								declared[n.Name] = true
+							}
+						}
+					}
+				}
+			}
+		}
+		for _, s := range syms {
+			if !declared[s] {
+				t.Errorf("hardSyms[%q] names %s, which %s does not declare", p, s, p)
+			}
+		}
 	}
 }

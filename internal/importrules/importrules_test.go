@@ -25,10 +25,23 @@ func (e ext) on(p platform) bool {
 }
 
 // rule is what one package imports beyond the stdlib: aikit packages (paths relative
-// to the module root) and external packages.
+// to the module root) and external packages. aikitOn lists aikit packages imported only
+// on some platforms (an ext whose path is relative to the module root).
 type rule struct {
-	aikit []string
-	ext   []ext
+	aikit   []string
+	aikitOn []ext
+	ext     []ext
+}
+
+// aikitFor is r's aikit imports on platform p.
+func (r rule) aikitFor(p platform) []string {
+	out := slices.Clone(r.aikit)
+	for _, e := range r.aikitOn {
+		if e.on(p) {
+			out = append(out, e.path)
+		}
+	}
+	return out
 }
 
 // rules is the core module's import graph, one entry per package, non-test imports
@@ -40,23 +53,29 @@ type rule struct {
 // the same commit.
 var rules = map[string]rule{
 	// Leaves: stdlib only.
-	"topk":                 {},
-	"fuse":                 {},
-	"chunk":                {},
-	"internal/accum":       {},
-	"internal/cursor":      {},
-	"internal/cpufeat":     {},
-	"internal/guardmem":    {},
-	"internal/importrules": {},
-	"internal/kernreg":     {aikit: []string{"internal/guardmem"}},
+	"topk":                           {},
+	"fuse":                           {},
+	"chunk":                          {},
+	"internal/accum":                 {},
+	"internal/cursor":                {},
+	"internal/cpufeat":               {},
+	"internal/guardmem":              {},
+	"internal/importrules":           {},
+	"internal/half":                  {},
+	"linalg/internal/outputcontract": {},
+	"linalg/internal/shape":          {},
+	"internal/kernreg":               {aikit: []string{"internal/guardmem"}},
 
 	// mmap is a leaf among aikit packages. Its one external import is madvise on darwin.
 	"mmap": {ext: []ext{{path: "golang.org/x/sys/unix", goos: "darwin"}}},
 
 	// Kernels and loaders.
-	"linalg": {aikit: []string{"internal/cpufeat", "mmap"}},
+	"linalg":        {aikit: []string{"internal/cpufeat", "internal/half", "linalg/internal/shape", "mmap"}},
+	"linalg/bitvec": {aikitOn: []ext{{path: "internal/cpufeat", goarch: "amd64"}}},
+	"linalg/attn":   {aikit: []string{"internal/half", "linalg/elem", "linalg/internal/shape"}, aikitOn: []ext{{path: "internal/cpufeat", goarch: "amd64"}}},
+	"linalg/elem":   {aikitOn: []ext{{path: "internal/cpufeat", goarch: "amd64"}}},
 	"embed": {
-		aikit: []string{"internal/cursor", "mmap"},
+		aikit: []string{"internal/cursor", "internal/half", "mmap"},
 		ext: []ext{
 			{path: "golang.org/x/text/unicode/norm"},
 			{path: "golang.org/x/sys/cpu", goarch: "amd64"},
@@ -68,15 +87,14 @@ var rules = map[string]rule{
 	"chunk/regex":    {aikit: []string{"chunk"}},
 
 	// Indexes and rerankers.
-	"ann":    {aikit: []string{"internal/cursor", "linalg", "mmap", "topk"}},
+	"ann":    {aikit: []string{"internal/cursor", "linalg", "linalg/bitvec", "mmap", "topk"}},
 	"bm25":   {aikit: []string{"internal/accum", "internal/cursor", "mmap", "topk"}},
 	"sparse": {aikit: []string{"internal/accum", "topk"}},
 	"late":   {aikit: []string{"linalg", "topk"}},
 	"hybrid": {aikit: []string{"ann", "bm25", "fuse"}},
 
 	// Model towers.
-	"encoder": {aikit: []string{"embed", "linalg", "sparse"}},
-	"vision":  {aikit: []string{"embed", "linalg"}},
+	"encoder": {aikit: []string{"embed", "linalg", "linalg/elem", "sparse"}},
 
 	// Harness and programs.
 	"bench":                 {aikit: []string{"ann"}},
@@ -84,7 +102,6 @@ var rules = map[string]rule{
 	"examples/colbert":      {aikit: []string{"ann", "bm25", "chunk", "chunk/regex", "embed", "encoder", "fuse", "late"}},
 	"examples/rag":          {aikit: []string{"ann", "bm25", "chunk", "chunk/regex", "embed", "encoder", "fuse", "topk"}},
 	"examples/splade":       {aikit: []string{"chunk", "chunk/regex", "encoder", "sparse"}},
-	"examples/vision":       {aikit: []string{"ann", "bm25", "chunk", "chunk/regex", "embed", "fuse", "vision"}},
 }
 
 // quarantined are the nested modules the core must never reach, directly or through
@@ -255,7 +272,7 @@ func checkPlatform(t *testing.T, p platform) {
 				gotExt = append(gotExt, imp)
 			}
 		}
-		diff(t, p, name, "aikit package", gotAikit, want.aikit)
+		diff(t, p, name, "aikit package", gotAikit, want.aikitFor(p))
 		diff(t, p, name, "external package", gotExt, wantExt)
 		if q.incomplete && !t.Failed() {
 			t.Errorf("%s: go list reports package %s (or a dependency) as broken; run `GOOS=%s GOARCH=%s go list -deps ./%s`",
@@ -329,7 +346,7 @@ func TestREADMEPackageTable(t *testing.T) {
 		rows++
 		var want []string
 		for _, a := range r.aikit {
-			if !strings.HasPrefix(a, "internal/") {
+			if !strings.HasPrefix(a, "internal/") && !strings.Contains(a, "/internal/") {
 				want = append(want, a)
 			}
 		}

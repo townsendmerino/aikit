@@ -54,7 +54,7 @@ func TestW4A8TilePanelTraffic(t *testing.T) {
 		}
 		q4, q4s := QuantizeGroupsInt4(w, N, K, group)
 		row4 := RepackW4A8Row4(q4, N, K, group)
-		row4s := RepackW4A8Row4Scales(q4s, N, K, group)
+		row4s := repackW4A8Row4Scales(q4s, N, K, group)
 
 		fmt.Fprintf(os.Stderr, "\n  %s  (weights %.1f MB)\n", sh.name, float64(len(row4)+4*len(row4s))/(1<<20))
 		fmt.Fprintf(os.Stderr, "    %-5s %-8s %12s %12s %14s\n", "M", "workers", "ns/op", "GMAC/s", "ps per MAC")
@@ -73,12 +73,12 @@ func TestW4A8TilePanelTraffic(t *testing.T) {
 				} else {
 					ws.SetThreshold(0)
 				}
-				MatmulBTW4A8Row4TileInto(ws, a, row4, row4s, dst, M, K, N, group)
+				matmulBTW4A8Row4TileInto(ws, a, row4, row4s, dst, M, K, N, group)
 				best := 0.0
 				for range 3 {
 					r := testing.Benchmark(func(b *testing.B) {
 						for b.Loop() {
-							MatmulBTW4A8Row4TileInto(ws, a, row4, row4s, dst, M, K, N, group)
+							matmulBTW4A8Row4TileInto(ws, a, row4, row4s, dst, M, K, N, group)
 						}
 					})
 					ns := float64(r.NsPerOp())

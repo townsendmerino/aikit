@@ -10,7 +10,7 @@ import (
 // QuantizeGroupInt4Row's default sets scale = max|w|/7 and clamps codes to [-7, 7]: it uses 15 of
 // the 16 levels a nibble holds (code -8 is never produced) and searches nothing. The candidates here
 // keep the format exactly (decode (nibble-8)*scale, same packing, same group) and change only how the
-// scale and codes are chosen, so no kernel changes. Experimental, behind SetInt4WeightScheme; the
+// scale and codes are chosen, so no kernel changes. Internal, behind setInt4WeightScheme (linalg's own A/B tests set it); the
 // default "" leaves QuantizeGroupInt4Row bit-identical.
 //
 //   - "fullrange": scale = (signed element of largest magnitude) / -8, llama.cpp Q4_0's rule. That
@@ -20,9 +20,9 @@ import (
 
 var int4WeightScheme string
 
-// SetInt4WeightScheme selects the int4 weight quantizer: "" (the default max/7 rule), "fullrange" or
+// setInt4WeightScheme selects the int4 weight quantizer: "" (the default max/7 rule), "fullrange" or
 // "mse". It affects only quantization done after the call; set it before loading a model.
-func SetInt4WeightScheme(scheme string) {
+func setInt4WeightScheme(scheme string) {
 	switch scheme {
 	case "", "fullrange", "mse":
 		int4WeightScheme = scheme
@@ -31,8 +31,8 @@ func SetInt4WeightScheme(scheme string) {
 	}
 }
 
-// Int4WeightScheme reports the scheme SetInt4WeightScheme selected.
-func Int4WeightScheme() string { return int4WeightScheme }
+// currentInt4WeightScheme reports the scheme setInt4WeightScheme selected.
+func currentInt4WeightScheme() string { return int4WeightScheme }
 
 // int4Codes rounds row[ks:ke]/s into [-8, 7] and returns the squared reconstruction error.
 func int4Codes(row []float32, ks, ke int, s float32, codes []int8) float64 {

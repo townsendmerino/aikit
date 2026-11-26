@@ -43,11 +43,11 @@ func TestWorkspace_quantizeActivationsSurvivesWeightOnlyMatmul(t *testing.T) {
 	// ordering here passes even against the defect. The hazard is the in-place
 	// case: once the buffer is already big enough, no growth occurs and the
 	// dequantized weight rows are written straight over the scales.
-	MatmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
+	matmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
 
 	_, scales := ws.QuantizeActivations(a, M, K)
 	want := slices.Clone(scales)
-	MatmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
+	matmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
 	if !slices.Equal(scales, want) {
 		t.Errorf("MatmulBTQ8Into overwrote the activation scales:\n got %v\nwant %v", scales, want)
 	}
@@ -56,10 +56,10 @@ func TestWorkspace_quantizeActivationsSurvivesWeightOnlyMatmul(t *testing.T) {
 	const group = 32
 	packed, gScales := QuantizeGroupsInt4(w, N, K, group)
 	var ws4 Workspace
-	MatmulBTQ4Into(&ws4, a, packed, gScales, dst, M, K, N, group)
+	matmulBTQ4Into(&ws4, a, packed, gScales, dst, M, K, N, group)
 	_, scales4 := ws4.QuantizeActivations(a, M, K)
 	want4 := slices.Clone(scales4)
-	MatmulBTQ4Into(&ws4, a, packed, gScales, dst, M, K, N, group)
+	matmulBTQ4Into(&ws4, a, packed, gScales, dst, M, K, N, group)
 	if !slices.Equal(scales4, want4) {
 		t.Errorf("MatmulBTQ4Into overwrote the activation scales:\n got %v\nwant %v", scales4, want4)
 	}

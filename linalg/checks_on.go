@@ -29,7 +29,7 @@ func checkDequantInt4(packed []byte, scales []float32, group, cols int, dst []fl
 }
 
 // checkGroupMatmul validates the shared shape contract of the group-quantized
-// matmuls (MatmulBTW4A8, MatmulBTQ4): a is [M,K], the packed weights are [N, bytesPerRow],
+// matmuls (matmulBTW4A8, matmulBTQ4): a is [M,K], the packed weights are [N, bytesPerRow],
 // scales are [N, nGroups], dst is [M,N].
 func checkGroupMatmul(name string, aLen int, packed []byte, scales []float32, dstLen, M, K, N, group int) {
 	assertf(group > 0, "%s: group must be > 0, got %d", name, group)

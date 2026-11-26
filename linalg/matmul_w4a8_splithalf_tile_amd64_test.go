@@ -60,7 +60,7 @@ var splitHalfTileShapes = []struct{ K, N int }{
 }
 
 // TestMatmulBTW4A8SplitHalfTile_bitIdenticalToCanonical is the split-half
-// tile's own gate, held against the canonical M>1 path (MatmulBTW4A8Into
+// tile's own gate, held against the canonical M>1 path (matmulBTW4A8Into
 // over the SAME logical weights in canonical packing) — the same
 // construction TestMatmulBTW4A8Row4TileInto_bitIdenticalToCanonical uses
 // for row4, so it proves the thing callers care about: swapping the
@@ -79,7 +79,7 @@ func TestMatmulBTW4A8SplitHalfTile_bitIdenticalToCanonical(t *testing.T) {
 			w[i] = float32(rng.NormFloat64())
 		}
 		q4, q4s := QuantizeGroupsInt4(w, N, K, group)
-		splitHalf := RepackW4A8SplitHalf(cloneBytes(q4), N, K, group)
+		splitHalf := repackW4A8SplitHalf(cloneBytes(q4), N, K, group)
 
 		for _, M := range []int{4, 5, 7, 8, 16, 64} {
 			a := make([]float32, M*K)
@@ -89,7 +89,7 @@ func TestMatmulBTW4A8SplitHalfTile_bitIdenticalToCanonical(t *testing.T) {
 			var wsWant, wsGot Workspace
 			want := make([]float32, M*N)
 			got := make([]float32, M*N)
-			MatmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
+			matmulBTW4A8Into(&wsWant, a, q4, q4s, want, M, K, N, group)
 			matmulBTW4A8SplitHalfMultiInto(&wsGot, a, splitHalf, q4s, got, M, K, N, group)
 			for i := range got {
 				if got[i] != want[i] {
@@ -118,15 +118,15 @@ func TestWeightMatW4A8_MConsistentAcrossSplitHalfDispatch(t *testing.T) {
 
 	for _, c := range quantMConsistentCases {
 		t.Run(c.name, func(t *testing.T) {
-			if !Int4SplitHalfUsable(c.K, group) {
+			if !int4SplitHalfUsable(c.K, group) {
 				t.Skipf("split-half not usable for K=%d group=%d on this core", c.K, group)
 			}
 			assertSplitHalfTileEngages(t, 4, c.K)
 			a := mconsistentRand(rng, maxM*c.K)
 			q4, q4s := QuantizeGroupsInt4(mconsistentRand(rng, c.N*c.K), c.N, c.K, group)
-			wm := WrapInt4(q4, q4s, c.N, c.K, group)
+			wm := wrapInt4F32(q4, q4s, c.N, c.K, group)
 			if !wm.RepackInt4SplitHalf() {
-				t.Fatal("RepackInt4SplitHalf declined despite Int4SplitHalfUsable saying yes")
+				t.Fatal("RepackInt4SplitHalf declined despite int4SplitHalfUsable saying yes")
 			}
 
 			solo := make([]float32, maxM*c.N)

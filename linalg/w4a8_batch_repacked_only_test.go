@@ -1,9 +1,9 @@
 //go:build arm64
 
-// row4 has no amd64/portable twin (RepackW4A8Row4/RepackW4A8Row4Scales live
+// row4 has no amd64/portable twin (RepackW4A8Row4/repackW4A8Row4Scales live
 // only in matmul_w4a8_row4_arm64.go), so this file — which builds row4 test
 // data directly rather than going through a gated wrapper — is arm64-only.
-// Int4Row4Usable/row4Usable are false everywhere off arm64 anyway, so
+// int4Row4Usable/row4Usable are false everywhere off arm64 anyway, so
 // nothing here would ever run on another arch.
 package linalg
 
@@ -21,7 +21,7 @@ import (
 // dereferencing a nil W4/Scales.
 func TestMatmulBTW4A8Batch_repackedOnlyMatchesCanonical(t *testing.T) {
 	const group, K = 32, 1536
-	if !Int4Row4Usable(8, K, group) {
+	if !int4Row4Usable(8, K, group) {
 		t.Skip("row4 not usable on this core")
 	}
 	rng := rand.New(rand.NewPCG(22, 5))
@@ -33,7 +33,7 @@ func TestMatmulBTW4A8Batch_repackedOnlyMatchesCanonical(t *testing.T) {
 	// aligned) land on quad boundaries for every op and the row4 path
 	// covers the whole batch.
 	shapes := []int{256, 512}
-	var canonOps, repackedOps []W4A8Op
+	var canonOps, repackedOps []w4a8Op
 	var wantDst, gotDst [][]float32
 	for _, n := range shapes {
 		q4, q4s := quantizeInt4Random(rng, n, K, group)
@@ -41,16 +41,16 @@ func TestMatmulBTW4A8Batch_repackedOnlyMatchesCanonical(t *testing.T) {
 		gD := make([]float32, n)
 		wantDst = append(wantDst, wD)
 		gotDst = append(gotDst, gD)
-		canonOps = append(canonOps, W4A8Op{W4: q4, Scales: q4s, Dst: wD, N: n})
+		canonOps = append(canonOps, w4a8Op{W4: q4, Scales: q4s, Dst: wD, N: n})
 
-		row4, row4s := RepackW4A8Row4(q4, n, K, group), RepackW4A8Row4Scales(q4s, n, K, group)
-		repackedOps = append(repackedOps, W4A8Op{Row4: row4, Row4Scales: row4s, Dst: gD, N: n})
+		row4, row4s := RepackW4A8Row4(q4, n, K, group), repackW4A8Row4Scales(q4s, n, K, group)
+		repackedOps = append(repackedOps, w4a8Op{Row4: row4, Row4Scales: row4s, Dst: gD, N: n})
 	}
 
 	var wsCanon Workspace
-	MatmulBTW4A8Batch(&wsCanon, a, M, K, group, canonOps)
+	matmulBTW4A8Batch(&wsCanon, a, M, K, group, canonOps)
 	var wsRepacked Workspace
-	MatmulBTW4A8Batch(&wsRepacked, a, M, K, group, repackedOps)
+	matmulBTW4A8Batch(&wsRepacked, a, M, K, group, repackedOps)
 
 	for opIdx := range wantDst {
 		for i := range wantDst[opIdx] {
@@ -64,7 +64,7 @@ func TestMatmulBTW4A8Batch_repackedOnlyMatchesCanonical(t *testing.T) {
 // TestMatmulBTW4A8Batch_repackedOnlyUnalignedEdgePanics is the failure-mode
 // half of the M-22 batch fix: a repacked-only op whose requested column
 // range straddles a non-quad boundary must panic, naming the op and range,
-// rather than dereference W4A8Op.W4 == nil three calls into w4a8Span.
+// rather than dereference w4a8Op.W4 == nil three calls into w4a8Span.
 func TestMatmulBTW4A8Batch_repackedOnlyUnalignedEdgePanics(t *testing.T) {
 	const group, K = 32, 1536
 	if !row4Usable() {
@@ -73,12 +73,12 @@ func TestMatmulBTW4A8Batch_repackedOnlyUnalignedEdgePanics(t *testing.T) {
 	rng := rand.New(rand.NewPCG(22, 6))
 	const n = 8 // row4-shaped (N%4==0), but the call below asks for a non-quad-aligned slice
 	q4, q4s := quantizeInt4Random(rng, n, K, group)
-	row4, row4s := RepackW4A8Row4(q4, n, K, group), RepackW4A8Row4Scales(q4s, n, K, group)
+	row4, row4s := RepackW4A8Row4(q4, n, K, group), repackW4A8Row4Scales(q4s, n, K, group)
 
 	aq := make([]int8, K)
 	aScales := []float32{1}
 	dst := make([]float32, n)
-	op := W4A8Op{Row4: row4, Row4Scales: row4s, Dst: dst, N: n}
+	op := w4a8Op{Row4: row4, Row4Scales: row4s, Dst: dst, N: n}
 	nGroups, bpr := groupsFor(K, group)
 
 	defer func() {

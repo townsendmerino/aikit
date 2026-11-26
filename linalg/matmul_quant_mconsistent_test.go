@@ -83,7 +83,7 @@ func TestMatmulBTW4A8_MConsistent(t *testing.T) {
 			solo := make([]float32, maxM*c.N)
 			var wsSolo Workspace
 			for i := range maxM {
-				MatmulBTW4A8Into(&wsSolo, a[i*c.K:(i+1)*c.K], q4, q4s, solo[i*c.N:(i+1)*c.N], 1, c.K, c.N, group)
+				matmulBTW4A8Into(&wsSolo, a[i*c.K:(i+1)*c.K], q4, q4s, solo[i*c.N:(i+1)*c.N], 1, c.K, c.N, group)
 			}
 
 			for _, M := range mconsistentMs {
@@ -98,7 +98,7 @@ func TestMatmulBTW4A8_MConsistent(t *testing.T) {
 						ws.SetWorkers(4)
 					}
 					got := make([]float32, M*c.N)
-					MatmulBTW4A8Into(&ws, a, q4, q4s, got, M, c.K, c.N, group)
+					matmulBTW4A8Into(&ws, a, q4, q4s, got, M, c.K, c.N, group)
 					for i := range M {
 						for j := range c.N {
 							if g, w := got[i*c.N+j], solo[i*c.N+j]; g != w {
@@ -133,7 +133,7 @@ func TestMatmulBTW8A8_MConsistent(t *testing.T) {
 			solo := make([]float32, maxM*c.N)
 			var wsSolo Workspace
 			for i := range maxM {
-				MatmulBTW8A8Into(&wsSolo, a[i*c.K:(i+1)*c.K], bq, bs, solo[i*c.N:(i+1)*c.N], 1, c.K, c.N)
+				matmulBTW8A8Into(&wsSolo, a[i*c.K:(i+1)*c.K], bq, bs, solo[i*c.N:(i+1)*c.N], 1, c.K, c.N)
 			}
 
 			for _, M := range mconsistentMs {
@@ -144,7 +144,7 @@ func TestMatmulBTW8A8_MConsistent(t *testing.T) {
 						ws.SetWorkers(4)
 					}
 					got := make([]float32, M*c.N)
-					MatmulBTW8A8Into(&ws, a, bq, bs, got, M, c.K, c.N)
+					matmulBTW8A8Into(&ws, a, bq, bs, got, M, c.K, c.N)
 					for i := range M {
 						for j := range c.N {
 							if g, w := got[i*c.N+j], solo[i*c.N+j]; g != w {
@@ -183,7 +183,7 @@ func TestWeightMatW4A8_MConsistentAcrossRow4Dispatch(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			a := mconsistentRand(rng, maxM*c.K)
 			q4, q4s := QuantizeGroupsInt4(mconsistentRand(rng, c.N*c.K), c.N, c.K, group)
-			wm := WrapInt4(q4, q4s, c.N, c.K, group)
+			wm := wrapInt4F32(q4, q4s, c.N, c.K, group)
 			repacked := wm.RepackInt4Row4()
 
 			solo := make([]float32, maxM*c.N)

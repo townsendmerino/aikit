@@ -4,6 +4,8 @@ import (
 	"math"
 
 	"github.com/townsendmerino/aikit/linalg"
+
+	"github.com/townsendmerino/aikit/linalg/elem"
 )
 
 // (*WeightsQ8).forward runs the int8 forward pass on a single sequence. It mirrors
@@ -282,7 +284,7 @@ func swigluMLPQ8(h []float32, fc11, fc12, fc2 *linalg.WeightMat,
 	parallelRows(L, L*intermediate, func(start, end int) {
 		lo, hi := start*intermediate, end*intermediate
 		g := gate[lo:hi]
-		linalg.SiLUContractInto(g, g)
+		elem.SiLUContractInto(g, g)
 		v := val[lo:hi]
 		for i := range v {
 			v[i] *= g[i]

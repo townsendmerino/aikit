@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TestW4A8Batch_bitIdenticalToPerOp is MatmulBTW4A8Batch's contract: it must
-// produce EXACTLY the bits that calling MatmulBTW4A8Into once per op produces.
+// TestW4A8Batch_bitIdenticalToPerOp is matmulBTW4A8Batch's contract: it must
+// produce EXACTLY the bits that calling matmulBTW4A8Into once per op produces.
 // The batch form exists to remove fork/join barriers and redundant activation
 // quantization, never to change a number — goinfer's decode == batched prefill
 // == speculative verify guarantee runs through these projections.
@@ -30,12 +30,12 @@ func TestW4A8Batch_bitIdenticalToPerOp(t *testing.T) {
 	}
 	// mkOp builds one op; withRow4 asks for the repacked layout, which
 	// RepackInt4Row4's own gate may still decline (N%4, group, DotProd).
-	mkOp := func(K, N int, withRow4 bool) W4A8Op {
+	mkOp := func(K, N int, withRow4 bool) w4a8Op {
 		q4, q4s := QuantizeGroupsInt4(rv(N*K), N, K, group)
 		f16RoundScales(q4s) // the WeightMat below stores binary16 scales
-		op := W4A8Op{W4: q4, Scales: q4s, N: N}
+		op := w4a8Op{W4: q4, Scales: q4s, N: N}
 		if withRow4 && row4Usable() && N%4 == 0 && K%group == 0 {
-			wm := WrapInt4(q4, q4s, N, K, group)
+			wm := wrapInt4F32(q4, q4s, N, K, group)
 			if wm.RepackInt4Row4() {
 				op.Row4, op.Row4ScalesF16 = wm.q4Row4, wm.q4Row4Scales16
 			}
@@ -70,7 +70,7 @@ func TestW4A8Batch_bitIdenticalToPerOp(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			a := rv(c.M * c.K)
-			ops := make([]W4A8Op, len(c.Ns))
+			ops := make([]w4a8Op, len(c.Ns))
 			want := make([][]float32, len(c.Ns))
 			for i, N := range c.Ns {
 				ops[i] = mkOp(c.K, N, c.row4)
@@ -78,10 +78,10 @@ func TestW4A8Batch_bitIdenticalToPerOp(t *testing.T) {
 				want[i] = make([]float32, c.M*N)
 			}
 
-			// Reference: one MatmulBTW4A8Into per op, canonical layout.
+			// Reference: one matmulBTW4A8Into per op, canonical layout.
 			var wsRef Workspace
 			for i, op := range ops {
-				MatmulBTW4A8Into(&wsRef, a, op.W4, op.Scales, want[i], c.M, c.K, op.N, group)
+				matmulBTW4A8Into(&wsRef, a, op.W4, op.Scales, want[i], c.M, c.K, op.N, group)
 			}
 
 			for _, forced := range []bool{false, true} {
@@ -96,7 +96,7 @@ func TestW4A8Batch_bitIdenticalToPerOp(t *testing.T) {
 					ws.SetThreshold(1)
 					ws.SetWorkers(4)
 				}
-				MatmulBTW4A8Batch(&ws, a, c.M, c.K, group, ops)
+				matmulBTW4A8Batch(&ws, a, c.M, c.K, group, ops)
 				for i, op := range ops {
 					usedRow4 := op.Row4 != nil
 					for k := range op.Dst {
@@ -129,8 +129,8 @@ func TestW4A8Batch_widthInert(t *testing.T) {
 	}
 	a := rv(M * K)
 	Ns := []int{256, 128, 64}
-	build := func() []W4A8Op {
-		ops := make([]W4A8Op, len(Ns))
+	build := func() []w4a8Op {
+		ops := make([]w4a8Op, len(Ns))
 		r := rand.New(rand.NewPCG(0x1de, 0x22))
 		for i, N := range Ns {
 			w := make([]float32, N*K)
@@ -139,9 +139,9 @@ func TestW4A8Batch_widthInert(t *testing.T) {
 			}
 			q4, q4s := QuantizeGroupsInt4(w, N, K, group)
 			f16RoundScales(q4s) // the WeightMat below stores binary16 scales
-			ops[i] = W4A8Op{W4: q4, Scales: q4s, N: N, Dst: make([]float32, M*N)}
+			ops[i] = w4a8Op{W4: q4, Scales: q4s, N: N, Dst: make([]float32, M*N)}
 			if row4Usable() {
-				wm := WrapInt4(q4, q4s, N, K, group)
+				wm := wrapInt4F32(q4, q4s, N, K, group)
 				if wm.RepackInt4Row4() {
 					ops[i].Row4, ops[i].Row4ScalesF16 = wm.q4Row4, wm.q4Row4Scales16
 				}
@@ -153,14 +153,14 @@ func TestW4A8Batch_widthInert(t *testing.T) {
 	serial := build()
 	var wsS Workspace
 	wsS.SetThreshold(1 << 62)
-	MatmulBTW4A8Batch(&wsS, a, M, K, group, serial)
+	matmulBTW4A8Batch(&wsS, a, M, K, group, serial)
 
 	for _, workers := range []int{1, 2, 3, 5, 8, 16} {
 		got := build()
 		var ws Workspace
 		ws.SetThreshold(1)
 		ws.SetWorkers(workers)
-		MatmulBTW4A8Batch(&ws, a, M, K, group, got)
+		matmulBTW4A8Batch(&ws, a, M, K, group, got)
 		for i := range got {
 			for k := range got[i].Dst {
 				if got[i].Dst[k] != serial[i].Dst[k] {
@@ -177,6 +177,6 @@ func TestW4A8Batch_widthInert(t *testing.T) {
 // legitimately end up with none.
 func TestW4A8Batch_emptyOpsIsNoop(t *testing.T) {
 	var ws Workspace
-	MatmulBTW4A8Batch(&ws, nil, 1, 64, 32, nil)
-	MatmulBTW4A8Batch(&ws, nil, 1, 64, 32, []W4A8Op{})
+	matmulBTW4A8Batch(&ws, nil, 1, 64, 32, nil)
+	matmulBTW4A8Batch(&ws, nil, 1, 64, 32, []w4a8Op{})
 }

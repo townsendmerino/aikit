@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/townsendmerino/aikit/embed"
-	"github.com/townsendmerino/aikit/linalg"
+	"github.com/townsendmerino/aikit/linalg/elem"
 )
 
 // gte.go — the GTE encoder (Alibaba gte-multilingual-base; the base of
@@ -292,7 +292,7 @@ func (g *GTE) forward(ids []int32, clsOnly bool) []float32 {
 		// splitting because geluScalar is math.Erf per element — after the
 		// attention softmax was parallelized this was the largest remaining
 		// serial stage of GTE.Encode, ~27% of the call at L=690.
-		// Each row's gate is contiguous (I-length), so linalg.GELUInto (vectorized
+		// Each row's gate is contiguous (I-length), so elem.GELUInto (vectorized
 		// under GOEXPERIMENT=simd — T1, autoresearch round 2) applies per row, in
 		// place, before the up-multiply — this row-parallel loop was the encoder's
 		// own biggest GELU hotspot (~27% of GTE.Encode at L=690) that the batched
@@ -302,7 +302,7 @@ func (g *GTE) forward(ids []int32, clsOnly bool) []float32 {
 				up := upGate[i*2*I : i*2*I+I]
 				gate := upGate[i*2*I+I : i*2*I+2*I]
 				m := mid[i*I : (i+1)*I]
-				linalg.GELUContractInto(gate, gate)
+				elem.GELUContractInto(gate, gate)
 				for j := range I {
 					m[j] = gate[j] * up[j]
 				}

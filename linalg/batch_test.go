@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// TestW8A8Batch_bitIdenticalToPerOp: MatmulBTW8A8Batch must produce EXACTLY the
-// same bytes as calling MatmulBTW8A8Into once per op — the whole point is a
+// TestW8A8Batch_bitIdenticalToPerOp: matmulBTW8A8Batch must produce EXACTLY the
+// same bytes as calling matmulBTW8A8Into once per op — the whole point is a
 // dispatch optimization with zero numeric change (so goinfer's HF-logit parity
 // is untouched). Checked under both the serial and parallel thresholds, since
 // the column partitioning differs between them.
@@ -31,12 +31,12 @@ func TestW8A8Batch_bitIdenticalToPerOp(t *testing.T) {
 		const K = 896
 		ns := []int{896, 128, 128} // qkv-like, uneven so spans cross op boundaries
 		a := randF(M * K)
-		ops := make([]W8A8Op, len(ns))
-		ref := make([]W8A8Op, len(ns))
+		ops := make([]w8a8Op, len(ns))
+		ref := make([]w8a8Op, len(ns))
 		for i, N := range ns {
 			bq, bs := randQ(N*K), randF(N)
-			ops[i] = W8A8Op{BQ: bq, Scales: bs, Dst: make([]float32, M*N), N: N}
-			ref[i] = W8A8Op{BQ: bq, Scales: bs, Dst: make([]float32, M*N), N: N}
+			ops[i] = w8a8Op{BQ: bq, Scales: bs, Dst: make([]float32, M*N), N: N}
+			ref[i] = w8a8Op{BQ: bq, Scales: bs, Dst: make([]float32, M*N), N: N}
 		}
 
 		for _, serial := range []bool{true, false} {
@@ -44,10 +44,10 @@ func TestW8A8Batch_bitIdenticalToPerOp(t *testing.T) {
 				var ws Workspace
 				// Reference: one Into call per op.
 				for _, op := range ref {
-					MatmulBTW8A8Into(&ws, a, op.BQ, op.Scales, op.Dst, M, K, op.N)
+					matmulBTW8A8Into(&ws, a, op.BQ, op.Scales, op.Dst, M, K, op.N)
 				}
 				// Batched.
-				MatmulBTW8A8Batch(&ws, a, M, K, ops)
+				matmulBTW8A8Batch(&ws, a, M, K, ops)
 				for i := range ops {
 					for j := range ops[i].Dst {
 						if ops[i].Dst[j] != ref[i].Dst[j] {
@@ -66,7 +66,7 @@ func TestW8A8Batch_bitIdenticalToPerOp(t *testing.T) {
 }
 
 // TestW8A8Into_bitIdenticalToWrapper: the zero-alloc Into path must match the
-// allocating MatmulBTW8A8 wrapper exactly.
+// allocating matmulBTW8A8 wrapper exactly.
 func TestW8A8Into_bitIdenticalToWrapper(t *testing.T) {
 	rng := rand.New(rand.NewSource(11))
 	const M, K, N = 2, 640, 1024
@@ -83,11 +83,11 @@ func TestW8A8Into_bitIdenticalToWrapper(t *testing.T) {
 		bs[i] = float32(rng.NormFloat64())
 	}
 	want := make([]float32, M*N)
-	MatmulBTW8A8(a, bq, bs, want, M, K, N)
+	matmulBTW8A8(a, bq, bs, want, M, K, N)
 
 	var ws Workspace
 	got := make([]float32, M*N)
-	MatmulBTW8A8Into(&ws, a, bq, bs, got, M, K, N)
+	matmulBTW8A8Into(&ws, a, bq, bs, got, M, K, N)
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("elem %d: Into %v != wrapper %v", i, got[i], want[i])
@@ -120,10 +120,10 @@ func TestW8A8Reblock_matchesPerRow(t *testing.T) {
 	} {
 		a, bq, bs := rf(s.M*s.K), rq(s.N*s.K), rf(s.N)
 		gotM := make([]float32, s.M*s.N)
-		MatmulBTW8A8(a, bq, bs, gotM, s.M, s.K, s.N)
+		matmulBTW8A8(a, bq, bs, gotM, s.M, s.K, s.N)
 		for i := 0; i < s.M; i++ {
 			row := make([]float32, s.N)
-			MatmulBTW8A8(a[i*s.K:(i+1)*s.K], bq, bs, row, 1, s.K, s.N)
+			matmulBTW8A8(a[i*s.K:(i+1)*s.K], bq, bs, row, 1, s.K, s.N)
 			for j := 0; j < s.N; j++ {
 				if gotM[i*s.N+j] != row[j] {
 					t.Fatalf("shape %+v row %d col %d: M>1 %v != per-row M=1 %v",
@@ -143,10 +143,10 @@ func TestW8A8Into_zeroAllocWhenReused(t *testing.T) {
 	bs := randF(N)
 	dst := make([]float32, M*N)
 	var ws Workspace
-	MatmulBTW8A8Into(&ws, a, bq, bs, dst, M, K, N) // warm the workspace
+	matmulBTW8A8Into(&ws, a, bq, bs, dst, M, K, N) // warm the workspace
 
 	avg := testing.AllocsPerRun(20, func() {
-		MatmulBTW8A8Into(&ws, a, bq, bs, dst, M, K, N)
+		matmulBTW8A8Into(&ws, a, bq, bs, dst, M, K, N)
 	})
 	if avg != 0 {
 		t.Errorf("reused Into allocs = %v/op, want 0", avg)
@@ -179,9 +179,9 @@ func TestW8A8Into_boundedAllocOnParallelPath(t *testing.T) {
 		var ws Workspace
 		ws.SetWorkers(workers)
 		ws.SetThreshold(1) // force the parallel path regardless of shape
-		MatmulBTW8A8Into(&ws, a, bq, bs, dst, M, K, N)
+		matmulBTW8A8Into(&ws, a, bq, bs, dst, M, K, N)
 		return testing.AllocsPerRun(20, func() {
-			MatmulBTW8A8Into(&ws, a, bq, bs, dst, M, K, N)
+			matmulBTW8A8Into(&ws, a, bq, bs, dst, M, K, N)
 		})
 	}
 

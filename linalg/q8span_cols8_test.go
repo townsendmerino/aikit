@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// q8SpanColumn is the definition of MatmulBTQ8's arithmetic; on arm64 q8Span
+// q8SpanColumn is the definition of matmulBTQ8's arithmetic; on arm64 q8Span
 // runs eight columns through dotNEON8x4 instead. The contract is raw-bit
 // equality on every output, over: K with a K%4 dot tail and a K%16 widen tail,
 // N below eight, N not a multiple of eight (remainder columns), M=1 and M>1,
@@ -64,7 +64,7 @@ func TestQ8Span8Cols_bitIdenticalToColumnForm(t *testing.T) {
 			for i := range got {
 				got[i] = float32(math.NaN())
 			}
-			MatmulBTQ8Into(&ws, a, bQ, bScales, got, M, K, N)
+			matmulBTQ8Into(&ws, a, bQ, bScales, got, M, K, N)
 			compareBits(t, fmt.Sprintf("M=%d K=%d N=%d Into(thr=%d)", M, K, N, thr), got, want)
 		}
 	}
@@ -102,7 +102,7 @@ func TestMatmulBTQ8Into_parallelScratchPooled(t *testing.T) {
 	var ws Workspace
 	ws.SetThreshold(0)
 	for range 4 {
-		MatmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N) // warm the pool
+		matmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N) // warm the pool
 	}
 	if raceEnabled {
 		// sync.Pool.Put drops one item in four under the race detector (sync/pool.go,
@@ -115,7 +115,7 @@ func TestMatmulBTQ8Into_parallelScratchPooled(t *testing.T) {
 	}
 	workers := resolveWidth(0)
 	allocs := testing.AllocsPerRun(20, func() {
-		MatmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
+		matmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
 	})
 	// Bookkeeping per call: the closure, the WaitGroup-captured goroutine
 	// frames, one per worker — generously bounded. A per-worker K-float make
@@ -148,7 +148,7 @@ func BenchmarkMatmulBTQ8_span(b *testing.B) {
 		b.Run(fmt.Sprintf("cols8/M%d_K%d_N%d", M, K, N), func(b *testing.B) {
 			b.SetBytes(int64(N) * int64(K))
 			for b.Loop() {
-				MatmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
+				matmulBTQ8Into(&ws, a, bQ, bScales, dst, M, K, N)
 			}
 		})
 		deq := make([]float32, K)

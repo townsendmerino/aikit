@@ -59,25 +59,25 @@ func buildLayer(M int) (acts map[string][]float32, p map[string]*proj) {
 	return acts, p
 }
 
-// runLayerInto runs the 7 projections one-per-call (MatmulBTW8A8Into).
+// runLayerInto runs the 7 projections one-per-call (matmulBTW8A8Into).
 func runLayerInto(ws *Workspace, acts map[string][]float32, p map[string]*proj, M int) {
 	in := map[string]string{"q_proj": "attn", "k_proj": "attn", "v_proj": "attn", "o_proj": "attn", "gate": "mlp", "up": "mlp", "down": "down"}
 	for name, src := range in {
 		o := p[name]
-		MatmulBTW8A8Into(ws, acts[src], o.bq, o.bs, o.dst, M, o.K, o.N)
+		matmulBTW8A8Into(ws, acts[src], o.bq, o.bs, o.dst, M, o.K, o.N)
 	}
 }
 
 // runLayerBatch is the goinfer-style fused dispatch: qkv in one parallel
 // region, gate+up in one, o and down on their own — 4 dispatches, not 7.
 func runLayerBatch(ws *Workspace, acts map[string][]float32, p map[string]*proj, M int) {
-	opOf := func(name string) W8A8Op { o := p[name]; return W8A8Op{BQ: o.bq, Scales: o.bs, Dst: o.dst, N: o.N} }
-	MatmulBTW8A8Batch(ws, acts["attn"], M, qHidden, []W8A8Op{opOf("q_proj"), opOf("k_proj"), opOf("v_proj")})
-	MatmulBTW8A8Batch(ws, acts["mlp"], M, qHidden, []W8A8Op{opOf("gate"), opOf("up")})
+	opOf := func(name string) w8a8Op { o := p[name]; return w8a8Op{BQ: o.bq, Scales: o.bs, Dst: o.dst, N: o.N} }
+	matmulBTW8A8Batch(ws, acts["attn"], M, qHidden, []w8a8Op{opOf("q_proj"), opOf("k_proj"), opOf("v_proj")})
+	matmulBTW8A8Batch(ws, acts["mlp"], M, qHidden, []w8a8Op{opOf("gate"), opOf("up")})
 	o := p["o_proj"]
-	MatmulBTW8A8Into(ws, acts["attn"], o.bq, o.bs, o.dst, M, o.K, o.N)
+	matmulBTW8A8Into(ws, acts["attn"], o.bq, o.bs, o.dst, M, o.K, o.N)
 	d := p["down"]
-	MatmulBTW8A8Into(ws, acts["down"], d.bq, d.bs, d.dst, M, d.K, d.N)
+	matmulBTW8A8Into(ws, acts["down"], d.bq, d.bs, d.dst, M, d.K, d.N)
 }
 
 // withThreshold runs fn with parThreshold set to force serial or parallel.

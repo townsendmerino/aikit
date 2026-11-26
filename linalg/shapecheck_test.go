@@ -3,6 +3,8 @@ package linalg
 import (
 	"strings"
 	"testing"
+
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
 )
 
 // recoverPanic runs fn and returns the recovered panic value (nil if none). It
@@ -46,20 +48,20 @@ func TestMatmulShapeChecks_recoverableAcrossFanout(t *testing.T) {
 		call func()
 	}{
 		{"MatmulBT short dst", func() { MatmulBT(a, bF, short, M, K, N) }},
-		{"MatmulBTQ8 short dst", func() { MatmulBTQ8(a, bQ, scales, short, M, K, N) }},
-		{"MatmulBTW8A8 short dst", func() { MatmulBTW8A8(a, bQ, scales, short, M, K, N) }},
-		{"MatmulBTQ8 short scales", func() { MatmulBTQ8(a, bQ, scales[:N-1], good, M, K, N) }},
+		{"MatmulBTQ8 short dst", func() { matmulBTQ8(a, bQ, scales, short, M, K, N) }},
+		{"MatmulBTW8A8 short dst", func() { matmulBTW8A8(a, bQ, scales, short, M, K, N) }},
+		{"MatmulBTQ8 short scales", func() { matmulBTQ8(a, bQ, scales[:N-1], good, M, K, N) }},
 		{"MatmulBTW4A8 group 0", func() {
-			MatmulBTW4A8(a, make([]byte, N*((K+1)/2)), make([]float32, N), good, M, K, N, 0)
+			matmulBTW4A8(a, make([]byte, N*((K+1)/2)), make([]float32, N), good, M, K, N, 0)
 		}},
 		// §2.2: the f64-accumulate twin was missing the guard.
 		{"MatmulBTAcc64 short dst", func() { MatmulBTAcc64(a, bF, short, M, K, N) }},
 		// §2.1: the batch variant checks each op before the fan-out.
 		{"MatmulBTW8A8Batch short op.Dst", func() {
-			MatmulBTW8A8Batch(&Workspace{}, a, M, K, []W8A8Op{{BQ: bQ, Scales: scales, Dst: short, N: N}})
+			matmulBTW8A8Batch(&Workspace{}, a, M, K, []w8a8Op{{BQ: bQ, Scales: scales, Dst: short, N: N}})
 		}},
 		{"MatmulBTW8A8Batch short op.BQ", func() {
-			MatmulBTW8A8Batch(&Workspace{}, a, M, K, []W8A8Op{{BQ: bQ[:N*K-1], Scales: scales, Dst: good, N: N}})
+			matmulBTW8A8Batch(&Workspace{}, a, M, K, []w8a8Op{{BQ: bQ[:N*K-1], Scales: scales, Dst: good, N: N}})
 		}},
 	}
 	for _, c := range cases {
@@ -78,13 +80,13 @@ func TestMatmulShapeChecks_recoverableAcrossFanout(t *testing.T) {
 // caught, not wrapped negative-and-small to slip a short slice past a length
 // compare.
 func TestShapeChecks_overflow(t *testing.T) {
-	if got := mul(1<<40, 1<<40); got != -1 {
+	if got := shape.Mul(1<<40, 1<<40); got != -1 {
 		t.Errorf("mul overflow: got %d, want -1 sentinel", got)
 	}
-	if got := mul(-1, 4); got != -1 {
+	if got := shape.Mul(-1, 4); got != -1 {
 		t.Errorf("mul negative: got %d, want -1", got)
 	}
-	if got := mul(1000, 1000); got != 1_000_000 {
+	if got := shape.Mul(1000, 1000); got != 1_000_000 {
 		t.Errorf("mul normal: got %d, want 1000000", got)
 	}
 

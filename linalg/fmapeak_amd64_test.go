@@ -42,7 +42,7 @@ func TestFMAPeakAMD64_empirical(t *testing.T) {
 		minPlausibleHz = 1.5  // below this, suspect the loop is latency-bound
 		maxPlausibleHz = 6.0  // above this, suspect work is being elided
 	)
-	g, ok := MeasuredFMAPeakGFLOPS()
+	g, ok := measuredFMAPeakGFLOPS()
 	if !ok {
 		t.Fatal("MeasuredFMAPeakGFLOPS reported no measurement on an AVX2 machine")
 	}

@@ -12,11 +12,8 @@ func kernelAdapters() []kernreg.Adapter {
 	return slices.Concat(
 		dotAdapters(),
 		kquantAdapters(),
-		attnAdapters(),
-		expAdapters(),
 		widenAdapters(),
 		f16scaleAdapters(),
-		hammingAdapters(),
 		doti8Adapters(),
 		dequanti8Adapters(),
 		dotmicroAdapters(),

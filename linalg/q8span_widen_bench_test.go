@@ -21,7 +21,7 @@ func q8HeadShapes() []struct {
 	}
 }
 
-// BenchmarkQ8Head measures the whole production path — MatmulBTQ8Into at M=1 on the LM-head
+// BenchmarkQ8Head measures the whole production path — matmulBTQ8Into at M=1 on the LM-head
 // shapes — so perfgate can A/B the widen substitution end to end (parallel path included). The
 // sub-benchmark name carries K/N so perfgate keys on the shape.
 func BenchmarkQ8Head(b *testing.B) {
@@ -44,7 +44,7 @@ func BenchmarkQ8Head(b *testing.B) {
 		var ws Workspace
 		b.Run(s.name, func(b *testing.B) {
 			for b.Loop() {
-				MatmulBTQ8Into(&ws, a, bQ, bScales, dst, 1, K, N)
+				matmulBTQ8Into(&ws, a, bQ, bScales, dst, 1, K, N)
 			}
 		})
 	}

@@ -1,18 +1,22 @@
 package linalg
 
-import "fmt"
+import (
+	"fmt"
 
-// RepackInt4SplitHalfRow writes ONE row's canonical int4 nibbles (src, bpr =
+	"github.com/townsendmerino/aikit/linalg/internal/shape"
+)
+
+// repackInt4SplitHalfRow writes ONE row's canonical int4 nibbles (src, bpr =
 // cols/2 bytes) into dst (bpr bytes) in split-half order — byte i holds
 // weight i (low nibble) and weight i+16 (high), within each 32-wide group;
-// see RepackW4A8SplitHalf's own comment for why. Factored out (audit M-22)
-// so RepackW4A8SplitHalf (below) and RepackInt4SplitHalfInPlace
+// see repackW4A8SplitHalf's own comment for why. Factored out (audit M-22)
+// so repackW4A8SplitHalf (below) and RepackInt4InPlace(LayoutSplitHalf)
 // (weightmat.go) share one row transform.
 //
-// dst and src MUST NOT OVERLAP. RepackInt4SplitHalfInPlace gets this safely
+// dst and src MUST NOT OVERLAP. RepackInt4InPlace(LayoutSplitHalf) gets this safely
 // by snapshotting the live row into scratch before calling this with
 // dst=the live array, src=the scratch — same hazard and same fix as
-// RepackInt4Row4Quad's (the row4 arm64 twin), just at row granularity
+// repackInt4Row4Quad's (the row4 arm64 twin), just at row granularity
 // instead of quad, since split-half does not interleave rows.
 // repackSplitHalfGroup repacks 16 bytes (32 canonical nibbles) into split-half order.
 // Both dg and sg must have len >= 16.
@@ -53,15 +57,15 @@ func repackSplitHalfGroup(dg, sg []byte) {
 	dg[15] = (s7 >> 4) | (s15 & 0xF0)
 }
 
-// RepackInt4SplitHalfRow writes into a caller's buffer; its output contract:
+// repackInt4SplitHalfRow writes into a caller's buffer; its output contract:
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:K/2]; src and dst may not overlap.
-func RepackInt4SplitHalfRow(dst, src []byte, K int) {
+func repackInt4SplitHalfRow(dst, src []byte, K int) {
 	if K%32 != 0 {
 		panic(fmt.Sprintf("linalg: RepackInt4SplitHalfRow requires K a multiple of 32, got %d", K))
 	}
 	bpr := K / 2
-	requireLen("RepackInt4SplitHalfRow", "dst", len(dst), bpr)
-	requireLen("RepackInt4SplitHalfRow", "src", len(src), bpr)
+	shape.RequireLen("repackInt4SplitHalfRow", "dst", len(dst), bpr)
+	shape.RequireLen("repackInt4SplitHalfRow", "src", len(src), bpr)
 	nGroups := K / 32
 	for g := range nGroups {
 		ob := g * 16
@@ -69,7 +73,7 @@ func RepackInt4SplitHalfRow(dst, src []byte, K int) {
 	}
 }
 
-// RepackW4A8SplitHalf converts a [rows, cols] int4 weight matrix from the canonical packed
+// repackW4A8SplitHalf converts a [rows, cols] int4 weight matrix from the canonical packed
 // layout into the SPLIT-HALF layout the AVX2 kernel dotW4A8SplitHalfAVX2 consumes.
 //
 // Canonical: byte i of a group holds weights 2i (low nibble) and 2i+1 (high) — the two halves of
@@ -82,19 +86,19 @@ func RepackInt4SplitHalfRow(dst, src []byte, K int) {
 //
 // SCALES ARE UNCHANGED. Split-half permutes nibbles WITHIN a group and never reorders groups, so
 // the per-group scale array is bit-identical between layouts — unlike the 4-row-interleaved
-// layout, which needs RepackW4A8Row4Scales. Callers pass the original scales straight through.
+// layout, which needs repackW4A8Row4Scales. Callers pass the original scales straight through.
 //
 // Portable Go on purpose: it is a load-time O(K) pass per tensor, never on the token path, and
 // keeping it architecture-neutral means the layout can be tested and reasoned about on any host
 // even though only the AVX2 kernel currently reads it.
-func RepackW4A8SplitHalf(packed []byte, rows, cols, group int) []byte {
+func repackW4A8SplitHalf(packed []byte, rows, cols, group int) []byte {
 	if group != 32 || cols%32 != 0 {
-		panic("RepackW4A8SplitHalf: requires group=32 and cols a multiple of 32")
+		panic("repackW4A8SplitHalf: requires group=32 and cols a multiple of 32")
 	}
 	bpr := cols / 2
 	out := make([]byte, len(packed))
 	for r := range rows {
-		RepackInt4SplitHalfRow(out[r*bpr:(r+1)*bpr], packed[r*bpr:(r+1)*bpr], cols)
+		repackInt4SplitHalfRow(out[r*bpr:(r+1)*bpr], packed[r*bpr:(r+1)*bpr], cols)
 	}
 	return out
 }

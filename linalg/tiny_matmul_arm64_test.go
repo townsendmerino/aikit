@@ -27,12 +27,12 @@ func tmArchAdapters() []kernreg.Adapter {
 		})
 	}
 	return []kernreg.Adapter{
-		row4("MatmulBTW4A8Row4Into", MatmulBTW4A8Row4Into),
-		row4("MatmulBTW4A8Row4TileInto", MatmulBTW4A8Row4TileInto),
-		row4("MatmulBTW4A8Row4PrefetchInto", func(ws *Workspace, a []float32, w4 []byte, wS, dst []float32, M, K, N, g int) {
-			MatmulBTW4A8Row4PrefetchInto(ws, a, w4, wS, dst, M, K, N, g, 256)
+		row4("matmulBTW4A8Row4Into", matmulBTW4A8Row4Into),
+		row4("matmulBTW4A8Row4TileInto", matmulBTW4A8Row4TileInto),
+		row4("matmulBTW4A8Row4PrefetchInto", func(ws *Workspace, a []float32, w4 []byte, wS, dst []float32, M, K, N, g int) {
+			matmulBTW4A8Row4PrefetchInto(ws, a, w4, wS, dst, M, K, N, g, 256)
 		}),
-		tmGroupAdapter("MatmulBTW4A8Row4DesharedInto", shapes, func(p *kernreg.Placer, s tmG) any {
+		tmGroupAdapter("matmulBTW4A8Row4DesharedInto", shapes, func(p *kernreg.Placer, s tmG) any {
 			bpr, ng := tmInt4Sizes(s.K, s.group)
 			nq := s.N / 4
 			a := kernreg.Put(p, "a", seqF32(s.M*s.K, 1))
@@ -45,7 +45,7 @@ func tmArchAdapters() []kernreg.Adapter {
 			dst := kernreg.Put(p, "dst", make([]float32, s.M*s.N))
 			ws := tmWorkspace(s.actGroup)
 			r := kernreg.Refused(func() {
-				MatmulBTW4A8Row4DesharedInto(ws, a, w[0], w[1], w[2], w[3], sc[0], sc[1], sc[2], sc[3], dst, s.M, s.K, s.N, s.group)
+				matmulBTW4A8Row4DesharedInto(ws, a, w[0], w[1], w[2], w[3], sc[0], sc[1], sc[2], sc[3], dst, s.M, s.K, s.N, s.group)
 			})
 			return tmResult(r, dst)
 		}),

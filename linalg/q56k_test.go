@@ -5,6 +5,8 @@ import (
 	"math/rand/v2"
 	"testing"
 	"unsafe"
+
+	"github.com/townsendmerino/aikit/internal/half"
 )
 
 // kqF16 is a random normal f16 in [2^-6, 2^1), as two little-endian bytes.
@@ -62,7 +64,7 @@ func q5kTruthWeights(row []byte, K int) []float64 {
 	w := make([]float64, K)
 	for b := range K / qkK {
 		blk := row[b*q5kBlockB : (b+1)*q5kBlockB]
-		d, dmin := float64(f16ToF32(u16le(blk[0:]))), float64(f16ToF32(u16le(blk[2:])))
+		d, dmin := float64(half.ToF32(u16le(blk[0:]))), float64(half.ToF32(u16le(blk[2:])))
 		scales, qh, qs := blk[4:16], blk[16:48], blk[48:176]
 		u1, u2 := byte(1), byte(2)
 		for j := range 4 {
@@ -225,7 +227,7 @@ func TestQ56K_rowAndKind(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if wm.Kind() != c.kind {
+		if wm.Kind().String() != c.kind {
 			t.Errorf("%s: Kind = %q", c.name, wm.Kind())
 		}
 		if got, ok := c.rawOf(&wm); !ok || &got[0] != &raw[0] {

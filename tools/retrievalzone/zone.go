@@ -63,6 +63,7 @@ var Packages = []string{
 	"chunk", "chunk/regex", "chunk/markdown",
 	"bm25", "sparse", "ann", "hybrid", "late",
 	"encoder",
+	"linalg/bitvec", // ann's binary prefilter, whole
 }
 
 // Symbols are the entry points ken uses in the packages that are in the zone only in
@@ -75,7 +76,7 @@ var Packages = []string{
 // if ken uses a package or symbol this file does not name.
 var Symbols = map[string][]string{
 	"embed":  {"StaticModel", "Load", "LoadFromFS", "LoadMmap"},
-	"linalg": {"Workspace", "QuantizeRowInt8", "PackSignBitsRow"},
+	"linalg": {"Workspace", "QuantizeRowInt8"},
 }
 
 // Source is a snapshot of the repository's files: the working tree or a git ref.

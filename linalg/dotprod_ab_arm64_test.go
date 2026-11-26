@@ -247,7 +247,7 @@ func abBuildArms(t *testing.T, quant string, src []float32, p abProj) []abArm {
 		}
 		r4 := RepackW4A8Row4(q4, p.N, p.K, 32)
 		r4s := RepackW4A8Row4ScalesF16(s16, p.N, p.K, 32)
-		row4, ok := WrapInt4Row4OnlyF16(r4, r4s, p.N, p.K, 32)
+		row4, ok := wrapInt4Row4Only(r4, r4s, p.N, p.K, 32)
 		if !ok {
 			t.Fatalf("row4-only wrap rejected %dx%d: shape or core does not qualify", p.N, p.K)
 		}

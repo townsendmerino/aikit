@@ -131,7 +131,7 @@ func TestMatmulBTW4A8Row4Into_foldBitIdenticalToUnfolded(t *testing.T) {
 		t.Skip("DotProd required")
 	}
 	prev := w4a8RowFold
-	defer SetW4A8RowFold(prev)
+	defer SetW4A8RowFoldForTest(prev)
 	rng := rand.New(rand.NewSource(1201))
 	const group = 32
 	shapes := []struct{ K, N int }{{1536, 8960}, {8960, 1536}, {64, 8}}
@@ -142,7 +142,7 @@ func TestMatmulBTW4A8Row4Into_foldBitIdenticalToUnfolded(t *testing.T) {
 		}
 		packed, scales := QuantizeGroupsInt4(w, sh.N, sh.K, group)
 		row4 := RepackW4A8Row4(packed, sh.N, sh.K, group)
-		row4s := RepackW4A8Row4Scales(scales, sh.N, sh.K, group)
+		row4s := repackW4A8Row4Scales(scales, sh.N, sh.K, group)
 		for _, par := range []bool{false, true} {
 			var ws Workspace
 			if par {
@@ -158,10 +158,10 @@ func TestMatmulBTW4A8Row4Into_foldBitIdenticalToUnfolded(t *testing.T) {
 				}
 				off := make([]float32, sh.N)
 				on := make([]float32, sh.N)
-				SetW4A8RowFold(false)
-				MatmulBTW4A8Row4Into(&ws, a, row4, row4s, off, 1, sh.K, sh.N, group)
-				SetW4A8RowFold(true)
-				MatmulBTW4A8Row4Into(&ws, a, row4, row4s, on, 1, sh.K, sh.N, group)
+				SetW4A8RowFoldForTest(false)
+				matmulBTW4A8Row4Into(&ws, a, row4, row4s, off, 1, sh.K, sh.N, group)
+				SetW4A8RowFoldForTest(true)
+				matmulBTW4A8Row4Into(&ws, a, row4, row4s, on, 1, sh.K, sh.N, group)
 				for j := range off {
 					if on[j] != off[j] {
 						t.Fatalf("K=%d N=%d parallel=%v trial=%d: dst[%d] fold %v vs unfolded %v (bit mismatch)", sh.K, sh.N, par, trial, j, on[j], off[j])
@@ -228,8 +228,8 @@ func TestW4A8RowFold_hotAB(t *testing.T) {
 	}
 }
 
-// TestW4A8RowFold_streamedAB: the real dispatch (MatmulBTW4A8Row4Into, fold on vs
-// off via SetW4A8RowFold) over a 12-matrix bank so no call reuses the previous one's
+// TestW4A8RowFold_streamedAB: the real dispatch (matmulBTW4A8Row4Into, fold on vs
+// off via SetW4A8RowFoldForTest) over a 12-matrix bank so no call reuses the previous one's
 // residency (docs/internal/measuring-performance.md §1.3), serial and 6 workers,
 // ABBA-interleaved pairs with a win count (rule 7). The serial row is the S-05
 // single-core number in its streamed regime; the parallel row is what decode sees.
@@ -239,7 +239,7 @@ func TestW4A8RowFold_streamedAB(t *testing.T) {
 		t.Skip("DotProd required")
 	}
 	prev := w4a8RowFold
-	defer SetW4A8RowFold(prev)
+	defer SetW4A8RowFoldForTest(prev)
 	rng := rand.New(rand.NewSource(4242))
 	const group, bank, pairs = 32, 12, 3
 	for _, sh := range []struct{ K, N int }{{1536, 8960}, {8960, 1536}} {
@@ -254,7 +254,7 @@ func TestW4A8RowFold_streamedAB(t *testing.T) {
 				w[j] = float32(rng.NormFloat64())
 			}
 			packed, scales := QuantizeGroupsInt4(w, sh.N, sh.K, group)
-			mats[i] = mat{RepackW4A8Row4(packed, sh.N, sh.K, group), RepackW4A8Row4Scales(scales, sh.N, sh.K, group)}
+			mats[i] = mat{RepackW4A8Row4(packed, sh.N, sh.K, group), repackW4A8Row4Scales(scales, sh.N, sh.K, group)}
 		}
 		a := make([]float32, sh.K)
 		for i := range a {
@@ -273,10 +273,10 @@ func TestW4A8RowFold_streamedAB(t *testing.T) {
 				ws.SetThreshold(1 << 60)
 			}
 			pass := func(on bool) float64 {
-				SetW4A8RowFold(on)
+				SetW4A8RowFoldForTest(on)
 				t0 := time.Now()
 				for i := range mats {
-					MatmulBTW4A8Row4Into(&ws, a, mats[i].row4, mats[i].s4, dst, 1, sh.K, sh.N, group)
+					matmulBTW4A8Row4Into(&ws, a, mats[i].row4, mats[i].s4, dst, 1, sh.K, sh.N, group)
 				}
 				return float64(time.Since(t0).Nanoseconds())
 			}

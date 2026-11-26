@@ -1,5 +1,7 @@
 package linalg
 
+import "github.com/townsendmerino/aikit/internal/half"
+
 // This file has no build tag: q4Row4/q4Row4Scales/q4SplitHalf are ordinary
 // WeightMat fields on every architecture (nil where the platform has no
 // repacked layout), and the gather below is pure Go arithmetic over bytes —
@@ -33,7 +35,7 @@ func dequantizeRowFromRow4(q4Row4 []byte, q4Row4Scales []uint16, cols, i int, ds
 	quadBase := q * 4 * bpr
 	scaleQuadBase := q * 4 * nGroups
 	for g := range nGroups {
-		s := f16ToF32(q4Row4Scales[scaleQuadBase+4*g+r])
+		s := half.ToF32(q4Row4Scales[scaleQuadBase+4*g+r])
 		gk := g * groupSize
 		end := min(gk+groupSize, cols)
 		chunk := q4Row4[quadBase+g*64+r*16 : quadBase+g*64+r*16+16]
@@ -61,7 +63,7 @@ func dequantizeRowFromRow4(q4Row4 []byte, q4Row4Scales []uint16, cols, i int, ds
 }
 
 // dequantizeRowFromSplitHalf dequantizes row i's cols elements from the
-// amd64 split-half layout (RepackW4A8SplitHalf — no row interleave, so
+// amd64 split-half layout (repackW4A8SplitHalf — no row interleave, so
 // unlike row4 this is one row's OWN bpr-byte slice, byte-arrangement-only
 // changed within it) — audit M-22. scales is q4s, shared with canonical
 // (split-half permutes nibbles within a group and never reorders groups, so
@@ -82,7 +84,7 @@ func dequantizeRowFromSplitHalf(q4SplitHalf []byte, scales []uint16, cols, i int
 	row := q4SplitHalf[i*bpr : (i+1)*bpr]
 	srow := scales[i*nGroups : (i+1)*nGroups]
 	for g := range nGroups {
-		s := f16ToF32(srow[g])
+		s := half.ToF32(srow[g])
 		gk := g * groupSize
 		end := min(gk+groupSize, cols)
 		ob := g * 16

@@ -62,11 +62,14 @@ On top of the dot kernels, `linalg` provides:
   columns for small M, rows for large M — so each worker runs the fused kernel over a
   small row block and never opens `packedFill`'s missing-m-blocking gap (item 23). amd64
   keeps the vectorized dequant-then-GEMM path (`HasFusedQ8Kernel` false there).
-- The quant matmuls: `MatmulBTQ8` (int8 weights), `MatmulBTQ4` (int4 group, f32
-  activations — prefill path), **W8A8** (`MatmulBTW8A8` + the zero-alloc
-  `…Into(ws *Workspace)` and the fused `MatmulBTW8A8Batch`), and **W4A8**
-  (`MatmulBTW4A8`, int4 weights × int8 activations — the int4 *decode* path).
-  See `quant.go`, `workspace.go`, `quant_w4a8*.go`.
+- The quant matmuls: `matmulBTQ8` (int8 weights), `matmulBTQ4` (int4 group, f32
+  activations — prefill path), **W8A8** (`matmulBTW8A8` + the zero-alloc
+  `…Into(ws *Workspace)` and the fused W8A8 batch, now `MatmulBTBatchInto`), and **W4A8**
+  (`matmulBTW4A8`, int4 weights × int8 activations — the int4 *decode* path).
+  See `quant.go`, `workspace.go`, `quant_w4a8*.go`. Since LS6 the raw-slice forms
+  are unexported as their last consumer moves to `WeightMat` (`matmulBTQ4`,
+  `matmulBTW4A8` and the GGUF K-quant pair first); a consumer reaches each kernel
+  through `WeightMat.MatmulBTInto`.
 - `DequantizeRowsInt8Into` — bulk int8→f32 weight widen (`float32(q)*scale` per
   element), vectorized both arches: amd64 AVX2 (`VPMOVSXBD`+`VCVTDQ2PS`+`VMULPS`,
   32/iter), arm64 NEON (`dequant_i8_arm64.s`, `SXTL/SXTL2`→`SCVTF`→`FMUL`, 16/iter).
@@ -104,7 +107,7 @@ tolerance. Tests assert exact equality.
   single-row and register-blocked kernels bit-match the scalar reference. Numbers
   + the one tuning finding below.
 - **Perf campaign landed (v0.5.0–0.5.2)** in `linalg`: zero-alloc W8A8 decode
-  (`Workspace`/`…Into`), batched W8A8 (`MatmulBTW8A8Batch`), serial-decode
+  (`Workspace`/`…Into`), batched W8A8 (now `MatmulBTBatchInto`), serial-decode
   threshold + `SetParallelThreshold`/`SetParallelWidth`, the spin-park pool, and
   the column-outer W8A8 re-block (weight reused across M rows). See CHANGELOG.
   goinfer's end-to-end decode is the arbiter for those (warm microbenches mislead).
@@ -170,15 +173,16 @@ tolerance. Tests assert exact equality.
     CUDA mirror in `gpu/anncuda`).
 - **`WeightMat` int4 storage now has three representation policies, fixed at
   construction (audit M-22, aikit side; CHANGELOG `[1.41.0]`).**
-  1. **Canonical-only** (`WrapInt4`) — packed nibbles + per-group scales, the
+  1. **Canonical-only** (`WrapInt4` with `LayoutCanonical`) — packed nibbles + per-group scales, the
      original storage. Every accessor works; `Int4()` returns them.
-  2. **"Both"** (`WrapInt4` + `RepackInt4Row4`/`RepackInt4SplitHalf`) — canonical
+  2. **"Both"** (canonical `WrapInt4` + `RepackInt4Row4`/`RepackInt4SplitHalf`) — canonical
      PLUS the arch-specific repacked layout (row4 on arm64/NEON, split-half on
      amd64/AVX2), the pre-M-22 fast-matmul path. Costs 2× the nibbles (row4
      also 2× the scales, since split-half shares scales unrepacked). Unchanged
      by M-22 — same bytes, same dispatch order, same code path.
-  3. **Repacked-only** (`RepackInt4Row4InPlace`/`RepackInt4SplitHalfInPlace`,
-     or `WrapInt4Row4Only`/`WrapInt4SplitHalfOnly` for already-repacked bytes)
+  3. **Repacked-only** (`RepackInt4InPlace` with `LayoutRow4`/`LayoutSplitHalf`,
+     or `WrapInt4` with that layout for already-repacked bytes; since LS6 one
+     constructor and one in-place repack, `PreferredInt4Layout` naming the layout)
      — ONLY the repacked layout, no canonical bytes resident at all. The
      memory win M-22 exists for. The in-place constructors permute the
      caller's own q4/q4s bytes using one quad's (row4) or one row's
@@ -230,17 +234,19 @@ tolerance. Tests assert exact equality.
   | any M, the `M%4` remainder (this is ALL of M when 2≤M<4) | `matmulBTW4A8SplitHalfMultiInto` → `dotW4A8SplitHalfAVX2`, one activation row at a time — the same per-row kernel M=1 uses, just fed from the already-quantized batch rather than a fresh single-row quantize |
 
   K%32==0 is a hard guard at every M (no ragged-tail path, matching the M=1
-  kernel's own contract) — `Int4SplitHalfUsable` already refuses a tensor
+  kernel's own contract) — `PreferredInt4Layout`'s split-half gate already refuses a tensor
   that doesn't satisfy this at construction, so a split-half-only WeightMat
   can never present a bad K to any of these three rows.
-  <br>`MatmulBTW4A8Batch` (the batched q‖k‖v / gate‖up entry) gained a
-  `SplitHalf []byte` field on `W4A8Op` (scales are `Scales`, shared with
+  <br>The batched q‖k‖v / gate‖up W4A8 entry (since LS6 the int4 path of
+  `MatmulBTBatchInto`, internally `matmulBTW4A8Batch`) gained a
+  `SplitHalf []byte` field on its op (scales are `Scales`, shared with
   canonical — never repacked), routed at M=1 through the same
   `dotW4A8SplitHalfAVX2` kernel with NO quad-alignment carve-out (unlike
   `Row4`, split-half doesn't interleave rows, so a `SplitHalf` op serves its
   entire requested column range or none of it). The batch path still has no
-  tile for EITHER repacked layout, so a `SplitHalf` op at M>1 still panics,
-  now naming split-half in the message too — this is seam-completeness for
+  tile for EITHER repacked layout, so a `SplitHalf` op at M>1 still panics
+  inside it (`MatmulBTBatchInto` runs such a batch per op instead),
+  naming split-half in the message too — this is seam-completeness for
   a currently-unreachable case (goinfer's batch callers are both M=1), not a
   new capability.
   <br>Verified on real AVX2 hardware via a linux/amd64 container under QEMU

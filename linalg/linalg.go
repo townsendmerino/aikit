@@ -20,7 +20,7 @@ func Dot(a, b []float32) float32 { return dotF32(a, b) }
 // matmul; the decoder uses MatmulBT/Dot.
 //
 // Output contract: overwrites sums; do not pre-zero. Every element of the fixed-size array is written.
-func Dot4x4(a, b0, b1, b2, b3 *float32, n4 int, sums *[16]float32) {
+func dot4x4(a, b0, b1, b2, b3 *float32, n4 int, sums *[16]float32) {
 	dotNEON4x4(a, b0, b1, b2, b3, n4, sums)
 }
 
@@ -188,7 +188,7 @@ func MatmulBTAcc64(a, b, dst []float32, M, K, N int) {
 // MatmulBTAcc64 run through a Workspace uses its scoped threshold + worker pool.
 //
 // Output contract: overwrites dst; do not pre-zero. Covers dst[:M*N].
-func (w *Workspace) MatmulBTAcc64(a, b, dst []float32, M, K, N int) {
+func (w *Workspace) matmulBTAcc64(a, b, dst []float32, M, K, N int) {
 	checkMatmulBT("MatmulBTAcc64", len(a), len(b), len(dst), M, K, N)
 	w.parallelCols(M*N*K, N, func(j0, j1 int) { matmulBTAcc64Span(a, b, dst, M, K, N, j0, j1) })
 }

@@ -10,8 +10,8 @@ import (
 // Backend is a device accelerator for FlatI8 scoring. It is registered by an
 // aikit/gpu build (native Metal today, CUDA later) via RegisterBackend in an
 // init(); the default pure-Go build registers none, and FlatI8 scores on the CPU
-// (linalg.MatmulBTW8A8). This is the same inversion the encoder/vision packages
-// use for their GPU backends — the core ann package never imports the device
+// (linalg.MatmulBTW8A8). This is the same inversion the encoder package
+// uses for its GPU backend — the core ann package never imports the device
 // package, so the default build stays cgo-free and pure-Go.
 type Backend interface {
 	// NewI8Index makes an int8 index resident on the device: bq is [n*dim]
@@ -390,7 +390,7 @@ func (f *FlatI8) scoreShardCPU(queries [][]float32, k int) ([][]Hit, bool) {
 	// Same measured threshold Query uses (audit M-19): the pooled Workspace is a
 	// zero value and would otherwise inherit goinfer's decode-tuned parThreshold.
 	sc.ws.SetThreshold(flatParallelThreshold)
-	linalg.MatmulBTW8A8Into(&sc.ws, qbuf, f.bq[f.gpuShardRows*f.dim:], f.scales[f.gpuShardRows:], dst, M, f.dim, shardN)
+	scoreW8A8(&sc.wm, &sc.ws, qbuf, f.bq[f.gpuShardRows*f.dim:], f.scales[f.gpuShardRows:], dst, M, f.dim, shardN)
 	hits := make([][]Hit, M)
 	for m := range queries {
 		h := f.topHits(dst[m*shardN:(m+1)*shardN], k, nil)
@@ -408,6 +408,7 @@ func (f *FlatI8) scoreShardCPU(queries [][]float32, k int) ([][]Hit, bool) {
 // (M·dim + M·shardN) from either of those.
 type shardCPUScratch struct {
 	ws   linalg.Workspace
+	wm   linalg.WeightMat // scoreW8A8's view of the CPU shard
 	qbuf []float32
 	dst  []float32
 }

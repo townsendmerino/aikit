@@ -9,6 +9,112 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
+
+- **`linalg`'s `WeightMat` door is Hard again, as an explicit list** (LS8): the types `WeightMat` (with its methods),
+  `Workspace`, `Kind`, `Layout`, `BatchOp`, `ActQ` and `Kernels`; `Dot`, `MatmulBT`, `MatmulBTInto` and
+  `MatmulBTBatchInto`; the `Wrap*` and `Quantize*` constructors, `RepackInt4InPlace` and `PreferredInt4Layout`; the
+  `Kind*` and `Layout*` constants; `ActiveKernels` and the three process defaults. README § "Stability tiers" and
+  `tools/releasegate`'s new `hardSyms` list the same names (a test holds them equal, and each to a declaration); apidiff
+  judges only those names in `linalg`, from the release after this one (`hardFrom`: the previous tag must be v1.80.0 or
+  later), so this release's own breaks are not judged against v1.79.0. The rest of `linalg`, and `linalg/attn`,
+  `linalg/elem` and `linalg/bitvec`, stay Experimental.
+
+- **Five raw-slice matmuls stay exported as documented exceptions** (LS6, step 4, decided 2026-11-25):
+  `MatmulBTQ8Fused` and `MatmulBTQ8FusedInto` (the encoder), `MatmulBTW8A8Pre` (ann) and `MatmulBTW4A8F16Into` and
+  `MatmulBTW4A8F16Pre` (goinfer's fused gate‖up). linalg's package doc lists each with its caller and the WeightMat form
+  it waits for, and `TestDoc_rawSliceExceptionsListed` fails on an exported quantized raw-slice matmul the list leaves out.
+
+- **The raw-slice int8 and int4 matmuls goinfer reached are unexported** (LS6, step 4, second part): `MatmulBTQ8`,
+  `MatmulBTQ8Into`, `MatmulBTW8A8`, `MatmulBTW8A8Into`, `MatmulBTW4A8Into` and `MatmulBTW4A8Row4Into`. A caller wraps
+  its rows in a `WeightMat` (`WrapInt8`, `WrapInt4`, which copy nothing) and calls `MatmulBT`/`MatmulBTInto`, which
+  dispatch to the same kernels. Five raw-slice forms stay exported until the decision on their callers: the encoder's
+  `MatmulBTQ8Fused` and `MatmulBTQ8FusedInto`, `ann`'s `MatmulBTW8A8Pre`, and goinfer's `MatmulBTW4A8F16Into` and
+  `MatmulBTW4A8F16Pre`.
+- **The int4 repack helpers and the f32-widening int4 accessors are unexported** (LS2, part 2): `RepackInt4Row4Quad`,
+  `RepackInt4Row4ScalesQuad`, `RepackInt4Row4ScalesQuadF16`, `RepackInt4SplitHalfRow`, `RepackW4A8SplitHalf`,
+  `RepackW4A8Row4Scales`, `RepackW4A8Row4Deshared`, `RepackW4A8Row4DesharedScales`, and the Deprecated `WeightMat.Int4`
+  and `WeightMat.Int4Row4` (read `Int4F16` and `Int4Row4F16`). Only linalg's own code and tests called them; goinfer's
+  three tests that took `Int4` through an interface read `Int4F16`. The names only tests outside linalg reach stay: the
+  policy setters and their getters, the A/B test hooks, `SelfCheck`'s report fields, and the quantizers and reference
+  kernels other packages' tests compare against (`QuantizeGroupsInt4`, `F32ToF16Scales`, `DequantizeRowInt4`,
+  `MatmulBTAcc64`, `MatmulBTAcc64Strided`, `QuantizeActivationsGroupedInto`; in `linalg/elem` `GELUTanhF32` and
+  `GELUTanhInto`). `MatmulBTW4A8Into` and `MatmulBTW4A8Row4Into` go with LS6 step 4.
+
+- **Raw-slice matmuls nothing outside `linalg` calls are unexported** (LS6, step 4, first part): `MatmulBTGGUFQ4K`,
+  `MatmulBTGGUFQ6K`, `MatmulBTQ4`, `MatmulBTQ4Into`, `MatmulBTW4A8`, `MatmulBTW4A8Row4DesharedInto`,
+  `MatmulBTW4A8Row4PrefetchInto` and `MatmulBTW4A8Row4TileInto`. Each is reached through `WeightMat` (the K-quant kinds,
+  `QuantizeInt4`'s weight) or is a benchmark arm linalg's own tests run. The rest of the family follows as `encoder`, `ann`
+  and goinfer move to `WeightMat`.
+
+- **One batch call through `WeightMat`** (LS6, step 2): `MatmulBTBatchInto(ws, a, M, ops []BatchOp)` with
+  `BatchOp{W *WeightMat; Dst []float32}` replaces `MatmulBTW8A8Batch`, `MatmulBTW4A8Batch`, `W8A8Op` and `W4A8Op`. A batch of
+  W8A8 weights, or of int4 weights with one group, sharing K and the activation-group stamp, quantizes the activation once
+  and runs under one fork/join through the same kernels, each op through the layouts its weight holds (row4 when present;
+  split-half only for a weight without canonical bytes). Any other batch runs `MatmulBTInto` per op, and so does an int4
+  batch whose repacked-only weight the fused kernel cannot serve (M > 1, or a row count not a multiple of 4), where the old
+  call panicked. Each op's output is the bits `MatmulBTInto` gives it. The op descriptors live in the `Workspace`, so a
+  steady-state batch allocates nothing. In goinfer: `W8A8Op{BQ: wmInt8(w), Scales: wmScales(w), Dst: d, N: n}` and the
+  `W4A8Op` built by `wmW4A8Op(w, d)` both become `BatchOp{W: w, Dst: d}`.
+
+- **One int4 constructor with a layout** (LS6, step 1): `WrapInt4(q, scales16, rows, cols, group, layout) (WeightMat, bool)`
+  with `type Layout` (`LayoutCanonical`, `LayoutRow4`, `LayoutSplitHalf`; `String()` returns the names
+  `WeightMat.Int4Layout` reports), `RepackInt4InPlace` with the same arguments for canonical bytes permuted in place, and
+  `PreferredInt4Layout(rows, cols, group)` for the layout this CPU's kernel runs. A repacked layout is accepted only when it
+  is the preferred one (ok=false otherwise, nothing retained or written); canonical is always ok. Scales are binary16 only.
+  They replace `WrapInt4` (f32 scales), `WrapInt4F16`, `WrapInt4Row4`, `WrapInt4Row4F16`, `WrapInt4Row4Only`,
+  `WrapInt4Row4OnlyF16`, `WrapInt4SplitHalfOnly`, `WrapInt4SplitHalfOnlyF16`, `RepackInt4Row4InPlace`,
+  `RepackInt4Row4InPlaceF16`, `RepackInt4SplitHalfInPlace`, `RepackInt4SplitHalfInPlaceF16`, `Int4Row4Usable` and
+  `Int4SplitHalfUsable`. The form that attached separately supplied row4 bytes to a canonical weight (`WrapInt4Row4`) has
+  no replacement: no consumer's production code called it, and `RepackInt4Row4` derives the same bytes. Wrapping and the
+  in-place repack stay two calls because the second consumes the caller's slices. In goinfer: `WrapInt4F16(...)` becomes
+  `WrapInt4(..., LayoutCanonical)`, `WrapInt4Row4OnlyF16` `WrapInt4(..., LayoutRow4)`, `RepackInt4Row4InPlaceF16`
+  `RepackInt4InPlace(..., LayoutRow4)`, and `Int4Row4Usable(r, c, g)` `PreferredInt4Layout(r, c, g) == LayoutRow4`.
+
+- **The two kernel A/B switches leave the public surface** (LS6, step 3, narrowed 2026-11-24): `SetInt4WeightScheme` and
+  `Int4WeightScheme`, which only linalg's tests used, are unexported. `SetW4A8RowFold` and `W4A8RowFold` become the test hooks
+  `SetW4A8RowFoldForTest` and `W4A8RowFoldForTest`, which goinfer's arm64 A/B test calls. `SetParallelThreshold`,
+  `SetParallelWidth` and `SetActQuantGroup` stay as the process default that a `Workspace` overrides (and
+  `WeightMat.SetActQuantGroup` overrides per weight).
+
+- **`WeightMat.Kind` returns a typed `linalg.Kind`** (LS6, step 1): a string type with constants `KindF32`, `KindF16`,
+  `KindBF16`, `KindInt8`, `KindInt4`, `KindQ4K`, `KindQ5K`, `KindQ6K` and `KindNone`, whose `String()` returns today's
+  names byte for byte (`TestKind_stringsAreStable`). A comparison with a string constant compiles unchanged; a use as a
+  plain string adds `.String()`.
+
+- **Names nothing outside their package called are unexported** (LS2, from the type-checker census in
+  `docs/internal/linalg-census-2026-11.md`, re-run per package after the split): in `linalg/elem` `ErfF32`, `ExpF32`, `GELUF32`,
+  `TanhF32`, `ExpF32Into`, `GELUInto`, `SiLUInto`, `SoftmaxRowInto`, `SoftmaxRowScaledInto`; in `linalg/attn`
+  `FusedAttnScratch.Fits`; in `linalg/bitvec` `PackSignBits`; in `linalg` `Dot4x4`, `HasFusedQ8Kernel`, `Q8K`, `QuantizeActQ8K`,
+  `QuantizeActivationsInto`, `MeasuredFMAPeakGFLOPS`, `SumActGroupsInto`, `Workspace.MatmulBTAcc64` and
+  `Workspace.MatmulBTAcc64Strided`. `Workspace.ActQuantGroup`, which nothing called, is deleted. The quantized family's
+  entry points, constructors and setters change with the `WeightMat` door (LS6), not here.
+
+- **The binary-vector kernels move from `linalg` to `linalg/bitvec`**: `PackSignBits`, `PackSignBitsRow`, `PackedWords` and
+  `HammingRows`, unchanged but for the package. `ann` and ken call them; bitvec imports `internal/cpufeat` (amd64) and nothing
+  from `linalg`, and carries its own output-contract cases, kernel-registry rows and over-read adapters. The retrieval zone
+  holds it whole.
+
+- **The attention kernels move from `linalg` to `linalg/attn`**: `MatmulQKAcc64`, `MatmulAVAcc64`, their `Group` and `F16`
+  forms, `AttendTileFused`, `AttendTileFusedContractExp`, `FusedAttnScratch`, `NewFusedAttnScratch`, `FusedAttnKeyBlock` and
+  `GatherVBlockMajor`: 12 names, unchanged but for the package. attn imports `linalg/elem` and nothing from `linalg`; its tests
+  compare against `linalg`'s `MatmulBT` and `MatmulBTAcc64Strided`. It carries its own output-contract cases, kernel-registry
+  rows and over-read adapters.
+
+- **The elementwise kernels move from `linalg` to `linalg/elem`**: `ExpF32`, `TanhF32`, `ErfF32`, `GELUF32`, `GELUTanhF32`,
+  `SiLUF32` and their `*Into` forms, the contract forms (`ExpContractInto`, `GELUContractInto`, `GELUTanhContractInto`,
+  `SiLUContractInto`, `SoftmaxRowContractInto`, `SoftmaxRowScaledContractInto`) and `SoftmaxRowInto`/`SoftmaxRowScaledInto`:
+  19 names, unchanged but for the package. A caller replaces `linalg.X` with `elem.X`; goinfer's rewrite rules list them.
+  The package carries its own output-contract cases, kernel-registry rows and over-read adapters.
+
+### Removed
+
+- **`vision` and `examples/vision`, the one removal from the Hard tier** (decided 2026-11-24). The SigLIP/ViT towers moved into
+  goinfer on 2026-10-26, the package has been frozen since v1.76.0, and nothing imports it: no file in goinfer, ken or tack, and in
+  aikit only `examples/vision`. Its fixtures under `testdata/` and its five oracle scripts go with it. A build that imports
+  `aikit/vision` keeps working on the tags before this release. It leaves the release gate's Hard list with it, so the
+  gate's apidiff no longer reads it.
+
 ### Changed
 
 - **`perfgate` judges seventeen benchmark families, finds each by name in a list of packages, and fails on a listed family it
