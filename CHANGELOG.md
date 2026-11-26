@@ -11,6 +11,11 @@ excluded from that promise and may change in any release until it graduates.
 
 ### Changed (breaking: the linalg surface rework, `linalg` is Experimental)
 
+- **Five raw-slice matmuls stay exported as documented exceptions** (LS6, step 4, decided 2026-11-25):
+  `MatmulBTQ8Fused` and `MatmulBTQ8FusedInto` (the encoder), `MatmulBTW8A8Pre` (ann) and `MatmulBTW4A8F16Into` and
+  `MatmulBTW4A8F16Pre` (goinfer's fused gate‖up). linalg's package doc lists each with its caller and the WeightMat form
+  it waits for, and `TestDoc_rawSliceExceptionsListed` fails on an exported quantized raw-slice matmul the list leaves out.
+
 - **The raw-slice int8 and int4 matmuls goinfer reached are unexported** (LS6, step 4, second part): `MatmulBTQ8`,
   `MatmulBTQ8Into`, `MatmulBTW8A8`, `MatmulBTW8A8Into`, `MatmulBTW4A8Into` and `MatmulBTW4A8Row4Into`. A caller wraps
   its rows in a `WeightMat` (`WrapInt8`, `WrapInt4`, which copy nothing) and calls `MatmulBT`/`MatmulBTInto`, which
