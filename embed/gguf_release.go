@@ -40,3 +40,22 @@ func (g *GGUFFile) ReleaseTensors(names ...string) error {
 	}
 	return firstErr
 }
+
+// TensorBytes is the named tensor's size in the file, in bytes (its quantized blocks as stored), and whether the file has it
+// in a type whose size is known. A loader that releases each tensor once converted holds at most a few tensors' worth of the
+// source at a time, and prices that from this.
+func (g *GGUFFile) TensorBytes(name string) (int, bool) {
+	info, ok := g.tensors[name]
+	if !ok {
+		return 0, false
+	}
+	n := 1
+	for _, d := range info.dims {
+		n *= int(d)
+	}
+	raw, err := g.tensorBytes(info, n)
+	if err != nil {
+		return 0, false
+	}
+	return len(raw), true
+}

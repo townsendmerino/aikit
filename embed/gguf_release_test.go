@@ -53,3 +53,21 @@ func TestGGUFReleaseTensors_readsBackUnchanged(t *testing.T) {
 		}
 	}
 }
+
+// TestGGUFTensorBytes_isTheStoredSize: an F32 tensor's stored size is four bytes an element; an unknown name reports false.
+func TestGGUFTensorBytes_isTheStoredSize(t *testing.T) {
+	path, big := releaseFixture(t)
+	g, err := OpenGGUF(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n, ok := g.TensorBytes("big"); !ok || n != 4*len(big) {
+		t.Fatalf("TensorBytes(big) = %d, %v; want %d", n, ok, 4*len(big))
+	}
+	if n, ok := g.TensorBytes("small"); !ok || n != 16 {
+		t.Fatalf("TensorBytes(small) = %d, %v; want 16", n, ok)
+	}
+	if _, ok := g.TensorBytes("missing"); ok {
+		t.Fatal("TensorBytes of an unknown tensor reported ok")
+	}
+}
