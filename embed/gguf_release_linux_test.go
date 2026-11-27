@@ -89,22 +89,22 @@ func pageCacheResidentPages(t *testing.T, b []byte) int {
 
 // TestGGUFReleaseTensors_dropsThePageCache: a released tensor's pages leave the page cache too, not only this process's
 // mapping, so a load that converts a file larger than free memory does not push the kernel into reclaiming (and swapping)
-// the converted copy while the source's cache fills. The tensor is 4 MiB: the page cache may hold a file in large folios,
-// and a folio that also holds bytes still mapped (the header, the next tensor) stays, so only a tensor much larger than a
-// folio shows the drop. The file is synced to a disk file system: its pages are clean, as a checkpoint's are, and tmpfs
+// the converted copy while the source's cache fills. The tensor is 32 MiB: the page cache may hold a file in large folios
+// (up to 2 MiB seen on CI's ext4), and a folio that also holds bytes still mapped (the header, the next tensor) stays, so
+// only a tensor much larger than two folios shows the drop. The file is synced to a disk file system: its pages are clean, as a checkpoint's are, and tmpfs
 // pages are shared memory, not file cache.
 func TestGGUFReleaseTensors_dropsThePageCache(t *testing.T) {
 	if runtime.GOARCH != "amd64" && runtime.GOARCH != "arm64" {
 		t.Skipf("mmap.DropFileCache is a no-op on linux/%s", runtime.GOARCH)
 	}
-	const n = 1 << 20 // 4 MiB of f32
+	const n = 8 << 20 // 32 MiB of f32
 	big := make([]float32, n)
 	for i := range big {
 		big[i] = float32(i % 977)
 	}
 	path := filepath.Join(t.TempDir(), "release-cache.gguf")
 	writeTestGGUF(t, path, []ggufKV{{"general.architecture", "llama"}}, []ggufF32{
-		{"big", []uint64{1024, 1024}, big},
+		{"big", []uint64{4096, 2048}, big},
 		{"small", []uint64{4}, []float32{1, 2, 3, 4}},
 	})
 	var st syscall.Statfs_t
