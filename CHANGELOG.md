@@ -9,6 +9,15 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+## [1.82.0] — 2026-11-27
+
+`perfgate` VERDICT: PASS — no regression vs v1.81.0 above each shape's floor — 17/75 shapes resolve the 5.0% class
+
+sensitivity: 17/75 shapes have a floor ≤ 5.0% (the class this gate targets) Ryzen 7 3700X (linux/amd64), cf0a6fd vs v1.81.0, 2026-11-27 (06:39–06:51 PST), under the exclusive timing lock, Go 1.27.4.
+
+STATEMENT: no reachable vulnerabilities in 11/11 modules at cf0a6fd +dirty (2026-11-27T14:52:09Z) The tree was dirty only in CHANGELOG.md (this section). AMD Ryzen 7 3700X (linux/amd64), Go 1.27.4 (GOTOOLCHAIN=go1.27.4), govulncheck v1.8.0.
+RETRIEVAL: no — vs v1.81.0, none of 9 changed files is in the retrieval zone
+
 ### Changed
 
 - `embed`: `GGUFFile.ReleaseTensors` also drops the released bytes from the page cache on linux/amd64 and linux/arm64
@@ -6297,7 +6306,8 @@ broad slice of the open-weights ecosystem.
   golden cosine 1.000000 vs PyTorch+MPS CodeRankEmbed. See
   [README.md](README.md) for stability tiers.
 
-[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.81.0...HEAD
+[Unreleased]: https://github.com/townsendmerino/aikit/compare/v1.82.0...HEAD
+[1.82.0]: https://github.com/townsendmerino/aikit/compare/v1.81.0...v1.82.0
 [1.81.0]: https://github.com/townsendmerino/aikit/compare/v1.80.0...v1.81.0
 [1.80.0]: https://github.com/townsendmerino/aikit/compare/v1.79.0...v1.80.0
 [1.79.0]: https://github.com/townsendmerino/aikit/compare/v1.78.0...v1.79.0
