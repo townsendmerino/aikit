@@ -63,6 +63,9 @@ func OpenGGUFSplitMmap(paths []string) (*GGUFFile, error) {
 		return fail(errFormatf("gguf: the shards hold %d tensors, the first shard's split.tensors.count says %d", len(out.tensors), want))
 	}
 	out.mmaps = maps
+	for _, p := range paths {
+		out.files = append(out.files, openForAdvice(p))
+	}
 	runtime.SetFinalizer(out, finalizeGGUFMmap)
 	return out, nil
 }

@@ -2,6 +2,8 @@ package embed
 
 import (
 	"fmt"
+	"os"
+	"unsafe"
 
 	"github.com/townsendmerino/aikit/mmap"
 )
@@ -13,8 +15,9 @@ import (
 //
 // It is advisory and safe for a caller still holding an alias into a released tensor: the mapping is read-only and
 // file-backed, so a released page re-faults identical bytes. A no-op on a heap-backed file (OpenGGUF, OpenGGUFBytes), and
-// a footprint win on Linux only (MADV_DONTNEED on the tensor's page-aligned interior; see SafetensorsFile.ReleaseTensors
-// for darwin). An unknown name is an error; madvise failures are swallowed as advisory.
+// a footprint win on Linux only (MADV_DONTNEED on the tensor's page-aligned interior, then POSIX_FADV_DONTNEED on the same
+// bytes of the file, so a converting load neither holds the source mapped nor fills the page cache with it and pushes the
+// kernel to reclaim the converted copy; see SafetensorsFile.ReleaseTensors for darwin). An unknown name is an error; madvise failures are swallowed as advisory.
 func (g *GGUFFile) ReleaseTensors(names ...string) error {
 	var firstErr error
 	for _, name := range names {
@@ -36,7 +39,11 @@ func (g *GGUFFile) ReleaseTensors(names ...string) error {
 		if err != nil {
 			continue // a tensor whose bytes cannot be sized holds nothing a release could name
 		}
-		_ = mmap.Advise(mmap.PageAlignedInterior(raw), false) //nolint:errcheck // madvise DONTNEED is an advisory hint on release
+		span := mmap.PageAlignedInterior(raw)
+		_ = mmap.Advise(span, false) //nolint:errcheck // madvise DONTNEED is an advisory hint on release
+		if f, off := g.fileOf(span); f != nil {
+			_ = mmap.DropFileCache(f, off, int64(len(span))) //nolint:errcheck // advisory, like the madvise above
+		}
 	}
 	return firstErr
 }
@@ -58,4 +65,26 @@ func (g *GGUFFile) TensorBytes(name string) (int, bool) {
 		return 0, false
 	}
 	return len(raw), true
+}
+
+// fileOf is the mapped file holding span (a slice of one of g's mappings) and span's offset in it, or nil.
+func (g *GGUFFile) fileOf(span []byte) (*os.File, int64) {
+	if len(span) == 0 {
+		return nil, 0
+	}
+	maps := g.mmaps
+	if g.mmap != nil {
+		maps = [][]byte{g.mmap}
+	}
+	p := uintptr(unsafe.Pointer(&span[0]))
+	for i, m := range maps {
+		if len(m) == 0 || i >= len(g.files) {
+			continue
+		}
+		base := uintptr(unsafe.Pointer(&m[0]))
+		if p >= base && p+uintptr(len(span)) <= base+uintptr(len(m)) {
+			return g.files[i], int64(p - base)
+		}
+	}
+	return nil, 0
 }
