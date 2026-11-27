@@ -9,6 +9,14 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Added
+
+- `embed`: `GGUFFile.ReleaseTensors(names ...string)`, the GGUF twin of `SafetensorsFile.ReleaseTensors`: drops a mapped
+  file's resident pages for tensors a loader has converted and will not read again (MADV_DONTNEED on Linux; advisory, a
+  released page re-faults identical bytes; a no-op on a heap-backed file). A loader that requantizes a large `.gguf` no
+  longer has to hold the whole source resident beside what it built. `GGUFFile.TensorBytes(name)` reports a tensor's
+  stored size, so such a loader can price what it holds in flight.
+
 ## [1.80.0] — 2026-11-25
 
 `perfgate` VERDICT: PASS — no regression vs v1.79.0 above each shape's floor — 19/69 shapes resolve the 5.0% class
