@@ -88,6 +88,9 @@ type GGUFFile struct {
 	data     []byte   // the tensor-data section (file bytes after the aligned header); nil for a split set
 	mmap     []byte   // full mmap region iff opened via OpenGGUFMmap; nil for OpenGGUF
 	mmaps    [][]byte // every shard's mmap region iff opened via OpenGGUFSplitMmap
+	// files are the mapped files, open for ReleaseTensors' page-cache advice: one for mmap, one per shard for mmaps (an entry
+	// is nil where the file could not be reopened, which only loses the advice).
+	files []*os.File
 }
 
 // section is the data section a tensor's offset is relative to.
@@ -265,6 +268,7 @@ func OpenGGUFMmap(path string) (*GGUFFile, error) {
 		return nil, err
 	}
 	g.mmap = data
+	g.files = []*os.File{openForAdvice(path)}
 	runtime.SetFinalizer(g, finalizeGGUFMmap)
 	return g, nil
 }
@@ -294,6 +298,12 @@ func (g *GGUFFile) Close() error {
 		}
 		g.mmap = nil
 	}
+	for _, f := range g.files {
+		if f != nil {
+			_ = f.Close()
+		}
+	}
+	g.files = nil
 	g.data = nil
 	return err
 }

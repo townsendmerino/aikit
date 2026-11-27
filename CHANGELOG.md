@@ -9,6 +9,15 @@ excluded from that promise and may change in any release until it graduates.
 
 ## [Unreleased]
 
+### Changed
+
+- `embed`: `GGUFFile.ReleaseTensors` also drops the released bytes from the page cache on linux/amd64 and linux/arm64
+  (POSIX_FADV_DONTNEED on the mapped file, which a mapped GGUF now keeps open there until `Close`), through the new `mmap.DropFileCache`. Releasing only
+  the mapping left the file's pages cached, so a load converting a file larger than free memory pushed the kernel to reclaim
+  the converted copy, swapping some of it, while the source's cache filled. A later read of a released tensor re-reads the
+  file (identical bytes, a disk read where the cache would have served it). A page-cache folio that also holds bytes still
+  mapped stays until they are released too.
+
 ## [1.81.0] — 2026-11-26
 
 `perfgate` VERDICT: PASS — no regression vs v1.80.0 above each shape's floor — 17/75 shapes resolve the 5.0% class
